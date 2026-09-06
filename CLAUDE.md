@@ -1728,15 +1728,41 @@ bloqueado).
   1. ✅ Login automatizado nos dois sistemas (confirma sessão autenticada,
      grava sucesso/falha em `status_sincronizacao_automatica` — ver
      Central de Notificações).
-  2. 🟡 Exportar os dados — **Ulisses feito** (`exportarCsvInscricoes()`
-     em `scraper/ulisses.js`: clique único em "Exportar CSV", sem
-     formulário/seletor de evento no meio, confirmado testando de
-     verdade — baixa direto o CSV de Inscrições por filial, salvo em
-     `scraper/exports/`, subido como artifact do workflow). **Mercúrio
-     pendente** — ainda falta achar e exportar Ativos/Inativos.
-     Comparecimento (não só inscrição) também é um objetivo aqui —
-     provavelmente em "Relatórios" ou "Pré-inscrições" do Ulisses, ainda
-     não mapeado.
+  2. 🟡 Exportar os dados — **Ulisses parcialmente feito**:
+     - `exportarCsvInscricoes()` em `scraper/ulisses.js`: clique único em
+       "Exportar CSV" no menu do topo, sem formulário/seletor de evento
+       no meio (confirmado testando de verdade) — baixa direto o CSV de
+       Inscrições por filial, salvo em `scraper/exports/`, subido como
+       artifact do workflow.
+     - **Comparecimento (não só inscrição)** — mapeado, ainda NÃO
+       implementado no scraper: fica em **"Pré-inscrições" → "Recepção"
+       → selecionar um evento** (`#/recepcao` na SPA) — lista os
+       pré-inscritos daquele evento com um checkbox "Compareceu" (marcado
+       manualmente pela recepção no dia, então **não é 100% confiável** —
+       a recepção às vezes esquece de marcar; vale considerar perguntar
+       ao lead marcado como "não compareceu" antes de confiar cegamente)
+       e um botão "Ficha" por pessoa (mais detalhe, ainda não explorado).
+       "Relatórios" no menu do topo só tem estatística agregada, não lista
+       de leads — não serve pra isso. Como essa tela pede o evento um de
+       cada vez (diferente do "Exportar CSV", que é todos de uma vez),
+       precisa iterar por evento pra cobrir a filial inteira.
+     - **Catálogo de eventos** (menu "Links" → aba "Ativo" → clicar num
+       evento → sub-abas "Link"/"Eventos") também mapeado: tem título,
+       "Tipo link" (ex: `ABERTURA_DE_TURMA`), imagem (URL hospedada em S3
+       da própria Acrópole), subtítulo, informação (preço/horário em
+       texto livre) e descrição rica — dá pra puxar isso pra popular
+       `eventos.imagem_url`/`descricao` automaticamente em vez de cadastro
+       manual na Agenda. Ainda não implementado.
+     - **Mercúrio pendente** — ainda falta achar e exportar Ativos/
+       Inativos.
+     - **Ideia estratégica maior, registrada mas NÃO iniciada**: o evento
+       no Ulisses já linka pra uma tela de inscrição própria — dá pra
+       imaginar integrar um gateway de pagamento (ex: PagSeguro) nessa
+       inscrição e, no limite, substituir a tela do Ulisses pela nossa
+       própria (ganhando spread da taxa do gateway). Isso seria um
+       PRODUTO NOVO (site público de inscrição + pagamento), não uma
+       extensão do scraper — fora do escopo atual, mas vale uma conversa
+       de planejamento própria quando fizer sentido priorizar.
   3. ⬜ Decisão de arquitetura pendente pra ligar os dados exportados de
      volta no CRM: ou (a) reimplementar em Node a lógica de cruzamento/
      tags/Lead Forte que já existe em `js/importador.js` (risco: duas
