@@ -40,9 +40,16 @@ async function preencherComFallback(page, getByLabelRegex, seletorFallback, valo
 }
 
 async function loginMercurio(page, matricula, senha) {
-    await page.goto(URL_LOGIN, { waitUntil: 'networkidle' });
+    await page.goto(URL_LOGIN, { waitUntil: 'domcontentloaded' });
 
-    await preencherComFallback(page, /matr[ií]cula/i, 'input[type="text"]', matricula);
+    // O campo de Matrícula não tem type="text" explícito no HTML (comum
+    // em site antigo — "texto" é o padrão do navegador quando não se
+    // declara) — confirmado no primeiro teste real (o seletor exato
+    // input[type="text"] não achava nada e travava esperando 30s). Este
+    // seletor pega qualquer input que NÃO seja senha/oculto/botão/
+    // checkbox, o que cobre tanto "type ausente" quanto "type="text"".
+    const SELETOR_CAMPO_TEXTO = 'input:not([type="password"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="checkbox"])';
+    await preencherComFallback(page, /matr[ií]cula/i, SELETOR_CAMPO_TEXTO, matricula);
     await preencherComFallback(page, /senha/i, 'input[type="password"]', senha);
 
     try {

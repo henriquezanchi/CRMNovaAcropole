@@ -35,7 +35,12 @@ const URL_LOGIN = 'https://www.acropolebrasil.com.br/login.html';
 const PASTA_EXPORTS = 'exports';
 
 async function loginUlisses(page, email, senha) {
-    await page.goto(URL_LOGIN, { waitUntil: 'networkidle' });
+    // 'networkidle' trava pra sempre em sites com alguma conexão de fundo
+    // que nunca "para" (chat ao vivo, analytics, websocket) — confirmado
+    // no primeiro teste real (timeout de 30s em TODAS as filiais, sem
+    // nem chegar no Auth0). 'domcontentloaded' basta aqui, já que o passo
+    // seguinte espera o sinal de verdade (a URL virar a do Auth0).
+    await page.goto(URL_LOGIN, { waitUntil: 'domcontentloaded' });
 
     // O site redireciona pro Auth0 (acropolebrasil.us.auth0.com/u/login) —
     // espera isso acontecer antes de procurar os campos.
@@ -75,7 +80,10 @@ async function exportarCsvInscricoes(page, filial) {
 // CSV — os campos têm texto livre/multilinha, ex: descrição).
 async function exportarCatalogoEventos(page, filial) {
     if (!page.url().includes('#/evento')) {
-        await page.goto('https://www.acropolebrasil.com.br/#/evento', { waitUntil: 'networkidle' });
+        // 'networkidle' trava pra sempre nesse site (ver comentário em
+        // loginUlisses()) — usa 'domcontentloaded' + espera o próprio
+        // elemento que precisamos, mais abaixo.
+        await page.goto('https://www.acropolebrasil.com.br/#/evento', { waitUntil: 'domcontentloaded' });
     }
     await page.getByRole('button', { name: /^ativo$/i }).click({ timeout: 5000 }).catch(() => {});
 
