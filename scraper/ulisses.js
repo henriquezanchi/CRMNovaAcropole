@@ -144,16 +144,37 @@ export async function exportarCatalogoEventos(page, filial) {
     const total = await cards.count();
     if (total === 0) throw new Error('Nenhum card de evento encontrado na lista (seletor pode estar errado — ver comentário no topo do arquivo).');
 
+    // Timeout curto (não o padrão de 30s do Playwright) — confirmado por
+    // teste real que ALGUNS cards da lista pertencem a OUTRAS filiais (têm
+    // uma etiqueta colorida com o nome da filial embaixo, visível na
+    // tela); clicar neles nunca abre o painel de detalhes (sem acesso), e
+    // com o timeout padrão isso travava por ~3 minutos por card (6 campos
+    // x 30s). Aqui, 4s é o suficiente pra um campo que já carregou.
     const ler = async (rotulo) => {
-        try { return (await page.getByLabel(new RegExp(rotulo, 'i')).first().inputValue()).trim() || null; }
+        try { return (await page.getByLabel(new RegExp(rotulo, 'i')).first().inputValue({ timeout: 4000 })).trim() || null; }
         catch { return null; }
     };
 
     const eventos = [];
     for (let i = 0; i < total; i++) {
         try {
+            // O aviso do PagSeguro (ver fecharAvisosBloqueantes) confirmado
+            // reaparecendo ao voltar pra essa tela — tenta fechar de novo a
+            // cada card, não só uma vez no início da função.
+            await fecharAvisosBloqueantes(page);
             await cards.nth(i).click();
-            await page.waitForTimeout(500); // painel da direita atualiza
+
+            // Espera o campo "Título" de verdade aparecer/atualizar, em vez
+            // de um sleep fixo (que às vezes lia campo do card anterior
+            // ainda não trocado, às vezes esperava sem necessidade). Se não
+            // aparecer a tempo, é sinal de card de outra filial — pula sem
+            // tentar ler os outros 5 campos (que também nunca apareceriam).
+            const abriu = await page.getByLabel(/t[íi]tulo/i).first().waitFor({ timeout: 5000 }).then(() => true).catch(() => false);
+            if (!abriu) {
+                console.warn(`[ulisses] Evento ${i} não abriu painel de detalhes a tempo (provavelmente de outra filial) — pulando (${filial}).`);
+                continue;
+            }
+
             eventos.push({
                 titulo: await ler('t[íi]tulo'),
                 tipo_link: await ler('tipo link'),
