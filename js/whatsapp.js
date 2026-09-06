@@ -15,10 +15,18 @@
 // antes de ir pra produção. Enquanto vazio, qualquer conversa fora da
 // janela de 24h fica sem nenhuma forma de reabrir contato pela UI.
 const TEMPLATES_WHATSAPP = [
-    // Exemplo (ajustar/preencher quando o template for aprovado na Meta):
-    // { nome: 'resgate_lead_generico', label: 'Resgate de lead frio',
-    //   corpoAprovado: 'Olá {{1}}, tudo bem? Notamos seu interesse em nossos eventos e gostaríamos de retomar contato.',
-    //   variaveis: ['nome'] },
+    {
+        nome: 'contato_inicial',
+        label: 'Contato inicial (pós-palestra)',
+        corpoAprovado: 'Olá, {{1}}! Aqui quem fala é {{2}}, da Nova Acrópole. Tudo bem? Vi que você já esteve na Palestra {{3}} e gostaria de saber se ainda tem interesse em participar dos nossos próximos eventos de filosofia! Estamos abrindo uma nova turma em breve, quer saber mais detalhes de como funciona nosso curso?',
+        variaveis: ['nome', 'atendente', 'palestra'],
+    },
+    {
+        nome: 'resgate_lead_evento',
+        label: 'Resgate de lead frio',
+        corpoAprovado: 'Olá {{1}}! Aqui é da Nova Acrópole 🦉. \n\nNotamos seu interesse em nossos eventos de filosofia e gostaríamos muito de retomar contato. \n\nJá conhece nosso curso de Filosofia?',
+        variaveis: ['nome'],
+    },
 ];
 
 let wppContatoAtivoId = null;

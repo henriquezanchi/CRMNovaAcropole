@@ -1561,8 +1561,18 @@ uso principal do CRM é resgate de leads frios.
   tem menos de 24h.
 - **Templates de mensagem** só existem depois de criados e aprovados no
   painel da Meta Business — a lista `TEMPLATES_WHATSAPP` no topo de
-  `js/whatsapp.js` está vazia por padrão e precisa ser preenchida (nome
-  técnico exato + ordem das variáveis) conforme forem aprovados.
+  `js/whatsapp.js` precisa ser preenchida (nome técnico exato + ordem das
+  variáveis) conforme forem aprovados. Hoje tem 2: `contato_inicial`
+  (3 variáveis: nome/atendente/palestra — pós-palestra) e
+  `resgate_lead_evento` (1 variável: nome — resgate de lead frio
+  genérico). **Editar o texto de um template aprovado exige submeter de
+  novo pra Meta e esperar reaprovação** (não é instantâneo) — por isso,
+  antes de pedir aprovação de um template novo, vale considerar deixá-lo
+  bem genérico/com mais variáveis (parecido com o padrão de
+  `CONVITE_EVENTO_NAO_ALUNO`/`CONVITE_EVENTO_ATIVO` abaixo, que são só
+  texto livre preenchido no chat — sem aprovação nenhuma da Meta, mas só
+  funcionam DENTRO da janela de 24h) em vez de um texto fixo e específico
+  demais pra um cenário só.
 - **Convite padrão pra QUALQUER evento** (botão "Convidar pra Evento" no
   cabeçalho do chat da gaveta do lead — começou só pra "Abertura de
   Turma", generalizado depois a pedido do usuário): clicar abre um
