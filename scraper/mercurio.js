@@ -130,9 +130,13 @@ function paraCSV(cabecalhos, linhas) {
 // pegando sua primeira linha de texto (o nome da filial em maiúsculas,
 // visto no print, vem ANTES da lista de links "CADASTRO"/"RECEPÇÃO"/etc
 // na mesma célula). Se não conseguir identificar, usa um rótulo genérico
-// (filial_N) em vez de travar tudo.
+// (filial_N) em vez de travar tudo. Mesma lógica de "pode estar num frame
+// filho" do login (`acharContextoComTexto`) — confirmado no 4º teste real
+// que ger_frame.php também guarda o conteúdo num frame, não na página
+// principal (a busca direta em `page` não achou nenhum link).
 async function listarLinksCadastro(page) {
-    const links = page.getByRole('link', { name: 'CADASTRO', exact: true });
+    const ctx = await acharContextoComTexto(page, 'CADASTRO');
+    const links = ctx.getByRole('link', { name: 'CADASTRO', exact: true });
     const total = await links.count();
     const resultado = [];
     for (let i = 0; i < total; i++) {
@@ -151,9 +155,13 @@ async function listarLinksCadastro(page) {
 // na tela "Funções do Sistema" (ger_frame.php) com os links "CADASTRO"
 // disponíveis, e que `indice` é a posição do link daquela filial entre
 // TODOS os links "CADASTRO" da página (estável entre reloads, desde que
-// a lista de filiais não mude no meio da execução).
+// a lista de filiais não mude no meio da execução). Reacha o contexto do
+// zero (não reaproveita o Frame de `listarLinksCadastro()`) porque um
+// `page.goto()` entre filiais destrói e recria os frames — um Frame
+// antigo referenciado depois disso já não é mais válido.
 async function exportarAtivosEInativos(page, label, indice) {
-    const links = page.getByRole('link', { name: 'CADASTRO', exact: true });
+    const ctxCadastro = await acharContextoComTexto(page, 'CADASTRO');
+    const links = ctxCadastro.getByRole('link', { name: 'CADASTRO', exact: true });
     await links.nth(indice).click();
 
     // ATIVOS — colunas na tela: N., Matr., Nome, Nivel, Dia, Turma, Funções
