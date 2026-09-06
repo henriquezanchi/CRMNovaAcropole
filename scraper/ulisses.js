@@ -208,63 +208,72 @@ export async function exportarCatalogoEventos(page, filial) {
     return caminho;
 }
 
-// Comparecimento por evento (tela "Pré-inscrições" > "Recepção") — a
-// recepção marca manualmente no dia, então NÃO é 100% confiável (a
-// pessoa marcada "não compareceu" pode ter ido mesmo assim). Ancora nos
-// checkboxes (mais estável que tentar achar cada campo de nome/e-mail/
-// telefone) e extrai o resto por REGEX do texto ao redor.
-async function extrairPessoasComComparecimento(page) {
-    const checkboxes = page.locator('input[type="checkbox"]');
-    const total = await checkboxes.count();
-    const pessoas = [];
-
-    for (let i = 0; i < total; i++) {
-        const cb = checkboxes.nth(i);
-        const compareceu = await cb.isChecked().catch(() => null);
-        // Sobe até o ancestor mais próximo que contenha um e-mail no
-        // texto — heurística pra pegar "a linha inteira" sem depender da
-        // estrutura exata de tabela/div.
-        const container = cb.locator('xpath=ancestor::*[contains(., "@")][1]');
-        const texto = await container.innerText().catch(() => '');
-        const email = (texto.match(/[\w.+-]+@[\w-]+\.[\w.-]+/) || [])[0] || null;
-        const telefone = (texto.match(/\b\d{2}\s?\d{8,9}\b/) || [])[0] || null;
-        const nome = texto.split('\n')[0]?.trim() || null;
-        pessoas.push({ nome, email, telefone, compareceu });
-    }
-    return pessoas;
-}
-
+// Comparecimento por evento (tela "Recepção") — a recepção marca
+// manualmente no dia, então NÃO é 100% confiável (a pessoa marcada "não
+// compareceu" pode ter ido mesmo assim).
 export async function exportarComparecimento(page, filial) {
     await fecharAvisosBloqueantes(page);
-    await page.getByText('Pré-inscrições', { exact: false }).click({ timeout: 10000 });
-    await page.getByText('Recepção', { exact: false }).click({ timeout: 10000 });
-    await page.waitForURL(/recepcao/i, { timeout: 15000 }).catch(() => {});
-    await page.waitForTimeout(800);
+    // O clique em "Pré-inscrições" > "Recepção" (menu do topo) nunca
+    // chegava a essa tela de verdade — confirmado por teste real, o
+    // resultado anterior lia "Links" (item do menu da HOME), sinal de que
+    // a navegação nunca saiu do lugar (esse menu provavelmente só abre a
+    // aparece o submenu com HOVER, não clique). Vai direto pela URL —
+    // vista no print real: #/recepcao.
+    if (!page.url().includes('#/recepcao')) {
+        await page.goto('https://www.acropolebrasil.com.br/#/recepcao', { waitUntil: 'domcontentloaded' });
+    }
+    await fecharAvisosBloqueantes(page);
 
-    // Tenta achar um <select> nativo com a lista de eventos; se não achar
-    // (pode ser um dropdown customizado), captura só o evento que já
-    // estiver selecionado por padrão — melhor que falhar tudo.
-    const combobox = page.getByRole('combobox').first();
-    let opcoesEventos = [];
-    if (await combobox.count() > 0) {
-        opcoesEventos = (await combobox.locator('option').allTextContents()).map(t => t.trim()).filter(Boolean);
-    }
-    if (opcoesEventos.length === 0) {
-        console.warn('[ulisses] Não consegui listar eventos no seletor da Recepção — capturando só o evento já selecionado.');
-        opcoesEventos = [null]; // null = não muda o seletor, usa o que já está na tela
-    }
+    // Confirmado por print real: é um <select> HTML normal, sem
+    // formulário/seletor extra no meio. Cada opção vem no formato
+    // "[ATUAL]/[DESAT] ___ DD/MM/AAAA HH:MM ___ Nome do evento" (as duas
+    // primeiras partes vêm vazias — "___ ___ Nome" — quando o evento não
+    // tem data marcada, ex: "Chat Whatsapp Landing Page"). A lista INCLUI
+    // eventos de outras filiais também — não filtra, serve pra já ter a
+    // base do evento no CRM (nome + data), mesmo sem os detalhes
+    // completos (esses só vêm de exportarCatalogoEventos, só p/ eventos
+    // futuros da própria filial).
+    const combobox = page.locator('select').first();
+    await combobox.waitFor({ timeout: 10000 });
+    const opcoes = (await combobox.locator('option').allTextContents())
+        .map(t => t.trim())
+        .filter(t => t && !t.toLowerCase().startsWith('- selecione'));
+    if (opcoes.length === 0) throw new Error('Nenhum evento encontrado no seletor da tela de Recepção.');
 
     const registros = [];
-    for (const nomeEvento of opcoesEventos) {
+    for (const opcaoTexto of opcoes) {
         try {
-            if (nomeEvento !== null) {
-                await combobox.selectOption({ label: nomeEvento });
-                await page.waitForTimeout(800); // lista de pessoas recarrega
+            await combobox.selectOption({ label: opcaoTexto });
+            // Sem indicador de carregamento claro na tela — a lista de
+            // pré-inscritos costuma ser pequena, um wait curto e fixo
+            // aqui é aceitável (diferente do catálogo de eventos, aqui
+            // não tem risco de travar 30s num campo que nunca aparece).
+            await page.waitForTimeout(700);
+
+            const [status, dataHora, nomeEvento] = opcaoTexto.split('___').map(s => s.trim());
+
+            const checkboxes = page.locator('input[type="checkbox"]');
+            const total = await checkboxes.count();
+            for (let i = 0; i < total; i++) {
+                const cb = checkboxes.nth(i);
+                const compareceu = await cb.isChecked().catch(() => null);
+                // Sobe até o ancestor mais próximo que contenha um e-mail
+                // no texto — heurística pra pegar "a linha inteira" sem
+                // depender da estrutura exata da tabela/lista.
+                const linha = cb.locator('xpath=ancestor::*[contains(., "@")][1]');
+                const texto = await linha.innerText().catch(() => '');
+                const email = (texto.match(/[\w.+-]+@[\w-]+\.[\w.-]+/) || [])[0] || null;
+                const telefone = (texto.match(/\b\d{2}\s?\d{8,9}\b/) || [])[0] || null;
+                const nome = texto.split('\n')[0]?.trim() || null;
+                registros.push({
+                    eventoNome: nomeEvento || opcaoTexto,
+                    eventoData: dataHora || null,
+                    eventoStatus: status || null, // "[ATUAL]" ou "[DESAT]"
+                    filial, nome, email, telefone, compareceu,
+                });
             }
-            const pessoas = await extrairPessoasComComparecimento(page);
-            pessoas.forEach(p => registros.push({ evento: nomeEvento, filial, ...p }));
         } catch (e) {
-            console.warn(`[ulisses] Falha ao ler comparecimento do evento "${nomeEvento}" (${filial}):`, e.message);
+            console.warn(`[ulisses] Falha ao ler comparecimento do evento "${opcaoTexto}" (${filial}):`, e.message);
         }
     }
 

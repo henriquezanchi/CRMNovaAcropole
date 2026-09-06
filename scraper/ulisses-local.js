@@ -79,19 +79,10 @@ async function processarFilialLocal(browser, filial) {
         return;
     }
 
-    // comparecimento pausado por ora (2026-09-06) — o 1º teste real
-    // devolveu só lixo ("- Selecione um evento -"/"Links" repetido em
-    // todo registro), sinal de que o seletor do dropdown de evento na
-    // tela de Recepção está errado; precisa de investigação própria,
-    // separada da de catálogo/CSV. catalogo-eventos reativado — o mesmo
-    // teste mostrou uma PARTE real funcionando (título/imagem/descrição
-    // de vários eventos capturados certinho), mesmo com alguns cards
-    // ainda falhando ("element is not enabled") e um problema de
-    // acentuação a investigar. Pra reativar comparecimento, descomenta.
     const etapas = [
         { nome: 'exportar-csv-inscricoes', executar: () => exportarCsvInscricoes(page, filial) },
         { nome: 'catalogo-eventos', executar: () => exportarCatalogoEventos(page, filial) },
-        // { nome: 'comparecimento', executar: () => exportarComparecimento(page, filial) },
+        { nome: 'comparecimento', executar: () => exportarComparecimento(page, filial) },
     ];
     let algumaFalha = false;
     for (const etapa of etapas) {
