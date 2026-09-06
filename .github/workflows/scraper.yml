@@ -31,11 +31,21 @@ jobs:
       - name: Instalar navegador (Chromium)
         run: npx playwright install --with-deps chromium
 
+      # Pausado por decisão explícita (2026-09-06): o Cloudflare na frente
+      # do acropolebrasil.com.br barra qualquer acesso vindo do IP de
+      # datacenter do GitHub Actions com um challenge "Verify you are
+      # human" — nunca chega nem no Auth0. Não é um bug de código, é uma
+      # proteção deliberada contra automação; não vamos tentar contornar.
+      # Ulisses segue no fluxo manual (planilha) até decidirmos rodar isso
+      # de um IP residencial/self-hosted, ou conseguirmos allowlist com
+      # quem administra o site. Ver CLAUDE.md, seção do scraper. Pra
+      # reativar, é só apagar o `if: false` abaixo.
       - name: Ulisses — login + exportar Inscrições, catálogo de eventos e comparecimento (todas as filiais)
+        if: false
         run: node ulisses.js
         continue-on-error: true
 
-      - name: Login no Mercúrio
+      - name: Mercúrio — login + exportar Ativos e Inativos (todas as filiais)
         run: node mercurio.js
         continue-on-error: true
 
@@ -47,7 +57,7 @@ jobs:
           path: scraper/debug/
           if-no-files-found: ignore
 
-      - name: Guardar arquivos exportados do Ulisses (CSV/JSON)
+      - name: Guardar arquivos exportados (CSV/JSON)
         if: always()
         uses: actions/upload-artifact@v4
         with:
