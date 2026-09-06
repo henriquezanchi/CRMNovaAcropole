@@ -1,0 +1,16 @@
+{
+  "name": "crm-na-scraper",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Login automatizado no Ulisses (por filial) e no Mercúrio, pra manter o CRM sincronizado sem depender de exportar planilha na mão. Roda agendado via GitHub Actions (.github/workflows/scraper.yml).",
+  "type": "module",
+  "scripts": {
+    "ulisses": "node ulisses.js",
+    "mercurio": "node mercurio.js",
+    "run": "node run.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "playwright": "^1.47.0"
+  }
+}

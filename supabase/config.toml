@@ -1,0 +1,13 @@
+project_id = "eovgljcowblwoxmobeno"
+
+[functions.whatsapp-send]
+verify_jwt = true
+
+[functions.whatsapp-webhook]
+verify_jwt = false
+
+[functions.classificar-temas]
+verify_jwt = true
+
+[functions.gerenciar-credenciais]
+verify_jwt = true

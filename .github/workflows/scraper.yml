@@ -1,0 +1,48 @@
+name: Scraper Ulisses/Mercúrio
+
+# MARCO 1 — só disparo manual (workflow_dispatch) por enquanto, pra
+# testar se o login funciona antes de agendar rodadas automáticas todo
+# dia. Depois de confirmado, trocar/completar com:
+#   schedule:
+#     - cron: '0 8 * * *'  # 08:00 UTC = 05:00 em Brasília (sem horário de verão)
+on:
+  workflow_dispatch:
+
+jobs:
+  scraper:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: scraper
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      CREDENCIAIS_SCRAPER_CHAVE: ${{ secrets.CREDENCIAIS_SCRAPER_CHAVE }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Instalar dependências
+        run: npm install
+
+      - name: Instalar navegador (Chromium)
+        run: npx playwright install --with-deps chromium
+
+      - name: Login no Ulisses (todas as filiais)
+        run: node ulisses.js
+        continue-on-error: true
+
+      - name: Login no Mercúrio
+        run: node mercurio.js
+        continue-on-error: true
+
+      - name: Guardar prints de erro (se algum login falhou)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scraper-debug
+          path: scraper/debug/
+          if-no-files-found: ignore

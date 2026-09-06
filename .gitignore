@@ -1,0 +1,9 @@
+node_modules/
+scraper/node_modules/
+.env
+.env.local
+desktop.ini
+**/desktop.ini
+*.log
+scraper/playwright-report/
+scraper/test-results/

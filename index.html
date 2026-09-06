@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CRM Agência - Módulo 2</title>
+    <link rel="icon" type="image/png" href="img/logo-nova-acropole.png">
+    <!-- Importando fontes e ícones -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- ⚠️ AQUI ESTÁ A MÁGICA: Conectando o seu arquivo CSS externo -->
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+    <!-- Portão de acesso (senha única do time) — js/acesso.js. Fica escondido
+         (display:none) até o script decidir se precisa mostrar. -->
+    <div id="acessoOverlay" style="display:none; position:fixed; inset:0; z-index:99999; background:var(--na-green-dark, #0a3d33); align-items:center; justify-content:center; flex-direction:column; gap:16px; font-family:'Inter',sans-serif;">
+        <img src="img/logo-nova-acropole.png" alt="" style="width:64px; height:64px;" onerror="this.style.display='none';">
+        <div style="color:white; font-size:18px; font-weight:600;">CRM Nova Acrópole</div>
+        <input type="password" id="acessoSenhaInput" placeholder="Senha de acesso" style="padding:10px 14px; border-radius:8px; border:none; width:240px; font-size:14px;">
+        <button onclick="tentarAcesso()" style="padding:10px 20px; border-radius:8px; border:none; background:var(--na-gold, #c9a24b); color:#3a2e0f; font-weight:600; cursor:pointer;">Entrar</button>
+        <div id="acessoErro" style="display:none; color:#fca5a5; font-size:12px;">Senha incorreta.</div>
+    </div>
+
+    <!-- Sidebar: Navegação Multi-Abas -->
+    <div class="sidebar">
+        <i class="fa-solid fa-chart-line sidebar-icon" data-tab="tab-dashboard" title="Visão Geral"
+           onclick="switchModule('tab-dashboard', 'Visão Geral', 'Dashboard de performance da unidade')"></i>
+        <i class="fa-solid fa-users-viewfinder sidebar-icon active" data-tab="tab-crm" title="CRM e Prospecção"
+           onclick="switchModule('tab-crm', 'Prospecção Ativa', 'CRM Modularizado VS Code')"></i>
+        <i class="fa-solid fa-calendar-days sidebar-icon" data-tab="tab-agenda" title="Agenda de Eventos"
+           onclick="switchModule('tab-agenda', 'Agenda de Eventos', 'Atividades e capacidade por filial')"></i>
+        <i class="fa-brands fa-whatsapp sidebar-icon" data-tab="tab-whatsapp" title="WhatsApp Unificado"
+           onclick="switchModule('tab-whatsapp', 'WhatsApp Unificado', 'Caixa de entrada centralizada')"></i>
+        <i class="fa-solid fa-chart-simple sidebar-icon" data-tab="tab-relatorios" title="Relatórios"
+           onclick="switchModule('tab-relatorios', 'Relatórios', 'Funil de conversão da unidade')"></i>
+        <i class="fa-solid fa-clone sidebar-icon" data-tab="tab-leads-tratar" title="Leads a Tratar"
+           onclick="switchModule('tab-leads-tratar', 'Leads a Tratar', 'Duplicados e leads sem telefone')"></i>
+        <i class="fa-solid fa-file-import sidebar-icon" data-tab="tab-importar" title="Importar Planilhas"
+           onclick="switchModule('tab-importar', 'Importar Planilhas', 'Ativos, Inativos e Inscrições → CRM')"></i>
+    </div>
+
+    <div class="main-content">
+        <!-- Topbar (título/subtítulo dinâmicos por aba) -->
+        <div class="topbar">
+            <div style="display:flex; align-items:center; gap:14px;">
+                <img src="img/logo-nova-acropole.png" alt="Nova Acrópole" class="topbar-logo" onerror="this.style.display='none'">
+                <div>
+                    <h2 style="font-size: 18px; color: var(--na-green-dark); margin: 0;">
+                        <i id="topbar-icon" class="fa-solid fa-users-viewfinder"></i>
+                        <span id="topbar-title-text">Prospecção Ativa</span>
+                    </h2>
+                    <p id="topbar-subtitle" style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">CRM Modularizado VS Code</p>
+                </div>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <select id="filialSelect" onchange="trocarFilial(this.value)" style="font-size: 13px; font-weight: 600; padding: 6px; border-radius: 6px; border: 1px solid #ccc;">
+                    <option value="">Carregando filiais...</option>
+                </select>
+                <button class="btn-toggle" onclick="abrirGerenciarFiliais()" title="Gerenciar Filiais"><i class="fa-solid fa-gear"></i></button>
+                <div class="notificacoes-wrapper">
+                    <button class="btn-toggle notificacoes-sino" onclick="togglePainelNotificacoes()" title="Notificações">
+                        <i class="fa-solid fa-bell"></i>
+                        <span class="notificacoes-badge" id="notificacoesBadge" style="display:none;">0</span>
+                    </button>
+                    <div class="notificacoes-painel" id="notificacoesPainel">
+                        <div class="notificacoes-painel-header">
+                            <span>Notificações</span>
+                            <button class="btn-mini btn-secondary-mini" onclick="marcarTodasNotificacoesComoLidas()">Marcar tudo como lido</button>
+                        </div>
+                        <div class="notificacoes-lista" id="notificacoesLista"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==========================================================
+             ABA 1 — VISÃO GERAL (DASHBOARD)
+        =========================================================== -->
+        <div id="tab-dashboard" class="tab-pane">
+            <div class="dashboard-content">
+                <div class="kpi-grid">
+                    <div class="kpi-card">
+                        <div class="kpi-icon" style="background:#eef2ff; color:#4338ca;"><i class="fa-solid fa-magnifying-glass"></i></div>
+                        <div class="kpi-info">
+                            <div class="kpi-value" id="kpiLeadsMinerados">--</div>
+                            <div class="kpi-label">Leads Minerados</div>
+                        </div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-icon" style="background:#fef3c7; color:#b45309;"><i class="fa-solid fa-comments"></i></div>
+                        <div class="kpi-info">
+                            <div class="kpi-value" id="kpiTaxaResposta">--</div>
+                            <div class="kpi-label">Taxa de Resposta</div>
+                        </div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-icon" style="background:#dcfce7; color:#166534;"><i class="fa-solid fa-graduation-cap"></i></div>
+                        <div class="kpi-info">
+                            <div class="kpi-value" id="kpiNovasMatriculas">--</div>
+                            <div class="kpi-label">Novas Matrículas</div>
+                        </div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-icon" style="background:#fee2e2; color:#991b1b;"><i class="fa-solid fa-rotate-left"></i></div>
+                        <div class="kpi-info">
+                            <div class="kpi-value" id="kpiResgates">--</div>
+                            <div class="kpi-label">Resgates Efetivados</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Lead Forte por nível (1 = mais propenso), métrica-proxy igual os KPIs acima -->
+                <div class="activity-card" id="leadForteCard" style="flex:none;">
+                    <div class="activity-header"><i class="fa-solid fa-star"></i> Lead Forte por Nível</div>
+                    <div class="lead-forte-resumo" id="leadForteResumo"></div>
+                </div>
+
+                <!-- "Verdadeiros" Leads Fortes: prospectos com trilha Filosófica, por
+                     estágio da jornada — clicar já filtra o CRM pra começar os contatos -->
+                <div class="activity-card" id="jornadaCard" style="flex:none;">
+                    <div class="activity-header"><i class="fa-solid fa-route"></i> Jornada até a Matrícula</div>
+                    <div class="lead-forte-resumo" id="jornadaResumo"></div>
+                </div>
+
+                <!-- Lembretes de follow-up (snooze) vencidos hoje ou atrasados, da filial atual -->
+                <div class="activity-card" id="lembretesCard" style="flex:none; max-height:230px;">
+                    <div class="activity-header"><i class="fa-solid fa-bell"></i> Lembretes de Hoje / Atrasados</div>
+                    <div class="activity-list" id="lembretesFeed"></div>
+                </div>
+
+                <div class="activity-card">
+                    <div class="activity-header"><i class="fa-solid fa-bolt"></i> Feed de Atividades da Equipe <span class="live-dot"></span> <span style="font-weight:400; color:var(--text-muted); font-size:11px;">Ao Vivo</span></div>
+                    <div class="activity-list" id="activityFeed"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==========================================================
+             ABA 2 — CRM E PROSPECÇÃO (KANBAN) — lógica já 100% pronta
+        =========================================================== -->
+        <div id="tab-crm" class="tab-pane active">
+            <!-- Barra de Ordenação / Ações -->
+            <div class="filter-bar">
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <span style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Organizar Quadro:</span>
+                    <select id="sortSelect" onchange="renderizarCards()" style="font-size: 11px; padding: 6px; border-radius: 6px; border: 1px solid #cbd5e1; outline: none; background: white; cursor: pointer;">
+                        <option value="padrao">Data de Chegada (Padrão)</option>
+                        <option value="az">Nome (A - Z)</option>
+                        <option value="za">Nome (Z - A)</option>
+                        <option value="prioridade">Prioridade de Contato (Lead Forte + Tags)</option>
+                        <option value="lead_forte">Lead Forte (Nível 1 primeiro)</option>
+                        <option value="nivel_aluno">Nível de Aluno (TA → JN → PP → N1 → Membro)</option>
+                        <option value="tags_desc">Mais Tags Primeiro</option>
+                    </select>
+                </div>
+
+                <!-- Busca global: pesquisa em TODAS as colunas da filial atual (banco inteiro, não só o que já foi carregado) -->
+                <div class="global-search-wrapper" id="globalSearchWrapper">
+                    <input type="text" id="globalSearchInput" class="global-search-input" placeholder="Buscar em todas as colunas (nome, telefone, e-mail)..."
+                           autocomplete="off" name="busca-global-crm-na"
+                           oninput="buscaGlobalComDebounce()"
+                           onfocus="if(document.getElementById('globalSearchResults').innerHTML.trim() !== '') document.getElementById('globalSearchResults').classList.add('open')">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <div class="global-search-results" id="globalSearchResults"></div>
+                </div>
+
+                <div style="display: flex; gap: 8px; align-items: center; margin-left: auto;">
+                    <span style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Filtro Rápido:</span>
+                    <div id="filtrosRapidosContainer" style="display:flex; gap:6px;"></div>
+                    <button class="btn-toggle" onclick="abrirGerenciarTags()">
+                        <i class="fa-solid fa-tags"></i> Gerenciar Tags
+                    </button>
+                    <button class="btn-toggle" onclick="abrirGerenciarColunas()">
+                        <i class="fa-solid fa-table-columns"></i> Gerenciar Colunas
+                    </button>
+                    <button class="btn-add-tag" onclick="limparFiltros()"><i class="fa-solid fa-xmark"></i> Limpar Tudo</button>
+                </div>
+            </div>
+            <!-- Os filtros avançados (status, telemarketing, tags, evento, data,
+                 telefone/e-mail) agora são por coluna — ver o botão "Filtros" em
+                 cada coluna do Kanban, montado em renderizarColunas() (js/app.js). -->
+
+            <!-- Barra de estatísticas -->
+            <div class="stats-bar" id="statsBar">Carregando leads...</div>
+
+            <!-- Gaveta de colunas: colunas "guardadas" aparecem aqui como chips; populada por montarGavetaColunas() em js/app.js -->
+            <div class="colunas-gaveta" id="colunasGaveta" style="display:none;"></div>
+
+            <!-- O Kanban (renderizado dinamicamente em JS a partir das colunas configuradas) -->
+            <div class="kanban-board" id="kanbanBoard"></div>
+
+            <!-- Barra de ação em massa: só aparece com pelo menos 1 lead selecionado -->
+            <div class="bulk-action-bar" id="bulkActionBar" style="display:none;">
+                <span id="bulkActionCount">0 selecionados</span>
+                <select id="bulkActionColuna"></select>
+                <button class="btn-primary" id="btnMoverSelecionados" onclick="moverSelecionadosParaColuna()"><i class="fa-solid fa-arrow-right"></i> Mover</button>
+                <span style="width:1px; height:20px; background:rgba(255,255,255,0.25);"></span>
+                <input type="text" id="bulkActionTagInput" list="tagsSugeridasList" placeholder="Nome da tag..." style="padding:8px 10px; border-radius:6px; border:none; font-size:12px; width:170px;">
+                <button class="btn-secondary" onclick="aplicarTagEmMassa('add')" title="Adicionar esta tag a todos os selecionados"><i class="fa-solid fa-tag"></i> + Tag</button>
+                <button class="btn-secondary" onclick="aplicarTagEmMassa('remove')" title="Remover esta tag de todos os selecionados"><i class="fa-solid fa-tag"></i> − Tag</button>
+                <span style="width:1px; height:20px; background:rgba(255,255,255,0.25);"></span>
+                <button class="btn-secondary" onclick="iniciarMesclagemManual()" title="Mesclar os leads selecionados (2 ou mais) — mesmo sem o sistema ter sugerido"><i class="fa-solid fa-code-merge"></i> Mesclar</button>
+                <button class="btn-secondary" onclick="limparSelecao()">Cancelar seleção</button>
+            </div>
+
+            <!-- Barra de desfazer: aparece por 5s depois de mover lead(s) de coluna -->
+            <div class="bulk-action-bar" id="undoBar" style="display:none;">
+                <span id="undoTexto"></span>
+                <button class="btn-secondary" onclick="desfazerUltimoMovimento()"><i class="fa-solid fa-rotate-left"></i> Desfazer</button>
+            </div>
+        </div>
+
+        <!-- ==========================================================
+             ABA — AGENDA DE EVENTOS (atividades/capacidade por filial)
+        =========================================================== -->
+        <div id="tab-agenda" class="tab-pane">
+            <div class="agenda-content">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px;">
+                    <div>
+                        <h3 style="font-size:16px; color:var(--na-green-dark);">Agenda de Eventos</h3>
+                        <p class="report-sub">Atividades cadastradas pra esta filial. "Confirmados" é uma métrica-proxy — conta quantos dos leads já carregados no navegador têm esse evento no histórico, não é uma contagem exata do banco inteiro.</p>
+                    </div>
+                    <div style="display:flex; gap:8px; flex-shrink:0;">
+                        <button class="btn-toggle" id="btnTogglePassadosEventos" onclick="toggleEventosPassados()"><i class="fa-solid fa-clock-rotate-left"></i> Mostrar passados</button>
+                        <button class="btn-toggle" onclick="abrirGerenciarTiposEvento()"><i class="fa-solid fa-list-check"></i> Gerenciar Tipos</button>
+                        <button class="btn-primary" onclick="abrirFormEvento()"><i class="fa-solid fa-plus"></i> Novo Evento</button>
+                    </div>
+                </div>
+                <div class="agenda-lista" id="agendaLista"></div>
+            </div>
+        </div>
+
+        <!-- ==========================================================
+             ABA 3 — WHATSAPP UNIFICADO
+        =========================================================== -->
+        <div id="tab-whatsapp" class="tab-pane">
+            <div class="wpp-layout">
+                <div class="wpp-sidebar">
+                    <div class="wpp-sidebar-header">
+                        <input type="text" id="wppSearch" placeholder="Buscar conversa ou nome de lead p/ iniciar..." oninput="filtrarContatosWpp(this.value)">
+                    </div>
+                    <div class="wpp-contact-list" id="wppContactList"></div>
+                </div>
+                <div class="drawer-chat" style="flex:1;">
+                    <div class="chat-header" id="wppChatHeader">
+                        <div style="width: 36px; height: 36px; background: #cbd5e1; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; color: white;"><i class="fa-solid fa-user"></i></div>
+                        <div style="font-size:13px; color:var(--text-muted);">Selecione um contato à esquerda</div>
+                    </div>
+                    <div class="chat-messages" id="wppMessages">
+                        <div style="text-align:center; font-size:11px; color:#64748b; margin-top:20px;">
+                            Selecione um contato para ver a conversa.
+                        </div>
+                    </div>
+                    <div class="chat-input-area" id="wppChatInputArea"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==========================================================
+             ABA 4 — RELATÓRIOS (FUNIL DE CONVERSÃO)
+        =========================================================== -->
+        <div id="tab-relatorios" class="tab-pane">
+            <div class="report-content">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px;">
+                    <div>
+                        <h3 style="font-size:16px; color:var(--na-green-dark);">Funil de Conversão</h3>
+                        <p class="report-sub">Calculado em tempo real a partir dos leads carregados para a filial atual.</p>
+                    </div>
+                    <button class="btn-secondary" style="white-space:nowrap;" onclick="exportarLeadsCSV()"><i class="fa-solid fa-file-csv"></i> Exportar Leads (CSV)</button>
+                </div>
+                <div class="funnel" id="funnelChart"></div>
+
+                <div style="margin-top:30px;">
+                    <h3 style="font-size:16px; color:var(--na-green-dark);">Jornada da Base</h3>
+                    <p class="report-sub">Sistema de follow-up: distribui os leads em estágios (Descoberta → Interesse Emergente → Engajado → Matriculado, além de Em Recuperação) com base nas trilhas de interesse frequentadas — configure em "Trilhas de Interesse" na aba Importar.</p>
+                    <div class="funnel" id="relatorioJornadaBase"></div>
+                </div>
+
+                <div style="margin-top:30px;">
+                    <h3 style="font-size:16px; color:var(--na-green-dark);">Conversão por Tema de Evento</h3>
+                    <p class="report-sub">Cruza o tema de cada evento (classificado por IA na importação de planilhas) com quem já matriculou — proxy sobre os leads já carregados, mesmo espírito dos KPIs do Dashboard.</p>
+                    <div id="relatorioTemasEvento"></div>
+                </div>
+
+                <div style="margin-top:30px;">
+                    <h3 style="font-size:16px; color:var(--na-green-dark);">Matrículas por Mês</h3>
+                    <p class="report-sub">Baseado em data_matricula (busca direta no banco, cobre a filial inteira — não é proxy).</p>
+                    <div id="relatorioMatriculasPorMes"></div>
+                </div>
+
+                <div style="margin-top:30px;">
+                    <h3 style="font-size:16px; color:var(--na-green-dark);">Motivos de Perda</h3>
+                    <p class="report-sub">Por que os leads perdidos (coluna "Perdido"/"Lixeira") não matricularam — proxy sobre os leads já carregados.</p>
+                    <div class="funnel" id="relatorioMotivosPerda"></div>
+                </div>
+
+                <div style="margin-top:30px;">
+                    <h3 style="font-size:16px; color:var(--na-green-dark);">Comparação entre Filiais</h3>
+                    <p class="report-sub">Total de leads e matrículas (data_matricula preenchido) de cada filial ativa — busca direta no banco.</p>
+                    <div id="relatorioComparacaoFiliais"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==========================================================
+             ABA — LEADS A TRATAR (duplicados por telefone/nome + sem telefone)
+        =========================================================== -->
+        <div id="tab-leads-tratar" class="tab-pane">
+            <div class="agenda-content">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px;">
+                    <div>
+                        <h3 style="font-size:16px; color:var(--na-green-dark);">Leads a Tratar</h3>
+                        <p class="report-sub">Roda automaticamente ao final de cada importação. Possíveis duplicados por telefone (mais confiável) ou nome parecido (menos confiável — revise antes de mesclar/apagar qualquer coisa), e leads sem telefone cadastrado. Clique num lead pra abrir a gaveta dele.</p>
+                    </div>
+                    <button class="btn-primary" id="btnVerificarLeadsATratar" style="white-space:nowrap;" onclick="verificarLeadsATratarAgora()"><i class="fa-solid fa-magnifying-glass"></i> Verificar Agora</button>
+                </div>
+                <div class="agenda-lista" id="leadsATratarLista"></div>
+            </div>
+        </div>
+
+        <!-- ==========================================================
+             ABA 5 — IMPORTAR PLANILHAS (Ativos / Inativos / Inscrições)
+        =========================================================== -->
+        <div id="tab-importar" class="tab-pane">
+            <div class="import-content">
+                <div class="import-intro" style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px;">
+                    <div>
+                        <h3 style="font-size:16px; color:var(--na-green-dark);">Importar Planilhas</h3>
+                        <p class="report-sub">
+                            Sobe as 3 planilhas da filial (Ativos, Inativos e Inscrições) e o CRM cruza tudo sozinho:
+                            marca quem é Ativo, Inativo ou Lead Forte (níveis 1 a 3), e monta o histórico de eventos de cada pessoa.
+                            Nada é enviado ao banco até você conferir a prévia e clicar em "Confirmar e Enviar".
+                        </p>
+                    </div>
+                    <div style="display:flex; gap:8px;">
+                        <button class="btn-secondary" style="white-space:nowrap;" onclick="abrirConfigPontuacao()"><i class="fa-solid fa-sliders"></i> Critérios de Lead Forte</button>
+                        <button class="btn-secondary" style="white-space:nowrap;" onclick="abrirCredenciaisScraper()"><i class="fa-solid fa-key"></i> Login Automático (Ulisses/Mercúrio)</button>
+                    </div>
+                </div>
+
+                <div class="import-upload-grid">
+                    <div class="import-upload-card">
+                        <div class="import-upload-title"><i class="fa-solid fa-user-graduate"></i> Alunos Ativos</div>
+                        <div class="import-upload-sub">CSV separado por ; (ponto-e-vírgula), colunas: N., Matr, Nome, Nivel, Dia, Turma</div>
+                        <input type="file" id="fileAtivos" accept=".csv">
+                    </div>
+                    <div class="import-upload-card">
+                        <div class="import-upload-title"><i class="fa-solid fa-user-slash"></i> Ex-Alunos (Inativos)</div>
+                        <div class="import-upload-sub">CSV separado por ; (ponto-e-vírgula), colunas: Nome, Telefones, Ni, Data, Motivo</div>
+                        <input type="file" id="fileInativos" accept=".csv">
+                    </div>
+                    <div class="import-upload-card">
+                        <div class="import-upload-title"><i class="fa-solid fa-calendar-check"></i> Inscrições (Ulisses)</div>
+                        <div class="import-upload-sub">CSV separado por vírgula, exportado do Ulisses (pessoaIdentificador, eventoNome, eventoData...)</div>
+                        <input type="file" id="fileInscricoes" accept=".csv">
+                    </div>
+                </div>
+
+                <div class="import-filial-row">
+                    <label style="font-size:11px; font-weight:600; color:var(--text-muted);">Filial de destino:</label>
+                    <select id="importFilialSelect" style="font-size:12px; padding:6px 10px; border-radius:6px; border:1px solid #cbd5e1;" onchange="atualizarContagemExclusao()"></select>
+                    <button class="btn-primary" onclick="processarPlanilhas()"><i class="fa-solid fa-gears"></i> Processar (não envia nada ainda)</button>
+                </div>
+
+                <div id="importLog" class="import-log" style="display:none;"></div>
+                <div id="importPreview" class="import-preview" style="display:none;"></div>
+                <div id="auditoriaImportacaoContainer" style="display:none;"></div>
+
+                <!-- Zona de Perigo: apagar leads de uma filial antes de reimportar do zero -->
+                <div class="import-danger-zone">
+                    <div class="import-danger-header">
+                        <i class="fa-solid fa-triangle-exclamation"></i>
+                        <div>
+                            <div class="import-danger-title">Zona de Perigo</div>
+                            <div class="import-danger-sub">Apaga permanentemente todos os leads da filial selecionada acima em "Filial de destino". Use antes de reimportar do zero.</div>
+                        </div>
+                    </div>
+                    <div class="import-danger-body">
+                        <div id="importDangerContagem" class="import-danger-contagem">Selecione uma filial para ver quantos leads seriam apagados.</div>
+                        <label class="import-danger-label">Digite o nome exato da filial pra confirmar:</label>
+                        <input type="text" id="importDangerConfirmInput" class="import-danger-input" placeholder="Nome da filial" oninput="verificarTextoConfirmacaoExclusao()">
+                        <button id="btnExcluirLeadsFilial" class="btn-danger" disabled onclick="excluirLeadsDaFilial()">
+                            <i class="fa-solid fa-trash-can"></i> Apagar todos os leads desta filial
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Gaveta Lateral (Offcanvas) — Ficha/IA/Tags à esquerda + Chat WhatsApp do lead à direita -->
+    <div class="overlay" id="overlay" onclick="fecharGaveta()"></div>
+    <div class="drawer" id="leadDrawer">
+        <!-- Coluna da Ficha e IA -->
+        <div class="drawer-info">
+            <div class="drawer-header">
+                <div>
+                    <h3 id="drawer-name" style="font-size: 16px; color: var(--na-green-dark);">Nome</h3>
+                    <p id="drawer-subtitle" style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Subtítulo</p>
+                </div>
+                <button style="background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted);" onclick="fecharGaveta()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <div class="drawer-body">
+                <!-- EVENTOS (CONVITES) — em quais eventos esse lead está sendo trabalhado
+                     (evento_leads), com opção de convidar pra um evento novo -->
+                <div class="drawer-gaveta">
+                    <div class="drawer-gaveta-header" onclick="toggleGavetaLead('eventos')">
+                        <span class="drawer-gaveta-titulo"><i class="fa-solid fa-chevron-right" id="drawer-gaveta-seta-eventos"></i> <i class="fa-solid fa-calendar-check"></i> Eventos (Convites)</span>
+                        <button class="btn-add-tag" onclick="event.stopPropagation(); abrirFormConvidarEventoNaGaveta()"><i class="fa-solid fa-plus"></i> Convidar</button>
+                    </div>
+                    <div class="drawer-gaveta-body" id="drawer-gaveta-body-eventos" style="display:none;">
+                        <div id="drawer-eventos-lista" class="info-box">
+                            <!-- populado por carregarEventosDoLead() (js/eventos.js) -->
+                        </div>
+                        <div id="drawer-eventos-form" class="drawer-tag-form" style="display:none;">
+                            <select id="drawer-eventos-select" style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px;"></select>
+                            <div style="display:flex; gap:6px; margin-top:6px;">
+                                <button class="btn-mini btn-primary-mini" onclick="confirmarConvidarEventoNaGaveta()"><i class="fa-solid fa-check"></i> Vincular</button>
+                                <button class="btn-mini btn-secondary-mini" onclick="fecharFormConvidarEventoNaGaveta()">Cancelar</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- COMO ABORDAR (Sugestão SDR) — editável, por lead, mesmo padrão de edição do Resumo da Conversa -->
+                <div class="drawer-gaveta">
+                    <div class="drawer-gaveta-header" onclick="toggleGavetaLead('abordagem')">
+                        <span class="drawer-gaveta-titulo"><i class="fa-solid fa-chevron-right" id="drawer-gaveta-seta-abordagem"></i> <i class="fa-solid fa-lightbulb"></i> Como Abordar (Sugestão SDR)</span>
+                        <button class="btn-add-tag" onclick="event.stopPropagation(); editarAbordagemSugerida()"><i class="fa-solid fa-pen"></i> Editar</button>
+                    </div>
+                    <div class="drawer-gaveta-body" id="drawer-gaveta-body-abordagem" style="display:none;">
+                        <div id="drawer-approach" class="info-box" style="border-left: 3px solid var(--na-gold);"></div>
+                    </div>
+                </div>
+
+                <!-- MÓDULO DE RESUMO DE IA -->
+                <div class="drawer-gaveta">
+                    <div class="drawer-gaveta-header" onclick="toggleGavetaLead('resumo')">
+                        <span class="drawer-gaveta-titulo"><i class="fa-solid fa-chevron-right" id="drawer-gaveta-seta-resumo"></i> <i class="fa-solid fa-wand-magic-sparkles" style="color:#8b5cf6;"></i> Resumo da Conversa (IA)</span>
+                        <button class="btn-add-tag" onclick="event.stopPropagation(); editarResumoIA()" style="color: #8b5cf6; border-color: #ddd6fe; background: #f5f3ff;"><i class="fa-solid fa-pen"></i> Editar</button>
+                    </div>
+                    <div class="drawer-gaveta-body" id="drawer-gaveta-body-resumo" style="display:none;">
+                        <div id="drawer-ai-summary" class="info-box" style="background: #f8fafc; border-color: #bfdbfe; font-size: 11px; color: #334155;">
+                            <!-- O resumo editável vai aparecer aqui -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- LEMBRETE DE FOLLOW-UP (snooze) — 1 lembrete ativo por lead -->
+                <div class="drawer-gaveta">
+                    <div class="drawer-gaveta-header" onclick="toggleGavetaLead('lembrete')">
+                        <span class="drawer-gaveta-titulo"><i class="fa-solid fa-chevron-right" id="drawer-gaveta-seta-lembrete"></i> <i class="fa-solid fa-bell"></i> Lembrete de Follow-up</span>
+                    </div>
+                    <div class="drawer-gaveta-body" id="drawer-gaveta-body-lembrete" style="display:none;">
+                        <div class="info-box drawer-contato-box">
+                            <input type="date" id="drawer-lembrete-data" onchange="salvarLembreteLead()">
+                            <input type="text" id="drawer-lembrete-nota" placeholder="Nota (ex: retornar depois do fim de semana)" onchange="salvarLembreteLead()">
+                            <button class="btn-add-tag" id="drawer-lembrete-limpar" style="align-self:flex-start; display:none;" onclick="limparLembreteLead()"><i class="fa-solid fa-xmark"></i> Remover lembrete</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- MÓDULO DE TAGS -->
+                <div class="drawer-gaveta">
+                    <div class="drawer-gaveta-header" onclick="toggleGavetaLead('tags')">
+                        <span class="drawer-gaveta-titulo"><i class="fa-solid fa-chevron-right" id="drawer-gaveta-seta-tags"></i> <i class="fa-solid fa-tags"></i> Tags e Classificação</span>
+                        <button class="btn-add-tag" onclick="event.stopPropagation(); abrirFormNovaTag()"><i class="fa-solid fa-plus"></i> Nova Tag</button>
+                    </div>
+                    <div class="drawer-gaveta-body" id="drawer-gaveta-body-tags" style="display:none;">
+                        <div id="drawer-tags" style="display: flex; gap: 6px; flex-wrap: wrap; background: #f8fafc; padding: 10px; border-radius: 8px; border: 1px dashed var(--border-color);">
+                            <!-- Tags Renderizadas Aqui -->
+                        </div>
+                        <div id="drawer-tag-form" class="drawer-tag-form" style="display:none;">
+                            <input type="text" id="drawer-tag-input" list="tagsSugeridasList" placeholder="Digite ou escolha uma tag sugerida..." onkeydown="if(event.key==='Enter') confirmarNovaTag(); if(event.key==='Escape') fecharFormNovaTag();">
+                            <div style="display:flex; gap:6px; margin-top:6px;">
+                                <button class="btn-mini btn-primary-mini" onclick="confirmarNovaTag()"><i class="fa-solid fa-check"></i> Adicionar</button>
+                                <button class="btn-mini btn-secondary-mini" onclick="fecharFormNovaTag()">Cancelar</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- CONTATO — telefone, e-mail e status (Ulisses); aberto por padrão quando falta algum dado -->
+                <div class="drawer-gaveta">
+                    <div class="drawer-gaveta-header" onclick="toggleGavetaLead('contato')">
+                        <span class="drawer-gaveta-titulo"><i class="fa-solid fa-chevron-right" id="drawer-gaveta-seta-contato"></i> <i class="fa-solid fa-address-book"></i> Contato</span>
+                    </div>
+                    <div class="drawer-gaveta-body" id="drawer-gaveta-body-contato" style="display:none;">
+                        <div class="info-box drawer-contato-box">
+                            <div class="drawer-contato-tel">
+                                <input type="text" id="drawer-tel-ddd" placeholder="DDD" maxlength="3" onchange="salvarTelefoneLead()">
+                                <input type="text" id="drawer-tel-numero" placeholder="Telefone / WhatsApp" onchange="salvarTelefoneLead()">
+                                <button class="icon-btn danger" title="Marcar telefone como inválido" onclick="marcarTelefoneInvalido()"><i class="fa-solid fa-phone-slash"></i></button>
+                            </div>
+                            <div class="drawer-contato-row">
+                                <input type="email" id="drawer-email" placeholder="E-mail" onchange="salvarEmailLead()">
+                                <button class="icon-btn danger" title="Marcar e-mail como inválido" onclick="marcarEmailInvalido()"><i class="fa-solid fa-envelope-circle-check"></i></button>
+                            </div>
+                        </div>
+                        <!-- STATUS (Ulisses) — pra saber se vale a pena entrar em contato -->
+                        <div id="drawer-status-bloco" style="display:none; margin-top:10px;">
+                            <div class="info-label">Status</div>
+                            <div id="drawer-status" class="info-box"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VÍNCULO FAMILIAR — Radar de Acompanhantes (cônjuge, amigos, quem veio junto) -->
+                <div class="drawer-gaveta">
+                    <div class="drawer-gaveta-header" onclick="toggleGavetaLead('vinculo')">
+                        <span class="drawer-gaveta-titulo"><i class="fa-solid fa-chevron-right" id="drawer-gaveta-seta-vinculo"></i> <i class="fa-solid fa-link"></i> Vínculo Familiar</span>
+                        <button class="icon-btn" title="Vincular a outro lead" onclick="event.stopPropagation(); abrirBuscaVinculoFamiliar();"><i class="fa-solid fa-user-plus"></i></button>
+                    </div>
+                    <div class="drawer-gaveta-body" id="drawer-gaveta-body-vinculo" style="display:none;">
+                        <div id="drawer-vinculo-lista"></div>
+                        <div id="drawer-vinculo-busca-form" style="display:none; gap:6px; margin-top:8px;">
+                            <input type="text" id="drawer-vinculo-busca-input" placeholder="Buscar por nome ou telefone..." oninput="buscarLeadParaVinculoFamiliar()" style="flex:1;">
+                            <button class="icon-btn" title="Cancelar" onclick="fecharBuscaVinculoFamiliar()"><i class="fa-solid fa-xmark"></i></button>
+                        </div>
+                        <div id="drawer-vinculo-busca-resultados" style="margin-top:6px;"></div>
+                    </div>
+                </div>
+
+                <!-- HISTÓRICO — saída (só aparece pra leads Inativos) + histórico escolar de eventos -->
+                <div class="drawer-gaveta">
+                    <div class="drawer-gaveta-header" onclick="toggleGavetaLead('historico')">
+                        <span class="drawer-gaveta-titulo"><i class="fa-solid fa-chevron-right" id="drawer-gaveta-seta-historico"></i> <i class="fa-solid fa-clock-rotate-left"></i> Histórico Escolar</span>
+                    </div>
+                    <div class="drawer-gaveta-body" id="drawer-gaveta-body-historico" style="display:none;">
+                        <div id="drawer-motivo-bloco" style="display:none; margin-bottom:10px;">
+                            <div class="info-label" style="color:#b45309;"><i class="fa-solid fa-door-open"></i> Saída (Inativo)</div>
+                            <div class="info-box" style="border-left: 3px solid #fbbf24; color:#78350f; background:#fffbeb;">
+                                <div><strong>Motivo:</strong> <span id="drawer-motivo-saida"></span></div>
+                                <div style="margin-top:4px;"><strong>Data da baixa:</strong> <span id="drawer-data-saida"></span></div>
+                            </div>
+                        </div>
+                        <div id="drawer-perda-bloco" style="display:none; margin-bottom:10px;">
+                            <div class="info-label" style="color:#dc2626;"><i class="fa-solid fa-trash"></i> Motivo da Perda</div>
+                            <div class="info-box" style="border-left: 3px solid #dc2626; color:#7f1d1d; background:#fef2f2;">
+                                <div><strong>Motivo:</strong> <span id="drawer-motivo-perda"></span></div>
+                                <div style="margin-top:4px;"><strong>Data:</strong> <span id="drawer-data-perda"></span></div>
+                            </div>
+                        </div>
+                        <div class="info-box"><ul id="drawer-history" style="padding-left: 14px; color: var(--text-muted); font-size: 11px; line-height: 1.6;"></ul></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Coluna do Chat (WhatsApp) específico do lead -->
+        <div class="drawer-chat">
+            <div class="chat-header">
+                <div style="width: 36px; height: 36px; background: #cbd5e1; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; color: white;"><i class="fa-solid fa-user"></i></div>
+                <div>
+                    <div id="drawer-chat-header" style="font-size: 13px; font-weight: 600;">Nome (+55)</div>
+                    <div style="font-size: 11px; color: var(--na-green); display: flex; align-items: center; gap: 4px;">
+                        <i class="fa-brands fa-whatsapp"></i> <span>WhatsApp API</span>
+                    </div>
+                </div>
+                <button class="btn-toggle" style="margin-left:auto; font-size:10px;" title="Preenche o chat com um convite padrão pra um evento (Ativo ou Não-Aluno, conforme a tag do lead)" onclick="abrirSeletorConviteEvento()"><i class="fa-solid fa-envelope-open-text"></i> Convidar pra Evento</button>
+                <button class="icon-btn" title="Alterar seu nome (aparece nos convites)" onclick="alterarNomeAtendente()"><i class="fa-solid fa-user-pen"></i></button>
+            </div>
+            <div id="drawerConviteEventoForm" style="display:none; padding:10px 20px; background:#f8fafc; border-bottom:1px solid var(--border-color); gap:8px; align-items:center;">
+                <select id="drawerConviteEventoSelect" style="flex:1; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:11px;"></select>
+                <button class="btn-mini btn-primary-mini" onclick="confirmarConviteEvento()"><i class="fa-solid fa-check"></i> Gerar</button>
+                <button class="btn-mini btn-secondary-mini" onclick="fecharSeletorConviteEvento()">Cancelar</button>
+            </div>
+            <div class="chat-messages" id="drawer-messages">
+                <div style="text-align:center; font-size:11px; color:#64748b; margin-top:20px;">
+                    Histórico de mensagens será carregado aqui.
+                </div>
+            </div>
+            <div class="chat-input-area" id="drawerChatInputArea"></div>
+        </div>
+    </div>
+
+    <!-- Populado por montarDatalistTagsSugeridas() em js/app.js -->
+    <datalist id="tagsSugeridasList"></datalist>
+
+    <!-- Modal: Gerenciar Colunas do Funil -->
+    <div class="overlay" id="overlayModal" onclick="fecharGerenciarColunas()"></div>
+    <div class="modal" id="modalColunas">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-table-columns"></i> Gerenciar Colunas do Funil</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharGerenciarColunas()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">Adicione, renomeie, recolore, reordene ou remova as etapas do funil de prospecção. Leads de uma coluna removida são movidos automaticamente para a primeira coluna da lista.</p>
+            <div id="colunasList"></div>
+            <button class="btn-secondary" style="margin-top: 12px; width:100%;" onclick="adicionarColuna()"><i class="fa-solid fa-plus"></i> Adicionar Coluna</button>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-primary" onclick="fecharGerenciarColunas()"><i class="fa-solid fa-check"></i> Concluir</button>
+        </div>
+    </div>
+
+    <!-- Modal: Gerenciar Filiais -->
+    <div class="overlay" id="overlayModalFiliais" onclick="fecharGerenciarFiliais()"></div>
+    <div class="modal" id="modalFiliais">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-building"></i> Gerenciar Filiais</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharGerenciarFiliais()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">Renomeie, reordene, desative ou crie filiais. Desativar uma filial só a tira do seletor principal — os leads dela continuam intactos e podem ser reativados a qualquer momento.</p>
+            <div id="filiaisList"></div>
+            <button class="btn-secondary" style="margin-top: 12px; width:100%;" onclick="adicionarFilial()"><i class="fa-solid fa-plus"></i> Adicionar Filial</button>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-primary" onclick="fecharGerenciarFiliais()"><i class="fa-solid fa-check"></i> Concluir</button>
+        </div>
+    </div>
+
+    <!-- Modal: Gerenciar Tags (catálogo compartilhado de tags sugeridas) -->
+    <div class="overlay" id="overlayModalTags" onclick="fecharGerenciarTags()"></div>
+    <div class="modal" id="modalTags">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-tags"></i> Gerenciar Tags</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharGerenciarTags()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">Catálogo de tags sugeridas pro time — aparecem como autocomplete ao adicionar uma tag num lead e já vêm prontas no filtro de cada coluna. Compartilhado entre todo mundo que usa o CRM. Edite o texto direto no campo, mova o grupo pelo seletor ao lado — a cor do badge já segue o grupo escolhido.</p>
+            <div id="tagsGerenciarList"></div>
+            <div class="coluna-row" style="margin-top:14px; background:#f0fdf4; border-color:#bbf7d0;">
+                <input type="text" id="novaTagSugeridaTexto" placeholder="Texto da nova tag" style="flex:1;" onkeydown="if(event.key==='Enter') adicionarTagSugerida()">
+                <select id="novaTagSugeridaFamilia">
+                    <option value="Engajamento / SDR">Engajamento / SDR</option>
+                    <option value="Objeções">Objeções</option>
+                    <option value="Interesses / Origem">Interesses / Origem</option>
+                    <option value="Outras">Outras</option>
+                </select>
+                <button class="icon-btn" title="Adicionar" onclick="adicionarTagSugerida()"><i class="fa-solid fa-plus"></i></button>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-primary" onclick="fecharGerenciarTags()"><i class="fa-solid fa-check"></i> Concluir</button>
+        </div>
+    </div>
+
+    <!-- Modal: Importar Matrícula (texto colado da tela "Aluno => Matricular" do Mercúrio) -->
+    <div class="overlay" id="overlayModalImportarMatricula" onclick="fecharImportarMatricula()"></div>
+    <div class="modal" id="modalImportarMatricula">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-graduation-cap"></i> Importar Matrícula</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharImportarMatricula()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <div id="matriculaImportarEtapaTexto">
+                <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
+                    Na tela "Aluno =&gt; Matricular" do Mercúrio, selecione a tabela inteira (clique e arraste sobre as linhas, incluindo o cabeçalho) e copie (Ctrl+C); depois cole aqui embaixo.
+                </p>
+                <textarea id="matriculaImportarTexto" rows="8" placeholder="Cole aqui o texto copiado da tabela..." oninput="atualizarBotaoProcessarMatricula()" style="width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:8px; font-size:12px; font-family:monospace; box-sizing:border-box;"></textarea>
+                <p style="font-size:12px; color:var(--text-muted); margin-top:10px;">
+                    Cruza o Matr./Nome/Fone/Ingresso de cada linha com os leads desta filial — quem já foi importado antes (mesmo número de matrícula) é ignorado automaticamente, pra não duplicar entre textos colados de dias diferentes.
+                </p>
+                <div id="matriculaImportarStatus" style="margin-top:10px; font-size:12px;"></div>
+            </div>
+            <div id="matriculaImportarEtapaRevisao" style="display:none;">
+                <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
+                    Revise cada linha antes de confirmar. Linhas sem correspondência precisam ser vinculadas manualmente ou cadastradas como novo lead.
+                </p>
+                <div id="matriculaImportarRevisaoLista"></div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-primary" id="matriculaImportarBtnProcessar" onclick="processarTextoMatricula()" disabled><i class="fa-solid fa-wand-magic-sparkles"></i> Processar</button>
+            <button class="btn-primary" id="matriculaImportarBtnConfirmar" style="display:none;" onclick="confirmarImportacaoMatricula()"><i class="fa-solid fa-check"></i> Confirmar</button>
+        </div>
+    </div>
+
+    <!-- Modal: Relatório final da Importação de Matrícula -->
+    <div class="overlay" id="overlayModalRelatorioMatricula" onclick="fecharRelatorioMatricula()"></div>
+    <div class="modal" id="modalRelatorioMatricula">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-clipboard-check"></i> Relatório da Importação</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharRelatorioMatricula()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <div id="matriculaRelatorioConteudo"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-primary" onclick="fecharRelatorioMatricula()"><i class="fa-solid fa-check"></i> Concluir</button>
+        </div>
+    </div>
+
+    <!-- Modal: Novo/Editar Evento (Agenda) -->
+    <div class="overlay" id="overlayModalEvento" onclick="fecharFormEvento()"></div>
+    <div class="modal" id="modalEvento">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-calendar-plus"></i> <span id="eventoModalTitulo">Novo Evento</span></h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharFormEvento()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <div class="filter-group">
+                <label>Nome do evento</label>
+                <input type="text" id="eventoNomeInput" placeholder="Ex: Palestra de Estoicismo">
+            </div>
+            <div class="filter-group">
+                <label>Tipo</label>
+                <!-- Populado dinamicamente por montarSelectTipoEvento() (js/eventos.js), a partir da tabela tipos_evento -->
+                <select id="eventoTipoInput"></select>
+            </div>
+            <div class="filter-group">
+                <label>Imagem (URL, opcional)</label>
+                <input type="text" id="eventoImagemInput" placeholder="https://...">
+            </div>
+            <div class="filter-group">
+                <label>Descrição (opcional)</label>
+                <textarea id="eventoDescricaoInput" rows="4" placeholder="Programa, investimento, informações extras..." style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; font-family:inherit; box-sizing:border-box;"></textarea>
+            </div>
+
+            <label class="col-tag-option" id="eventoMultiFilialWrapper" style="margin-bottom:14px;">
+                <input type="checkbox" id="eventoMultiFilialCheck" onchange="toggleMultiFilialEvento(this.checked)">
+                Cadastrar para várias filiais (ciclo de abertura de turma unificada)
+            </label>
+
+            <div id="eventoUnicaFilialBloco">
+                <div class="col-filter-dates" style="margin-bottom:14px;">
+                    <div class="filter-group" style="margin-bottom:0;">
+                        <label>Data</label>
+                        <input type="date" id="eventoDataInput">
+                    </div>
+                    <div class="filter-group" style="margin-bottom:0;">
+                        <label>Hora</label>
+                        <input type="time" id="eventoHoraInput">
+                    </div>
+                </div>
+                <div class="filter-group">
+                    <label>Capacidade (vagas) — deixe em branco se não houver limite</label>
+                    <input type="number" id="eventoCapacidadeInput" min="0">
+                </div>
+            </div>
+
+            <div id="eventoMultiFilialBloco" style="display:none;">
+                <p style="font-size:11px; color:var(--text-muted); margin-bottom:8px;">Marque as filiais que vão participar e preencha a data (e opcionalmente hora/vagas) de cada uma — o nome, tipo, imagem e descrição são os mesmos pra todas.</p>
+                <div id="eventoFiliaisChecklist"></div>
+                <label class="col-tag-option" style="margin-top:10px;">
+                    <input type="checkbox" id="eventoParticipantesUnificadosCheck">
+                    Lista de participantes unificada entre as filiais (em vez de separada por filial)
+                </label>
+            </div>
+
+            <div class="filter-group" style="margin-top:14px;">
+                <label>Ingresso</label>
+                <input type="text" id="eventoIngressoInput" placeholder="Ex: Gratuito, R$ 20,00...">
+            </div>
+            <div class="filter-group" id="eventoDataLimiteBloco">
+                <label>Data limite para inscrição (opcional)</label>
+                <input type="date" id="eventoDataLimiteInput">
+                <small style="font-size:10px; color:var(--text-muted); line-height:1.4;">Deixe em branco se a inscrição só vale no dia do evento. Preencha pra eventos como "Abertura de Turma", que continuam recebendo matrícula por meses — o evento só passa a ser tratado como "passado" (sai da lista padrão da Agenda e fica indisponível pra convidar leads) depois dessa data, não no dia seguinte ao evento em si.</small>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" id="btnDesativarEvento" style="display:none;" onclick="desativarEventoAtual()"><i class="fa-solid fa-ban"></i> Desativar</button>
+            <button class="btn-primary" onclick="salvarEvento()"><i class="fa-solid fa-check"></i> Salvar</button>
+        </div>
+    </div>
+
+    <!-- Modal: Participantes do Evento (associação evento <-> lead) -->
+    <div class="overlay" id="overlayModalParticipantesEvento" onclick="fecharParticipantesEvento()"></div>
+    <div class="modal" id="modalParticipantesEvento">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-users"></i> Participantes — <span id="participantesEventoTitulo"></span></h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharParticipantesEvento()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
+                Vincule leads que estão sendo trabalhados pra este evento e acompanhe como responderam ao convite e se compareceram.
+            </p>
+            <div class="global-search-wrapper" style="width:100%; margin-bottom:14px;">
+                <input type="text" id="participantesBuscaInput" class="global-search-input" placeholder="Buscar lead por nome ou telefone pra vincular..." oninput="processarBuscaParticipante()">
+                <i class="fa-solid fa-magnifying-glass"></i>
+                <div class="global-search-results" id="participantesBuscaResultados"></div>
+            </div>
+            <label class="participantes-select-todos">
+                <input type="checkbox" id="participantesSelecionarTodos" onchange="toggleSelecionarTodosParticipantes(this.checked)">
+                Selecionar todos
+            </label>
+            <div id="participantesLista"></div>
+        </div>
+        <div class="participantes-bulk-bar" id="participantesBulkBar" style="display:none;">
+            <span id="participantesBulkContador" style="font-size:11px; font-weight:600;"></span>
+            <select id="participantesBulkResposta" onchange="aplicarRespostaEmMassaParticipantes()">
+                <option value="">Marcar resposta como...</option>
+                <option value="pendente">Pendente</option>
+                <option value="confirmado">Confirmado</option>
+                <option value="recusado">Recusado</option>
+            </select>
+            <select id="participantesBulkCompareceu" onchange="aplicarCompareceuEmMassaParticipantes()">
+                <option value="">Marcar comparecimento como...</option>
+                <option value="sim">Compareceu: Sim</option>
+                <option value="nao">Compareceu: Não</option>
+            </select>
+            <select id="participantesBulkMatriculado" onchange="aplicarMatriculadoEmMassaParticipantes()">
+                <option value="">Marcar matrícula como...</option>
+                <option value="sim">Matriculado: Sim 🎉</option>
+                <option value="nao">Matriculado: Não</option>
+            </select>
+            <button class="btn-mini" style="background:#fef2f2; color:#991b1b; border:1px solid #fecaca;" onclick="removerParticipantesEmMassa()"><i class="fa-solid fa-trash"></i> Remover selecionados</button>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-primary" onclick="fecharParticipantesEvento()"><i class="fa-solid fa-check"></i> Concluir</button>
+        </div>
+    </div>
+
+    <!-- Modal: Mesclar leads duplicados (aba Leads a Tratar) -->
+    <div class="overlay" id="overlayModalMesclar" onclick="fecharModalMesclar()"></div>
+    <div class="modal" id="modalMesclar">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-code-merge"></i> Mesclar Leads Duplicados</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharModalMesclar()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
+                Detectado por: <strong id="mesclarInfoCriterio"></strong>. Escolha qual lead vai ficar (sobrevivente) — tags e histórico de eventos dos outros são incorporados a ele automaticamente. Os demais são <strong>apagados permanentemente</strong>. Essa ação não pode ser desfeita.
+            </p>
+            <div id="mesclarOpcoes"></div>
+            <div id="mesclarConflitos"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-danger" onclick="confirmarMesclagem()"><i class="fa-solid fa-code-merge"></i> Mesclar</button>
+        </div>
+    </div>
+
+    <!-- Modal: Gerenciar Tipos de Evento (catálogo compartilhado, usado no <select> do modal de Evento acima) -->
+    <div class="overlay" id="overlayModalTiposEvento" onclick="fecharGerenciarTiposEvento()"></div>
+    <div class="modal" id="modalTiposEvento">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-list-check"></i> Gerenciar Tipos de Evento</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharGerenciarTiposEvento()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">Catálogo compartilhado entre todo mundo que usa o CRM — edite o texto, reordene ou remova. Renomear aqui NÃO muda o tipo de eventos já cadastrados (o texto fica gravado em cada evento na hora que ele foi salvo). A <strong>Trilha</strong> e as <strong>palavras-chave</strong> de cada tipo alimentam a classificação automática e as tags de Trilha/Jornada na importação de planilhas — mudar aqui já vale a partir da próxima importação.</p>
+            <div id="tiposEventoList"></div>
+            <div class="coluna-row" style="margin-top:14px; background:#f0fdf4; border-color:#bbf7d0;">
+                <input type="text" id="novoTipoEventoTexto" placeholder="Nome do novo tipo" style="flex:1;" onkeydown="if(event.key==='Enter') adicionarTipoEvento()">
+                <button class="icon-btn" title="Adicionar" onclick="adicionarTipoEvento()"><i class="fa-solid fa-plus"></i></button>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-primary" onclick="fecharGerenciarTiposEvento()"><i class="fa-solid fa-check"></i> Concluir</button>
+        </div>
+    </div>
+
+    <!-- Modal: Critérios de pontuação do Lead Forte (nível 1-3) -->
+    <div class="overlay" id="overlayModalPontuacao" onclick="fecharConfigPontuacao()"></div>
+    <div class="modal" id="modalPontuacao">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-star"></i> Critérios de Lead Forte</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharConfigPontuacao()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">
+                Quem veio em evento(s) mas nunca foi aluno recebe uma pontuação com base no histórico de participação,
+                e vira "Lead Forte 1" (mais propenso a matricular), "2" ou "3" conforme os limites abaixo. Esses valores
+                ficam salvos no banco (não no código) — dá pra reajustar aqui a qualquer momento, inclusive depois de
+                analisar estatisticamente quem realmente converteu em aluno. Vale a partir da <strong>próxima importação</strong>.
+            </p>
+            <div class="filter-group">
+                <label>Pontos por evento que a pessoa participou</label>
+                <input type="number" id="cfgPontosPorEvento" min="0">
+            </div>
+            <div class="filter-group">
+                <label>Pontos por TIPO distinto de evento (Palestra, Curso, Oficina...)</label>
+                <input type="number" id="cfgPontosPorTipo" min="0">
+            </div>
+            <div class="filter-group">
+                <label>Janela de "engajamento recente" (dias desde o último evento)</label>
+                <input type="number" id="cfgDiasRecente" min="0">
+            </div>
+            <div class="filter-group">
+                <label>Bônus se o último evento caiu dentro dessa janela</label>
+                <input type="number" id="cfgBonusRecente" min="0">
+            </div>
+            <div class="filter-group">
+                <label>Pontuação mínima para Lead Forte 1 (o mais propenso)</label>
+                <input type="number" id="cfgLimiteNivel1" min="0">
+            </div>
+            <div class="filter-group">
+                <label>Pontuação mínima para Lead Forte 2 (abaixo disso = nível 3)</label>
+                <input type="number" id="cfgLimiteNivel2" min="0">
+            </div>
+            <div class="filter-group">
+                <label>Nível 1 também exige evento nos últimos N dias (senão cai pro nível 2, mesmo com pontuação de nível 1)</label>
+                <input type="number" id="cfgDiasGateNivel1" min="0">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-primary" onclick="salvarConfigPontuacao()"><i class="fa-solid fa-check"></i> Salvar Critérios</button>
+        </div>
+    </div>
+
+    <!-- Modal: Motivo da Perda (obrigatório ao mover um lead pra coluna "Perdido"/"Lixeira") -->
+    <div class="overlay" id="overlayModalMotivoPerda" onclick="fecharModalMotivoPerda()"></div>
+    <div class="modal" id="modalMotivoPerda">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-trash"></i> Motivo da Perda</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharModalMotivoPerda()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">
+                Antes de mover pra essa coluna, diga por que esse lead não vai matricular — alimenta o relatório de
+                motivos de perda na aba Relatórios, pra saber onde investir (ex: "perdemos 40 por choque de horário,
+                vamos abrir uma turma no sábado").
+            </p>
+            <div class="filter-group">
+                <label>Motivo</label>
+                <select id="motivoPerdaSelect"></select>
+            </div>
+            <div class="filter-group">
+                <label>Observação (opcional)</label>
+                <input type="text" id="motivoPerdaNota" placeholder="Ex: nome do concorrente, detalhe da objeção...">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-primary" onclick="confirmarMotivoPerda()"><i class="fa-solid fa-check"></i> Confirmar e Mover</button>
+        </div>
+    </div>
+
+    <!-- Modal: Login Automático (cofre de credenciais do futuro scraper Ulisses/Mercúrio) -->
+    <div class="overlay" id="overlayModalCredenciaisScraper" onclick="fecharCredenciaisScraper()"></div>
+    <div class="modal" id="modalCredenciaisScraper">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-key"></i> Login Automático (Ulisses/Mercúrio)</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharCredenciaisScraper()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">
+                As senhas salvas aqui ficam <strong>cifradas</strong> no banco — o CRM nunca mostra o valor de volta, nem
+                em texto puro. Isso ainda é só o cofre de credenciais: a automação que efetivamente entra no Ulisses/
+                Mercúrio e puxa os dados sozinha é um projeto à parte, em desenvolvimento — enquanto isso, a
+                importação por planilha (acima) continua funcionando normalmente.
+            </p>
+            <div id="credenciaisScraperContainer"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-primary" onclick="fecharCredenciaisScraper()"><i class="fa-solid fa-check"></i> Concluir</button>
+        </div>
+    </div>
+
+    <!-- ⚠️ AQUI ESTÁ A SEGUNDA MÁGICA: Conectando os scripts (O Cérebro) -->
+    <!-- 1. Importa a biblioteca do Supabase da internet -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- 1b. Papa Parse: leitura robusta de CSV (campos com vírgula/aspas, encoding, etc.) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+    <!-- 2. Faz a conexão segura com a sua conta -->
+    <script>
+        const supabaseUrl = 'https://eovgljcowblwoxmobeno.supabase.co';
+        const supabaseKey = 'sb_publishable_hB8cP0_-9K9lt-18AKUsMw_xVDM7rea';
+        window.supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
+    </script>
+
+    <!-- 3. Chama o SEU arquivo de lógica que acabamos de criar -->
+    <script src="js/app.js"></script>
+    <!-- 3b. Módulo do importador de planilhas (Ativos/Inativos/Inscrições) -->
+    <script src="js/importador.js"></script>
+    <!-- 3b2. Módulo de "Leads a Tratar" (duplicados por telefone/nome + sem telefone) -->
+    <script src="js/leads-a-tratar.js"></script>
+    <!-- 3c. Módulo de integração real com WhatsApp (Meta Cloud API) -->
+    <script src="js/whatsapp.js"></script>
+    <!-- 3d. Módulo da Agenda de Eventos (atividades/capacidade por filial) -->
+    <script src="js/eventos.js"></script>
+    <!-- 3e. Módulo de importar matrícula via texto colado da tela do Mercúrio -->
+    <script src="js/matricula-importar.js"></script>
+    <!-- 3f. Central de Notificações (sino no topbar) -->
+    <script src="js/notificacoes.js"></script>
+    <!-- 3g. Portão de acesso (senha única do time) — carregado por último só
+         por convenção de organização; a checagem roda em DOMContentLoaded,
+         então a ordem dos scripts não afeta quando o overlay aparece -->
+    <script src="js/acesso.js"></script>
+
+    <!-- 4. Dá o "Start" assim que o HTML carregar -->
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            carregarFiliais();
+            if (typeof popularFilialImportacao === 'function') {
+                popularFilialImportacao();
+            }
+            carregarTagsSugeridas();
+            renderizarFiltrosRapidos();
+        });
+    </script>
+</body>
+</html>
