@@ -20,16 +20,22 @@
 // tendem a ser mais estáveis que atributos internos numa página gerada
 // pelo Auth0.
 //
-// ⚠️ Risco conhecido: o Auth0 pode ativar "Bot Detection" e pedir captcha
-// pra logins vindos de IP de datacenter (como o do GitHub Actions) — se
-// esse script falhar sempre no mesmo ponto (depois de preencher e clicar
-// "Continuar", sem navegar pra frente), é provavelmente isso. Não tem
-// como contornar automaticamente; a saída nesse caso seria alguma
-// plataforma que rode com IP residencial, ou desativar o Bot Detection
-// pro seu tenant Auth0 (se você tiver acesso a isso).
+// 🛑 BLOQUEADO no GitHub Actions, confirmado por teste real: quem barra
+// não é o Auth0, é o Cloudflare na frente do próprio acropolebrasil.com.br
+// — todo acesso vindo do IP de datacenter do GitHub Actions cai numa tela
+// "Verify you are human" antes de sequer chegar no formulário de login, e
+// fica preso lá pra sempre (não tem captcha pra resolver via código, e não
+// vamos tentar contornar essa proteção). Por isso esse arquivo NÃO roda
+// mais no workflow (`if: false` em .github/workflows/scraper.yml) — as
+// funções de exportação abaixo (exportarCsvInscricoes/
+// exportarCatalogoEventos/exportarComparecimento) continuam existindo e
+// são REAPROVEITADAS por `ulisses-local.js`, que roda na SUA máquina (seu
+// IP normal, sem bloqueio) com login feito à mão por você — ver esse
+// arquivo pra instruções de uso.
 import { chromium } from 'playwright';
 import { supabaseAdmin, lerCredencial, registrarStatusSincronizacao } from './lib/supabaseAdmin.js';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const URL_LOGIN = 'https://www.acropolebrasil.com.br/login.html';
 const PASTA_EXPORTS = 'exports';
@@ -61,7 +67,7 @@ async function loginUlisses(page, email, senha) {
 // Clique único — dispara o download direto, sem formulário/seletor de
 // evento no meio (confirmado testando de verdade). Salva com o nome da
 // filial pra não sobrescrever entre uma filial e outra na mesma rodada.
-async function exportarCsvInscricoes(page, filial) {
+export async function exportarCsvInscricoes(page, filial) {
     const [download] = await Promise.all([
         page.waitForEvent('download', { timeout: 30000 }),
         page.getByText('Exportar CSV', { exact: false }).click(),
@@ -78,7 +84,7 @@ async function exportarCsvInscricoes(page, filial) {
 // card mostra, já que não temos o HTML real pra um seletor mais preciso)
 // e lê os campos do formulário à direita por RÓTULO. Salva um JSON (não
 // CSV — os campos têm texto livre/multilinha, ex: descrição).
-async function exportarCatalogoEventos(page, filial) {
+export async function exportarCatalogoEventos(page, filial) {
     if (!page.url().includes('#/evento')) {
         // 'networkidle' trava pra sempre nesse site (ver comentário em
         // loginUlisses()) — usa 'domcontentloaded' + espera o próprio
@@ -146,7 +152,7 @@ async function extrairPessoasComComparecimento(page) {
     return pessoas;
 }
 
-async function exportarComparecimento(page, filial) {
+export async function exportarComparecimento(page, filial) {
     await page.getByText('Pré-inscrições', { exact: false }).click({ timeout: 10000 });
     await page.getByText('Recepção', { exact: false }).click({ timeout: 10000 });
     await page.waitForURL(/recepcao/i, { timeout: 15000 }).catch(() => {});
@@ -185,7 +191,7 @@ async function exportarComparecimento(page, filial) {
     return caminho;
 }
 
-async function salvarScreenshotErro(page, filial, etapa) {
+export async function salvarScreenshotErro(page, filial, etapa) {
     fs.mkdirSync('debug', { recursive: true });
     await page.screenshot({ path: `debug/ulisses-${etapa}-${filial.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
 }
@@ -244,4 +250,11 @@ async function main() {
     await browser.close();
 }
 
-main().catch(e => { console.error('[ulisses] Erro fatal:', e); process.exit(1); });
+// Só roda main() quando o arquivo é executado diretamente (`node
+// ulisses.js`, é o que o workflow faz) — `ulisses-local.js` importa as
+// funções de exportação deste arquivo pra reaproveitar, e sem essa guarda
+// esse main() (que tenta login 100% automático, sempre barrado pelo
+// Cloudflare) rodaria também nesse import, por cima do fluxo assistido.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+    main().catch(e => { console.error('[ulisses] Erro fatal:', e); process.exit(1); });
+}

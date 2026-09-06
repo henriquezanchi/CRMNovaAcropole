@@ -1712,25 +1712,48 @@ bloqueado).
   **"Exportar CSV"** — ainda não implementado (marco 2), só o login está
   pronto. Itera por todas as filiais ativas (tabela `filiais` do
   Supabase, `select` público de sempre).
-  - 🛑 **BLOQUEADO de verdade, confirmado por print real (3º teste)**: não
-    é o Auth0 quem barra, é o **Cloudflare** na frente do próprio
-    `acropolebrasil.com.br` — toda tentativa de `goto(URL_LOGIN)` a partir
-    do IP de datacenter do GitHub Actions cai na tela "Performing security
-    verification" / "Verify you are human" (challenge do Cloudflare) antes
-    de sequer chegar no formulário de login, e nunca sai dali sozinha.
-    **Não é um bug de seletor/timing pra corrigir no código** — é uma
-    proteção deliberada contra tráfego automatizado de datacenter, e não é
-    algo que se deva tentar contornar programaticamente (nem é confiável
-    tentar). Caminhos reais, todos exigindo uma decisão fora do código:
-    (a) rodar o scraper a partir de um IP residencial/não-datacenter — um
-    runner self-hosted numa máquina normal (ex: um PC na agência sempre
-    ligado) em vez do runner hospedado do GitHub Actions; (b) pedir pro
-    time que administra o Ulisses pra liberar/allowlist esse IP fixo no
-    Cloudflare, se houver esse acesso; (c) aceitar que o Ulisses continua
-    só no fluxo manual (planilha) por enquanto, e automatizar só o
-    Mercúrio, que não tem essa proteção. Nenhuma decisão tomada ainda —
-    Auth0 propriamente dito nunca chegou a ser testado (o Cloudflare barra
-    antes disso).
+  - 🛑 **BLOQUEADO no GitHub Actions, confirmado por print real (3º
+    teste)**: não é o Auth0 quem barra, é o **Cloudflare** na frente do
+    próprio `acropolebrasil.com.br` — toda tentativa de `goto(URL_LOGIN)`
+    a partir do IP de datacenter do GitHub Actions cai na tela "Performing
+    security verification" / "Verify you are human" (challenge do
+    Cloudflare) antes de sequer chegar no formulário de login, e nunca sai
+    dali sozinha. **Não é um bug de seletor/timing pra corrigir no
+    código** — é uma proteção deliberada contra tráfego automatizado de
+    datacenter, e não é algo que se deva tentar contornar
+    programaticamente. Por isso o passo do Ulisses foi **pausado no
+    workflow** (`if: false` em `.github/workflows/scraper.yml`) — Auth0
+    propriamente dito nunca chegou a ser testado (o Cloudflare barra antes
+    disso).
+  - ✅ **Solução escolhida: modo local/assistido** (`scraper/ulisses-local.js`,
+    decisão de 2026-09-06) — em vez de tentar contornar o Cloudflare ou
+    montar um runner self-hosted permanente, esse script roda direto na
+    máquina do usuário (`npm run ulisses-local`, dentro de `scraper/`),
+    com o Chromium em modo **visível** (`headless: false`). Como o acesso
+    parte do IP residencial/normal do usuário (não mais datacenter), o
+    Cloudflare tende a nem aparecer — e se aparecer, quem resolve o
+    desafio e faz login (e-mail + senha do Ulisses daquela filial) é o
+    próprio usuário, à mão, numa janela real. O script **não tenta
+    preencher nem clicar em NADA da tela de login** (diferente do modo
+    automático) — só espera (`aguardarLoginManual()`, timeout de 5 min) o
+    sinal de que o login deu certo (menu "Exportar CSV" visível, mesmo
+    sinal que `loginUlisses()` já usa) e AÍ assume sozinho, reaproveitando
+    100% das mesmas funções de exportação de `ulisses.js`
+    (`exportarCsvInscricoes`/`exportarCatalogoEventos`/
+    `exportarComparecimento`, exportadas desse arquivo especificamente pra
+    esse reuso) — uma janela abre por vez, uma pra cada filial ativa.
+    Credenciais lidas do mesmo cofre (`lerCredencial('ulisses', filial)`)
+    só pra MOSTRAR o e-mail cadastrado no terminal como dica (não preenche
+    nada) — login sem credencial salva no cofre também funciona, só sem a
+    dica. Precisa de `scraper/.env` (nunca commitado, veja
+    `scraper/.env.example`) com as mesmas 3 variáveis dos Secrets do
+    GitHub Actions, carregadas via pacote `dotenv` (só usado por esse
+    arquivo — `ulisses.js`/`mercurio.js`, que rodam só no CI, continuam
+    lendo direto de `process.env`, sem depender de `.env`). `ulisses.js`
+    ganhou uma guarda (`if (process.argv[1] === fileURLToPath(import.meta.url))`)
+    em volta do próprio `main()`, pra ele não rodar sozinho (com login
+    100% automático, sempre barrado) quando `ulisses-local.js` importa
+    suas funções de exportação.
 - **Mercúrio** (`scraper/mercurio.js`): **DUAS camadas de login**,
   descobertas testando de verdade (não estavam visíveis no print inicial):
   1. Autenticação HTTP básica do navegador (pop-up cinza nativo) — uma

@@ -6,11 +6,13 @@
   "type": "module",
   "scripts": {
     "ulisses": "node ulisses.js",
+    "ulisses-local": "node ulisses-local.js",
     "mercurio": "node mercurio.js",
     "run": "node run.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
+    "dotenv": "^16.4.5",
     "playwright": "^1.47.0"
   }
 }
