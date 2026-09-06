@@ -609,6 +609,10 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
     opacity: 0; transition: opacity 0.15s ease, transform 0.15s ease;
 }
 .modal.open { display: flex; opacity: 1; transform: translate(-50%, -50%) scale(1); }
+/* Tela "Login Automático" tem linhas com mais campos (e-mail + senha +
+   botão por filial) do que o modal padrão de 520px comporta sem quebrar
+   o layout. */
+#modalCredenciaisScraper { width: 620px; }
 .modal-header { padding: 18px 20px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
 .modal-header h3 { font-size: 15px; color: var(--na-green-dark); display: flex; align-items: center; gap: 8px; }
 .modal-body { padding: 18px 20px; overflow-y: auto; flex: 1; }

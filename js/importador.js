@@ -363,11 +363,13 @@ async function renderizarCredenciaisScraper() {
 
         <div class="tag-filter-grupo-titulo">Ulisses (e-mail + senha por filial — login via Auth0)</div>
         ${filiais.length === 0 ? '<p style="font-size:12px; color:var(--text-muted);">Nenhuma filial cadastrada ainda.</p>' : filiais.map(f => `
-            <div class="coluna-row">
-                <span style="flex:1; font-size:12px;">${escapeHTML(f.nome)}</span>
-                <input type="email" id="credUsuarioUlisses-${f.id}" placeholder="E-mail de login" style="flex:1.5;">
-                <input type="password" id="credSenhaUlisses-${f.id}" placeholder="Senha do Ulisses" style="flex:1.5;">
-                <button class="btn-secondary" onclick="salvarCredencialScraper('ulisses', null, ${f.id})"><i class="fa-solid fa-floppy-disk"></i> Salvar</button>
+            <div class="coluna-row" style="flex-direction:column; align-items:stretch; gap:8px;">
+                <strong style="font-size:12px;">${escapeHTML(f.nome)}</strong>
+                <div style="display:flex; gap:8px;">
+                    <input type="email" id="credUsuarioUlisses-${f.id}" placeholder="E-mail de login" style="flex:1;">
+                    <input type="password" id="credSenhaUlisses-${f.id}" placeholder="Senha do Ulisses" style="flex:1;">
+                    <button class="btn-secondary" onclick="salvarCredencialScraper('ulisses', null, ${f.id})" style="white-space:nowrap;"><i class="fa-solid fa-floppy-disk"></i> Salvar</button>
+                </div>
             </div>
             <p style="font-size:11px; margin:-4px 0 10px;">${formatarStatus('ulisses|' + f.nome)}</p>
         `).join('')}
