@@ -64,25 +64,30 @@ async function loginUlisses(page, email, senha) {
     await page.getByText('Exportar CSV', { exact: false }).waitFor({ timeout: 15000 });
 }
 
-// Aviso de cookies/LGPD aparece por cima da tela logo após o login
-// (confirmado no 1º teste real, print do usuário) e barra qualquer
-// clique em elementos atrás dele — mesmo que o Playwright ache o
-// elemento "visível" (ele está pintado na tela, só que embaixo do
-// aviso), o clique de verdade é interceptado pela camada do aviso, o que
-// faz o download nunca disparar / os cards do catálogo nunca reagirem ao
-// clique ("element is not enabled"/"not stable"). Cada filial abre numa
-// aba isolada (contexto novo, sem cookie de "já aceitei"), então isso
-// pode acontecer de novo em toda filial — best-effort, se o aviso já não
-// existir mais não faz nada.
-export async function fecharAvisoLGPD(page) {
-    await page.getByRole('button', { name: /aceitar/i }).click({ timeout: 3000 }).catch(() => {});
+// Mais de um tipo de aviso em modal pode aparecer por cima da tela logo
+// após o login, dependendo da filial — confirmado por 2 testes reais
+// diferentes: aviso de cookies/LGPD (botão "Aceitar") e, só nas filiais
+// com a integração de pagamento quebrada, um alerta "Integração com o
+// PagSeguro parou de funcionar. Você está perdendo inscrições..." (botão
+// "OK") — esse só aparece pra ALGUMAS filiais, não todas. Qualquer um
+// desses barra clique em elementos atrás dele mesmo que pareçam
+// "visíveis" pro Playwright (é o que causava os erros "element is not
+// enabled"/timeout esperando download). Cada filial abre numa aba
+// isolada (contexto novo, sem cookie de "já vi isso"), então pode
+// acontecer de novo em toda filial — tenta fechar cada um dos avisos
+// conhecidos, ignorando silenciosamente o que não aparecer.
+export async function fecharAvisosBloqueantes(page) {
+    const botoes = [/aceitar/i, /^ok$/i];
+    for (const nome of botoes) {
+        await page.getByRole('button', { name: nome }).click({ timeout: 3000 }).catch(() => {});
+    }
 }
 
 // Clique único — dispara o download direto, sem formulário/seletor de
 // evento no meio (confirmado testando de verdade). Salva com o nome da
 // filial pra não sobrescrever entre uma filial e outra na mesma rodada.
 export async function exportarCsvInscricoes(page, filial) {
-    await fecharAvisoLGPD(page);
+    await fecharAvisosBloqueantes(page);
     // Escuta no CONTEXTO (page.context()), não só nesta página — confirmado
     // por teste real que o clique não disparava nada em 30s. Se o link
     // abre o download numa aba nova (target="_blank", comum em botões de
@@ -105,7 +110,7 @@ export async function exportarCsvInscricoes(page, filial) {
 // e lê os campos do formulário à direita por RÓTULO. Salva um JSON (não
 // CSV — os campos têm texto livre/multilinha, ex: descrição).
 export async function exportarCatalogoEventos(page, filial) {
-    await fecharAvisoLGPD(page);
+    await fecharAvisosBloqueantes(page);
     if (!page.url().includes('#/evento')) {
         // 'networkidle' trava pra sempre nesse site (ver comentário em
         // loginUlisses()) — usa 'domcontentloaded' + espera o próprio
@@ -174,7 +179,7 @@ async function extrairPessoasComComparecimento(page) {
 }
 
 export async function exportarComparecimento(page, filial) {
-    await fecharAvisoLGPD(page);
+    await fecharAvisosBloqueantes(page);
     await page.getByText('Pré-inscrições', { exact: false }).click({ timeout: 10000 });
     await page.getByText('Recepção', { exact: false }).click({ timeout: 10000 });
     await page.waitForURL(/recepcao/i, { timeout: 15000 }).catch(() => {});
