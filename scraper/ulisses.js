@@ -83,8 +83,13 @@ export async function fecharAvisoLGPD(page) {
 // filial pra não sobrescrever entre uma filial e outra na mesma rodada.
 export async function exportarCsvInscricoes(page, filial) {
     await fecharAvisoLGPD(page);
+    // Escuta no CONTEXTO (page.context()), não só nesta página — confirmado
+    // por teste real que o clique não disparava nada em 30s. Se o link
+    // abre o download numa aba nova (target="_blank", comum em botões de
+    // exportação), o evento "download" nasce nessa aba nova, não na
+    // original — um listener só em `page` nunca veria isso.
     const [download] = await Promise.all([
-        page.waitForEvent('download', { timeout: 30000 }),
+        page.context().waitForEvent('download', { timeout: 30000 }),
         page.getByText('Exportar CSV', { exact: false }).click(),
     ]);
 
