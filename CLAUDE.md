@@ -1728,8 +1728,15 @@ bloqueado).
   1. ✅ Login automatizado nos dois sistemas (confirma sessão autenticada,
      grava sucesso/falha em `status_sincronizacao_automatica` — ver
      Central de Notificações).
-  2. ⬜ Exportar os dados (CSV do Ulisses; achar e exportar Ativos/
-     Inativos no Mercúrio).
+  2. 🟡 Exportar os dados — **Ulisses feito** (`exportarCsvInscricoes()`
+     em `scraper/ulisses.js`: clique único em "Exportar CSV", sem
+     formulário/seletor de evento no meio, confirmado testando de
+     verdade — baixa direto o CSV de Inscrições por filial, salvo em
+     `scraper/exports/`, subido como artifact do workflow). **Mercúrio
+     pendente** — ainda falta achar e exportar Ativos/Inativos.
+     Comparecimento (não só inscrição) também é um objetivo aqui —
+     provavelmente em "Relatórios" ou "Pré-inscrições" do Ulisses, ainda
+     não mapeado.
   3. ⬜ Decisão de arquitetura pendente pra ligar os dados exportados de
      volta no CRM: ou (a) reimplementar em Node a lógica de cruzamento/
      tags/Lead Forte que já existe em `js/importador.js` (risco: duas

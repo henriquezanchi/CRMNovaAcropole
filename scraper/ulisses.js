@@ -1,8 +1,8 @@
-// Scraper do Ulisses (acropolebrasil.com.br) — MARCO 1: só login, um
-// checkpoint pra confirmar que dá pra entrar de forma automatizada antes
-// de implementar o "Exportar CSV" (ainda não sei exatamente o que
-// acontece depois de clicar nele — precisa de mais 1 rodada de
-// verificação real, ver TODO no fim do arquivo).
+// Scraper do Ulisses (acropolebrasil.com.br) — MARCO 2: login + exportar
+// o CSV de Inscrições por filial (clique único, sem formulário no meio —
+// confirmado testando de verdade). O arquivo baixado é salvo em
+// scraper/exports/ (o workflow sobe como artifact) — ainda NÃO alimenta o
+// CRM sozinho (marco 3, pendente da mesma peça do lado do Mercúrio).
 //
 // Login é via Auth0 (Universal Login padrão) — usamos os RÓTULOS visíveis
 // dos campos ("Endereço de e-mail"/"Senha") em vez de seletores CSS
@@ -22,6 +22,7 @@ import { supabaseAdmin, lerCredencial, registrarStatusSincronizacao } from './li
 import fs from 'node:fs';
 
 const URL_LOGIN = 'https://www.acropolebrasil.com.br/login.html';
+const PASTA_EXPORTS = 'exports';
 
 async function loginUlisses(page, email, senha) {
     await page.goto(URL_LOGIN, { waitUntil: 'networkidle' });
@@ -42,18 +43,36 @@ async function loginUlisses(page, email, senha) {
     await page.getByText('Exportar CSV', { exact: false }).waitFor({ timeout: 15000 });
 }
 
+// Clique único — dispara o download direto, sem formulário/seletor de
+// evento no meio (confirmado testando de verdade). Salva com o nome da
+// filial pra não sobrescrever entre uma filial e outra na mesma rodada.
+async function exportarCsvInscricoes(page, filial) {
+    const [download] = await Promise.all([
+        page.waitForEvent('download', { timeout: 30000 }),
+        page.getByText('Exportar CSV', { exact: false }).click(),
+    ]);
+
+    fs.mkdirSync(PASTA_EXPORTS, { recursive: true });
+    const caminho = `${PASTA_EXPORTS}/inscricoes-${filial.replace(/[^a-z0-9]/gi, '_')}.csv`;
+    await download.saveAs(caminho);
+    return caminho;
+}
+
 async function processarFilial(browser, filial) {
     const page = await browser.newPage();
     try {
         const { usuario, senha } = await lerCredencial('ulisses', filial);
         await loginUlisses(page, usuario, senha);
-
         console.log(`[ulisses] Login OK — ${filial}`);
-        await registrarStatusSincronizacao('ulisses', filial, true, 'Login confirmado (marco 1 — export ainda não implementado).');
 
-        // TODO (marco 2): clicar em "Exportar CSV" e ver o que acontece —
-        // baixa direto, ou abre um formulário (evento/intervalo de data)
-        // antes? Ajustar aqui depois de confirmar isso na prática.
+        const caminho = await exportarCsvInscricoes(page, filial);
+        console.log(`[ulisses] CSV exportado — ${filial}: ${caminho}`);
+
+        await registrarStatusSincronizacao('ulisses', filial, true, `CSV de Inscrições exportado em ${caminho} (marco 2 — ainda não alimenta o CRM automaticamente).`);
+
+        // TODO (marco 3): alimentar o CRM de verdade com este arquivo —
+        // depende da mesma peça do lado do Mercúrio (Ativos/Inativos)
+        // estar pronta, já que a importação exige as 3 planilhas juntas.
     } catch (e) {
         console.error(`[ulisses] Falha em ${filial}:`, e.message);
         // Caminho relativo ao diretório de trabalho do workflow (scraper/),
