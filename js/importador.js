@@ -341,7 +341,17 @@ async function renderizarCredenciaisScraper() {
         return row ? `<span style="color:#15803d;"><i class="fa-solid fa-check"></i> Configurado em ${new Date(row.atualizado_em).toLocaleString('pt-BR')}</span>` : '<span style="color:var(--text-muted);">Ainda não configurado</span>';
     };
 
-    const filiais = (typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : []);
+    // Busca direto do banco (não reaproveita filiaisDisponiveis, que só é
+    // atualizado quando "Gerenciar Filiais" fecha) — assim uma filial
+    // cadastrada há pouco já aparece aqui sem precisar de mais nenhuma
+    // ação, mesmo que essa tela seja aberta antes de qualquer outro
+    // refresh acontecer.
+    const { data: filiaisData, error: erroFiliais } = await window.supabaseClient
+        .from(NOME_TABELA_FILIAIS)
+        .select('id, nome')
+        .eq('ativo', true)
+        .order('ordem', { ascending: true });
+    const filiais = erroFiliais ? [] : (filiaisData || []);
 
     container.innerHTML = `
         ${error ? `<p style="font-size:12px; color:#dc2626;">Aviso: não consegui ler o status atual (${escapeHTML(error.message)}). Rode migracao_credenciais_scraper.sql se ainda não rodou — mesmo assim, dá pra tentar salvar novas senhas abaixo.</p>` : ''}
