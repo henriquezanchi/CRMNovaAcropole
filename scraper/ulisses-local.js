@@ -74,17 +74,18 @@ async function processarFilialLocal(browser, filial) {
         return;
     }
 
-    // catalogo-eventos e comparecimento pausados por ora (2026-09-06) — os
-    // cards da lista de eventos não reagem ao clique automático ainda
-    // (confirmado por print real, "element is not enabled"; precisa do
-    // HTML de verdade da tela pra corrigir direito, não só mais um print)
-    // e cada card que falha gasta ~30s tentando de novo, o que deixava
-    // cada rodada de teste bem mais lenta sem necessidade enquanto o foco
-    // é validar o CSV de Inscrições (o dado que realmente importa agora).
-    // Pra reativar, é só descomentar as 2 linhas abaixo.
+    // comparecimento pausado por ora (2026-09-06) — o 1º teste real
+    // devolveu só lixo ("- Selecione um evento -"/"Links" repetido em
+    // todo registro), sinal de que o seletor do dropdown de evento na
+    // tela de Recepção está errado; precisa de investigação própria,
+    // separada da de catálogo/CSV. catalogo-eventos reativado — o mesmo
+    // teste mostrou uma PARTE real funcionando (título/imagem/descrição
+    // de vários eventos capturados certinho), mesmo com alguns cards
+    // ainda falhando ("element is not enabled") e um problema de
+    // acentuação a investigar. Pra reativar comparecimento, descomenta.
     const etapas = [
         { nome: 'exportar-csv-inscricoes', executar: () => exportarCsvInscricoes(page, filial) },
-        // { nome: 'catalogo-eventos', executar: () => exportarCatalogoEventos(page, filial) },
+        { nome: 'catalogo-eventos', executar: () => exportarCatalogoEventos(page, filial) },
         // { nome: 'comparecimento', executar: () => exportarComparecimento(page, filial) },
     ];
     let algumaFalha = false;

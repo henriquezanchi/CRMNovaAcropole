@@ -5,14 +5,17 @@
 // scraper/exports/ (o workflow sobe como artifact) — ainda NÃO alimenta o
 // CRM sozinho (marco 3, pendente da mesma peça do lado do Mercúrio).
 //
-// (b) e (c) foram escritos só com PRINTS de tela, sem o HTML real — ao
-// contrário do login/exportar CSV (que já foram testados e confirmados),
-// estas duas usam heurísticas de leitura mais "cegas" (regex em cima do
-// texto visível, âncoras por elemento mais confiável tipo checkbox) e
-// têm boa chance de precisar de ajuste depois do primeiro teste real. Se
-// falhar, o jeito mais rápido de corrigir é o usuário abrir a tela no
-// DevTools (botão direito > Inspecionar no elemento certo > Copy >
-// Copy outerHTML) e mandar o HTML de verdade, em vez de mais um print.
+// (a), (b) e (c) foram escritos só com PRINTS de tela, sem o HTML real —
+// login é a única parte confirmada de verdade contra o site real; (a) já
+// precisou de 1 rodada de correção depois do 1º teste (o clique em
+// "Exportar CSV" não baixa nada direto, só navega pra uma tela com um
+// 2º botão — ver exportarCsvInscricoes()), e (b)/(c) ainda usam
+// heurísticas de leitura "cegas" (regex em cima do texto visível,
+// âncoras por elemento mais confiável tipo checkbox) com boa chance de
+// precisar de mais ajuste. Se algo falhar, o jeito mais rápido de
+// corrigir é o usuário abrir a tela no DevTools (botão direito >
+// Inspecionar no elemento certo > Copy > Copy outerHTML) e mandar o HTML
+// de verdade, em vez de mais um print.
 //
 // Login é via Auth0 (Universal Login padrão) — usamos os RÓTULOS visíveis
 // dos campos ("Endereço de e-mail"/"Senha") em vez de seletores CSS
@@ -83,19 +86,27 @@ export async function fecharAvisosBloqueantes(page) {
     }
 }
 
-// Clique único — dispara o download direto, sem formulário/seletor de
-// evento no meio (confirmado testando de verdade). Salva com o nome da
-// filial pra não sobrescrever entre uma filial e outra na mesma rodada.
+// DOIS cliques, não um — confirmado por teste manual real (print do
+// usuário): "Exportar CSV" no menu só NAVEGA pra uma tela separada
+// (#/exportar) com 2 botões verdes ("Baixar CSV de Contatos padrão
+// FACEBOOK" e, o que queremos, "Baixar CSV de Inscrições" — na seção
+// "Dados das inscrições"); é só o SEGUNDO clique que de fato dispara o
+// download. A versão anterior deste código assumia 1 clique só e nunca
+// via o evento de download (documentado como "testado e confirmado" no
+// passado, mas essa confirmação era só do 1º clique/navegação, não do
+// fluxo completo).
 export async function exportarCsvInscricoes(page, filial) {
     await fecharAvisosBloqueantes(page);
-    // Escuta no CONTEXTO (page.context()), não só nesta página — confirmado
-    // por teste real que o clique não disparava nada em 30s. Se o link
-    // abre o download numa aba nova (target="_blank", comum em botões de
-    // exportação), o evento "download" nasce nessa aba nova, não na
-    // original — um listener só em `page` nunca veria isso.
+    await page.getByText('Exportar CSV', { exact: false }).click();
+    await page.waitForURL(/#\/exportar/i, { timeout: 15000 }).catch(() => {});
+    await fecharAvisosBloqueantes(page);
+
+    // Escuta no CONTEXTO (page.context()), não só nesta página — se o
+    // botão abrir o download numa aba nova (target="_blank"), o evento
+    // nasce nessa aba nova, não na original.
     const [download] = await Promise.all([
         page.context().waitForEvent('download', { timeout: 30000 }),
-        page.getByText('Exportar CSV', { exact: false }).click(),
+        page.getByRole('button', { name: /baixar csv de inscri[çc][õo]es/i }).click(),
     ]);
 
     fs.mkdirSync(PASTA_EXPORTS, { recursive: true });
