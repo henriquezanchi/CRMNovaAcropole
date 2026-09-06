@@ -27,6 +27,38 @@ const TEMPLATES_WHATSAPP = [
         corpoAprovado: 'Olá {{1}}! Aqui é da Nova Acrópole 🦉. \n\nNotamos seu interesse em nossos eventos de filosofia e gostaríamos muito de retomar contato. \n\nJá conhece nosso curso de Filosofia?',
         variaveis: ['nome'],
     },
+    // Os 3 abaixo ainda estão "Em análise" na Meta — DESCOMENTAR só depois
+    // de aprovados (usar um template não aprovado falha o envio na hora).
+    // ⚠️ contato_aluno_ativo e resgate_ex_aluno foram submetidos com
+    // idioma "English" por engano (conteúdo é português) — se a Meta
+    // rejeitar por causa disso, reenviar como "Portuguese (BR)" antes de
+    // descomentar; se aprovar mesmo assim, o `language` abaixo precisa
+    // virar 'en_US' nesses dois pra bater com o que foi registrado (ver
+    // whatsapp-send/index.ts — hoje assume pt_BR pra todo mundo).
+    //
+    // Os 3 usam o truque de embutir artigo/preposição DENTRO do valor da
+    // variável (ex: "o Henrique", "de Barra do Garças") pra ler natural
+    // no corpo aprovado — por isso os placeholders dos campos já orientam
+    // o SDR a digitar assim, em vez de código tentar adivinhar artigo por
+    // gênero.
+    // {
+    //     nome: 'contato_ulisses',
+    //     label: 'Contato via Ulisses (nunca foi aluno)',
+    //     corpoAprovado: 'Oi, {{1}}! Aqui é {{2}}, da Nova Acrópole {{3}}, tudo bem?\n\nVi que você participou {{4}} {{5}} recentemente.\n\nE aí, o que achou?',
+    //     variaveis: ['nome', 'atendente (com artigo, ex: o Henrique)', 'filial (com preposição, ex: de Barra do Garças)', 'tipo do evento (com artigo, ex: da Palestra)', 'nome/tema do evento (ex: "A Odisseia: ...")'],
+    // },
+    // {
+    //     nome: 'resgate_ex_aluno',
+    //     label: 'Resgate (já foi aluno, inativo)',
+    //     corpoAprovado: 'Oi, {{1}}!\n\nAqui é {{2}}, da Nova Acrópole {{3}}, tudo bem? Faz um tempo que você deu uma pausa na sua jornada filosófica com a gente, e sentimos sua falta!\n\nQueria saber como estão as coisas atualmente com você, os novos desafios que tem enfrentado, enfim, sobre tudo que quiser😊.\n\nEstamos sempre de portas abertas!',
+    //     variaveis: ['nome', 'atendente (com artigo, ex: o Henrique)', 'filial (com preposição, ex: de Barra do Garças)'],
+    // },
+    // {
+    //     nome: 'contato_aluno_ativo',
+    //     label: 'Contato com aluno atual',
+    //     corpoAprovado: 'Oii, {{1}}! Aqui é {{2}}, da Nova Acrópole {{3}}. Estamos com {{4}} chegando e queria muito contar com você — seja participando, indicando alguém que você acha que ia gostar, ou nos ajudando a divulgar. Topa conversar um pouquinho sobre isso?',
+    //     variaveis: ['nome', 'atendente (com artigo, ex: o Henrique)', 'filial (com preposição, ex: de Barra do Garças)', 'evento/motivo (com artigo, ex: uma Palestra)'],
+    // },
 ];
 
 let wppContatoAtivoId = null;
