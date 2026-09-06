@@ -1728,31 +1728,38 @@ bloqueado).
   1. ✅ Login automatizado nos dois sistemas (confirma sessão autenticada,
      grava sucesso/falha em `status_sincronizacao_automatica` — ver
      Central de Notificações).
-  2. 🟡 Exportar os dados — **Ulisses parcialmente feito**:
-     - `exportarCsvInscricoes()` em `scraper/ulisses.js`: clique único em
-       "Exportar CSV" no menu do topo, sem formulário/seletor de evento
-       no meio (confirmado testando de verdade) — baixa direto o CSV de
-       Inscrições por filial, salvo em `scraper/exports/`, subido como
-       artifact do workflow.
-     - **Comparecimento (não só inscrição)** — mapeado, ainda NÃO
-       implementado no scraper: fica em **"Pré-inscrições" → "Recepção"
-       → selecionar um evento** (`#/recepcao` na SPA) — lista os
-       pré-inscritos daquele evento com um checkbox "Compareceu" (marcado
-       manualmente pela recepção no dia, então **não é 100% confiável** —
-       a recepção às vezes esquece de marcar; vale considerar perguntar
-       ao lead marcado como "não compareceu" antes de confiar cegamente)
-       e um botão "Ficha" por pessoa (mais detalhe, ainda não explorado).
-       "Relatórios" no menu do topo só tem estatística agregada, não lista
-       de leads — não serve pra isso. Como essa tela pede o evento um de
-       cada vez (diferente do "Exportar CSV", que é todos de uma vez),
-       precisa iterar por evento pra cobrir a filial inteira.
-     - **Catálogo de eventos** (menu "Links" → aba "Ativo" → clicar num
-       evento → sub-abas "Link"/"Eventos") também mapeado: tem título,
-       "Tipo link" (ex: `ABERTURA_DE_TURMA`), imagem (URL hospedada em S3
-       da própria Acrópole), subtítulo, informação (preço/horário em
-       texto livre) e descrição rica — dá pra puxar isso pra popular
-       `eventos.imagem_url`/`descricao` automaticamente em vez de cadastro
-       manual na Agenda. Ainda não implementado.
+  2. 🟡 Exportar os dados — **Ulisses feito, mas com 2 partes ainda por
+     validar de verdade** (escritas só com prints, sem HTML real — ver
+     comentário no topo de `scraper/ulisses.js`):
+     - `exportarCsvInscricoes()`: clique único em "Exportar CSV" no menu
+       do topo, sem formulário/seletor de evento no meio **(testado e
+       confirmado)** — baixa direto o CSV de Inscrições por filial.
+     - `exportarCatalogoEventos()`: tela "Links" (home pós-login,
+       `#/evento`) → aba "Ativo" → clica em cada card da lista (achado
+       pela data DD/MM/AAAA no texto, sem seletor mais preciso disponível)
+       e lê por RÓTULO os campos do formulário à direita (Título, Tipo
+       link — ex: `ABERTURA_DE_TURMA`, Imagem — URL S3, Subtítulo,
+       Informação, Descrição). Salva um JSON — dá pra popular
+       `eventos.imagem_url`/`descricao` automaticamente depois. **Ainda
+       não testado de verdade** — só o HTML real (DevTools → Inspecionar
+       → Copy outerHTML) resolveria as dúvidas de seletor mais rápido que
+       mais um print, se falhar.
+     - `exportarComparecimento()`: "Pré-inscrições" → "Recepção" →
+       seletor de evento no topo (tenta achar um `<select>` nativo; se não
+       achar, captura só o evento já selecionado por padrão). Ancora nos
+       **checkboxes** de "Compareceu" (mais estável que tentar achar cada
+       campo) e extrai nome/e-mail/telefone por REGEX do texto ao redor —
+       heurística deliberadamente "cega" pela mesma falta de HTML real.
+       **Comparecimento NÃO é 100% confiável** (a recepção marca na mão no
+       dia, às vezes esquece) — vale considerar perguntar ao lead antes de
+       confiar cegamente num "não compareceu". "Relatórios" no menu do
+       topo só tem estatística agregada, não lista de leads — não serve
+       pra isso.
+     - Cada uma das 3 exportações roda independente dentro de
+       `processarFilial()` — uma falhar não impede as outras, e cada
+       etapa que falha gera seu PRÓPRIO print de erro
+       (`debug/ulisses-<etapa>-<filial>.png`), mais fácil de diagnosticar
+       que 1 só genérico por filial.
      - **Mercúrio pendente** — ainda falta achar e exportar Ativos/
        Inativos.
      - **Ideia estratégica maior, registrada mas NÃO iniciada**: o evento

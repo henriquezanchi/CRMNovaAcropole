@@ -1,8 +1,18 @@
 // Scraper do Ulisses (acropolebrasil.com.br) — MARCO 2: login + exportar
-// o CSV de Inscrições por filial (clique único, sem formulário no meio —
-// confirmado testando de verdade). O arquivo baixado é salvo em
+// (a) o CSV de Inscrições, (b) o catálogo de eventos (título/imagem/
+// descrição, tela "Links") e (c) comparecimento por evento (tela
+// "Pré-inscrições" > "Recepção") — por filial. Arquivos salvos em
 // scraper/exports/ (o workflow sobe como artifact) — ainda NÃO alimenta o
 // CRM sozinho (marco 3, pendente da mesma peça do lado do Mercúrio).
+//
+// (b) e (c) foram escritos só com PRINTS de tela, sem o HTML real — ao
+// contrário do login/exportar CSV (que já foram testados e confirmados),
+// estas duas usam heurísticas de leitura mais "cegas" (regex em cima do
+// texto visível, âncoras por elemento mais confiável tipo checkbox) e
+// têm boa chance de precisar de ajuste depois do primeiro teste real. Se
+// falhar, o jeito mais rápido de corrigir é o usuário abrir a tela no
+// DevTools (botão direito > Inspecionar no elemento certo > Copy >
+// Copy outerHTML) e mandar o HTML de verdade, em vez de mais um print.
 //
 // Login é via Auth0 (Universal Login padrão) — usamos os RÓTULOS visíveis
 // dos campos ("Endereço de e-mail"/"Senha") em vez de seletores CSS
@@ -58,32 +68,160 @@ async function exportarCsvInscricoes(page, filial) {
     return caminho;
 }
 
+// Catálogo de eventos (tela "Links", que é a home pós-login em #/evento) —
+// clica em cada card da lista (identificado pela data DD/MM/AAAA que todo
+// card mostra, já que não temos o HTML real pra um seletor mais preciso)
+// e lê os campos do formulário à direita por RÓTULO. Salva um JSON (não
+// CSV — os campos têm texto livre/multilinha, ex: descrição).
+async function exportarCatalogoEventos(page, filial) {
+    if (!page.url().includes('#/evento')) {
+        await page.goto('https://www.acropolebrasil.com.br/#/evento', { waitUntil: 'networkidle' });
+    }
+    await page.getByRole('button', { name: /^ativo$/i }).click({ timeout: 5000 }).catch(() => {});
+
+    const cards = page.locator('text=/\\d{2}\\/\\d{2}\\/\\d{4}/').locator('..');
+    const total = await cards.count();
+    if (total === 0) throw new Error('Nenhum card de evento encontrado na lista (seletor pode estar errado — ver comentário no topo do arquivo).');
+
+    const ler = async (rotulo) => {
+        try { return (await page.getByLabel(new RegExp(rotulo, 'i')).first().inputValue()).trim() || null; }
+        catch { return null; }
+    };
+
+    const eventos = [];
+    for (let i = 0; i < total; i++) {
+        try {
+            await cards.nth(i).click();
+            await page.waitForTimeout(500); // painel da direita atualiza
+            eventos.push({
+                titulo: await ler('t[íi]tulo'),
+                tipo_link: await ler('tipo link'),
+                imagem_url: await ler('imagem'),
+                subtitulo: await ler('subt[íi]tulo'),
+                informacao: await ler('informa[çc][ãa]o'),
+                descricao: await ler('descri[çc][ãa]o'),
+            });
+        } catch (e) {
+            console.warn(`[ulisses] Não consegui ler o evento ${i} do catálogo (${filial}):`, e.message);
+        }
+    }
+
+    fs.mkdirSync(PASTA_EXPORTS, { recursive: true });
+    const caminho = `${PASTA_EXPORTS}/catalogo-eventos-${filial.replace(/[^a-z0-9]/gi, '_')}.json`;
+    fs.writeFileSync(caminho, JSON.stringify(eventos, null, 2), 'utf-8');
+    return caminho;
+}
+
+// Comparecimento por evento (tela "Pré-inscrições" > "Recepção") — a
+// recepção marca manualmente no dia, então NÃO é 100% confiável (a
+// pessoa marcada "não compareceu" pode ter ido mesmo assim). Ancora nos
+// checkboxes (mais estável que tentar achar cada campo de nome/e-mail/
+// telefone) e extrai o resto por REGEX do texto ao redor.
+async function extrairPessoasComComparecimento(page) {
+    const checkboxes = page.locator('input[type="checkbox"]');
+    const total = await checkboxes.count();
+    const pessoas = [];
+
+    for (let i = 0; i < total; i++) {
+        const cb = checkboxes.nth(i);
+        const compareceu = await cb.isChecked().catch(() => null);
+        // Sobe até o ancestor mais próximo que contenha um e-mail no
+        // texto — heurística pra pegar "a linha inteira" sem depender da
+        // estrutura exata de tabela/div.
+        const container = cb.locator('xpath=ancestor::*[contains(., "@")][1]');
+        const texto = await container.innerText().catch(() => '');
+        const email = (texto.match(/[\w.+-]+@[\w-]+\.[\w.-]+/) || [])[0] || null;
+        const telefone = (texto.match(/\b\d{2}\s?\d{8,9}\b/) || [])[0] || null;
+        const nome = texto.split('\n')[0]?.trim() || null;
+        pessoas.push({ nome, email, telefone, compareceu });
+    }
+    return pessoas;
+}
+
+async function exportarComparecimento(page, filial) {
+    await page.getByText('Pré-inscrições', { exact: false }).click({ timeout: 10000 });
+    await page.getByText('Recepção', { exact: false }).click({ timeout: 10000 });
+    await page.waitForURL(/recepcao/i, { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(800);
+
+    // Tenta achar um <select> nativo com a lista de eventos; se não achar
+    // (pode ser um dropdown customizado), captura só o evento que já
+    // estiver selecionado por padrão — melhor que falhar tudo.
+    const combobox = page.getByRole('combobox').first();
+    let opcoesEventos = [];
+    if (await combobox.count() > 0) {
+        opcoesEventos = (await combobox.locator('option').allTextContents()).map(t => t.trim()).filter(Boolean);
+    }
+    if (opcoesEventos.length === 0) {
+        console.warn('[ulisses] Não consegui listar eventos no seletor da Recepção — capturando só o evento já selecionado.');
+        opcoesEventos = [null]; // null = não muda o seletor, usa o que já está na tela
+    }
+
+    const registros = [];
+    for (const nomeEvento of opcoesEventos) {
+        try {
+            if (nomeEvento !== null) {
+                await combobox.selectOption({ label: nomeEvento });
+                await page.waitForTimeout(800); // lista de pessoas recarrega
+            }
+            const pessoas = await extrairPessoasComComparecimento(page);
+            pessoas.forEach(p => registros.push({ evento: nomeEvento, filial, ...p }));
+        } catch (e) {
+            console.warn(`[ulisses] Falha ao ler comparecimento do evento "${nomeEvento}" (${filial}):`, e.message);
+        }
+    }
+
+    fs.mkdirSync(PASTA_EXPORTS, { recursive: true });
+    const caminho = `${PASTA_EXPORTS}/comparecimento-${filial.replace(/[^a-z0-9]/gi, '_')}.json`;
+    fs.writeFileSync(caminho, JSON.stringify(registros, null, 2), 'utf-8');
+    return caminho;
+}
+
+async function salvarScreenshotErro(page, filial, etapa) {
+    fs.mkdirSync('debug', { recursive: true });
+    await page.screenshot({ path: `debug/ulisses-${etapa}-${filial.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
+}
+
 async function processarFilial(browser, filial) {
     const page = await browser.newPage();
+
     try {
         const { usuario, senha } = await lerCredencial('ulisses', filial);
         await loginUlisses(page, usuario, senha);
         console.log(`[ulisses] Login OK — ${filial}`);
-
-        const caminho = await exportarCsvInscricoes(page, filial);
-        console.log(`[ulisses] CSV exportado — ${filial}: ${caminho}`);
-
-        await registrarStatusSincronizacao('ulisses', filial, true, `CSV de Inscrições exportado em ${caminho} (marco 2 — ainda não alimenta o CRM automaticamente).`);
-
-        // TODO (marco 3): alimentar o CRM de verdade com este arquivo —
-        // depende da mesma peça do lado do Mercúrio (Ativos/Inativos)
-        // estar pronta, já que a importação exige as 3 planilhas juntas.
     } catch (e) {
-        console.error(`[ulisses] Falha em ${filial}:`, e.message);
-        // Caminho relativo ao diretório de trabalho do workflow (scraper/),
-        // que já é o CWD deste script — vira scraper/debug/... visto da
-        // raiz do repositório, batendo com o "path" do upload-artifact.
-        fs.mkdirSync('debug', { recursive: true });
-        await page.screenshot({ path: `debug/ulisses-${filial.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
-        await registrarStatusSincronizacao('ulisses', filial, false, e.message);
-    } finally {
+        console.error(`[ulisses] Falha no login em ${filial}:`, e.message);
+        await salvarScreenshotErro(page, filial, 'login');
+        await registrarStatusSincronizacao('ulisses', filial, false, `Login falhou: ${e.message}`);
         await page.close();
+        return;
     }
+
+    // A partir daqui o login já funcionou — cada exportação roda
+    // independente, uma falhar não impede as outras (e cada uma vira um
+    // print de erro próprio, mais fácil de diagnosticar que 1 só genérico).
+    const etapas = [
+        { nome: 'exportar-csv-inscricoes', executar: () => exportarCsvInscricoes(page, filial) },
+        { nome: 'catalogo-eventos', executar: () => exportarCatalogoEventos(page, filial) },
+        { nome: 'comparecimento', executar: () => exportarComparecimento(page, filial) },
+    ];
+    let algumaFalha = false;
+    for (const etapa of etapas) {
+        try {
+            const caminho = await etapa.executar();
+            console.log(`[ulisses] ${etapa.nome} OK — ${filial}: ${caminho}`);
+        } catch (e) {
+            algumaFalha = true;
+            console.error(`[ulisses] Falha em ${etapa.nome} (${filial}):`, e.message);
+            await salvarScreenshotErro(page, filial, etapa.nome);
+        }
+    }
+
+    await registrarStatusSincronizacao('ulisses', filial, !algumaFalha, algumaFalha
+        ? 'Login OK, mas 1+ exportação falhou — ver logs e prints do workflow.'
+        : 'Login + exportação de Inscrições, catálogo de eventos e comparecimento OK (marco 2 — ainda não alimenta o CRM automaticamente).');
+
+    await page.close();
 }
 
 async function main() {

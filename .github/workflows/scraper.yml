@@ -31,7 +31,7 @@ jobs:
       - name: Instalar navegador (Chromium)
         run: npx playwright install --with-deps chromium
 
-      - name: Login + exportar Inscrições no Ulisses (todas as filiais)
+      - name: Ulisses — login + exportar Inscrições, catálogo de eventos e comparecimento (todas as filiais)
         run: node ulisses.js
         continue-on-error: true
 
@@ -39,7 +39,7 @@ jobs:
         run: node mercurio.js
         continue-on-error: true
 
-      - name: Guardar prints de erro (se algum login falhou)
+      - name: Guardar prints de erro (se algum passo falhou)
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -47,7 +47,7 @@ jobs:
           path: scraper/debug/
           if-no-files-found: ignore
 
-      - name: Guardar CSVs exportados do Ulisses
+      - name: Guardar arquivos exportados do Ulisses (CSV/JSON)
         if: always()
         uses: actions/upload-artifact@v4
         with:
