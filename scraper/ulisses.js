@@ -155,9 +155,22 @@ export async function exportarCatalogoEventos(page, filial) {
         catch { return null; }
     };
 
+    // Só vale a pena ler os detalhes completos (imagem/descrição/etc.) de
+    // eventos FUTUROS — decisão do usuário: pra evento passado, o que
+    // importa é só quem compareceu (ver exportarComparecimento), não mais
+    // os detalhes de divulgação. Isso também evita a grande maioria dos
+    // cards de outra filial na prática (são quase todos antigos).
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+
     const eventos = [];
     for (let i = 0; i < total; i++) {
         try {
+            const textoCard = await cards.nth(i).innerText().catch(() => '');
+            const match = textoCard.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+            const dataEvento = match ? new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1])) : null;
+            if (dataEvento && dataEvento < hoje) continue; // passado — não abre o painel, nem gasta tempo
+
             // O aviso do PagSeguro (ver fecharAvisosBloqueantes) confirmado
             // reaparecendo ao voltar pra essa tela — tenta fechar de novo a
             // cada card, não só uma vez no início da função.
@@ -176,6 +189,7 @@ export async function exportarCatalogoEventos(page, filial) {
             }
 
             eventos.push({
+                data: match ? `${match[3]}-${match[2]}-${match[1]}` : null,
                 titulo: await ler('t[íi]tulo'),
                 tipo_link: await ler('tipo link'),
                 imagem_url: await ler('imagem'),
