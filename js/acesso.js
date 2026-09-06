@@ -18,7 +18,7 @@
 //     .then(buf => console.log(Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')));
 //
 // e cole o resultado na constante abaixo.
-const SENHA_ACESSO_HASH = 'TROCAR_ESTE_HASH_AQUI'; // ver instrução acima
+const SENHA_ACESSO_HASH = '17b85045f73cd36467ae7f397e2b7d83addae4a48daaae4e1bddcd7180207dab';
 
 const CHAVE_ACESSO_LIBERADO = 'crm_na_acesso_liberado';
 
