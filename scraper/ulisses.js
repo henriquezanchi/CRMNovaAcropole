@@ -64,10 +64,25 @@ async function loginUlisses(page, email, senha) {
     await page.getByText('Exportar CSV', { exact: false }).waitFor({ timeout: 15000 });
 }
 
+// Aviso de cookies/LGPD aparece por cima da tela logo após o login
+// (confirmado no 1º teste real, print do usuário) e barra qualquer
+// clique em elementos atrás dele — mesmo que o Playwright ache o
+// elemento "visível" (ele está pintado na tela, só que embaixo do
+// aviso), o clique de verdade é interceptado pela camada do aviso, o que
+// faz o download nunca disparar / os cards do catálogo nunca reagirem ao
+// clique ("element is not enabled"/"not stable"). Cada filial abre numa
+// aba isolada (contexto novo, sem cookie de "já aceitei"), então isso
+// pode acontecer de novo em toda filial — best-effort, se o aviso já não
+// existir mais não faz nada.
+export async function fecharAvisoLGPD(page) {
+    await page.getByRole('button', { name: /aceitar/i }).click({ timeout: 3000 }).catch(() => {});
+}
+
 // Clique único — dispara o download direto, sem formulário/seletor de
 // evento no meio (confirmado testando de verdade). Salva com o nome da
 // filial pra não sobrescrever entre uma filial e outra na mesma rodada.
 export async function exportarCsvInscricoes(page, filial) {
+    await fecharAvisoLGPD(page);
     const [download] = await Promise.all([
         page.waitForEvent('download', { timeout: 30000 }),
         page.getByText('Exportar CSV', { exact: false }).click(),
@@ -85,6 +100,7 @@ export async function exportarCsvInscricoes(page, filial) {
 // e lê os campos do formulário à direita por RÓTULO. Salva um JSON (não
 // CSV — os campos têm texto livre/multilinha, ex: descrição).
 export async function exportarCatalogoEventos(page, filial) {
+    await fecharAvisoLGPD(page);
     if (!page.url().includes('#/evento')) {
         // 'networkidle' trava pra sempre nesse site (ver comentário em
         // loginUlisses()) — usa 'domcontentloaded' + espera o próprio
@@ -153,6 +169,7 @@ async function extrairPessoasComComparecimento(page) {
 }
 
 export async function exportarComparecimento(page, filial) {
+    await fecharAvisoLGPD(page);
     await page.getByText('Pré-inscrições', { exact: false }).click({ timeout: 10000 });
     await page.getByText('Recepção', { exact: false }).click({ timeout: 10000 });
     await page.waitForURL(/recepcao/i, { timeout: 15000 }).catch(() => {});
