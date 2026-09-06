@@ -1768,12 +1768,15 @@ async function renderizarListaFiliaisModal() {
 
     filiaisModalCache = data || [];
     container.innerHTML = filiaisModalCache.map((f, i) => `
-        <div class="coluna-row" data-idx="${i}" draggable="true" ondragstart="iniciarArrastoLista(event, '${f.id}')" ondragend="this.style.opacity='1'" ondragover="event.preventDefault()" ondrop="soltarNaLista(event, 'filiais', '${f.id}')">
-            <i class="fa-solid fa-grip-vertical" style="color:var(--text-muted); cursor:grab;" title="Arraste pra reordenar"></i>
-            <input type="text" value="${escapeHTML(f.nome)}" onchange="atualizarNomeFilial(${f.id}, this.value)">
-            <label class="col-tag-option" style="white-space:nowrap;">
-                <input type="checkbox" ${f.ativo ? 'checked' : ''} onchange="atualizarAtivoFilial(${f.id}, this.checked)"> Ativa
-            </label>
+        <div class="coluna-row" data-idx="${i}" draggable="true" ondragstart="iniciarArrastoLista(event, '${f.id}')" ondragend="this.style.opacity='1'" ondragover="event.preventDefault()" ondrop="soltarNaLista(event, 'filiais', '${f.id}')" style="flex-direction:column; align-items:stretch; gap:8px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+                <i class="fa-solid fa-grip-vertical" style="color:var(--text-muted); cursor:grab;" title="Arraste pra reordenar"></i>
+                <input type="text" value="${escapeHTML(f.nome)}" onchange="atualizarNomeFilial(${f.id}, this.value)" style="flex:1;">
+                <label class="col-tag-option" style="white-space:nowrap;">
+                    <input type="checkbox" ${f.ativo ? 'checked' : ''} onchange="atualizarAtivoFilial(${f.id}, this.checked)"> Ativa
+                </label>
+            </div>
+            <input type="text" value="${escapeHTML(f.nome_com_preposicao || '')}" placeholder="Como falar dela naturalmente (ex: do Jardim América, de Barra do Garças)" onchange="atualizarPreposicaoFilial(${f.id}, this.value)">
         </div>
     `).join('');
 }
@@ -1789,6 +1792,17 @@ async function atualizarNomeFilial(id, novoNome) {
 
 async function atualizarAtivoFilial(id, ativo) {
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ ativo }).eq('id', id);
+    if (error) alert('Erro ao salvar: ' + error.message);
+}
+
+// "do Jardim América" / "de Barra do Garças" — usado pra pré-preencher a
+// variável "filial" nos modelos de WhatsApp (js/whatsapp.js), sem
+// precisar digitar toda vez. Propriedade da FILIAL (igual pra qualquer
+// atendente), não uma preferência pessoal — por isso fica aqui, não em
+// localStorage.
+async function atualizarPreposicaoFilial(id, novoValor) {
+    novoValor = novoValor.trim();
+    const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ nome_com_preposicao: novoValor || null }).eq('id', id);
     if (error) alert('Erro ao salvar: ' + error.message);
 }
 
@@ -2764,6 +2778,17 @@ function formatarTextoPadrao(texto) {
         if (i > 0 && PALAVRAS_MINUSCULAS_TITULO.includes(palavra)) return palavra;
         return palavra.charAt(0).toUpperCase() + palavra.slice(1);
     }).join(' ');
+}
+
+// Só o primeiro nome, formatado (nem tudo maiúsculo, nem tudo minúsculo)
+// — o nome do lead às vezes chega em CAIXA ALTA das planilhas (Ativos/
+// Inativos/Ulisses/Mercúrio). Usado em convites de WhatsApp e no
+// preenchimento automático de templates — é só exibição, nunca muda o
+// valor guardado no banco.
+function primeiroNomeFormatado(nomeCompleto) {
+    const primeiro = String(nomeCompleto || '').trim().split(/\s+/)[0] || '';
+    if (!primeiro) return '';
+    return primeiro.charAt(0).toUpperCase() + primeiro.slice(1).toLowerCase();
 }
 
 // Gavetas colapsáveis da ficha do lead (Eventos/Como Abordar/Resumo/

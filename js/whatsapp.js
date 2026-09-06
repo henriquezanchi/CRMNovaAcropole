@@ -14,18 +14,32 @@
 // NOME TÉCNICO exato de cada template aprovado (e a ordem das variáveis)
 // antes de ir pra produção. Enquanto vazio, qualquer conversa fora da
 // janela de 24h fica sem nenhuma forma de reabrir contato pela UI.
+//
+// Cada entrada de `variaveis` é { chave, label } — `chave` decide se o
+// campo já vem PRÉ-PREENCHIDO (mas sempre editável) por
+// preencherValorAutomatico() logo abaixo:
+//   'nome'      -> primeiro nome do lead (formatado, nunca CAIXA ALTA)
+//   'atendente' -> obterNomeAtendente() (já com artigo, se a pessoa quiser)
+//   'filial'    -> filiais.nome_com_preposicao da filial atual (ou "de {nome}"
+//                  como aproximação, se ninguém configurou ainda)
+//   null        -> sem fonte automática, fica em branco pro SDR digitar
+//                  (ex: nome da palestra, motivo do contato)
 const TEMPLATES_WHATSAPP = [
     {
         nome: 'contato_inicial',
         label: 'Contato inicial (pós-palestra)',
         corpoAprovado: 'Olá, {{1}}! Aqui quem fala é {{2}}, da Nova Acrópole. Tudo bem? Vi que você já esteve na Palestra {{3}} e gostaria de saber se ainda tem interesse em participar dos nossos próximos eventos de filosofia! Estamos abrindo uma nova turma em breve, quer saber mais detalhes de como funciona nosso curso?',
-        variaveis: ['nome', 'atendente', 'palestra'],
+        variaveis: [
+            { chave: 'nome', label: 'nome do lead' },
+            { chave: 'atendente', label: 'atendente' },
+            { chave: null, label: 'palestra' },
+        ],
     },
     {
         nome: 'resgate_lead_evento',
         label: 'Resgate de lead frio',
         corpoAprovado: 'Olá {{1}}! Aqui é da Nova Acrópole 🦉. \n\nNotamos seu interesse em nossos eventos de filosofia e gostaríamos muito de retomar contato. \n\nJá conhece nosso curso de Filosofia?',
-        variaveis: ['nome'],
+        variaveis: [{ chave: 'nome', label: 'nome do lead' }],
     },
     // Os 3 abaixo ainda estão "Em análise" na Meta — DESCOMENTAR só depois
     // de aprovados (usar um template não aprovado falha o envio na hora).
@@ -38,28 +52,62 @@ const TEMPLATES_WHATSAPP = [
     //
     // Os 3 usam o truque de embutir artigo/preposição DENTRO do valor da
     // variável (ex: "o Henrique", "de Barra do Garças") pra ler natural
-    // no corpo aprovado — por isso os placeholders dos campos já orientam
-    // o SDR a digitar assim, em vez de código tentar adivinhar artigo por
-    // gênero.
+    // no corpo aprovado — os campos 'atendente'/'filial' já vêm assim
+    // pré-preenchidos automaticamente (ver preencherValorAutomatico()).
     // {
     //     nome: 'contato_ulisses',
     //     label: 'Contato via Ulisses (nunca foi aluno)',
     //     corpoAprovado: 'Oi, {{1}}! Aqui é {{2}}, da Nova Acrópole {{3}}, tudo bem?\n\nVi que você participou {{4}} {{5}} recentemente.\n\nE aí, o que achou?',
-    //     variaveis: ['nome', 'atendente (com artigo, ex: o Henrique)', 'filial (com preposição, ex: de Barra do Garças)', 'tipo do evento (com artigo, ex: da Palestra)', 'nome/tema do evento (ex: "A Odisseia: ...")'],
+    //     variaveis: [
+    //         { chave: 'nome', label: 'nome do lead' },
+    //         { chave: 'atendente', label: 'atendente (com artigo)' },
+    //         { chave: 'filial', label: 'filial (com preposição)' },
+    //         { chave: null, label: 'tipo do evento (com artigo, ex: da Palestra)' },
+    //         { chave: null, label: 'nome/tema do evento (ex: "A Odisseia: ...")' },
+    //     ],
     // },
     // {
     //     nome: 'resgate_ex_aluno',
     //     label: 'Resgate (já foi aluno, inativo)',
     //     corpoAprovado: 'Oi, {{1}}!\n\nAqui é {{2}}, da Nova Acrópole {{3}}, tudo bem? Faz um tempo que você deu uma pausa na sua jornada filosófica com a gente, e sentimos sua falta!\n\nQueria saber como estão as coisas atualmente com você, os novos desafios que tem enfrentado, enfim, sobre tudo que quiser😊.\n\nEstamos sempre de portas abertas!',
-    //     variaveis: ['nome', 'atendente (com artigo, ex: o Henrique)', 'filial (com preposição, ex: de Barra do Garças)'],
+    //     variaveis: [
+    //         { chave: 'nome', label: 'nome do lead' },
+    //         { chave: 'atendente', label: 'atendente (com artigo)' },
+    //         { chave: 'filial', label: 'filial (com preposição)' },
+    //     ],
     // },
     // {
     //     nome: 'contato_aluno_ativo',
     //     label: 'Contato com aluno atual',
     //     corpoAprovado: 'Oii, {{1}}! Aqui é {{2}}, da Nova Acrópole {{3}}. Estamos com {{4}} chegando e queria muito contar com você — seja participando, indicando alguém que você acha que ia gostar, ou nos ajudando a divulgar. Topa conversar um pouquinho sobre isso?',
-    //     variaveis: ['nome', 'atendente (com artigo, ex: o Henrique)', 'filial (com preposição, ex: de Barra do Garças)', 'evento/motivo (com artigo, ex: uma Palestra)'],
+    //     variaveis: [
+    //         { chave: 'nome', label: 'nome do lead' },
+    //         { chave: 'atendente', label: 'atendente (com artigo)' },
+    //         { chave: 'filial', label: 'filial (com preposição)' },
+    //         { chave: null, label: 'evento/motivo (com artigo, ex: uma Palestra)' },
+    //     ],
     // },
 ];
+
+// Valor pré-preenchido pra uma variável de template, conforme sua chave —
+// sempre EDITÁVEL depois (o SDR pode corrigir/trocar antes de enviar).
+function preencherValorAutomatico(chave, leadId) {
+    if (chave === 'nome') {
+        const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
+        return lead ? primeiroNomeFormatado(lead.pessoaNome) : '';
+    }
+    if (chave === 'atendente') {
+        return obterNomeAtendente() || '';
+    }
+    if (chave === 'filial') {
+        const f = (typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : []).find(x => x.nome === filialAtual);
+        if (f && f.nome_com_preposicao) return f.nome_com_preposicao;
+        // Sem preposição configurada em "Gerenciar Filiais" — "de {nome}"
+        // é uma aproximação razoável na maioria dos casos, mas editável.
+        return filialAtual ? `de ${filialAtual}` : '';
+    }
+    return '';
+}
 
 let wppContatoAtivoId = null;
 let canalListaWpp = null;
@@ -170,9 +218,10 @@ function criarChatController({ messagesId, inputAreaId }) {
 
         function montarCamposVariaveis() {
             const tpl = TEMPLATES_WHATSAPP[Number(select.value)];
-            varsEl.innerHTML = (tpl.variaveis || []).map((nomeVar) =>
-                `<input type="text" class="wpp-template-var" placeholder="${escapeHTML(nomeVar)}">`
-            ).join('');
+            varsEl.innerHTML = (tpl.variaveis || []).map((v) => {
+                const valor = preencherValorAutomatico(v.chave, leadId);
+                return `<input type="text" class="wpp-template-var" placeholder="${escapeHTML(v.label)}" value="${escapeHTML(valor)}">`;
+            }).join('');
         }
         montarCamposVariaveis();
         select.addEventListener('change', montarCamposVariaveis);
@@ -328,10 +377,11 @@ const CONVITE_EVENTO_ATIVO = `Olá, {nome}! Tudo bem? Aqui é {atendente}, da No
 // Nome de quem está mandando — perguntado uma vez, guardado só neste
 // navegador (não tem login no CRM pra puxar isso de outro jeito).
 const CHAVE_STORAGE_NOME_ATENDENTE = 'crm_na_nome_atendente';
+const TEXTO_PROMPT_NOME_ATENDENTE = 'Como você quer aparecer nas mensagens pros leads?\n\nPode escrever com artigo, do jeito que soa mais natural pra você (ex: "o Henrique", "a Lilica"), ou só o nome puro (ex: "Henrique") — o que você digitar aqui entra EXATAMENTE assim em todo lugar que precisar do seu nome (convites, modelos de WhatsApp).';
 function obterNomeAtendente() {
     let nome = localStorage.getItem(CHAVE_STORAGE_NOME_ATENDENTE);
     if (!nome) {
-        nome = prompt('Qual é o seu nome? Aparece nos convites que você manda pelos leads (fica salvo só neste navegador — dá pra mudar depois clicando no lápis ao lado do botão de convite).');
+        nome = prompt(TEXTO_PROMPT_NOME_ATENDENTE + '\n\n(fica salvo só neste navegador — dá pra mudar depois clicando no lápis ao lado do botão de convite)');
         if (nome && nome.trim()) {
             nome = nome.trim();
             localStorage.setItem(CHAVE_STORAGE_NOME_ATENDENTE, nome);
@@ -341,7 +391,7 @@ function obterNomeAtendente() {
 }
 function alterarNomeAtendente() {
     const atual = localStorage.getItem(CHAVE_STORAGE_NOME_ATENDENTE) || '';
-    const novo = prompt('Seu nome (aparece nos convites que você envia pelos leads):', atual);
+    const novo = prompt(TEXTO_PROMPT_NOME_ATENDENTE, atual);
     if (novo === null) return; // cancelou
     const limpo = novo.trim();
     if (limpo) localStorage.setItem(CHAVE_STORAGE_NOME_ATENDENTE, limpo);
@@ -419,7 +469,7 @@ function enviarConviteEvento(evento) {
 
     const tagsLead = (typeof parseTags === 'function' ? parseTags(lead.tags) : []).map(t => t.trim()).filter(Boolean);
     const ehAtivo = tagsLead.includes('Ativo') || tagsLead.includes('Aluno Ativo');
-    const primeiroNome = (lead.pessoaNome || '').trim().split(/\s+/)[0] || '';
+    const primeiroNome = primeiroNomeFormatado(lead.pessoaNome);
     const atendente = obterNomeAtendente();
 
     // Interesses — só as tags da família "Interesses / Origem" (mesma

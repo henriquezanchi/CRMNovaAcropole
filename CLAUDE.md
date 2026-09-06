@@ -153,6 +153,10 @@ migracao_credenciais_scraper_mercurio_http.sql → alarga a constraint de "siste
 migracao_data_nascimento.sql      → coluna data_nascimento em leads_inscricoes
                                      (Aniversariantes do Mês no Dashboard); rodar
                                      manualmente
+migracao_filial_preposicao.sql    → coluna nome_com_preposicao em filiais (ex: "do
+                                     Jardim América") — preenchimento automático da
+                                     variável filial nos templates de WhatsApp;
+                                     rodar manualmente
 ```
 
 ## Banco de dados (Supabase)
@@ -233,6 +237,10 @@ seletor de filial no topbar abre "Gerenciar Filiais" (`abrirGerenciarFiliais()`
 em `js/app.js`) — cria, renomeia, reordena e desativa filiais direto do
 navegador (grava na hora no Supabase, diferente de "Gerenciar Colunas" que
 é só `localStorage`). Desativar = `ativo=false`, não apaga nenhum lead.
+`nome_com_preposicao` (nullable, `migracao_filial_preposicao.sql`) — forma
+natural de falar o nome da filial (ex: `"do Jardim América"`, `"de Barra
+do Garças"`), editável na mesma tela; alimenta o preenchimento automático
+da variável `filial` nos templates de WhatsApp (ver seção própria).
 
 ### Tabela `mensagens_whatsapp`
 Histórico completo (enviado/recebido) da integração real de WhatsApp — ver
@@ -1573,6 +1581,25 @@ uso principal do CRM é resgate de leads frios.
   texto livre preenchido no chat — sem aprovação nenhuma da Meta, mas só
   funcionam DENTRO da janela de 24h) em vez de um texto fixo e específico
   demais pra um cenário só.
+- **Preenchimento automático das variáveis do template** —
+  `tpl.variaveis` é uma lista de `{chave, label}`, não só texto: quando
+  `chave` é `'nome'`/`'atendente'`/`'filial'`, `preencherValorAutomatico()`
+  já entrega o campo preenchido (sempre editável depois, o SDR pode
+  corrigir) em vez do SDR digitar toda vez:
+  - `'nome'` → `primeiroNomeFormatado(lead.pessoaNome)` — só o primeiro
+    nome, nunca em CAIXA ALTA (a planilha às vezes traz assim).
+  - `'atendente'` → `obterNomeAtendente()`, sem mudança de comportamento
+    (já perguntava uma vez e guardava em `localStorage`) — só o TEXTO do
+    prompt mudou, agora orientando a pessoa a incluir o artigo se quiser
+    (ex: "o Henrique") pra ler natural nos templates que embutem isso.
+  - `'filial'` → `filiais.nome_com_preposicao` (`migracao_filial_preposicao.sql`,
+    editável em "Gerenciar Filiais") da filial atual — ex: "do Jardim
+    América". É propriedade da FILIAL (igual pra qualquer atendente que a
+    mencionar), por isso fica no banco, não em `localStorage` como o nome
+    do atendente. Sem configurar, cai no fallback `"de {nome da filial}"`
+    (aproximação razoável, mas nem sempre gramaticalmente perfeita).
+  - `chave: null` → sem fonte automática, campo fica em branco (ex: nome
+    da palestra, motivo do contato) — só o `label` vira o placeholder.
 - **Convite padrão pra QUALQUER evento** (botão "Convidar pra Evento" no
   cabeçalho do chat da gaveta do lead — começou só pra "Abertura de
   Turma", generalizado depois a pedido do usuário): clicar abre um
