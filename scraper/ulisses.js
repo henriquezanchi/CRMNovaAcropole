@@ -56,8 +56,11 @@ async function processarFilial(browser, filial) {
         // antes? Ajustar aqui depois de confirmar isso na prática.
     } catch (e) {
         console.error(`[ulisses] Falha em ${filial}:`, e.message);
-        fs.mkdirSync('scraper/debug', { recursive: true });
-        await page.screenshot({ path: `scraper/debug/ulisses-${filial.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
+        // Caminho relativo ao diretório de trabalho do workflow (scraper/),
+        // que já é o CWD deste script — vira scraper/debug/... visto da
+        // raiz do repositório, batendo com o "path" do upload-artifact.
+        fs.mkdirSync('debug', { recursive: true });
+        await page.screenshot({ path: `debug/ulisses-${filial.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
         await registrarStatusSincronizacao('ulisses', filial, false, e.message);
     } finally {
         await page.close();

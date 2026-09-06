@@ -84,4 +84,27 @@ select 'migracao_temas_eventos.sql',
 union all
 select 'migracao_whatsapp.sql',
     (to_regclass('public.mensagens_whatsapp') is not null)
+union all
+select 'migracao_credenciais_scraper.sql',
+    (to_regclass('public.credenciais_scraper') is not null)
+union all
+select 'migracao_credenciais_scraper_leitura.sql',
+    (to_regprocedure('public.ler_credencial_scraper(text, text, text)') is not null)
+union all
+select 'migracao_credenciais_scraper_fix_pgcrypto.sql',
+    exists(
+        select 1 from pg_proc
+        where proname = 'salvar_credencial_scraper'
+          and array_to_string(coalesce(proconfig, '{}'), ',') like '%extensions%'
+    )
+union all
+select 'migracao_credenciais_scraper_mercurio_http.sql',
+    exists(
+        select 1 from pg_constraint
+        where conname = 'credenciais_scraper_sistema_check'
+          and pg_get_constraintdef(oid) like '%mercurio_http%'
+    )
+union all
+select 'migracao_data_nascimento.sql',
+    exists(select 1 from information_schema.columns where table_name = 'leads_inscricoes' and column_name = 'data_nascimento')
 order by 2 asc, 1; -- mostra as FALTANDO (false) primeiro

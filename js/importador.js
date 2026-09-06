@@ -345,17 +345,27 @@ async function renderizarCredenciaisScraper() {
 
     container.innerHTML = `
         ${error ? `<p style="font-size:12px; color:#dc2626;">Aviso: não consegui ler o status atual (${escapeHTML(error.message)}). Rode migracao_credenciais_scraper.sql se ainda não rodou — mesmo assim, dá pra tentar salvar novas senhas abaixo.</p>` : ''}
-        <div class="tag-filter-grupo-titulo">Mercúrio (senha única, vale pra todas as filiais)</div>
+        <div class="tag-filter-grupo-titulo">Mercúrio — autenticação prévia (pop-up cinza do navegador, única pra todo mundo, muda 1x por ano)</div>
         <div class="coluna-row">
+            <input type="text" id="credUsuarioMercurioHttp" placeholder="Usuário do pop-up" style="flex:1;">
+            <input type="password" id="credSenhaMercurioHttp" placeholder="Senha do pop-up" style="flex:1;">
+            <button class="btn-secondary" onclick="salvarCredencialScraper('mercurio_http', null)"><i class="fa-solid fa-floppy-disk"></i> Salvar</button>
+        </div>
+        <p style="font-size:11px; margin:-4px 0 14px;">${formatarStatus('mercurio_http|GLOBAL')}</p>
+
+        <div class="tag-filter-grupo-titulo">Mercúrio (Matrícula/Senha, vale pra todas as filiais)</div>
+        <div class="coluna-row">
+            <input type="text" id="credUsuarioMercurio" placeholder="Matrícula" style="flex:1;">
             <input type="password" id="credSenhaMercurio" placeholder="Senha do Mercúrio" style="flex:1;">
             <button class="btn-secondary" onclick="salvarCredencialScraper('mercurio', null)"><i class="fa-solid fa-floppy-disk"></i> Salvar</button>
         </div>
         <p style="font-size:11px; margin:-4px 0 14px;">${formatarStatus('mercurio|GLOBAL')}</p>
 
-        <div class="tag-filter-grupo-titulo">Ulisses (uma senha por filial)</div>
+        <div class="tag-filter-grupo-titulo">Ulisses (e-mail + senha por filial — login via Auth0)</div>
         ${filiais.length === 0 ? '<p style="font-size:12px; color:var(--text-muted);">Nenhuma filial cadastrada ainda.</p>' : filiais.map(f => `
             <div class="coluna-row">
                 <span style="flex:1; font-size:12px;">${escapeHTML(f.nome)}</span>
+                <input type="email" id="credUsuarioUlisses-${f.id}" placeholder="E-mail de login" style="flex:1.5;">
                 <input type="password" id="credSenhaUlisses-${f.id}" placeholder="Senha do Ulisses" style="flex:1.5;">
                 <button class="btn-secondary" onclick="salvarCredencialScraper('ulisses', null, ${f.id})"><i class="fa-solid fa-floppy-disk"></i> Salvar</button>
             </div>
@@ -365,9 +375,16 @@ async function renderizarCredenciaisScraper() {
 }
 
 async function salvarCredencialScraper(sistema, _filialIgnorado, filialId) {
-    const inputId = sistema === 'mercurio' ? 'credSenhaMercurio' : `credSenhaUlisses-${filialId}`;
-    const input = document.getElementById(inputId);
-    const senha = input ? input.value : '';
+    const idsPorSistema = {
+        mercurio: { usuario: 'credUsuarioMercurio', senha: 'credSenhaMercurio' },
+        mercurio_http: { usuario: 'credUsuarioMercurioHttp', senha: 'credSenhaMercurioHttp' },
+        ulisses: { usuario: `credUsuarioUlisses-${filialId}`, senha: `credSenhaUlisses-${filialId}` },
+    };
+    const ids = idsPorSistema[sistema];
+    const inputSenha = ids ? document.getElementById(ids.senha) : null;
+    const inputUsuario = ids && ids.usuario ? document.getElementById(ids.usuario) : null;
+    const senha = inputSenha ? inputSenha.value : '';
+    const usuario = inputUsuario ? inputUsuario.value : '';
     if (!senha || senha.trim() === '') { alert('Digite a senha antes de salvar.'); return; }
 
     let filial = null;
@@ -378,14 +395,15 @@ async function salvarCredencialScraper(sistema, _filialIgnorado, filialId) {
     }
 
     const { data, error } = await window.supabaseClient.functions.invoke('gerenciar-credenciais', {
-        body: { sistema, filial, senha }
+        body: { sistema, filial, usuario: usuario || null, senha }
     });
 
     if (error || (data && data.ok === false)) {
         alert('Erro ao salvar: ' + ((data && data.erro) || (error && error.message) || 'erro desconhecido'));
         return;
     }
-    if (input) input.value = '';
+    if (inputSenha) inputSenha.value = '';
+    if (inputUsuario) inputUsuario.value = '';
     alert('Senha salva com sucesso! (cifrada — o CRM não guarda nem mostra o valor em texto puro)');
     renderizarCredenciaisScraper();
 }

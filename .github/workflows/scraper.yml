@@ -23,7 +23,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22 # < 22 não tem WebSocket nativo, e o cliente do Supabase precisa disso
 
       - name: Instalar dependências
         run: npm install

@@ -4,12 +4,19 @@
 // listando várias filiais na mesma tela) — por isso é lida com
 // filial='GLOBAL' (ver migracao_credenciais_scraper.sql).
 //
-// Formulário simples (Matrícula + Senha), sem framework — mas é um site
-// antigo (PHP puro, a julgar pela URL pós-login "ger_frame.php") onde o
-// texto do rótulo pode NÃO estar associado ao campo via <label for="...">
-// de verdade (comum em tabelas HTML antigas) — por isso cada campo tenta
-// getByLabel() primeiro e cai num seletor mais genérico se não achar,
-// em vez de travar direto no primeiro try.
+// DUAS camadas de autenticação, descobertas testando de verdade:
+//   1. Autenticação HTTP básica do navegador (pop-up cinza nativo) — uma
+//      credencial ÚNICA compartilhada por TODOS os usuários, que muda 1x
+//      por ano. Fica salva no navegador de quem usa no dia a dia, por
+//      isso passa despercebida — mas o Playwright (sessão nova, sem nada
+//      salvo) precisa dela. Guardada como sistema='mercurio_http'
+//      (migracao_credenciais_scraper_mercurio_http.sql).
+//   2. A tela de Matrícula + Senha em si (formulário simples, PHP puro).
+//
+// Formulário da camada 2 é antigo — o texto do rótulo pode NÃO estar
+// associado ao campo via <label for="..."> de verdade (comum em tabela
+// HTML antiga) — por isso cada campo tenta getByLabel() primeiro e cai
+// num seletor mais genérico se não achar.
 //
 // Ainda NÃO SEI onde fica o export de Ativos/Inativos dentro do menu
 // (provavelmente em "CADASTRO" de cada filial) — ver TODO no fim.
@@ -48,12 +55,18 @@ async function loginMercurio(page, matricula, senha) {
 }
 
 async function main() {
-    const page = await (await chromium.launch()).newPage();
+    let browser;
     try {
-        const { usuario, senha } = await lerCredencial('mercurio', null);
-        // "usuario" aqui é a matrícula, se foi salva; senão usa a senha só
-        // (ajuste conforme o que de fato foi cadastrado em "Login Automático").
-        await loginMercurio(page, usuario, senha);
+        const httpAuth = await lerCredencial('mercurio_http', null);
+        const { usuario: matricula, senha } = await lerCredencial('mercurio', null);
+
+        browser = await chromium.launch();
+        const context = await browser.newContext({
+            httpCredentials: { username: httpAuth.usuario, password: httpAuth.senha },
+        });
+        const page = await context.newPage();
+
+        await loginMercurio(page, matricula, senha);
 
         console.log('[mercurio] Login OK');
         await registrarStatusSincronizacao('mercurio', null, true, 'Login confirmado (marco 1 — export ainda não implementado).');
@@ -61,14 +74,17 @@ async function main() {
         // TODO (marco 2): navegar até "CADASTRO" de cada filial e achar
         // onde exportar Ativos/Inativos — precisa de mais um print/
         // descrição de dentro dessa tela pra escrever certo.
+        await browser.close();
     } catch (e) {
         console.error('[mercurio] Falha:', e.message);
-        fs.mkdirSync('scraper/debug', { recursive: true });
-        await page.screenshot({ path: 'scraper/debug/mercurio.png', fullPage: true }).catch(() => {});
+        try {
+            fs.mkdirSync('debug', { recursive: true });
+            const pages = browser ? browser.contexts().flatMap(c => c.pages()) : [];
+            if (pages[0]) await pages[0].screenshot({ path: 'debug/mercurio.png', fullPage: true }).catch(() => {});
+        } catch { /* melhor esforço — não deixa o print quebrar o registro do erro */ }
         await registrarStatusSincronizacao('mercurio', null, false, e.message);
+        if (browser) await browser.close();
         process.exitCode = 1;
-    } finally {
-        await page.context().browser().close();
     }
 }
 

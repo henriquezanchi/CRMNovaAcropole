@@ -41,8 +41,8 @@ Deno.serve(async (req) => {
     const { sistema, usuario, senha } = corpo;
     let filial = corpo.filial;
 
-    if (sistema !== "ulisses" && sistema !== "mercurio") {
-        return json({ ok: false, erro: "sistema precisa ser 'ulisses' ou 'mercurio'" }, 400);
+    if (sistema !== "ulisses" && sistema !== "mercurio" && sistema !== "mercurio_http") {
+        return json({ ok: false, erro: "sistema precisa ser 'ulisses', 'mercurio' ou 'mercurio_http'" }, 400);
     }
     if (!senha || senha.trim() === "") {
         return json({ ok: false, erro: "senha é obrigatória" }, 400);
@@ -50,9 +50,10 @@ Deno.serve(async (req) => {
     if (sistema === "ulisses" && (!filial || filial.trim() === "")) {
         return json({ ok: false, erro: "filial é obrigatória para o Ulisses (cada filial tem uma senha diferente)" }, 400);
     }
-    // Mercúrio é uma senha só, compartilhada entre as filiais — ignora
-    // qualquer filial que venha no corpo e força o valor global fixo.
-    if (sistema === "mercurio") filial = "GLOBAL";
+    // Mercúrio (e a autenticação HTTP básica dele) são credenciais únicas,
+    // compartilhadas entre as filiais — ignora qualquer filial que venha
+    // no corpo e força o valor global fixo.
+    if (sistema === "mercurio" || sistema === "mercurio_http") filial = "GLOBAL";
 
     const { error } = await supabaseAdmin.rpc("salvar_credencial_scraper", {
         p_sistema: sistema,

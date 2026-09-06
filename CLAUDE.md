@@ -139,6 +139,20 @@ migracao_credenciais_scraper.sql  → tabelas credenciais_scraper (cofre cifrado
                                      única exceção do projeto) e
                                      status_sincronizacao_automatica (log/alerta);
                                      base do "Login Automático", rodar manualmente
+migracao_credenciais_scraper_leitura.sql → função ler_credencial_scraper() (decifra pro
+                                     scraper ler, só service_role); rodar manualmente,
+                                     depois da acima
+migracao_credenciais_scraper_fix_pgcrypto.sql → corrige "pgp_sym_encrypt does not
+                                     exist" (pgcrypto fica no schema "extensions" no
+                                     Supabase, não "public"); rodar manualmente,
+                                     depois das duas acima
+migracao_credenciais_scraper_mercurio_http.sql → alarga a constraint de "sistema" em
+                                     credenciais_scraper pra aceitar 'mercurio_http'
+                                     (autenticação HTTP básica do Mercúrio, camada
+                                     antes do Matrícula/Senha); rodar manualmente
+migracao_data_nascimento.sql      → coluna data_nascimento em leads_inscricoes
+                                     (Aniversariantes do Mês no Dashboard); rodar
+                                     manualmente
 ```
 
 ## Banco de dados (Supabase)
@@ -1668,13 +1682,38 @@ bloqueado).
     mas não sai da tela do Auth0), é provavelmente isso — não tem fix
     automático, precisaria de outra forma de rodar com IP residencial ou
     desativar o Bot Detection no tenant Auth0 (se houver acesso a isso).
-- **Mercúrio** (`scraper/mercurio.js`): login simples (Matrícula + Senha,
-  site antigo em PHP puro) — **1 login só cobre várias filiais** de uma
-  vez (confirmado por print: a tela pós-login lista as funções
-  autorizadas por filial pra aquela matrícula), por isso a credencial é
-  salva com `filial = 'GLOBAL'` (mesmo padrão do cofre). Onde exatamente
-  fica o export de Ativos/Inativos dentro do menu (provavelmente em
-  "CADASTRO" de cada filial) ainda não foi mapeado — marco 2.
+- **Mercúrio** (`scraper/mercurio.js`): **DUAS camadas de login**,
+  descobertas testando de verdade (não estavam visíveis no print inicial):
+  1. Autenticação HTTP básica do navegador (pop-up cinza nativo) — uma
+     credencial ÚNICA compartilhada por TODOS os usuários, que muda 1x
+     por ano. Fica salva no navegador de quem usa no dia a dia (por isso
+     passa despercebida), mas o Playwright (sessão nova) precisa dela.
+     Guardada como `sistema = 'mercurio_http'`
+     (`migracao_credenciais_scraper_mercurio_http.sql`, que também
+     alarga a constraint de `sistema` em `credenciais_scraper`) — aplicada
+     via `context.newContext({ httpCredentials: {...} })` do Playwright,
+     ANTES de navegar pra página de login em si.
+  2. A tela de Matrícula + Senha propriamente dita (formulário simples,
+     PHP puro) — **1 login só cobre várias filiais** de uma vez
+     (confirmado por print: a tela pós-login lista as funções autorizadas
+     por filial pra aquela matrícula), por isso essa credencial é salva
+     com `filial = 'GLOBAL'` (mesmo padrão do cofre).
+  Onde exatamente fica o export de Ativos/Inativos dentro do menu
+  (provavelmente em "CADASTRO" de cada filial) ainda não foi mapeado —
+  marco 2.
+- **Tela "Login Automático" no CRM** (aba Importar) tem 3 blocos: a
+  autenticação HTTP do Mercúrio (usuário+senha do pop-up), o
+  Matrícula+Senha do Mercúrio (usuário = matrícula), e e-mail+senha do
+  Ulisses por filial (usuário = e-mail de login via Auth0) — os 3 têm
+  campo de usuário desde a correção feita depois do primeiro teste real
+  (antes só existiam campos de senha, um bug descoberto ao rodar o
+  scraper pela 1ª vez).
+- **Rodar em Node 22+ no workflow** (`node-version` em
+  `.github/workflows/scraper.yml`) — o cliente `@supabase/supabase-js`
+  cria um `RealtimeClient` internamente mesmo sem usar Realtime, e isso
+  quebra em Node < 22 por falta de `WebSocket` nativo ("Node.js 20
+  detected without native WebSocket support") — descoberto no primeiro
+  teste real do workflow.
 - **Status por marco**:
   1. ✅ Login automatizado nos dois sistemas (confirma sessão autenticada,
      grava sucesso/falha em `status_sincronizacao_automatica` — ver
