@@ -29,6 +29,11 @@
 //      espera até 5 minutos e continua sozinho assim que detectar que o
 //      login deu certo. Pode deixar a janela em segundo plano enquanto
 //      espera; não precisa voltar pro terminal.
+//
+// Testar com 1 filial só (mais rápido enquanto ainda está em ajuste, não
+// precisa logar em todas de novo a cada tentativa): passe um pedaço do
+// nome da filial depois de "--":
+//   npm run ulisses-local -- "Setor Oeste"
 import 'dotenv/config';
 import { chromium } from 'playwright';
 import { supabaseAdmin, lerCredencial, registrarStatusSincronizacao } from './lib/supabaseAdmin.js';
@@ -107,9 +112,21 @@ async function processarFilialLocal(browser, filial) {
 }
 
 async function main() {
-    const { data: filiais, error } = await supabaseAdmin.from('filiais').select('nome').eq('ativo', true);
+    const { data: filiaisTodas, error } = await supabaseAdmin.from('filiais').select('nome').eq('ativo', true);
     if (error) throw new Error('Erro ao buscar filiais: ' + error.message);
-    if (!filiais || filiais.length === 0) { console.log('Nenhuma filial ativa encontrada.'); return; }
+
+    // Filtro opcional por linha de comando (npm run ulisses-local -- "Setor
+    // Oeste") — testa só as filiais cujo nome contém esse texto, pra não
+    // precisar logar em todas de novo a cada ajuste no código.
+    const filtro = process.argv[2];
+    const filiais = filtro
+        ? (filiaisTodas || []).filter(f => f.nome.toLowerCase().includes(filtro.toLowerCase()))
+        : (filiaisTodas || []);
+
+    if (filiais.length === 0) {
+        console.log(filtro ? `Nenhuma filial ativa bate com "${filtro}".` : 'Nenhuma filial ativa encontrada.');
+        return;
+    }
 
     console.log(`${filiais.length} filial(is) ativa(s): ${filiais.map(f => f.nome).join(', ')}`);
     console.log('Uma janela do Chromium vai abrir por vez — faça login em cada uma quando ela aparecer.\n');

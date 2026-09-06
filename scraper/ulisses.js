@@ -101,12 +101,16 @@ export async function exportarCsvInscricoes(page, filial) {
     await page.waitForURL(/#\/exportar/i, { timeout: 15000 }).catch(() => {});
     await fecharAvisosBloqueantes(page);
 
-    // Escuta no CONTEXTO (page.context()), não só nesta página — se o
-    // botão abrir o download numa aba nova (target="_blank"), o evento
-    // nasce nessa aba nova, não na original.
+    // getByText (não getByRole('button')) — o botão pode não ser uma tag
+    // <button> de verdade (comum ser um <a> estilizado de verde, que pro
+    // Playwright tem "papel" de link, não de botão); buscar por TEXTO
+    // funciona independente da tag por baixo. Escuta no CONTEXTO
+    // (page.context()), não só nesta página — se o botão abrir o download
+    // numa aba nova (target="_blank"), o evento nasce nessa aba nova, não
+    // na original.
     const [download] = await Promise.all([
         page.context().waitForEvent('download', { timeout: 30000 }),
-        page.getByRole('button', { name: /baixar csv de inscri[çc][õo]es/i }).click(),
+        page.getByText(/baixar csv de inscri[çc][õo]es/i).click(),
     ]);
 
     fs.mkdirSync(PASTA_EXPORTS, { recursive: true });
@@ -131,6 +135,12 @@ export async function exportarCatalogoEventos(page, filial) {
     await page.getByRole('button', { name: /^ativo$/i }).click({ timeout: 5000 }).catch(() => {});
 
     const cards = page.locator('text=/\\d{2}\\/\\d{2}\\/\\d{4}/').locator('..');
+    // Espera pelo menos 1 card aparecer antes de contar — se o goto()
+    // acima aconteceu (troca só de hash, sem requisição de rede de
+    // verdade), 'domcontentloaded' dispara quase na hora, antes da SPA
+    // ter tido tempo de buscar/renderizar a lista de eventos (confirmado
+    // por teste real: "0 cards" logo depois de vir da tela de exportar).
+    await cards.first().waitFor({ timeout: 10000 }).catch(() => {});
     const total = await cards.count();
     if (total === 0) throw new Error('Nenhum card de evento encontrado na lista (seletor pode estar errado — ver comentário no topo do arquivo).');
 
