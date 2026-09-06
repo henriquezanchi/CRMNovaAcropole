@@ -1992,6 +1992,7 @@ function atualizarDashboard() {
     renderizarResumoJornada();
     renderizarFeedAtividades();
     atualizarLembretesPendentes();
+    atualizarAniversariantes();
 }
 
 // Mesma lógica de rankLeadForte()/renderizarCards() pra reconhecer a tag
@@ -2102,6 +2103,57 @@ async function atualizarLembretesPendentes() {
                 <div>
                     <div><strong>${escapeHTML(l.pessoaNome || 'Lead sem nome')}</strong>${l.lembrete_nota ? ' — ' + escapeHTML(l.lembrete_nota) : ''}</div>
                     <div class="activity-time">${atrasado ? 'Atrasado desde' : 'Hoje'}: ${escapeHTML(l.lembrete_em)}</div>
+                </div>
+            </div>`;
+    }).join('');
+}
+
+// Aniversariantes do Mês — busca direta no banco (não é proxy sobre
+// leadsAtuais, já que aniversário importa pra filial inteira, não só o
+// que já foi paginado). data_nascimento é preenchida manualmente na
+// gaveta (bloco "Contato") — nenhuma das 3 planilhas traz esse dado hoje.
+// Aniversariante de HOJE ganha o mesmo destaque festivo do feed de
+// atividades (Matriculado/Recuperado — ver renderizarFeedAtividades()).
+async function atualizarAniversariantes() {
+    const container = document.getElementById('aniversariantesFeed');
+    if (!container || !filialAtual) return;
+
+    const { data, error } = await window.supabaseClient
+        .from(NOME_TABELA)
+        .select('pessoaIdentificador, pessoaNome, data_nascimento')
+        .eq('filial', filialAtual)
+        .not('data_nascimento', 'is', null);
+
+    if (error) {
+        container.innerHTML = '<div style="font-size:11px; color:var(--text-muted);">Aniversariantes indisponíveis (rode migracao_data_nascimento.sql).</div>';
+        return;
+    }
+
+    const hoje = new Date();
+    const mesAtual = hoje.getMonth() + 1;
+    const diaAtual = hoje.getDate();
+
+    const doMes = (data || [])
+        .map(l => {
+            const [, mes, dia] = l.data_nascimento.split('-').map(Number);
+            return { ...l, mes, dia };
+        })
+        .filter(l => l.mes === mesAtual)
+        .sort((a, b) => a.dia - b.dia);
+
+    if (doMes.length === 0) {
+        container.innerHTML = '<div style="font-size:12px; color:var(--text-muted);">Nenhum aniversariante com data cadastrada este mês.</div>';
+        return;
+    }
+
+    container.innerHTML = doMes.map(l => {
+        const ehHoje = l.dia === diaAtual;
+        return `
+            <div class="activity-item ${ehHoje ? 'activity-item-festiva' : ''}" style="cursor:pointer;" onclick="abrirResultadoBuscaGlobal('${l.pessoaIdentificador}')">
+                <div class="activity-dot ${ehHoje ? 'activity-dot-festiva' : ''}"></div>
+                <div>
+                    <div><strong>${escapeHTML(l.pessoaNome || 'Lead sem nome')}</strong>${ehHoje ? ' 🎂 <strong>hoje!</strong>' : ''}</div>
+                    <div class="activity-time">${String(l.dia).padStart(2, '0')}/${String(l.mes).padStart(2, '0')}</div>
                 </div>
             </div>`;
     }).join('');
@@ -2766,6 +2818,7 @@ function abrirGaveta(id) {
     document.getElementById('drawer-tel-ddd').value = lead.pessoaTelefoneDDD || '';
     document.getElementById('drawer-tel-numero').value = lead.pessoaTelefoneNumero || '';
     document.getElementById('drawer-email').value = lead.pessoaEmail || '';
+    document.getElementById('drawer-data-nascimento').value = lead.data_nascimento || '';
 
     document.getElementById('drawer-lembrete-data').value = lead.lembrete_em || '';
     document.getElementById('drawer-lembrete-nota').value = lead.lembrete_nota || '';
@@ -3195,6 +3248,24 @@ async function salvarEmailLead() {
         .eq('pessoaIdentificador', currentLeadId);
 
     if (error) alert('Erro ao salvar e-mail: ' + error.message);
+}
+
+// Data de Nascimento — nenhuma das 3 planilhas traz esse dado hoje, então
+// é preenchida manualmente aqui; alimenta o card "Aniversariantes do Mês"
+// no Dashboard (migracao_data_nascimento.sql).
+async function salvarDataNascimentoLead() {
+    const input = document.getElementById('drawer-data-nascimento');
+    const dataNascimento = input.value || null;
+
+    const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(currentLeadId));
+    if (leadIndex !== -1) leadsAtuais[leadIndex].data_nascimento = dataNascimento;
+
+    const { error } = await window.supabaseClient
+        .from(NOME_TABELA)
+        .update({ data_nascimento: dataNascimento })
+        .eq('pessoaIdentificador', currentLeadId);
+
+    if (error) alert('Erro ao salvar data de nascimento: ' + error.message);
 }
 
 // Mesma ideia de marcarTelefoneInvalido() acima, pro e-mail.

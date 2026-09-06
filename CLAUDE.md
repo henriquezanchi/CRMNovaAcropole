@@ -197,6 +197,16 @@ Colunas relevantes:
   "Motivos de Perda".
 - `grupo_familiar_id` (uuid, nullable, `migracao_vinculo_familiar.sql`) —
   Radar de Acompanhantes. Ver seção própria.
+- `data_nascimento` (date, nullable, `migracao_data_nascimento.sql`) —
+  nenhuma das 3 planilhas traz esse dado hoje, então é preenchida
+  manualmente no bloco "Contato" da gaveta (`salvarDataNascimentoLead()`,
+  `js/app.js`) — pronta pra ser alimentada automaticamente no futuro se o
+  scraper do Mercúrio (ver seção própria) conseguir extrair do CADASTRO.
+  Alimenta o card **"Aniversariantes do Mês"** no Dashboard
+  (`atualizarAniversariantes()`) — busca direta no banco (não é proxy,
+  já que aniversário importa pra filial inteira), aniversariante de HOJE
+  ganha o mesmo destaque festivo do feed de Matriculado/Recuperado
+  (`.activity-item-festiva`).
 
 ### Tabela `filiais`
 `id`, `nome`, `ativo`, `ordem`. Hoje tem 3: Goiânia - Jardim América, Goiânia

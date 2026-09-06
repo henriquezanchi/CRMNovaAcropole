@@ -130,6 +130,12 @@
                     <div class="activity-list" id="lembretesFeed"></div>
                 </div>
 
+                <!-- Aniversariantes do mês (data_nascimento, preenchida manualmente na gaveta) -->
+                <div class="activity-card" id="aniversariantesCard" style="flex:none; max-height:230px;">
+                    <div class="activity-header"><i class="fa-solid fa-cake-candles"></i> Aniversariantes do Mês</div>
+                    <div class="activity-list" id="aniversariantesFeed"></div>
+                </div>
+
                 <div class="activity-card">
                     <div class="activity-header"><i class="fa-solid fa-bolt"></i> Feed de Atividades da Equipe <span class="live-dot"></span> <span style="font-weight:400; color:var(--text-muted); font-size:11px;">Ao Vivo</span></div>
                     <div class="activity-list" id="activityFeed"></div>
@@ -498,6 +504,12 @@
                             <div class="drawer-contato-row">
                                 <input type="email" id="drawer-email" placeholder="E-mail" onchange="salvarEmailLead()">
                                 <button class="icon-btn danger" title="Marcar e-mail como inválido" onclick="marcarEmailInvalido()"><i class="fa-solid fa-envelope-circle-check"></i></button>
+                            </div>
+                            <div class="drawer-contato-row">
+                                <label style="font-size:11px; color:var(--text-muted); display:flex; align-items:center; gap:6px; flex:1;">
+                                    <i class="fa-solid fa-cake-candles"></i> Nascimento
+                                    <input type="date" id="drawer-data-nascimento" onchange="salvarDataNascimentoLead()" style="flex:1;">
+                                </label>
                             </div>
                         </div>
                         <!-- STATUS (Ulisses) — pra saber se vale a pena entrar em contato -->
