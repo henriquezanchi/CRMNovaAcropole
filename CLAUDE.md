@@ -1712,13 +1712,25 @@ bloqueado).
   **"Exportar CSV"** — ainda não implementado (marco 2), só o login está
   pronto. Itera por todas as filiais ativas (tabela `filiais` do
   Supabase, `select` público de sempre).
-  - ⚠️ **Risco conhecido, não contornável automaticamente**: Auth0 pode
-    ter "Bot Detection" ativado, que costuma exigir captcha quando o
-    login vem de IP de datacenter (caso do GitHub Actions). Se o script
-    sempre falhar no mesmo ponto (preenche os campos, clica "Continuar",
-    mas não sai da tela do Auth0), é provavelmente isso — não tem fix
-    automático, precisaria de outra forma de rodar com IP residencial ou
-    desativar o Bot Detection no tenant Auth0 (se houver acesso a isso).
+  - 🛑 **BLOQUEADO de verdade, confirmado por print real (3º teste)**: não
+    é o Auth0 quem barra, é o **Cloudflare** na frente do próprio
+    `acropolebrasil.com.br` — toda tentativa de `goto(URL_LOGIN)` a partir
+    do IP de datacenter do GitHub Actions cai na tela "Performing security
+    verification" / "Verify you are human" (challenge do Cloudflare) antes
+    de sequer chegar no formulário de login, e nunca sai dali sozinha.
+    **Não é um bug de seletor/timing pra corrigir no código** — é uma
+    proteção deliberada contra tráfego automatizado de datacenter, e não é
+    algo que se deva tentar contornar programaticamente (nem é confiável
+    tentar). Caminhos reais, todos exigindo uma decisão fora do código:
+    (a) rodar o scraper a partir de um IP residencial/não-datacenter — um
+    runner self-hosted numa máquina normal (ex: um PC na agência sempre
+    ligado) em vez do runner hospedado do GitHub Actions; (b) pedir pro
+    time que administra o Ulisses pra liberar/allowlist esse IP fixo no
+    Cloudflare, se houver esse acesso; (c) aceitar que o Ulisses continua
+    só no fluxo manual (planilha) por enquanto, e automatizar só o
+    Mercúrio, que não tem essa proteção. Nenhuma decisão tomada ainda —
+    Auth0 propriamente dito nunca chegou a ser testado (o Cloudflare barra
+    antes disso).
 - **Mercúrio** (`scraper/mercurio.js`): **DUAS camadas de login**,
   descobertas testando de verdade (não estavam visíveis no print inicial):
   1. Autenticação HTTP básica do navegador (pop-up cinza nativo) — uma
@@ -1735,9 +1747,20 @@ bloqueado).
      (confirmado por print: a tela pós-login lista as funções autorizadas
      por filial pra aquela matrícula), por isso essa credencial é salva
      com `filial = 'GLOBAL'` (mesmo padrão do cofre).
-  Onde exatamente fica o export de Ativos/Inativos dentro do menu
-  (provavelmente em "CADASTRO" de cada filial) ainda não foi mapeado —
-  marco 2.
+  Navegação mapeada por descrição/print do usuário (ainda NÃO testada de
+  verdade): `ger_frame.php` (pós-login) lista um link "CADASTRO" por
+  filial (1 login cobre várias); clicar entra em `uni_frame.php`, que tem
+  um menu lateral persistente com "Ativos"/"Inativos"/"Turmas"/etc — a URL
+  não muda entre cliques no menu, o que sugere fortemente um `<frameset>`
+  clássico (mesmo padrão de nome de arquivo `_frame.php` usado em toda a
+  navegação, INCLUSIVE a tela de login em si — foi exatamente isso que
+  causou o timeout de 30s do 3º teste real, corrigido buscando o campo de
+  Matrícula tanto na página principal quanto em qualquer frame filho,
+  função `acharContextoComTexto()`). Ativos tem colunas N./Matr./Nome/
+  Nivel/Dia/Turma (sem telefone nem data de ingresso — isso só existe
+  dentro do detalhe de cada Turma, ainda não capturado); Inativos tem
+  Nome/Telefones/Ni/Data/Motivo, que bate 1:1 com o formato já esperado
+  pelo importador manual.
 - **Tela "Login Automático" no CRM** (aba Importar) tem 3 blocos: a
   autenticação HTTP do Mercúrio (usuário+senha do pop-up), o
   Matrícula+Senha do Mercúrio (usuário = matrícula), e e-mail+senha do
@@ -1787,8 +1810,22 @@ bloqueado).
        etapa que falha gera seu PRÓPRIO print de erro
        (`debug/ulisses-<etapa>-<filial>.png`), mais fácil de diagnosticar
        que 1 só genérico por filial.
-     - **Mercúrio pendente** — ainda falta achar e exportar Ativos/
-       Inativos.
+     - **Mercúrio**: `exportarAtivosEInativos()` escrita (login corrigido
+       pra buscar em frames — ver acima; descobre TODOS os links
+       "CADASTRO" da tela pós-login via `listarLinksCadastro()`, um por
+       filial, sem tentar casar com `filiais.nome` do Supabase — processa
+       cada um sob o rótulo que o próprio Mercúrio usa; gera
+       `mercurio-ativos-<filial>.csv`/`mercurio-inativos-<filial>.csv` no
+       mesmo layout de colunas que o importador manual já espera,
+       encoding ISO-8859-1). **Ainda NÃO testada de verdade** — mapeada só
+       por descrição/print do usuário, mesmo estágio em que
+       `exportarCatalogoEventos()`/`exportarComparecimento()` do Ulisses
+       estavam antes do 1º teste real. Fotografias (Relatórios →
+       Fotografias) e enriquecimento de telefone/ingresso via Turmas e
+       aniversário via Aniversariantes (incluindo Inativos) ficaram de
+       fora de propósito, priorizados depois de Ativos/Inativos — a
+       primeira (Fotografias) também exige Supabase Storage (infra nova),
+       deliberadamente adiada ("Deixa pra depois").
      - **Ideia estratégica maior, registrada mas NÃO iniciada**: o evento
        no Ulisses já linka pra uma tela de inscrição própria — dá pra
        imaginar integrar um gateway de pagamento (ex: PagSeguro) nessa
