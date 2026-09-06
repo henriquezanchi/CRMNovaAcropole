@@ -632,7 +632,7 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
     display: flex; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--border-color);
     border-radius: 8px; margin-bottom: 8px; background: #fafafa;
 }
-.coluna-row input[type="text"] { flex: 1; padding: 7px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 12px; outline: none; }
+.coluna-row input[type="text"], .coluna-row input[type="email"], .coluna-row input[type="password"] { flex: 1; padding: 7px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 12px; outline: none; }
 .coluna-row select { padding: 7px 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 11px; background: white; cursor: pointer; }
 .coluna-row input[type="color"] { width: 32px; height: 32px; border: none; border-radius: 6px; cursor: pointer; background: none; padding: 0; }
 .icon-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 13px; padding: 6px; border-radius: 4px; transition: 0.2s; }
