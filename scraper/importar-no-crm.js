@@ -54,7 +54,7 @@ export async function abrirCrmComAcesso(page) {
 
     const { senha } = await lerCredencial('crm_acesso', null);
     await page.locator('#acessoSenhaInput').fill(senha);
-    await page.getByRole('button', { name: 'Entrar' }).click();
+    await page.locator('button[onclick="tentarAcesso()"]').click();
     await overlay.waitFor({ state: 'hidden', timeout: 10000 });
 }
 
@@ -92,13 +92,24 @@ export async function importarNoCrm(page, filial, { caminhoAtivos, caminhoInativ
     await page.locator('#fileInativos').setInputFiles(caminhoInativos);
     await page.locator('#fileInscricoes').setInputFiles(caminhoInscricoes);
 
-    await page.getByRole('button', { name: /^Processar/ }).click();
+    // Seletor por `onclick` exato, não por texto/role — confirmado ao
+    // vivo que `getByRole('button', { name: /Processar/ })` fica
+    // ambíguo/instável nessa tela: existe um SEGUNDO botão "Processar"
+    // escondido (modal de Importar Matrícula via print,
+    // js/matricula-importar.js, fechado/disabled), e mesmo só 1 dos 2
+    // sendo visível de verdade (confirmado inspecionando o DOM direto —
+    // offsetParent, display, tabPaneAtivo todos corretos), o locator por
+    // texto simplesmente nunca resolvia (timeout, sem lançar erro de
+    // "strict mode" nem nada que desse pra diagnosticar sem olhar o DOM
+    // cru). onclick="processarPlanilhas()"/"confirmarEnviarImportacao()"
+    // são únicos na página, sem ambiguidade nenhuma.
+    await page.locator('button[onclick="processarPlanilhas()"]').click();
 
     // Só existe depois que processarPlanilhas() monta a prévia — esperar
     // ele aparecer já é o sinal de "processamento terminou" (pode levar
     // um tempo real: cruzamento de milhares de linhas + classificação de
     // temas de evento por IA).
-    const btnConfirmar = page.getByRole('button', { name: 'Confirmar e Enviar para o Supabase' });
+    const btnConfirmar = page.locator('button[onclick="confirmarEnviarImportacao()"]');
     await btnConfirmar.waitFor({ timeout: 120000 });
     await btnConfirmar.click();
 
