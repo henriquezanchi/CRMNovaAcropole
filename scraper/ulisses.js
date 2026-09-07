@@ -337,8 +337,8 @@ export async function exportarComparecimento(page, filial) {
     // "[ATUAL]/[DESAT] ___ DD/MM/AAAA HH:MM ___ Nome do evento" (as duas
     // primeiras partes vêm vazias — "___ ___ Nome" — quando o evento não
     // tem data marcada, ex: "Chat Whatsapp Landing Page"). A lista INCLUI
-    // eventos de outras filiais também — não filtra, serve pra já ter a
-    // base do evento no CRM (nome + data), mesmo sem os detalhes
+    // eventos de outras filiais também — não filtra por filial, serve pra
+    // já ter a base do evento no CRM (nome + data), mesmo sem os detalhes
     // completos (esses só vêm de exportarCatalogoEventos, só p/ eventos
     // futuros da própria filial).
     const combobox = page.locator('select').first();
@@ -348,8 +348,26 @@ export async function exportarComparecimento(page, filial) {
         .filter(t => t && !t.toLowerCase().startsWith('- selecione'));
     if (opcoes.length === 0) throw new Error('Nenhum evento encontrado no seletor da tela de Recepção.');
 
+    // Filtra pros últimos 3 anos — o seletor lista TODO o histórico do
+    // Ulisses (confirmado por teste real: 522 eventos numa única filial),
+    // e a esmagadora maioria é passado antigo demais pra ainda importar
+    // pro CRM; sem esse corte o JSON final fica enorme (6439 linhas só
+    // de Garavelo) pra pouquíssimo ganho. Evento SEM data no texto da
+    // opção (raro, ex: "Chat Whatsapp Landing Page") não dá pra avaliar
+    // idade nenhuma — mantido, já que são poucos casos.
+    const TRES_ANOS_ATRAS = new Date();
+    TRES_ANOS_ATRAS.setFullYear(TRES_ANOS_ATRAS.getFullYear() - 3);
+    const opcoesRecentes = opcoes.filter(opcaoTexto => {
+        const dataHora = opcaoTexto.split('___')[1]?.trim();
+        const m = dataHora && dataHora.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+        if (!m) return true;
+        const dataEvento = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+        return dataEvento >= TRES_ANOS_ATRAS;
+    });
+    console.log(`[ulisses] Comparecimento: ${opcoesRecentes.length} de ${opcoes.length} evento(s) dentro dos últimos 3 anos (${filial}).`);
+
     const registros = [];
-    for (const opcaoTexto of opcoes) {
+    for (const opcaoTexto of opcoesRecentes) {
         try {
             await combobox.selectOption({ label: opcaoTexto });
             // Sem indicador de carregamento claro na tela — a lista de

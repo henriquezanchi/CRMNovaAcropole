@@ -1911,7 +1911,12 @@ bloqueado).
        em vez de heurística de texto — mais robusto, mas **ainda NÃO
        testado de novo contra o site real** depois dessa reescrita (só
        validado contra o HTML que o usuário mandou, não rodado de
-       verdade ainda).
+       verdade ainda). **Filtrado pros últimos 3 anos** (decisão do
+       usuário) — o `<select>` lista TODO o histórico do Ulisses (os 522
+       eventos do teste real acima são prova disso), e processar cada um
+       (selecionar + esperar + ler todas as linhas de participantes)
+       gerava um JSON enorme pra praticamente nenhum ganho; evento sem
+       data no texto da opção (raro) fica de fora do corte, mantido.
        **Comparecimento NÃO é 100% confiável** mesmo depois de corrigido
        (a recepção marca na mão no dia, às vezes esquece) — vale
        considerar perguntar ao lead antes de confiar cegamente num "não
