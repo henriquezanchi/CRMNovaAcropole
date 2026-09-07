@@ -355,6 +355,13 @@ async function renderizarCredenciaisScraper() {
 
     container.innerHTML = `
         ${error ? `<p style="font-size:12px; color:#dc2626;">Aviso: não consegui ler o status atual (${escapeHTML(error.message)}). Rode migracao_credenciais_scraper.sql se ainda não rodou — mesmo assim, dá pra tentar salvar novas senhas abaixo.</p>` : ''}
+        <div class="tag-filter-grupo-titulo">CRM Publicado — senha do portão de acesso (js/acesso.js), pro scraper conseguir subir as planilhas sozinho na tela de Importar</div>
+        <div class="coluna-row">
+            <input type="password" id="credSenhaCrmAcesso" placeholder="Senha de acesso ao CRM" style="flex:1;">
+            <button class="btn-secondary" onclick="salvarCredencialScraper('crm_acesso', null)"><i class="fa-solid fa-floppy-disk"></i> Salvar</button>
+        </div>
+        <p style="font-size:11px; margin:-4px 0 14px;">${formatarStatus('crm_acesso|GLOBAL')}</p>
+
         <div class="tag-filter-grupo-titulo">Mercúrio — autenticação prévia (pop-up cinza do navegador, única pra todo mundo, muda 1x por ano)</div>
         <div class="coluna-row">
             <input type="text" id="credUsuarioMercurioHttp" placeholder="Usuário do pop-up" style="flex:1;">
@@ -391,6 +398,7 @@ async function salvarCredencialScraper(sistema, _filialIgnorado, filialId) {
         mercurio: { usuario: 'credUsuarioMercurio', senha: 'credSenhaMercurio' },
         mercurio_http: { usuario: 'credUsuarioMercurioHttp', senha: 'credSenhaMercurioHttp' },
         ulisses: { usuario: `credUsuarioUlisses-${filialId}`, senha: `credSenhaUlisses-${filialId}` },
+        crm_acesso: { usuario: null, senha: 'credSenhaCrmAcesso' }, // sem usuário — é só a senha do portão
     };
     const ids = idsPorSistema[sistema];
     const inputSenha = ids ? document.getElementById(ids.senha) : null;
