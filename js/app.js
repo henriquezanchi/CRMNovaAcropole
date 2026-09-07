@@ -2346,23 +2346,45 @@ function atualizarRelatorios() {
     const showUpMatricula = contarColuna(matriculadosKey);
 
     const etapas = [
-        { label: 'Base Carregada', valor: baseCarregada },
-        { label: 'Engajamento', valor: engajamento },
-        { label: 'RSVP Confirmado', valor: rsvpConfirmado },
-        { label: 'Show-up e Matrícula', valor: showUpMatricula }
+        { label: 'Base Carregada', desc: 'Todos os leads da filial atual', valor: baseCarregada },
+        { label: 'Engajamento', desc: 'Já saíram da coluna fria do funil', valor: engajamento },
+        { label: 'RSVP Confirmado', desc: 'Confirmaram presença ou já matricularam', valor: rsvpConfirmado },
+        { label: 'Show-up e Matrícula', desc: 'Efetivamente matricularam', valor: showUpMatricula }
     ];
 
+    // Visual em cards empilhados (largura proporcional ao valor real de
+    // cada etapa, cor por posição — cinza/dourado/azul/verde, igual o
+    // protótipo aprovado) em vez da barra fina antiga. Só esta função usa
+    // essas classes (funil-etapa-*) — os outros funis do app (Motivos de
+    // Perda, Jornada da Base) continuam com .funnel-bar-wrapper/.funnel-bar,
+    // sem qualquer mudança.
+    const PALETA_ETAPAS = [
+        { borda: '#cbd5e1', fundo: '#f1f5f9', cor: 'var(--text-dark)' },
+        { borda: 'var(--na-gold)', fundo: '#fdfaf5', cor: 'var(--text-dark)' },
+        { borda: '#3b82f6', fundo: '#eff6ff', cor: 'var(--text-dark)' },
+        { borda: 'var(--na-green)', fundo: '#f0fdf4', cor: 'var(--na-green-dark)' },
+    ];
     const maiorValor = Math.max(1, ...etapas.map(e => e.valor));
 
-    container.innerHTML = etapas.map(e => {
-        const pct = Math.max(4, Math.round((e.valor / maiorValor) * 100));
+    container.innerHTML = etapas.map((e, i) => {
+        const pct = Math.max(50, Math.round((e.valor / maiorValor) * 100));
+        const paleta = PALETA_ETAPAS[i % PALETA_ETAPAS.length];
+        const ehUltima = i === etapas.length - 1;
+        const anterior = i > 0 ? etapas[i - 1].valor : null;
+        const taxaConversao = ehUltima && anterior ? Math.round((e.valor / anterior) * 100) : null;
+
+        const seta = i > 0 ? `<div class="funil-etapa-seta"><i class="fa-solid fa-arrow-down"></i></div>` : '';
         return `
-            <div class="funnel-stage">
-                <div class="funnel-label">${escapeHTML(e.label)}</div>
-                <div class="funnel-bar-wrapper">
-                    <div class="funnel-bar" style="width:${pct}%;">${pct}%</div>
+            ${seta}
+            <div class="funil-etapa-card" style="width:${pct}%; border-left-color:${paleta.borda}; background:${paleta.fundo};">
+                <div>
+                    <div class="funil-etapa-titulo" style="color:${paleta.cor};">${i + 1}. ${escapeHTML(e.label)}</div>
+                    <div class="funil-etapa-desc">${escapeHTML(e.desc)}</div>
                 </div>
-                <div class="funnel-count">${e.valor.toLocaleString('pt-BR')}</div>
+                <div class="funil-etapa-valor-bloco">
+                    <div class="funil-etapa-valor" style="color:${paleta.cor};">${e.valor.toLocaleString('pt-BR')}</div>
+                    ${taxaConversao !== null ? `<div class="funil-etapa-badge">${taxaConversao}% de Show-up</div>` : ''}
+                </div>
             </div>
         `;
     }).join('');

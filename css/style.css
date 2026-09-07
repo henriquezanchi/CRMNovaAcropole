@@ -538,6 +538,18 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .funnel-bar { height: 100%; background: linear-gradient(90deg, var(--na-green), var(--na-gold)); display: flex; align-items: center; padding-left: 14px; color: white; font-weight: 600; font-size: 12px; border-radius: 6px; transition: width 0.5s ease; white-space: nowrap; }
 .funnel-count { width: 70px; font-size: 13px; font-weight: 700; color: var(--na-green-dark); flex-shrink: 0; }
 
+/* Funil de Conversão (aba Relatórios, atualizarRelatorios()) — cards
+   empilhados afunilando, cor por etapa + selo de conversão na última,
+   só usado ali (as outras classes .funnel-* acima continuam servindo os
+   demais relatórios, sem mudança). */
+.funil-etapa-card { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px; border-radius: 8px; border-left: 5px solid #cbd5e1; min-width: 320px; transition: width 0.4s ease; }
+.funil-etapa-titulo { font-size: 14px; font-weight: 700; white-space: nowrap; }
+.funil-etapa-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.funil-etapa-valor-bloco { text-align: right; flex-shrink: 0; }
+.funil-etapa-valor { font-size: 20px; font-weight: 700; }
+.funil-etapa-badge { font-size: 10px; font-weight: 700; color: white; background: var(--na-green); padding: 2px 8px; border-radius: 4px; display: inline-block; margin-top: 4px; white-space: nowrap; }
+.funil-etapa-seta { text-align: center; color: var(--text-muted); font-size: 13px; }
+
 /* Tabelas dos novos relatórios (Temas de Evento / Comparação entre Filiais) */
 .tabela-relatorio { width: 100%; max-width: 760px; margin-top: 16px; border-collapse: collapse; font-size: 12px; }
 .tabela-relatorio th { text-align: left; padding: 8px 12px; border-bottom: 2px solid var(--border-color); color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; }
