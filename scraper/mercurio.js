@@ -21,6 +21,7 @@
 // tentam a página principal E qualquer frame filho antes de desistir.
 import { chromium } from 'playwright';
 import { supabaseAdmin, lerCredencial, registrarStatusSincronizacao } from './lib/supabaseAdmin.js';
+import { abrirCrmNaFilialParaMatricula, importarMatriculaViaTexto } from './importar-matricula-no-crm.js';
 import fs from 'node:fs';
 
 const URL_LOGIN = 'https://mercurio.oinabn.com.br/';
@@ -495,6 +496,113 @@ async function verificarAniversariosAtivosHoje(filialCrm) {
     }
 }
 
+function mesAnoDoIngresso(dataBR) {
+    const m = (dataBR || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    return m ? `${m[3]}-${m[2]}` : null;
+}
+
+// Varre TODAS as turmas da filial (menu "Turmas", uni_esctur.php) — entra
+// em cada uma, lê a tabela de alunos (Matr./Nome/Origem/Ingresso/Fone) e
+// separa quem ingressou no MÊS CORRENTE (não o padrão de 90 dias usado no
+// paste manual, ehMatriculaRecente() em js/matricula-importar.js — aqui
+// é "matriculados NESTE MÊS" de propósito, pedido explícito do usuário,
+// e o pré-filtro acontece AQUI, antes de qualquer coisa chegar na tela do
+// CRM, então esse limite não afeta em nada o fluxo manual). Quem bate é
+// colado na tela "Importar Matrícula" do CRM publicado (marco 3 —
+// scraper/importar-matricula-no-crm.js), reaproveitando 100% da lógica
+// de casamento/tags/dedup que já existe — não reimplementa nada disso
+// aqui.
+//
+// A "Matr." VISÍVEL nessa tabela é só um índice de linha (1, 2, 3...),
+// NÃO a matrícula real — confirmado no HTML ao vivo (a matrícula de
+// verdade só existe no href do link do nome, uni_cadfun.php?matr=XXXXX).
+// Por isso não dá pra só imitar um "copiar e colar" ingênuo — o texto
+// colado é montado aqui já com o número certo extraído do link.
+async function processarMatriculasRecentesTurmas(page, pageCrm, filialCrm, label, indice) {
+    const mesAtual = hojeBrasil().slice(0, 7); // "AAAA-MM"
+    let crmAberto = false;
+    let totalProcessadas = 0;
+
+    const entrarNoIndiceDaFilial = async () => {
+        const fp = await esperarFrame(page, 'principal', /ger_funcao\.php/, 15000);
+        await fp.getByRole('link', { name: 'CADASTRO', exact: true }).nth(indice).click();
+        return esperarFrame(page, 'indice', /uni_indice\.php/, 15000);
+    };
+
+    let frameIndice = await entrarNoIndiceDaFilial();
+    await frameIndice.getByText('Turmas', { exact: true }).first().click();
+    let frameTurmas = await esperarFrame(page, 'principal', /uni_esctur\.php/, 15000);
+
+    const nomesTurmas = [...new Set((await frameTurmas.locator('a[href^="uni_esctal.php?turma="]').allTextContents()).map(t => t.trim()).filter(Boolean))];
+
+    for (const nomeTurma of nomesTurmas) {
+        try {
+            frameTurmas = await esperarFrame(page, 'principal', /uni_esctur\.php/, 15000);
+            await frameTurmas.getByRole('link', { name: nomeTurma, exact: true }).click();
+            const frameDetalhe = await esperarFrame(page, 'principal', /uni_esctal\.php/, 15000);
+
+            const diaTexto = await frameDetalhe.locator('td:has-text("Dia:")').first().innerText().catch(() => '');
+            const horarioTexto = await frameDetalhe.locator('td:has-text("Horário:")').first().innerText().catch(() => '');
+            const dia = diaTexto.replace(/^Dia:\s*/i, '').trim();
+            const horario = horarioTexto.replace(/^Horário:\s*/i, '').trim();
+
+            const tabelas = frameDetalhe.locator('table');
+            const totalTabelas = await tabelas.count();
+            let tabelaAlunos = null;
+            for (let i = 0; i < totalTabelas; i++) {
+                const cab = (await tabelas.nth(i).locator('tr').first().innerText().catch(() => '')).toLowerCase();
+                if (cab.includes('nome') && cab.includes('ingresso')) { tabelaAlunos = tabelas.nth(i); break; }
+            }
+            if (!tabelaAlunos) continue;
+
+            const linhas = tabelaAlunos.locator('tr');
+            const totalLinhas = await linhas.count();
+            const recentes = [];
+            for (let j = 1; j < totalLinhas; j++) {
+                const linkNome = linhas.nth(j).locator('a[href*="uni_cadfun.php?matr="]');
+                if (await linkNome.count() === 0) continue;
+                const href = await linkNome.first().getAttribute('href');
+                const matr = (href.match(/matr=(\d+)/) || [])[1];
+                const nome = (await linkNome.first().innerText()).trim();
+                const celulas = await linhas.nth(j).locator('td').allInnerTexts();
+                const origem = (celulas[2] || '').trim();
+                const ingresso = (celulas[3] || '').trim();
+                const fone = (celulas[5] || '').trim();
+                if (!matr || !nome || mesAnoDoIngresso(ingresso) !== mesAtual) continue;
+                recentes.push({ matr, nome, origem, ingresso, fone });
+            }
+
+            if (recentes.length > 0) {
+                const textoColado = [
+                    'Matr.\tNome\tOrigem\tIngresso\tFormatura\tFone\tFunções\t\t\t\tObservações',
+                    `Turma:\t${nomeTurma}\tDia:\t${dia}\tHorário:\t${horario}`,
+                    ...recentes.map(l => [l.matr, l.nome, l.origem, l.ingresso, '', l.fone, '', '', '', '-', '-'].join('\t')),
+                ].join('\n');
+
+                if (!crmAberto) {
+                    await abrirCrmNaFilialParaMatricula(pageCrm, filialCrm);
+                    crmAberto = true;
+                }
+                await importarMatriculaViaTexto(pageCrm, textoColado);
+                totalProcessadas += recentes.length;
+                console.log(`[matricula-turma] ${recentes.length} matrícula(s) de ${mesAtual} na turma "${nomeTurma}" (${filialCrm}) processada(s).`);
+            }
+        } catch (e) {
+            console.warn(`[matricula-turma] Falha na turma "${nomeTurma}" (${filialCrm}):`, e.message);
+        }
+        // Volta CADASTRO -> Turmas pra próxima iteração (só mexe no `page`
+        // do Mercúrio — `pageCrm`, se aberto, fica intacto numa aba/
+        // contexto separado, sem precisar reabrir o CRM a cada turma).
+        await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
+        try {
+            frameIndice = await entrarNoIndiceDaFilial();
+            await frameIndice.getByText('Turmas', { exact: true }).first().click();
+        } catch { /* se falhar aqui, a próxima iteração do for vai falhar rápido e seguir também */ }
+    }
+
+    return totalProcessadas;
+}
+
 // O Ulisses NUNCA vai rodar sozinho (Cloudflare exige login manual — ver
 // topo do arquivo/CLAUDE.md), então esquecer de rodar é o risco real. Em
 // vez de confiar na memória, esta checagem roda TODO DIA dentro do job
@@ -550,6 +658,7 @@ async function verificarLembreteImportacaoUlisses() {
 async function main() {
     let browser;
     let page;
+    let pageCrm; // aba/contexto SEPARADO pro CRM publicado (sem httpCredentials do Mercúrio) — usado só quando alguma turma tem matrícula recente
     try {
         const httpAuth = await lerCredencial('mercurio_http', null);
         const { usuario: matricula, senha } = await lerCredencial('mercurio', null);
@@ -559,6 +668,7 @@ async function main() {
             httpCredentials: { username: httpAuth.usuario, password: httpAuth.senha },
         });
         page = await context.newPage();
+        pageCrm = await (await browser.newContext()).newPage();
 
         await loginMercurio(page, matricula, senha);
         console.log('[mercurio] Login OK');
@@ -583,17 +693,31 @@ async function main() {
             // padrão de isolamento de falha já usado no Ulisses (uma
             // etapa falhar não devia impedir as outras).
             await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
+            let filialCrm = null;
             try {
                 const caminhoAniversariantes = await exportarAniversariantes(page, label, indice);
                 const resultadoSync = await sincronizarAniversariantesNoCrm(label);
                 console.log(`[mercurio] Aniversariantes exportados — ${label}: ${caminhoAniversariantes} — ${resultadoSync}`);
-                const filialCrm = await resolverFilialCrm(label);
+                filialCrm = await resolverFilialCrm(label);
                 if (filialCrm) await verificarAniversariosAtivosHoje(filialCrm);
             } catch (e) {
                 algumaFalha = true;
                 console.error(`[mercurio] Falha ao exportar/sincronizar Aniversariantes de "${label}":`, e.message);
                 fs.mkdirSync('debug', { recursive: true });
                 await page.screenshot({ path: `debug/mercurio-aniversariantes-${label.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
+            }
+            await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
+
+            try {
+                if (filialCrm) {
+                    const total = await processarMatriculasRecentesTurmas(page, pageCrm, filialCrm, label, indice);
+                    console.log(`[matricula-turma] ${label}: ${total} matrícula(s) do mês corrente processada(s) via varredura de turmas.`);
+                }
+            } catch (e) {
+                algumaFalha = true;
+                console.error(`[mercurio] Falha na varredura de turmas de "${label}":`, e.message);
+                fs.mkdirSync('debug', { recursive: true });
+                await page.screenshot({ path: `debug/mercurio-turmas-${label.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
             }
             // Volta pra tela de funções antes da próxima filial, com ou
             // sem erro — senão a próxima iteração começa num lugar errado.
