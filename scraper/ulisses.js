@@ -5,17 +5,21 @@
 // scraper/exports/ (o workflow sobe como artifact) — ainda NÃO alimenta o
 // CRM sozinho (marco 3, pendente da mesma peça do lado do Mercúrio).
 //
-// (a), (b) e (c) foram escritos só com PRINTS de tela, sem o HTML real —
-// login é a única parte confirmada de verdade contra o site real; (a) já
+// (a) e (b) foram escritos só com PRINTS de tela, sem o HTML real — login
+// é a única parte confirmada de verdade contra o site real; (a) já
 // precisou de 1 rodada de correção depois do 1º teste (o clique em
 // "Exportar CSV" não baixa nada direto, só navega pra uma tela com um
-// 2º botão — ver exportarCsvInscricoes()), e (b)/(c) ainda usam
-// heurísticas de leitura "cegas" (regex em cima do texto visível,
-// âncoras por elemento mais confiável tipo checkbox) com boa chance de
-// precisar de mais ajuste. Se algo falhar, o jeito mais rápido de
-// corrigir é o usuário abrir a tela no DevTools (botão direito >
-// Inspecionar no elemento certo > Copy > Copy outerHTML) e mandar o HTML
-// de verdade, em vez de mais um print.
+// 2º botão — ver exportarCsvInscricoes()), e (b) ainda usa heurísticas de
+// leitura "cegas" (regex em cima do texto visível) pros campos do
+// catálogo de eventos, com boa chance de precisar de mais ajuste. (c) já
+// foi reescrita com o HTML real da tela de Recepção (mandado pelo
+// usuário depois de um bug real em produção — ver comentário dentro de
+// exportarComparecimento()), usando seletores por atributo Angular
+// (`ng-repeat`/`ng-show`), bem mais confiáveis que heurística de texto.
+// Se algo mais falhar, o jeito mais rápido de corrigir é o usuário abrir
+// a tela no DevTools (botão direito > Inspecionar no elemento certo >
+// Copy > Copy outerHTML) e mandar o HTML de verdade, em vez de mais um
+// print.
 //
 // Login é via Auth0 (Universal Login padrão) — usamos os RÓTULOS visíveis
 // dos campos ("Endereço de e-mail"/"Senha") em vez de seletores CSS
@@ -356,19 +360,53 @@ export async function exportarComparecimento(page, filial) {
 
             const [status, dataHora, nomeEvento] = opcaoTexto.split('___').map(s => s.trim());
 
-            const checkboxes = page.locator('input[type="checkbox"]');
-            const total = await checkboxes.count();
-            for (let i = 0; i < total; i++) {
-                const cb = checkboxes.nth(i);
-                const compareceu = await cb.isChecked().catch(() => null);
-                // Sobe até o ancestor mais próximo que contenha um e-mail
-                // no texto — heurística pra pegar "a linha inteira" sem
-                // depender da estrutura exata da tabela/lista.
-                const linha = cb.locator('xpath=ancestor::*[contains(., "@")][1]');
-                const texto = await linha.innerText().catch(() => '');
-                const email = (texto.match(/[\w.+-]+@[\w-]+\.[\w.-]+/) || [])[0] || null;
-                const telefone = (texto.match(/\b\d{2}\s?\d{8,9}\b/) || [])[0] || null;
-                const nome = texto.split('\n')[0]?.trim() || null;
+            // Estrutura confirmada por HTML real (Angular, mandado pelo
+            // usuário): 1 <tr ng-repeat="contato in emails"> por
+            // participante, com 2 <td>: o 1º tem nome/e-mail/telefone
+            // (célula com class="ng-binding"), o 2º tem 1
+            // <div ng-repeat="emailEvento in contato.emailEventos"> POR
+            // EVENTO que esse contato já participou, cada um com seu
+            // próprio checkbox "Compareceu" — só o do evento SELECIONADO
+            // agora fica visível (ng-show="emailEvento.evento.id ==
+            // evento.id"), os outros continuam no DOM, só escondidos.
+            //
+            // O código antigo lia TODOS os checkboxes da página (visíveis
+            // ou não) e subia pelo ancestral mais próximo que contivesse
+            // "@" pra achar "a linha" — isso quebrava de 2 formas
+            // confirmadas: (1) contava checkbox de contato/evento ERRADO
+            // (escondido, de outro evento que a pessoa participou antes),
+            // misturando presença de um evento com o registro de outro; e
+            // (2) quando o contato não tinha e-mail cadastrado, a subida
+            // ia longe demais (a linha dele não tem "@" nenhum) e pegava
+            // texto de uma seção qualquer da página, inclusive o próprio
+            // <select> de eventos — daí o "- Selecione um evento -"
+            // aparecendo como nome. Agora usa os seletores estruturais
+            // reais (por atributo ng-repeat/ng-show do Angular), não mais
+            // heurística de texto.
+            const linhas = page.locator('tr[ng-repeat="contato in emails"]');
+            await linhas.first().waitFor({ timeout: 5000 }).catch(() => {});
+            const totalLinhas = await linhas.count();
+            for (let i = 0; i < totalLinhas; i++) {
+                const linha = linhas.nth(i);
+                const checkboxVisivel = linha.locator('input[type="checkbox"]:visible');
+                if (await checkboxVisivel.count() === 0) continue; // esse contato não tem inscrição pra ESTE evento (só pra outro, escondido)
+                const compareceu = await checkboxVisivel.first().isChecked().catch(() => null);
+
+                const celulaContato = linha.locator('td.ng-binding').first();
+                const nome = (await celulaContato.evaluate(el => el.childNodes[0]?.textContent || '').catch(() => '')).trim() || null;
+
+                const emailSpan = linha.locator('span[ng-show="contato.email"]');
+                const email = (await emailSpan.isVisible().catch(() => false))
+                    ? (await emailSpan.innerText().catch(() => '')).trim() || null
+                    : null;
+
+                const telefoneSpan = linha.locator('span[ng-show="contato.telefone"]');
+                let telefone = null;
+                if (await telefoneSpan.isVisible().catch(() => false)) {
+                    const partes = await telefoneSpan.locator('> span').allTextContents().catch(() => []);
+                    telefone = partes.map(p => p.trim()).filter(Boolean).join(' ') || null;
+                }
+
                 registros.push({
                     eventoNome: nomeEvento || opcaoTexto,
                     eventoData: dataHora || null,

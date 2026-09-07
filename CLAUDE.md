@@ -1888,22 +1888,30 @@ bloqueado).
        `<tr>` toda) resolve rápido.
      - `exportarComparecimento()`: "Pré-inscrições" → "Recepção" (navega
        direto pra `#/recepcao` — o clique no menu nunca chegava lá de
-       verdade, o hover é que abre o submenu, não o clique). **Testado de
-       verdade — BUG SÉRIO CONFIRMADO, não corrigido ainda**: das 6439
-       linhas exportadas num teste real (Garavelo, 522 eventos), **71%
-       são lixo** (nome = "- Selecione um evento -", e-mail/telefone de
-       OUTRA pessoa que não tem nada a ver com a linha). O seletor que
-       sobe pelos ancestrais do checkbox até achar um texto com "@"
-       (`ancestor::*[contains(., "@")][1]`) está subindo longe demais em
-       boa parte dos casos — o padrão dos dados sugere 1+ checkbox por
-       evento fora da linha real de cada participante (talvez um
-       checkbox de cabeçalho/"selecionar todos", ou uma 2ª coluna de
-       checkbox que não fica dentro da própria linha da pessoa — não dá
-       pra saber sem ver o HTML de verdade). **Bloqueado até o usuário
-       mandar o HTML real de 1 linha de participante da tela de Recepção**
-       (DevTools → Inspecionar no checkbox de "Compareceu" → Copy →
-       Copy outerHTML, incluindo uns 2 níveis de ancestral) — mais um
-       palpite não vale a pena depois desse índice de erro.
+       verdade, o hover é que abre o submenu, não o clique). **1º teste
+       real confirmou BUG SÉRIO** (das 6439 linhas exportadas em
+       Garavelo/522 eventos, 71% eram lixo — nome = "- Selecione um
+       evento -", e-mail/telefone de OUTRA pessoa) — causa raiz achada
+       depois que o usuário mandou o HTML real (Angular): (1) cada
+       contato tem **1 checkbox "Compareceu" POR EVENTO que já
+       participou** (`ng-repeat="emailEvento in contato.emailEventos"`),
+       só o do evento selecionado agora fica visível (`ng-show`), os
+       outros continuam no DOM só escondidos — o código antigo lia TODOS
+       os checkboxes da página, inclusive os escondidos de outro evento
+       da mesma pessoa; (2) nome/e-mail/telefone tinham célula própria
+       (`td.ng-binding` na mesma `<tr ng-repeat="contato in emails">`) —
+       a heurística antiga de "subir pelo ancestral até achar um texto
+       com @" quebrava sempre que o contato não tinha e-mail cadastrado
+       (nesse caso a própria linha não tem nenhum "@", então a subida ia
+       longe demais e pegava texto de outra seção da página, inclusive o
+       `<select>` de eventos — daí o "- Selecione um evento -" como
+       nome). **Reescrito com seletores por atributo Angular**
+       (`tr[ng-repeat="contato in emails"]`, `input[type="checkbox"]:visible`
+       dentro da linha, `span[ng-show="contato.email"]`/`"contato.telefone"`)
+       em vez de heurística de texto — mais robusto, mas **ainda NÃO
+       testado de novo contra o site real** depois dessa reescrita (só
+       validado contra o HTML que o usuário mandou, não rodado de
+       verdade ainda).
        **Comparecimento NÃO é 100% confiável** mesmo depois de corrigido
        (a recepção marca na mão no dia, às vezes esquece) — vale
        considerar perguntar ao lead antes de confiar cegamente num "não
