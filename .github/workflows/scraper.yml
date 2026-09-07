@@ -1,12 +1,15 @@
 name: Scraper Ulisses/Mercúrio
 
-# MARCO 1 — só disparo manual (workflow_dispatch) por enquanto, pra
-# testar se o login funciona antes de agendar rodadas automáticas todo
-# dia. Depois de confirmado, trocar/completar com:
-#   schedule:
-#     - cron: '0 8 * * *'  # 08:00 UTC = 05:00 em Brasília (sem horário de verão)
+# Mercúrio roda 100% headless, sem bloqueio (confirmado em teste real) —
+# por isso já dá pra agendar sozinho, todo dia, sem precisar de ninguém
+# (ver `schedule:` abaixo). O Ulisses continua manual (Cloudflare barra
+# IP de datacenter, ver comentário no passo abaixo) — pra isso, use o
+# modo local/assistido (`npm run ulisses-local` na sua máquina de
+# confiança) sempre que precisar reimportar de verdade.
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 8 * * *'  # 08:00 UTC = 05:00 em Brasília (Brasil não observa horário de verão desde 2019)
 
 jobs:
   scraper:

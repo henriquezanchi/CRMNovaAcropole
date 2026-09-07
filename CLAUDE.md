@@ -2074,8 +2074,97 @@ bloqueado).
        Mercúrio + Ulisses + importar-no-crm em sequência, por filial, num
        comando só) é trabalho futuro, não um problema de arquitetura em
        aberto — só falta escrever o "orquestrador".
-  4. ⬜ Agendamento (`schedule:` no workflow — hoje só `workflow_dispatch`,
-     disparo manual, até os marcos acima estarem validados).
+  4. ✅ **Agendamento do Mercúrio** (`schedule:` no `.github/workflows/scraper.yml`,
+     cron `0 8 * * *` = 05:00 em Brasília todo dia) — só a parte do
+     Mercúrio, que já roda 100% headless sem bloqueio nenhum. O Ulisses
+     **nunca** vai ter agendamento automático (decisão consciente — ver
+     Cloudflare acima); continua exigindo `npm run ulisses-local` manual
+     numa máquina de confiança (usuário decidiu manter fixo, não abrir
+     mão de segurança só pra rodar de qualquer PC — ver justificativa na
+     seção "Lembrete de importação do Ulisses" logo abaixo).
+
+### Lembrete de importação do Ulisses (WhatsApp pro admin)
+
+Como o Ulisses nunca roda sozinho, o risco real é ESQUECER de rodar —
+por isso o job diário do Mercúrio (que já roda sozinho) manda um WhatsApp
+de lembrete pro admin em 2 situações, calculadas em `verificarLembreteImportacaoUlisses()`
+(`scraper/mercurio.js`, chamada no fim de `main()`, best-effort — erro
+aqui nunca derruba o resto do job):
+- **Existe algum evento (qualquer filial) com data de ontem, hoje ou
+  amanhã** → marcado como lembrete IMPORTANTE (é quando presença/
+  matrícula frescas mais importam) — lista os eventos na mensagem.
+- **É segunda-feira** (mesmo sem evento por perto) → checagem semanal de
+  rotina, pra não deixar a base ficar desatualizada por muito tempo.
+- Data "hoje" calculada no fuso de Brasília (`Intl.DateTimeFormat` com
+  `timeZone: 'America/Sao_Paulo'`) — importante porque o GitHub Actions
+  roda em UTC por padrão.
+
+**Nova Edge Function `lembrete-scraper`** (`supabase/functions/lembrete-scraper/`):
+manda a mensagem pra um número FIXO (secret `WHATSAPP_NUMERO_ADMIN`, nunca
+hardcoded), reaproveitando os MESMOS secrets já configurados da integração
+de WhatsApp (`WHATSAPP_TOKEN`/`WHATSAPP_PHONE_NUMBER_ID_DEFAULT`) — sem
+duplicar nada. Diferente de `whatsapp-send` (sempre busca telefone de um
+LEAD), esta manda pra um número que não é lead nenhum. **Setup pendente**
+(só o usuário consegue fazer): `supabase functions deploy lembrete-scraper`
++ `supabase secrets set WHATSAPP_NUMERO_ADMIN=5562991729783` (mantém
+verificação de JWT padrão — só o scraper, com `SERVICE_ROLE_KEY`, chama).
+
+**Limitação conhecida, documentada no código da function**: WhatsApp só
+aceita texto livre se o destinatário tiver mandado mensagem pro número
+comercial nas últimas 24h — fora da janela, só TEMPLATE aprovado
+funciona. Ainda não existe um template pra esse lembrete; até lá, a
+entrega em dias sem interação recente não é garantida (erro 131047,
+logado mas não visível pro admin — a mensagem simplesmente não chega).
+Recomendação: criar e aprovar um template dedicado na Meta assim que o
+bloqueio de API (ver abaixo) for resolvido, senão o lembrete pros "dias
+que não posso falhar" pode falhar silenciosamente bem nesses dias.
+
+**Cofre não usado aqui de propósito**: diferente de Ulisses/Mercúrio, o
+número do admin fica em secret de Edge Function (não em
+`credenciais_scraper`) porque não é uma senha de login — é só um
+destinatário fixo, sem necessidade de cifragem.
+
+**Decisão registrada (não construir por enquanto)**: o usuário cogitou um
+botão DENTRO do CRM publicado pra acionar o Ulisses remotamente, ou até
+baixar o scraper pra rodar em qualquer computador — as duas ideias
+esbarram no mesmo problema: a chave `service_role` do Supabase (usada
+pelo scraper pra ler o cofre de credenciais) precisaria "viajar" até um
+navegador ou computador não-confiável, o que anula a única tabela do
+projeto blindada contra acesso público (`credenciais_scraper`, sem RLS
+pública de propósito). Decisão do usuário: manter o modelo atual
+(`C:\Scrapper`, ou replicar o mesmo setup manual em outra máquina de
+confiança se precisar) em vez de investir numa ponte seguro-o-suficiente
+(token temporário via Edge Function) — reavaliar só se isso virar
+dor real no dia a dia.
+
+## Bloqueio da API do WhatsApp (Meta) — investigado 2026-09-07
+
+Toda mensagem de saída desde 2026-09-05 22:21 (e antes, 19:23) falha com
+`{"code":200,"type":"OAuthException","message":"API access blocked."}` —
+**diferente** do erro 131047 (janela de 24h fechada, normal/esperado, e
+que também aparece nos logs ANTES disso, confirmando que a integração
+funcionava). Investigação (consultando `mensagens_whatsapp` direto):
+- Só 11 mensagens no total, quase todas de teste do próprio usuário pro
+  próprio número (5562991729783) — volume baixíssimo, não bate com
+  "spam" ou envio em massa disparando um filtro da Meta.
+- O bloqueio apareceu num intervalo de ~18h SEM nenhuma mensagem sendo
+  mandada (entre 01:10 e 19:23 do dia 05/09) — não foi uma mensagem
+  específica que "estourou" nada.
+- **Teoria mais provável (do próprio usuário, consistente com a
+  investigação)**: divergência entre o telefone cadastrado na Receita
+  Federal (documentos enviados pra verificação da empresa na Meta) e o
+  telefone atual — a Meta pode ter rodado uma verificação nesse meio-tempo
+  e restringido o acesso à API por causa disso, não por comportamento de
+  uso.
+- **Não é algo que dê pra resolver por código** — precisa checar
+  business.facebook.com (avisos/notificações da Business Manager),
+  developers.facebook.com/apps (status do app), e o WhatsApp Manager
+  (status/"quality rating" do número). Provavelmente vai exigir corrigir
+  o telefone/documento da verificação de empresa e pedir nova revisão.
+- Bloqueia tudo que depende de WhatsApp: convites de evento, resgate de
+  lead frio, e o lembrete de importação do Ulisses (seção acima) — ainda
+  assim, o código do lembrete foi escrito e já fica pronto pra funcionar
+  assim que o bloqueio for resolvido.
 
 ## Publicação/Deploy — CRM público (Vercel) + portão de acesso
 

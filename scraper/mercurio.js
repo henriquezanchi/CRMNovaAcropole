@@ -437,6 +437,71 @@ export async function sincronizarAniversariantesNoCrm(labelMercurio) {
     return `${atualizados} lead(s) com data de nascimento preenchida, de ${registros.length} aniversariante(s) do Mercúrio (${semLead} sem lead correspondente por nome, ${ambiguos} nome ambíguo/homônimo, ${jaTinhaData} já tinham data preenchida).`;
 }
 
+// Data de hoje no fuso de Brasília (America/Sao_Paulo) — importante rodar
+// no GitHub Actions, que roda em UTC por padrão; sem isso, "hoje" podia
+// ficar 1 dia adiantado/atrasado dependendo da hora da execução.
+function hojeBrasil() {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()); // "AAAA-MM-DD"
+}
+function somarDias(dataISO, dias) {
+    const [a, m, d] = dataISO.split('-').map(Number);
+    const dt = new Date(Date.UTC(a, m - 1, d));
+    dt.setUTCDate(dt.getUTCDate() + dias);
+    return dt.toISOString().slice(0, 10);
+}
+
+// O Ulisses NUNCA vai rodar sozinho (Cloudflare exige login manual — ver
+// topo do arquivo/CLAUDE.md), então esquecer de rodar é o risco real. Em
+// vez de confiar na memória, esta checagem roda TODO DIA dentro do job
+// automático do Mercúrio (que já roda sozinho) e manda um WhatsApp de
+// lembrete pro admin quando: (a) existe algum evento (qualquer filial)
+// com data de ontem, hoje ou amanhã — marcado como IMPORTANTE, é quando
+// os dados de comparecimento/matrícula mais importam estarem frescos; ou
+// (b) é o dia da checagem semanal de rotina (segunda-feira), mesmo sem
+// evento por perto, pra não deixar a base ficar desatualizada por muito
+// tempo. Best-effort: qualquer erro aqui é só logado, nunca derruba o
+// resto do job do Mercúrio.
+async function verificarLembreteImportacaoUlisses() {
+    try {
+        const hoje = hojeBrasil();
+        const ontem = somarDias(hoje, -1);
+        const amanha = somarDias(hoje, 1);
+
+        const { data: eventosProximos, error } = await supabaseAdmin
+            .from('eventos')
+            .select('filial, nome, data')
+            .in('data', [ontem, hoje, amanha])
+            .order('data', { ascending: true });
+        if (error) { console.warn('[lembrete] Erro ao buscar eventos próximos:', error.message); return; }
+
+        const ehSegunda = new Date(`${hoje}T12:00:00`).getDay() === 1; // meio-dia evita virada de fuso na conversão
+        const temEvento = (eventosProximos || []).length > 0;
+        if (!temEvento && !ehSegunda) {
+            console.log('[lembrete] Nada a lembrar hoje (sem evento por perto, não é segunda-feira).');
+            return;
+        }
+
+        let texto = temEvento
+            ? '⚠️ *Lembrete importante* — tem evento por perto, rode a importação do Ulisses hoje pra manter presença/matrícula em dia!\n\nEventos:\n'
+            : '🔔 Checagem semanal — vale rodar a importação do Ulisses pra não deixar a base desatualizada.\n';
+        if (temEvento) {
+            for (const ev of eventosProximos) {
+                const rotulo = ev.data === hoje ? 'HOJE' : (ev.data === ontem ? 'ontem' : 'amanhã');
+                texto += `• ${ev.nome} (${ev.filial}) — ${rotulo}\n`;
+            }
+        }
+
+        const { data: resultado, error: erroEnvio } = await supabaseAdmin.functions.invoke('lembrete-scraper', { body: { texto } });
+        if (erroEnvio || (resultado && resultado.ok === false)) {
+            console.warn('[lembrete] Falha ao enviar lembrete por WhatsApp:', erroEnvio?.message || JSON.stringify(resultado));
+        } else {
+            console.log('[lembrete] Lembrete de importação do Ulisses enviado por WhatsApp.');
+        }
+    } catch (e) {
+        console.warn('[lembrete] Erro inesperado (não interrompe o job):', e.message);
+    }
+}
+
 async function main() {
     let browser;
     let page;
@@ -491,6 +556,10 @@ async function main() {
         await registrarStatusSincronizacao('mercurio', null, !algumaFalha, algumaFalha
             ? 'Login OK, mas 1+ exportação (Ativos/Inativos ou Aniversariantes) falhou — ver logs e prints do workflow.'
             : `Login + exportação de Ativos/Inativos + Aniversariantes (já sincronizados no CRM) OK para ${cadastros.length} filial(is).`);
+
+        // Roda sempre, mesmo se alguma filial falhou acima — o lembrete de
+        // rodar o Ulisses importa MAIS ainda quando algo deu errado.
+        await verificarLembreteImportacaoUlisses();
     } catch (e) {
         console.error('[mercurio] Falha:', e.message);
         try {
