@@ -534,6 +534,8 @@ async function processarMatriculasRecentesTurmas(page, pageCrm, filialCrm, label
     let frameTurmas = await esperarFrame(page, 'principal', /uni_esctur\.php/, 15000);
 
     const nomesTurmas = [...new Set((await frameTurmas.locator('a[href^="uni_esctal.php?turma="]').allTextContents()).map(t => t.trim()).filter(Boolean))];
+    console.log(`[matricula-turma] ${nomesTurmas.length} turma(s) encontrada(s) em ${filialCrm} — procurando ingressos de ${mesAtual}.`);
+    let totalAlunosLidos = 0;
 
     for (const nomeTurma of nomesTurmas) {
         try {
@@ -568,6 +570,7 @@ async function processarMatriculasRecentesTurmas(page, pageCrm, filialCrm, label
                 const origem = (celulas[2] || '').trim();
                 const ingresso = (celulas[3] || '').trim();
                 const fone = (celulas[5] || '').trim();
+                totalAlunosLidos++;
                 if (!matr || !nome || mesAnoDoIngresso(ingresso) !== mesAtual) continue;
                 recentes.push({ matr, nome, origem, ingresso, fone });
             }
@@ -600,6 +603,7 @@ async function processarMatriculasRecentesTurmas(page, pageCrm, filialCrm, label
         } catch { /* se falhar aqui, a próxima iteração do for vai falhar rápido e seguir também */ }
     }
 
+    console.log(`[matricula-turma] ${totalAlunosLidos} aluno(s) lidos no total em ${filialCrm}; ${totalProcessadas} matrícula(s) de ${mesAtual} encontrada(s).`);
     return totalProcessadas;
 }
 

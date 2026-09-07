@@ -48,6 +48,16 @@ export async function importarMatriculaViaTexto(page, textoColado) {
     const btnConfirmar = page.locator('#matriculaImportarBtnConfirmar');
     await btnConfirmar.waitFor({ timeout: 20000 }); // processarTextoMatricula() busca todos os leads da filial (paginado)
 
+    // O botão fica DESABILITADO quando 0 linhas casaram com um lead real
+    // (renderizarRevisaoMatricula(), js/matricula-importar.js) — confirmado
+    // ao vivo num teste com dado propositalmente falso. Nesse caso não tem
+    // nada pra confirmar; só fecha o modal em vez de esperar um clique que
+    // nunca vai ser aceito.
+    if (await btnConfirmar.isDisabled()) {
+        await page.locator('#modalImportarMatricula button:has(i.fa-xmark)').first().click().catch(() => {});
+        return;
+    }
+
     page.once('dialog', d => d.accept().catch(() => {})); // confirm() nativo de confirmarImportacaoMatricula()
     await btnConfirmar.click();
 
