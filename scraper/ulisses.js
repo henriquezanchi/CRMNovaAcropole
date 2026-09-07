@@ -177,16 +177,26 @@ export async function exportarCatalogoEventos(page, filial) {
             await fecharAvisosBloqueantes(page);
             await cards.nth(i).click();
 
-            // Espera o campo "Título" de verdade aparecer/atualizar, em vez
-            // de um sleep fixo (que às vezes lia campo do card anterior
-            // ainda não trocado, às vezes esperava sem necessidade). Se não
-            // aparecer a tempo, é sinal de card de outra filial — pula sem
-            // tentar ler os outros 5 campos (que também nunca apareceriam).
+            // Espera o campo "Título" de verdade aparecer, em vez de um
+            // sleep fixo — mas isso só detecta "o painel abriu" (útil pra
+            // pular card de outra filial, que nunca abre painel nenhum).
+            // NÃO detecta "os campos já atualizaram pro card novo": quando
+            // 2 cards seguidos têm o MESMO título (confirmado por teste
+            // real — "Workshop de Oratória" apareceu 2x, com descrição
+            // ERRADA no 2º, ainda a do card anterior), esperar o Título
+            // "aparecer" não serve de sinal nenhum, porque o texto dele já
+            // era esse antes mesmo do clique. Por isso, depois do painel
+            // abrir, ainda espera um instante fixo curto pros campos mais
+            // lentos (Descrição/Informação, que carregam depois do
+            // Título) terminarem de atualizar antes de ler qualquer um
+            // deles — mitigação best-effort; um sinal 100% confiável
+            // precisaria do HTML real do painel (ver topo do arquivo).
             const abriu = await page.getByLabel(/t[íi]tulo/i).first().waitFor({ timeout: 5000 }).then(() => true).catch(() => false);
             if (!abriu) {
                 console.warn(`[ulisses] Evento ${i} não abriu painel de detalhes a tempo (provavelmente de outra filial) — pulando (${filial}).`);
                 continue;
             }
+            await page.waitForTimeout(600);
 
             eventos.push({
                 data: match ? `${match[3]}-${match[2]}-${match[1]}` : null,
@@ -283,6 +293,66 @@ export async function exportarComparecimento(page, filial) {
     return caminho;
 }
 
+// Depois de exportar o catálogo de eventos (função acima), grava cada
+// evento FUTURO direto na tabela `eventos` do CRM — sem passo manual: o
+// scraper já tem acesso de service_role ao Supabase (mesmo cliente usado
+// pras credenciais/status de sincronização), então não faz sentido exigir
+// que alguém abra o JSON e cadastre na mão. Casa por (filial, nome, data)
+// — reexecutar o scraper atualiza imagem/descrição de um evento já
+// importado em vez de duplicar. Tipo é classificado pela MESMA tabela
+// `tipos_evento`/`palavras_chave` que a Agenda usa em "Gerenciar Tipos"
+// (pequena duplicação deliberada da lógica de classificarTipoEvento() em
+// js/importador.js — aqui é só um lookup de palavra-chave, baixo risco de
+// divergir, e evitar duplicar seria só possível fazendo o Playwright
+// pilotar a UI do CRM publicado, que é a decisão maior do marco 3, ainda
+// pendente). Sem "hora" — o card do Ulisses não expõe isso como campo
+// separado (o texto de Subtítulo/Informação, concatenado em `descricao`
+// abaixo, costuma trazer o horário em texto livre).
+export async function sincronizarCatalogoEventosNoCrm(filial) {
+    const caminhoJson = `${PASTA_EXPORTS}/catalogo-eventos-${filial.replace(/[^a-z0-9]/gi, '_')}.json`;
+    if (!fs.existsSync(caminhoJson)) throw new Error('catalogo-eventos.json não encontrado — a etapa "catalogo-eventos" precisa rodar (e ter achado 1+ evento) antes desta.');
+
+    const eventos = JSON.parse(fs.readFileSync(caminhoJson, 'utf-8'));
+    if (eventos.length === 0) return '0 eventos no catálogo — nada a sincronizar.';
+
+    const { data: tiposEvento } = await supabaseAdmin.from('tipos_evento').select('nome, ordem, palavras_chave').order('ordem', { ascending: true });
+    const escaparRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const classificarTipo = (nomeEvento) => {
+        for (const t of tiposEvento || []) {
+            const chaves = String(t.palavras_chave || '').split(',').map(p => p.trim()).filter(Boolean);
+            if (chaves.some(p => new RegExp(escaparRegex(p), 'i').test(nomeEvento))) return t.nome;
+        }
+        return null; // sem palavra-chave batendo — fica em branco, o usuário classifica na Agenda
+    };
+
+    let criados = 0, atualizados = 0, ignorados = 0;
+    for (const ev of eventos) {
+        if (!ev.data || !ev.titulo) { ignorados++; continue; } // sem data/título não dá pra casar nem cadastrar
+
+        const { data: existente } = await supabaseAdmin
+            .from('eventos')
+            .select('id')
+            .eq('filial', filial).eq('nome', ev.titulo).eq('data', ev.data)
+            .maybeSingle();
+
+        const payload = {
+            filial, nome: ev.titulo, data: ev.data,
+            tipo: classificarTipo(ev.titulo),
+            imagem_url: ev.imagem_url || null,
+            descricao: [ev.subtitulo, ev.informacao, ev.descricao].filter(Boolean).join('\n\n') || null,
+        };
+
+        if (existente) {
+            await supabaseAdmin.from('eventos').update(payload).eq('id', existente.id);
+            atualizados++;
+        } else {
+            await supabaseAdmin.from('eventos').insert(payload);
+            criados++;
+        }
+    }
+    return `${criados} evento(s) criado(s), ${atualizados} atualizado(s)${ignorados ? `, ${ignorados} ignorado(s) sem data/título` : ''}.`;
+}
+
 export async function salvarScreenshotErro(page, filial, etapa) {
     fs.mkdirSync('debug', { recursive: true });
     await page.screenshot({ path: `debug/ulisses-${etapa}-${filial.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
@@ -309,6 +379,7 @@ async function processarFilial(browser, filial) {
     const etapas = [
         { nome: 'exportar-csv-inscricoes', executar: () => exportarCsvInscricoes(page, filial) },
         { nome: 'catalogo-eventos', executar: () => exportarCatalogoEventos(page, filial) },
+        { nome: 'sincronizar-eventos-crm', executar: () => sincronizarCatalogoEventosNoCrm(filial) },
         { nome: 'comparecimento', executar: () => exportarComparecimento(page, filial) },
     ];
     let algumaFalha = false;

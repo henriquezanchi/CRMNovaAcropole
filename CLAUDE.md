@@ -796,6 +796,25 @@ mesma regra de confiança total usada pra tags/filiais/eventos.
      do card no Kanban. Ao lado, o card **"Jornada até a Matrícula"**
      (`renderizarResumoJornada()`/`filtrarPorJornada()`) — os "verdadeiros"
      Leads Fortes, ver bullet "Sistema de follow-up" na seção de tags.
+     Tem também o card **"Follow-up de Eventos"** (`atualizarFollowupEventos()`)
+     — DIRETO no banco, não proxy (mesmo motivo de
+     `atualizarLembretesPendentes()`/`atualizarAniversariantes()` logo
+     abaixo: um evento chegando precisa aparecer mesmo que o lead ainda
+     não tenha sido paginado pro navegador): lista quem está vinculado
+     (`evento_leads`) a um evento da filial atual que AINDA NÃO PASSOU
+     (mesma noção de "vale a pena" de `dataEfetivaLimite()`,
+     `js/eventos.js` — usa `data` OU `data_limite_inscricao`, o que for
+     mais tarde), pra lembrar o time de confirmar presença antes do
+     evento acontecer. Mistura `resposta_convite = 'confirmado'`
+     ("confirmaram que iriam") e `'pendente'` ("se inscreveram" mas ainda
+     não confirmaram) — `'recusado'` fica de fora, não precisa de
+     follow-up; confirmado aparece primeiro na lista (badge verde vs.
+     âmbar, reaproveita `CLASSES_RESPOSTA_CONVITE`/`ROTULOS_RESPOSTA_CONVITE`
+     já definidos em `js/eventos.js`). Alimentado por `evento_leads`
+     (criado manualmente no modal de Participantes/gaveta do lead, ver
+     "Agenda de Eventos" — não tem parser automático de "a pessoa
+     respondeu 'sim' no WhatsApp", isso continua exigindo alguém marcar
+     `resposta_convite = 'confirmado'` na tela).
   2. `tab-crm` — o Kanban em si (aba principal, 100% funcional).
   3. `tab-agenda` — Agenda de Eventos (cadastro manual de atividades por
      filial). Ver seção "Agenda de Eventos" abaixo.
@@ -1797,42 +1816,97 @@ bloqueado).
   quebra em Node < 22 por falta de `WebSocket` nativo ("Node.js 20
   detected without native WebSocket support") — descoberto no primeiro
   teste real do workflow.
+- **Ambiente pra RODAR o scraper (não só editar código) — `G:\` é um drive
+  virtual do Google Drive (streaming), não disco local de verdade, e
+  `npm install`/Playwright não são confiáveis lá** (confirmado em teste
+  real: `node_modules` ficou com arquivos de 0 byte mesmo depois de
+  reinstalar, `npm install` solta uma enxurrada de
+  `TAR_ENTRY_ERROR`/`EBADF` durante a extração — o driver do Google Drive
+  não aguenta a escrita rápida de milhares de arquivos pequenos, e nem
+  aceita criar um Junction/symlink apontando pra fora dele, "Função
+  incorreta"). O usuário mantém um clone git separado em **`C:\Scrapper`**
+  (disco local de verdade, `node_modules` íntegro) só pra RODAR
+  (`npm run ulisses-local`/`npm run mercurio`) — o código-fonte
+  continua sendo editado normalmente aqui em `G:\...\crm-agencia-na`
+  (é o repositório com o remote `origin`); antes de rodar algo em
+  `C:\Scrapper` depois de editar `scraper/*.js`, copie os arquivos
+  alterados pra lá (`cp`/`robocopy`) ou dê um `git pull` lá depois de
+  commitar+pushar daqui. `scraper/exports/`/`scraper/debug/` só existem
+  na cópia que rodou (hoje, `C:\Scrapper`), não aqui.
 - **Status por marco**:
   1. ✅ Login automatizado nos dois sistemas (confirma sessão autenticada,
      grava sucesso/falha em `status_sincronizacao_automatica` — ver
      Central de Notificações).
-  2. 🟡 Exportar os dados — **Ulisses feito, mas com 2 partes ainda por
-     validar de verdade** (escritas só com prints, sem HTML real — ver
-     comentário no topo de `scraper/ulisses.js`):
+  2. 🟡 Exportar os dados — **Ulisses testado de verdade (1º teste real
+     completo, 2026-09-06/07, filial Garavelo, modo local/assistido)**,
+     com 2 das 3 exportações precisando de correção depois do teste:
      - `exportarCsvInscricoes()`: clique único em "Exportar CSV" no menu
        do topo, sem formulário/seletor de evento no meio **(testado e
-       confirmado)** — baixa direto o CSV de Inscrições por filial.
+       confirmado)** — baixa direto o CSV de Inscrições por filial, no
+       formato exato que o importador manual espera.
      - `exportarCatalogoEventos()`: tela "Links" (home pós-login,
        `#/evento`) → aba "Ativo" → clica em cada card da lista (achado
-       pela data DD/MM/AAAA no texto, sem seletor mais preciso disponível)
-       e lê por RÓTULO os campos do formulário à direita (Título, Tipo
-       link — ex: `ABERTURA_DE_TURMA`, Imagem — URL S3, Subtítulo,
-       Informação, Descrição). Salva um JSON — dá pra popular
-       `eventos.imagem_url`/`descricao` automaticamente depois. **Ainda
-       não testado de verdade** — só o HTML real (DevTools → Inspecionar
-       → Copy outerHTML) resolveria as dúvidas de seletor mais rápido que
-       mais um print, se falhar.
-     - `exportarComparecimento()`: "Pré-inscrições" → "Recepção" →
-       seletor de evento no topo (tenta achar um `<select>` nativo; se não
-       achar, captura só o evento já selecionado por padrão). Ancora nos
-       **checkboxes** de "Compareceu" (mais estável que tentar achar cada
-       campo) e extrai nome/e-mail/telefone por REGEX do texto ao redor —
-       heurística deliberadamente "cega" pela mesma falta de HTML real.
-       **Comparecimento NÃO é 100% confiável** (a recepção marca na mão no
-       dia, às vezes esquece) — vale considerar perguntar ao lead antes de
-       confiar cegamente num "não compareceu". "Relatórios" no menu do
-       topo só tem estatística agregada, não lista de leads — não serve
-       pra isso.
-     - Cada uma das 3 exportações roda independente dentro de
-       `processarFilial()` — uma falhar não impede as outras, e cada
-       etapa que falha gera seu PRÓPRIO print de erro
-       (`debug/ulisses-<etapa>-<filial>.png`), mais fácil de diagnosticar
-       que 1 só genérico por filial.
+       pela data DD/MM/AAAA no texto) e lê por RÓTULO os campos do
+       formulário à direita (Título, Tipo link, Imagem, Subtítulo,
+       Informação, Descrição). **Testado de verdade — funciona, com 1 bug
+       real corrigido**: quando 2 cards seguidos têm o MESMO título (ex:
+       "Workshop de Oratória" 2x, datas diferentes), o código lia a
+       Descrição ainda do card ANTERIOR (esperar o campo "Título"
+       aparecer não serve de sinal quando o texto já era esse antes do
+       clique) — mitigado com uma espera fixa curta (600ms) depois do
+       painel abrir, antes de ler qualquer campo (best-effort; um sinal
+       100% confiável ainda precisaria do HTML real do painel).
+     - `exportarComparecimento()`: "Pré-inscrições" → "Recepção" (navega
+       direto pra `#/recepcao` — o clique no menu nunca chegava lá de
+       verdade, o hover é que abre o submenu, não o clique). **Testado de
+       verdade — BUG SÉRIO CONFIRMADO, não corrigido ainda**: das 6439
+       linhas exportadas num teste real (Garavelo, 522 eventos), **71%
+       são lixo** (nome = "- Selecione um evento -", e-mail/telefone de
+       OUTRA pessoa que não tem nada a ver com a linha). O seletor que
+       sobe pelos ancestrais do checkbox até achar um texto com "@"
+       (`ancestor::*[contains(., "@")][1]`) está subindo longe demais em
+       boa parte dos casos — o padrão dos dados sugere 1+ checkbox por
+       evento fora da linha real de cada participante (talvez um
+       checkbox de cabeçalho/"selecionar todos", ou uma 2ª coluna de
+       checkbox que não fica dentro da própria linha da pessoa — não dá
+       pra saber sem ver o HTML de verdade). **Bloqueado até o usuário
+       mandar o HTML real de 1 linha de participante da tela de Recepção**
+       (DevTools → Inspecionar no checkbox de "Compareceu" → Copy →
+       Copy outerHTML, incluindo uns 2 níveis de ancestral) — mais um
+       palpite não vale a pena depois desse índice de erro.
+       **Comparecimento NÃO é 100% confiável** mesmo depois de corrigido
+       (a recepção marca na mão no dia, às vezes esquece) — vale
+       considerar perguntar ao lead antes de confiar cegamente num "não
+       compareceu". "Relatórios" no menu do topo só tem estatística
+       agregada, não lista de leads — não serve pra isso.
+     - **`sincronizarCatalogoEventosNoCrm(filial)`, NOVA, testada de
+       verdade (2 eventos criados de verdade em Garavelo)**: depois de
+       `exportarCatalogoEventos()` gerar o JSON, essa função já grava cada
+       evento FUTURO direto na tabela `eventos` do CRM — sem passo manual
+       nenhum, o scraper já tem acesso `service_role` ao Supabase pra
+       isso (mesmo cliente usado pras credenciais/status de
+       sincronização). Casa por `(filial, nome, data)` — reexecutar o
+       scraper ATUALIZA um evento já importado (corrige imagem/descrição)
+       em vez de duplicar, então o bug de descrição acima se autocorrige
+       sozinho assim que o scraper rodar de novo com a correção. `tipo`
+       é classificado pela MESMA tabela `tipos_evento`/`palavras_chave`
+       de "Gerenciar Tipos" (pequena duplicação deliberada — só um
+       lookup de palavra-chave, baixo risco de divergir da lógica de
+       `classificarTipoEvento()` em `js/importador.js`); tipo de evento
+       sem palavra-chave configurada fica em branco, sem inventar
+       "Outro" (usuário classifica na Agenda se quiser). Não captura
+       `hora` (o card do Ulisses não expõe isso como campo separado — o
+       texto de Subtítulo/Informação, concatenado dentro de `descricao`,
+       costuma trazer o horário em texto livre) nem
+       `data_limite_inscricao` (fica null, editável na Agenda). Chamada
+       como uma etapa a mais dentro de `processarFilial()`/
+       `processarFilialLocal()`, entre `catalogo-eventos` e
+       `comparecimento` — roda independente das outras (mesmo padrão de
+       isolamento de falha).
+     - Cada uma das etapas roda independente dentro de `processarFilial()`
+       — uma falhar não impede as outras, e cada etapa que falha gera seu
+       PRÓPRIO print de erro (`debug/ulisses-<etapa>-<filial>.png`), mais
+       fácil de diagnosticar que 1 só genérico por filial.
      - **Mercúrio**: `exportarAtivosEInativos()` escrita (login corrigido
        pra buscar em frames — ver acima; descobre TODOS os links
        "CADASTRO" da tela pós-login via `listarLinksCadastro()`, um por

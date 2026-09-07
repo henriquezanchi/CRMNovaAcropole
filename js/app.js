@@ -2007,6 +2007,7 @@ function atualizarDashboard() {
     renderizarFeedAtividades();
     atualizarLembretesPendentes();
     atualizarAniversariantes();
+    atualizarFollowupEventos();
 }
 
 // Mesma lógica de rankLeadForte()/renderizarCards() pra reconhecer a tag
@@ -2168,6 +2169,88 @@ async function atualizarAniversariantes() {
                 <div>
                     <div><strong>${escapeHTML(l.pessoaNome || 'Lead sem nome')}</strong>${ehHoje ? ' 🎂 <strong>hoje!</strong>' : ''}</div>
                     <div class="activity-time">${String(l.dia).padStart(2, '0')}/${String(l.mes).padStart(2, '0')}</div>
+                </div>
+            </div>`;
+    }).join('');
+}
+
+// Follow-up de Eventos: quem está vinculado (evento_leads — "se inscreveu",
+// ou o time confirmou por WhatsApp/telefone e marcou no modal de
+// Participantes) a um evento AINDA NÃO PASSADO da filial atual. Direto no
+// banco (não proxy sobre leadsAtuais), mesmo motivo de
+// atualizarLembretesPendentes()/atualizarAniversariantes() — um evento
+// chegando precisa aparecer mesmo que o lead ainda não tenha sido paginado
+// pro navegador. "Recusado" fica de fora (não precisa de follow-up);
+// "Confirmado" aparece antes de "Pendente" (é quem mais precisa de um
+// lembrete de presença perto da data). Mesma noção de "evento ainda vale"
+// de dataEfetivaLimite() (js/eventos.js) — data OU data_limite_inscricao
+// (o que for mais tarde) ainda não passou.
+async function atualizarFollowupEventos() {
+    const container = document.getElementById('followupEventosFeed');
+    if (!container || !filialAtual) return;
+
+    const hojeISO = new Date().toISOString().slice(0, 10);
+
+    const { data: eventosFuturos, error: erroEventos } = await window.supabaseClient
+        .from('eventos')
+        .select('id, nome, data, data_limite_inscricao')
+        .eq('filial', filialAtual)
+        .eq('ativo', true)
+        .or(`data.gte.${hojeISO},data_limite_inscricao.gte.${hojeISO}`);
+
+    if (erroEventos) {
+        container.innerHTML = '<div style="font-size:11px; color:var(--text-muted);">Follow-up de eventos indisponível (rode migracao_evento_leads.sql).</div>';
+        return;
+    }
+    if (!eventosFuturos || eventosFuturos.length === 0) {
+        container.innerHTML = '<div style="font-size:12px; color:var(--text-muted);">Nenhum evento futuro cadastrado.</div>';
+        return;
+    }
+
+    const mapaEventos = new Map(eventosFuturos.map(e => [e.id, e]));
+
+    const { data: inscritos, error: erroInscritos } = await window.supabaseClient
+        .from('evento_leads')
+        .select('evento_id, pessoaIdentificador, resposta_convite')
+        .in('evento_id', eventosFuturos.map(e => e.id))
+        .neq('resposta_convite', 'recusado');
+
+    if (erroInscritos || !inscritos || inscritos.length === 0) {
+        container.innerHTML = '<div style="font-size:12px; color:var(--text-muted);">Ninguém inscrito nos próximos eventos ainda.</div>';
+        return;
+    }
+
+    const idsPessoas = [...new Set(inscritos.map(i => i.pessoaIdentificador))];
+    const { data: leadsInfo } = await window.supabaseClient
+        .from(NOME_TABELA)
+        .select('pessoaIdentificador, pessoaNome')
+        .in('pessoaIdentificador', idsPessoas);
+    const mapaNomes = new Map((leadsInfo || []).map(l => [l.pessoaIdentificador, l.pessoaNome]));
+
+    const linhas = inscritos
+        .map(i => ({ ...i, evento: mapaEventos.get(i.evento_id), nome: mapaNomes.get(i.pessoaIdentificador) }))
+        .filter(l => l.evento)
+        .sort((a, b) => {
+            if (a.resposta_convite !== b.resposta_convite) return a.resposta_convite === 'confirmado' ? -1 : 1;
+            return (a.evento.data || '').localeCompare(b.evento.data || '');
+        })
+        .slice(0, 20);
+
+    if (linhas.length === 0) {
+        container.innerHTML = '<div style="font-size:12px; color:var(--text-muted);">Ninguém inscrito nos próximos eventos ainda.</div>';
+        return;
+    }
+
+    container.innerHTML = linhas.map(l => {
+        const classeResposta = (typeof CLASSES_RESPOSTA_CONVITE !== 'undefined' && CLASSES_RESPOSTA_CONVITE[l.resposta_convite]) || '';
+        const rotuloResposta = (typeof ROTULOS_RESPOSTA_CONVITE !== 'undefined' && ROTULOS_RESPOSTA_CONVITE[l.resposta_convite]) || l.resposta_convite;
+        const dataFmt = (typeof formatarDataEvento === 'function') ? formatarDataEvento(l.evento.data) : l.evento.data;
+        return `
+            <div class="activity-item" style="cursor:pointer;" onclick="abrirResultadoBuscaGlobal('${l.pessoaIdentificador}')">
+                <div class="activity-dot" style="background:${l.resposta_convite === 'confirmado' ? '#16a34a' : '#f59e0b'};"></div>
+                <div>
+                    <div><strong>${escapeHTML(l.nome || 'Lead sem nome')}</strong> <span class="tag ${classeResposta}" style="font-size:10px;">${escapeHTML(rotuloResposta)}</span></div>
+                    <div class="activity-time">${escapeHTML(l.evento.nome)} — ${escapeHTML(dataFmt)}</div>
                 </div>
             </div>`;
     }).join('');

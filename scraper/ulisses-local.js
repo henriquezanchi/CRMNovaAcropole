@@ -37,7 +37,7 @@
 import 'dotenv/config';
 import { chromium } from 'playwright';
 import { supabaseAdmin, lerCredencial, registrarStatusSincronizacao } from './lib/supabaseAdmin.js';
-import { exportarCsvInscricoes, exportarCatalogoEventos, exportarComparecimento, salvarScreenshotErro } from './ulisses.js';
+import { exportarCsvInscricoes, exportarCatalogoEventos, exportarComparecimento, sincronizarCatalogoEventosNoCrm, salvarScreenshotErro } from './ulisses.js';
 
 const URL_LOGIN = 'https://www.acropolebrasil.com.br/login.html';
 const TIMEOUT_LOGIN_MANUAL_MS = 5 * 60 * 1000; // 5 min pra você fazer login na janela
@@ -82,6 +82,7 @@ async function processarFilialLocal(browser, filial) {
     const etapas = [
         { nome: 'exportar-csv-inscricoes', executar: () => exportarCsvInscricoes(page, filial) },
         { nome: 'catalogo-eventos', executar: () => exportarCatalogoEventos(page, filial) },
+        { nome: 'sincronizar-eventos-crm', executar: () => sincronizarCatalogoEventosNoCrm(filial) },
         { nome: 'comparecimento', executar: () => exportarComparecimento(page, filial) },
     ];
     let algumaFalha = false;
