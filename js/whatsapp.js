@@ -540,6 +540,7 @@ function htmlContatoWpp(lead, conversa) {
             <div class="wpp-contact-info">
                 <div class="wpp-contact-name">${escapeHTML(lead.pessoaNome || 'Sem nome')}</div>
                 <div class="wpp-contact-phone">${escapeHTML(preview)}</div>
+                ${lead.filial ? `<div style="font-size:9px; color:var(--text-muted);"><i class="fa-solid fa-building"></i> ${escapeHTML(lead.filial)}</div>` : ''}
             </div>
         </div>
     `;
@@ -579,7 +580,7 @@ async function renderizarContatosWpp(filtro = '') {
     if (idsFaltando.length > 0) {
         const { data: extras } = await window.supabaseClient
             .from('leads_inscricoes')
-            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero')
+            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, filial')
             .in('pessoaIdentificador', idsFaltando);
         (extras || []).forEach(l => mapaLeads.set(String(l.pessoaIdentificador), l));
     }
@@ -623,7 +624,10 @@ async function renderizarContatosWpp(filtro = '') {
         html += novosContatos.map(l => htmlContatoWpp(l, null)).join('');
     }
     if (naoIdentUnicos.length > 0) {
-        html += `<div style="padding:8px 14px; font-size:10px; font-weight:700; color:#b45309; text-transform:uppercase;">Não identificados</div>`;
+        html += `<div style="padding:8px 14px 2px;">
+            <div style="font-size:10px; font-weight:700; color:#b45309; text-transform:uppercase;">Não identificados</div>
+            <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">De QUALQUER filial (só existe 1 número de WhatsApp compartilhado hoje — não dá pra saber a escola antes de vincular)</div>
+        </div>`;
         html += naoIdentUnicos.map(htmlContatoNaoIdentificadoWpp).join('');
     }
     lista.innerHTML = html;

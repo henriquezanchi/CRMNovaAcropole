@@ -341,18 +341,6 @@ async function renderizarCredenciaisScraper() {
         return row ? `<span style="color:#15803d;"><i class="fa-solid fa-check"></i> Configurado em ${new Date(row.atualizado_em).toLocaleString('pt-BR')}</span>` : '<span style="color:var(--text-muted);">Ainda não configurado</span>';
     };
 
-    // Busca direto do banco (não reaproveita filiaisDisponiveis, que só é
-    // atualizado quando "Gerenciar Filiais" fecha) — assim uma filial
-    // cadastrada há pouco já aparece aqui sem precisar de mais nenhuma
-    // ação, mesmo que essa tela seja aberta antes de qualquer outro
-    // refresh acontecer.
-    const { data: filiaisData, error: erroFiliais } = await window.supabaseClient
-        .from(NOME_TABELA_FILIAIS)
-        .select('id, nome')
-        .eq('ativo', true)
-        .order('ordem', { ascending: true });
-    const filiais = erroFiliais ? [] : (filiaisData || []);
-
     container.innerHTML = `
         ${error ? `<p style="font-size:12px; color:#dc2626;">Aviso: não consegui ler o status atual (${escapeHTML(error.message)}). Rode migracao_credenciais_scraper.sql se ainda não rodou — mesmo assim, dá pra tentar salvar novas senhas abaixo.</p>` : ''}
         <div class="tag-filter-grupo-titulo">CRM Publicado — senha do portão de acesso (js/acesso.js), pro scraper conseguir subir as planilhas sozinho na tela de Importar</div>
@@ -378,26 +366,19 @@ async function renderizarCredenciaisScraper() {
         </div>
         <p style="font-size:11px; margin:-4px 0 14px;">${formatarStatus('mercurio|GLOBAL')}</p>
 
-        <div class="tag-filter-grupo-titulo">Ulisses (e-mail + senha por filial — login via Auth0)</div>
-        ${filiais.length === 0 ? '<p style="font-size:12px; color:var(--text-muted);">Nenhuma filial cadastrada ainda.</p>' : filiais.map(f => `
-            <div class="coluna-row" style="flex-direction:column; align-items:stretch; gap:8px;">
-                <strong style="font-size:12px;">${escapeHTML(f.nome)}</strong>
-                <div style="display:flex; gap:8px;">
-                    <input type="email" id="credUsuarioUlisses-${f.id}" placeholder="E-mail de login" style="flex:1;">
-                    <input type="password" id="credSenhaUlisses-${f.id}" placeholder="Senha do Ulisses" style="flex:1;">
-                    <button class="btn-secondary" onclick="salvarCredencialScraper('ulisses', null, ${f.id})" style="white-space:nowrap;"><i class="fa-solid fa-floppy-disk"></i> Salvar</button>
-                </div>
-            </div>
-            <p style="font-size:11px; margin:-4px 0 10px;">${formatarStatus('ulisses|' + f.nome)}</p>
-        `).join('')}
+        <p style="font-size:11px; color:var(--text-muted); margin-top:8px;"><i class="fa-solid fa-circle-info"></i> O login do Ulisses é sempre manual (Cloudflare exige resolver o desafio de verificação você mesmo) — por isso não tem senha pra salvar aqui. Rode <code>npm run ulisses-local</code> na sua máquina de confiança quando precisar importar.</p>
     `;
 }
 
-async function salvarCredencialScraper(sistema, _filialIgnorado, filialId) {
+// `ulisses` de propósito NÃO existe mais aqui — o login do Ulisses é
+// sempre manual (Cloudflare), então guardar a senha no cofre não serve
+// pra nada além de um "dica" que o scraper mostra no terminal (ver
+// ulisses-local.js) — removido do CRM a pedido do usuário pra não passar
+// a impressão de que existe algo automático ali.
+async function salvarCredencialScraper(sistema) {
     const idsPorSistema = {
         mercurio: { usuario: 'credUsuarioMercurio', senha: 'credSenhaMercurio' },
         mercurio_http: { usuario: 'credUsuarioMercurioHttp', senha: 'credSenhaMercurioHttp' },
-        ulisses: { usuario: `credUsuarioUlisses-${filialId}`, senha: `credSenhaUlisses-${filialId}` },
         crm_acesso: { usuario: null, senha: 'credSenhaCrmAcesso' }, // sem usuário — é só a senha do portão
     };
     const ids = idsPorSistema[sistema];
@@ -407,15 +388,8 @@ async function salvarCredencialScraper(sistema, _filialIgnorado, filialId) {
     const usuario = inputUsuario ? inputUsuario.value : '';
     if (!senha || senha.trim() === '') { alert('Digite a senha antes de salvar.'); return; }
 
-    let filial = null;
-    if (sistema === 'ulisses') {
-        const f = (filiaisDisponiveis || []).find(x => x.id === filialId);
-        if (!f) { alert('Filial não encontrada.'); return; }
-        filial = f.nome;
-    }
-
     const { data, error } = await window.supabaseClient.functions.invoke('gerenciar-credenciais', {
-        body: { sistema, filial, usuario: usuario || null, senha }
+        body: { sistema, filial: null, usuario: usuario || null, senha }
     });
 
     if (error || (data && data.ok === false)) {
