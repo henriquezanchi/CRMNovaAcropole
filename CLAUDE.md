@@ -1837,9 +1837,15 @@ bloqueado).
   1. ✅ Login automatizado nos dois sistemas (confirma sessão autenticada,
      grava sucesso/falha em `status_sincronizacao_automatica` — ver
      Central de Notificações).
-  2. 🟡 Exportar os dados — **Ulisses testado de verdade (1º teste real
-     completo, 2026-09-06/07, filial Garavelo, modo local/assistido)**,
-     com 2 das 3 exportações precisando de correção depois do teste:
+  2. 🟡 Exportar os dados — **Ulisses E Mercúrio testados de verdade**
+     (Ulisses: 1º teste real completo, 2026-09-06/07, filial Garavelo,
+     modo local/assistido; Mercúrio: 1º teste real completo, 2026-09-07,
+     headless, as 4 filiais, ver bullet próprio abaixo). Falta só
+     Fotografias/enriquecimento do Mercúrio (adiado de propósito) — o
+     resto de "exportar" está feito dos dois lados.
+
+     **Ulisses** (com 2 das 3 exportações precisando de correção depois
+     do 1º teste):
      - `exportarCsvInscricoes()`: clique único em "Exportar CSV" no menu
        do topo, sem formulário/seletor de evento no meio **(testado e
        confirmado)** — baixa direto o CSV de Inscrições por filial, no
@@ -1950,22 +1956,56 @@ bloqueado).
        — uma falhar não impede as outras, e cada etapa que falha gera seu
        PRÓPRIO print de erro (`debug/ulisses-<etapa>-<filial>.png`), mais
        fácil de diagnosticar que 1 só genérico por filial.
-     - **Mercúrio**: `exportarAtivosEInativos()` escrita (login corrigido
-       pra buscar em frames — ver acima; descobre TODOS os links
-       "CADASTRO" da tela pós-login via `listarLinksCadastro()`, um por
-       filial, sem tentar casar com `filiais.nome` do Supabase — processa
-       cada um sob o rótulo que o próprio Mercúrio usa; gera
-       `mercurio-ativos-<filial>.csv`/`mercurio-inativos-<filial>.csv` no
-       mesmo layout de colunas que o importador manual já espera,
-       encoding ISO-8859-1). **Ainda NÃO testada de verdade** — mapeada só
-       por descrição/print do usuário, mesmo estágio em que
-       `exportarCatalogoEventos()`/`exportarComparecimento()` do Ulisses
-       estavam antes do 1º teste real. Fotografias (Relatórios →
-       Fotografias) e enriquecimento de telefone/ingresso via Turmas e
-       aniversário via Aniversariantes (incluindo Inativos) ficaram de
-       fora de propósito, priorizados depois de Ativos/Inativos — a
-       primeira (Fotografias) também exige Supabase Storage (infra nova),
-       deliberadamente adiada ("Deixa pra depois").
+     - **Mercúrio**: `exportarAtivosEInativos()` — **1º teste real completo
+       e bem-sucedido (2026-09-07, headless, direto de `C:\Scrapper`, sem
+       bloqueio tipo Cloudflare)**, depois de 2 rodadas de correção
+       usando HTML/estrutura real (não mais só print):
+       - `listarLinksCadastro()` tinha um bug real: subia só 1 `<td>` a
+         partir do link "CADASTRO" pra achar o nome da filial — essa é a
+         própria célula do link, então "o nome da filial" lido era
+         sempre a palavra "CADASTRO" de novo (as 4 filiais saíram
+         rotuladas igual, no 1º teste). Corrigido subindo até a
+         `<table class="menu">` que envolve o link e lendo o
+         `<a class="menu_tit">` dela (elemento IRMÃO, com o nome real —
+         ex: `"GOIÂNIA UNIVERSITARIO: BARRA DO GARÇAS"`).
+       - `exportarAtivosEInativos()` usava "Turma" como texto-âncora pra
+         confirmar que chegou na tabela de Ativos — mas "Turmas" também é
+         um item fixo do menu lateral (sempre visível em qualquer tela
+         dentro de "CADASTRO"), então o código "achava" a tela certa
+         antes mesmo da navegação de verdade acontecer, e a leitura caía
+         sempre na tela de contato padrão (erro "Nenhuma tabela
+         encontrada", confirmado por print real). Corrigido usando os
+         NOMES FIXOS dos frames do site (confirmado ao vivo via
+         Playwright: `"principal"` = conteúdo, `"indice"` = menu lateral
+         dentro de uma filial) — `esperarFrame()`, nova, espera o frame
+         certo chegar numa URL esperada, não mais por texto.
+       - **Descoberta nova**: a tela de Inativos só mostra "RECENTES" por
+         padrão (bem poucas linhas) — tem um `<select name="cmbData">`
+         com opção `"TODOS"` que traz o histórico completo (a pedido do
+         usuário, que já sabia desse passo manual); escolher a opção
+         resubmete o formulário sozinho (`onchange="this.form.submit()"`).
+       - Resultado do teste real (Ativos/Inativos das 4 filiais, todas
+         com nome certo): CSVs gerados sem erro, colunas certas
+         (`Matr;Nome;Nivel;Dia;Turma` / `Nome;Telefones;Ni;Data;Motivo`),
+         encoding ISO-8859-1 correto (acentos ok), Inativos com histórico
+         completo de verdade (ex: 2455 linhas em Jardim América, não só
+         os "recentes"). `status_sincronizacao_automatica` já registrou
+         `sucesso: true` pra essa rodada.
+       - `listarLinksCadastro()` descobre TODOS os links "CADASTRO" da
+         tela pós-login, um por filial, sem tentar casar com
+         `filiais.nome` do Supabase — processa cada um sob o rótulo que o
+         próprio Mercúrio usa (é só pra nomear os arquivos de forma
+         reconhecível pra quem for importar na mão depois; a decisão de
+         "ligar direto no CRM sem passo manual" pro lado do Mercúrio,
+         equivalente ao que `sincronizarCatalogoEventosNoCrm()`/
+         `sincronizarComparecimentoNoCrm()` já fazem pro Ulisses, é o
+         marco 3, ainda pendente — ver abaixo).
+       - Fotografias (Relatórios → Fotografias) e enriquecimento de
+         telefone/ingresso via Turmas e aniversário via Aniversariantes
+         (incluindo Inativos) ficaram de fora de propósito, priorizados
+         depois de Ativos/Inativos — a primeira (Fotografias) também
+         exige Supabase Storage (infra nova), deliberadamente adiada
+         ("Deixa pra depois").
      - **Ideia estratégica maior, registrada mas NÃO iniciada**: o evento
        no Ulisses já linka pra uma tela de inscrição própria — dá pra
        imaginar integrar um gateway de pagamento (ex: PagSeguro) nessa
