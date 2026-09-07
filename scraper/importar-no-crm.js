@@ -72,8 +72,21 @@ export async function importarNoCrm(page, filial, { caminhoAtivos, caminhoInativ
     await abrirCrmComAcesso(page);
 
     await page.locator('.sidebar-icon[data-tab="tab-importar"]').click();
-    await page.locator('#importFilialSelect').waitFor({ timeout: 10000 });
-    await page.locator('#importFilialSelect').selectOption({ label: filial });
+    const seletorFilial = page.locator('#importFilialSelect');
+    await seletorFilial.waitFor({ timeout: 10000 });
+
+    // Confere e RESSELECIONA se preciso — corrigido na fonte (index.html,
+    // `await carregarFiliais()` antes de popularFilialImportacao()), mas
+    // mantém essa checagem aqui como cinto e suspensório: uma corrida
+    // real foi confirmada ao vivo (a seleção "pegava" e depois voltava
+    // sozinha pro padrão um instante depois, antes da correção).
+    for (let tentativa = 0; tentativa < 6; tentativa++) {
+        await seletorFilial.selectOption({ label: filial });
+        await page.waitForTimeout(400);
+        const valorAtual = await seletorFilial.inputValue();
+        if (valorAtual === filial) break;
+        if (tentativa === 5) throw new Error(`Não consegui manter a filial "${filial}" selecionada no importador (ficou "${valorAtual}") — provável corrida na população do <select>.`);
+    }
 
     await page.locator('#fileAtivos').setInputFiles(caminhoAtivos);
     await page.locator('#fileInativos').setInputFiles(caminhoInativos);

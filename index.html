@@ -994,8 +994,18 @@
 
     <!-- 4. Dá o "Start" assim que o HTML carregar -->
     <script>
-        document.addEventListener("DOMContentLoaded", () => {
-            carregarFiliais();
+        document.addEventListener("DOMContentLoaded", async () => {
+            // `await` aqui de propósito: popularFilialImportacao() decide
+            // se usa `filiaisDisponiveis` (já carregado) ou busca de novo
+            // sozinha (fallback) checando se esse array já tem itens —
+            // sem esperar carregarFiliais() terminar primeiro, as duas
+            // corriam em paralelo, e a busca de fallback podia terminar
+            // DEPOIS e sobrescrever qualquer seleção já feita no
+            // <select> da aba Importar (bug real, achado automatizando a
+            // tela via Playwright — script conseguia selecionar a filial
+            // certa, mas ela voltava sozinha pro padrão um instante
+            // depois).
+            await carregarFiliais();
             if (typeof popularFilialImportacao === 'function') {
                 popularFilialImportacao();
             }
