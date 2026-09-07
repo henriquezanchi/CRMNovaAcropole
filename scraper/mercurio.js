@@ -20,7 +20,7 @@
 // clássico (comum em sites desse período) — por isso as buscas abaixo
 // tentam a página principal E qualquer frame filho antes de desistir.
 import { chromium } from 'playwright';
-import { lerCredencial, registrarStatusSincronizacao } from './lib/supabaseAdmin.js';
+import { supabaseAdmin, lerCredencial, registrarStatusSincronizacao } from './lib/supabaseAdmin.js';
 import fs from 'node:fs';
 
 const URL_LOGIN = 'https://mercurio.oinabn.com.br/';
@@ -239,6 +239,144 @@ async function exportarAtivosEInativos(page, label, indice) {
     return { caminhoAtivos, caminhoInativos };
 }
 
+// As 6 opções REAIS do <select name="sit"> da tela "Aniversariantes"
+// (confirmado ao vivo) — inclui "INA" (Inativos) de propósito, a pedido
+// do usuário ("pegar os aniversários de todo mundo, inclusive
+// inativos"). Não é a mesma lista de níveis usada em Ativos/Inativos
+// (TA/JN/PP/N1/Membro do resto do app) — é o vocabulário PRÓPRIO dessa
+// tela do Mercúrio, só usado aqui.
+const SITUACOES_ANIVERSARIANTES = ['N1', 'CIR', 'MEM', 'COR', 'JAN', 'INA'];
+const MESES_ANIVERSARIANTES = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
+
+// Aniversariantes (menu "Relatórios" → "Aniversariantes", uni_cadani.php)
+// — a tela só mostra 1 situação + 1 mês por vez (2 <select>, cada um
+// resubmete o formulário sozinho no onchange), sem opção "todos" em
+// nenhum dos dois — por isso a varredura completa (pedida pelo usuário,
+// "todo mundo, inclusive inativos") precisa passar pelas 6 situações x
+// 12 meses = 72 combinações, por filial. Colunas da tabela: Nome, Sit.,
+// Nasc. (DD/MM/AAAA — data completa, com ano), Fone, Endereço (o e-mail
+// vem embutido no fim desse texto livre, não usado aqui), Dia de Aula.
+async function exportarAniversariantes(page, label, indice) {
+    const framePrincipal1 = await esperarFrame(page, 'principal', /ger_funcao\.php/, 15000);
+    await framePrincipal1.getByRole('link', { name: 'CADASTRO', exact: true }).nth(indice).click();
+    const frameIndice = await esperarFrame(page, 'indice', /uni_indice\.php/, 15000);
+
+    await frameIndice.getByText('Aniversariantes', { exact: true }).click();
+    const frame = await esperarFrame(page, 'principal', /uni_cadani\.php/, 15000);
+
+    const registros = [];
+    const vistos = new Set(); // matr (ou nome, se não achou matr) — evita duplicar quem aparece 2x (ex: mudou de situação no meio do ano)
+    for (const sit of SITUACOES_ANIVERSARIANTES) {
+        await frame.locator('select[name="sit"]').selectOption({ value: sit });
+        await page.waitForTimeout(700); // sem indicador de carregamento claro — espera curta e fixa, mesmo padrão do resto do arquivo
+        for (const mes of MESES_ANIVERSARIANTES) {
+            await frame.locator('select[name="mes"]').selectOption({ value: mes });
+            await page.waitForTimeout(700);
+
+            const linhas = frame.locator('table tr');
+            const total = await linhas.count();
+            for (let i = 1; i < total; i++) { // pula o cabeçalho (<th>, não <td>)
+                const celulas = linhas.nth(i).locator('td');
+                if (await celulas.count() < 3) continue;
+                const linkNome = celulas.nth(0).locator('a');
+                const temLink = await linkNome.count() > 0;
+                const nome = (temLink ? await linkNome.first().innerText() : await celulas.nth(0).innerText()).trim();
+                const href = temLink ? await linkNome.first().getAttribute('href') : null;
+                const matricula = href ? (href.match(/matr=(\d+)/) || [])[1] || null : null;
+                const nascimento = (await celulas.nth(2).innerText()).trim(); // DD/MM/AAAA
+                if (!nome || !/^\d{2}\/\d{2}\/\d{4}$/.test(nascimento)) continue;
+
+                const chave = matricula || `${nome}|||${nascimento}`;
+                if (vistos.has(chave)) continue;
+                vistos.add(chave);
+                registros.push({ matricula, nome, nascimento, situacao: sit });
+            }
+        }
+    }
+
+    fs.mkdirSync(PASTA_EXPORTS, { recursive: true });
+    const slug = label.replace(/[^a-z0-9]/gi, '_');
+    const caminho = `${PASTA_EXPORTS}/mercurio-aniversariantes-${slug}.json`;
+    fs.writeFileSync(caminho, JSON.stringify(registros, null, 2), 'utf-8');
+    return caminho;
+}
+
+function normalizarNomeMercurio(nome) {
+    return String(nome || '')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .toUpperCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function dataBRParaISO(dataBR) {
+    const m = (dataBR || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+}
+
+// Depois de exportar os aniversariantes (função acima), preenche
+// `data_nascimento` (leads_inscricoes) de quem ainda não tem essa data —
+// nenhuma das 3 planilhas de importação manual traz esse dado, então até
+// agora só dava pra preencher um lead de cada vez, na mão, pela gaveta
+// (ver `migracao_data_nascimento.sql`). Casa por NOME normalizado (mesma
+// heurística de `normalizarNomeImport()` em js/importador.js — o
+// Mercúrio não expõe telefone/e-mail nessa tela de um jeito fácil de
+// casar com confiança, e o `matricula_mercurio` salvo em
+// leads_inscricoes só existe pra quem já passou pela importação de
+// matrícula via print, cobertura baixa demais pra ser o critério
+// principal aqui). Homônimos (2+ leads com o mesmo nome normalizado na
+// filial) ficam de fora de propósito — sem outro dado pra desempatar,
+// arriscar a data errada é pior que não preencher. NUNCA sobrescreve uma
+// data já preenchida (pode ter sido corrigida à mão).
+export async function sincronizarAniversariantesNoCrm(filial) {
+    const caminhoJson = `${PASTA_EXPORTS}/mercurio-aniversariantes-${filial.replace(/[^a-z0-9]/gi, '_')}.json`;
+    if (!fs.existsSync(caminhoJson)) throw new Error('mercurio-aniversariantes.json não encontrado — a etapa "aniversariantes" precisa rodar antes desta.');
+
+    const registros = JSON.parse(fs.readFileSync(caminhoJson, 'utf-8'));
+    if (registros.length === 0) return '0 aniversariantes exportados — nada a sincronizar.';
+
+    const porNome = new Map(); // nome normalizado -> { pessoaIdentificador, temData, ambiguo }
+    const TAMANHO_PAGINA = 1000;
+    for (let de = 0; ; de += TAMANHO_PAGINA) {
+        const { data: pagina, error } = await supabaseAdmin
+            .from('leads_inscricoes')
+            .select('pessoaIdentificador, pessoaNome, data_nascimento')
+            .eq('filial', filial)
+            .order('pessoaIdentificador', { ascending: true })
+            .range(de, de + TAMANHO_PAGINA - 1);
+        if (error) throw new Error('Erro ao buscar leads da filial: ' + error.message);
+        for (const lead of pagina || []) {
+            const chave = normalizarNomeMercurio(lead.pessoaNome);
+            if (!chave) continue;
+            const existente = porNome.get(chave);
+            if (existente) existente.ambiguo = true;
+            else porNome.set(chave, { pessoaIdentificador: lead.pessoaIdentificador, temData: !!lead.data_nascimento, ambiguo: false });
+        }
+        if (!pagina || pagina.length < TAMANHO_PAGINA) break;
+    }
+
+    let atualizados = 0, semLead = 0, ambiguos = 0, jaTinhaData = 0;
+    for (const r of registros) {
+        const dataISO = dataBRParaISO(r.nascimento);
+        if (!dataISO) continue;
+        const alvo = porNome.get(normalizarNomeMercurio(r.nome));
+        if (!alvo) { semLead++; continue; }
+        if (alvo.ambiguo) { ambiguos++; continue; }
+        if (alvo.temData) { jaTinhaData++; continue; }
+
+        const { error } = await supabaseAdmin
+            .from('leads_inscricoes')
+            .update({ data_nascimento: dataISO })
+            .eq('pessoaIdentificador', alvo.pessoaIdentificador);
+        if (!error) {
+            atualizados++;
+            alvo.temData = true; // evita reprocessar se o mesmo nome aparecer 2x na exportação
+        }
+    }
+
+    return `${atualizados} lead(s) com data de nascimento preenchida, de ${registros.length} aniversariante(s) do Mercúrio (${semLead} sem lead correspondente por nome, ${ambiguos} nome ambíguo/homônimo, ${jaTinhaData} já tinham data preenchida).`;
+}
+
 async function main() {
     let browser;
     let page;
@@ -268,7 +406,22 @@ async function main() {
                 algumaFalha = true;
                 console.error(`[mercurio] Falha ao exportar Ativos/Inativos de "${label}":`, e.message);
                 fs.mkdirSync('debug', { recursive: true });
-                await page.screenshot({ path: `debug/mercurio-${label.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
+                await page.screenshot({ path: `debug/mercurio-ativos-${label.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
+            }
+            // Volta pra tela de funções antes de Aniversariantes — cada
+            // etapa reabre a navegação (CADASTRO -> ...) do zero, mesmo
+            // padrão de isolamento de falha já usado no Ulisses (uma
+            // etapa falhar não devia impedir as outras).
+            await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
+            try {
+                const caminhoAniversariantes = await exportarAniversariantes(page, label, indice);
+                const resultadoSync = await sincronizarAniversariantesNoCrm(label);
+                console.log(`[mercurio] Aniversariantes exportados — ${label}: ${caminhoAniversariantes} — ${resultadoSync}`);
+            } catch (e) {
+                algumaFalha = true;
+                console.error(`[mercurio] Falha ao exportar/sincronizar Aniversariantes de "${label}":`, e.message);
+                fs.mkdirSync('debug', { recursive: true });
+                await page.screenshot({ path: `debug/mercurio-aniversariantes-${label.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
             }
             // Volta pra tela de funções antes da próxima filial, com ou
             // sem erro — senão a próxima iteração começa num lugar errado.
@@ -276,8 +429,8 @@ async function main() {
         }
 
         await registrarStatusSincronizacao('mercurio', null, !algumaFalha, algumaFalha
-            ? 'Login OK, mas 1+ exportação de Ativos/Inativos falhou — ver logs e prints do workflow.'
-            : `Login + exportação de Ativos/Inativos OK para ${cadastros.length} filial(is) (marco 2 — ainda não alimenta o CRM automaticamente).`);
+            ? 'Login OK, mas 1+ exportação (Ativos/Inativos ou Aniversariantes) falhou — ver logs e prints do workflow.'
+            : `Login + exportação de Ativos/Inativos + Aniversariantes (já sincronizados no CRM) OK para ${cadastros.length} filial(is).`);
     } catch (e) {
         console.error('[mercurio] Falha:', e.message);
         try {
