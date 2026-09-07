@@ -673,8 +673,17 @@ async function main() {
         await loginMercurio(page, matricula, senha);
         console.log('[mercurio] Login OK');
 
-        const cadastros = await listarLinksCadastro(page);
-        if (cadastros.length === 0) throw new Error('Nenhum link "CADASTRO" encontrado na tela pós-login — layout pode ter mudado.');
+        const cadastrosTodos = await listarLinksCadastro(page);
+        if (cadastrosTodos.length === 0) throw new Error('Nenhum link "CADASTRO" encontrado na tela pós-login — layout pode ter mudado.');
+
+        // Filtro opcional por linha de comando (node mercurio.js -- "Garavelo"
+        // ou npm run mercurio -- "Garavelo") — mesmo padrão de
+        // ulisses-local.js, útil pra testar 1 filial só sem esperar todas.
+        const filtro = process.argv[2];
+        const cadastros = filtro
+            ? cadastrosTodos.filter(c => c.label.toLowerCase().includes(filtro.toLowerCase()))
+            : cadastrosTodos;
+        if (cadastros.length === 0) throw new Error(`Nenhuma filial bate com o filtro "${filtro}" (filiais encontradas: ${cadastrosTodos.map(c => c.label).join(', ')}).`);
         console.log(`[mercurio] ${cadastros.length} filial(is) encontrada(s): ${cadastros.map(c => c.label).join(', ')}`);
 
         let algumaFalha = false;
