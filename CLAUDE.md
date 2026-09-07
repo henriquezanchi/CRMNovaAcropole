@@ -33,6 +33,8 @@ js/app.js            → toda a lógica do Kanban/CRM (esse é o arquivo princip
 js/importador.js     → módulo separado: importação das 3 planilhas → Supabase
 js/whatsapp.js       → módulo separado: integração real com WhatsApp (Meta Cloud API)
 js/eventos.js        → módulo separado: Agenda de Eventos (cadastro manual, por filial)
+js/mapa-turmas.js    → módulo separado: Mapa de Turmas (grade semanal dia x horário por
+                        filial, só leitura — alimentada pelo scraper do Mercúrio)
 js/leads-a-tratar.js → módulo separado: "Leads a Tratar" (duplicados por telefone/nome + sem telefone)
 js/matricula-importar.js → módulo separado: importar matrícula via texto colado da tela do
                         Mercúrio (lista avulsa OU tela de Turma completa, com Dia/Horário) —
@@ -168,6 +170,13 @@ migracao_filial_whatsapp_chefe.sql → coluna whatsapp_chefe_numero em filiais �
                                      responsável, destinatário do aviso de
                                      aniversário de aluno Ativo e do resumo de lead
                                      sob demanda; rodar manualmente
+migracao_turmas.sql               → tabela turmas (nome/dia/horário por filial) —
+                                     base do Mapa de Turmas, sincronizada
+                                     automaticamente pelo scraper do Mercúrio; rodar
+                                     manualmente
+migracao_filial_valor_mensalidade.sql → coluna valor_mensalidade em filiais — base do
+                                     cálculo de receita/comissão de SDR no relatório
+                                     "Matrículas por Mês"; rodar manualmente
 ```
 
 ## Banco de dados (Supabase)
@@ -2174,6 +2183,84 @@ fallback pro padrão), igual `whatsapp-send`.
 - Chamada pelo navegador (chave publishable) OU pelo scraper
   (`SERVICE_ROLE_KEY`) — mantém verificação de JWT padrão, os dois já
   mandam um Bearer válido.
+
+## Mapa de Turmas (`js/mapa-turmas.js`, aba nova)
+
+Grade semanal (dia x horário) de turmas por filial, só leitura — sem
+cadastro manual de propósito, é um espelho do Mercúrio. Fonte: tabela
+`turmas` (`migracao_turmas.sql`, `filial`+`nome` único), sincronizada
+automaticamente por `processarMatriculasRecentesTurmas()`
+(`scraper/mercurio.js`) — a mesma varredura que já visita cada turma
+procurando matrícula recente agora TAMBÉM grava dia/horário de TODA
+turma visitada ali (upsert), tenha matrícula nova ou não.
+
+- Colunas = dias da semana que têm pelo menos 1 turma, na ordem
+  Segunda→Domingo; linhas = todo horário distinto observado (ordena
+  certo como string "HH:MM"). Célula vazia = "horário livre", destacada
+  em verde — é o objetivo principal da tela (achar espaço pra abrir
+  turma nova).
+- **Bug real corrigido num teste visual**: a normalização de dia da
+  semana removia acento (`normalizarDiaSemana()`) mas a lista de
+  referência (`ORDEM_DIAS_SEMANA`) continuava acentuada — "Terça" nunca
+  batia e caía fora de ordem, no fim da grade. Corrigido removendo a
+  normalização de acento (o Mercúrio já manda "TERÇA"/"SÁBADO"
+  corretamente acentuados; comparar acentuado-com-acentuado é mais
+  confiável que uma normalização pela metade).
+
+## Matrículas por Mês — agora com receita e comissão de SDR
+
+`renderizarRelatorioMatriculasPorMes()` (aba Relatórios) ganhou um
+`<select>` de mês (padrão: o mais recente com matrícula) e 3 KPIs pro
+mês escolhido: quantidade de matrículas, receita (matrículas x
+`filiais.valor_mensalidade`, nova coluna —
+`migracao_filial_valor_mensalidade.sql`, editável em "Gerenciar
+Filiais") e comissão do SDR (30% da receita). **Receita aqui é só a
+contribuição do 1º mês de cada matrícula NOVA daquele mês** — não a
+mensalidade recorrente de toda a base já matriculada; é a mesma base
+usada pra calcular a comissão. Sem `valor_mensalidade` configurado, os
+2 últimos KPIs mostram "—" com um aviso, mas a contagem de matrículas
+continua funcionando normalmente. O gráfico de barras com todos os
+meses (já existente) continua embaixo, inalterado.
+
+## Login Automático — Ulisses removido do cofre
+
+A pedido do usuário: como o login do Ulisses é **sempre** manual
+(Cloudflare), guardar e-mail/senha no cofre nunca serviu pra mais que
+uma dica no terminal (`ulisses-local.js` já lê o cofre só pra ISSO,
+nunca preenche nada sozinho) — os campos de Ulisses foram removidos da
+tela "Login Automático" (`renderizarCredenciaisScraper()`,
+`js/importador.js`), com uma nota explicando o motivo. Mercúrio e o
+portão de acesso do CRM continuam lá normalmente (esses sim são
+automatizados). Backend/cofre não foram tocados — credencial de Ulisses
+já salva antes continua existindo e servindo de dica, só não dá mais
+pra SALVAR uma nova pela tela.
+
+## "Botão" de acionar o Ulisses — decisão final
+
+Um botão de verdade no CRM publicado não consegue abrir uma janela de
+navegador no PC de quem clica (é um site na nuvem) — por isso, em vez
+disso, existe `scraper/Importar Ulisses.bat`: atalho de duplo-clique
+(roda `npm run ulisses-local`, todas as filiais) na máquina de confiança
+(`C:\Scrapper`), com uma pausa no final pra dar tempo de ler o resumo.
+Copiar esse `.bat` pra área de trabalho (atalho) é o mais perto que dá
+de um "botão" sem abrir mão do modelo de segurança já decidido (chave
+`service_role` nunca sai de máquina de confiança — ver seção do
+lembrete de importação acima).
+
+## WhatsApp Unificado — de qual filial é cada conversa?
+
+Conversas **identificadas** já eram implicitamente da filial atual
+(`filialAtual`, mesmo filtro do resto do app) — agora cada uma também
+mostra um selo com o nome da filial, pra não depender só do seletor do
+topbar. Conversas **NÃO identificadas** (webhook não achou nenhum lead
+com aquele telefone) **não têm filial nenhuma pra mostrar** — o
+`filial` da mensagem fica `null` nesse caso (confirmado no código do
+webhook, `supabase/functions/whatsapp-webhook/index.ts`), e isso é
+inerente a ter só 1 número de WhatsApp compartilhado por todas as
+filiais hoje (não dá pra saber de qual escola veio antes de vincular a
+um lead). Adicionada uma nota explicando isso na seção "Não
+identificados" da lista de conversas, pra não dar a falsa impressão de
+que elas pertencem à filial selecionada no momento.
 
 ## Bloqueio da API do WhatsApp (Meta) — investigado 2026-09-07
 
