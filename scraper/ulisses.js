@@ -443,6 +443,153 @@ export async function exportarComparecimento(page, filial) {
     return caminho;
 }
 
+// Depois de exportar o comparecimento (função acima), vincula cada
+// participante que já é um LEAD conhecido do CRM ao evento correspondente
+// em `evento_leads` — é o que faz a tela "Participantes" da Agenda (ver
+// abrirParticipantesEvento() em js/eventos.js) já vir preenchida com quem
+// se inscreveu no Ulisses, sem precisar buscar e vincular 1 por 1 na mão.
+// Casamento por telefone (normalizado, ignorando o 9º dígito — mesma
+// lógica de normalizarTelefoneParaChave() em js/importador.js,
+// reproduzida aqui pro lado do Node) e, se não achar, por e-mail exato;
+// quem não bate com nenhum lead existente fica de fora (não inventa lead
+// novo — a importação de planilha continua sendo o jeito de cadastrar
+// gente nova no CRM).
+export async function sincronizarComparecimentoNoCrm(filial) {
+    const caminhoJson = `${PASTA_EXPORTS}/comparecimento-${filial.replace(/[^a-z0-9]/gi, '_')}.json`;
+    if (!fs.existsSync(caminhoJson)) throw new Error('comparecimento.json não encontrado — a etapa "comparecimento" precisa rodar antes desta.');
+
+    const registros = JSON.parse(fs.readFileSync(caminhoJson, 'utf-8'));
+    if (registros.length === 0) return '0 registros de comparecimento — nada a sincronizar.';
+
+    const normalizarTelefone = (ddd, numero) => {
+        const d = String(ddd || '').replace(/\D/g, '');
+        let n = String(numero || '').replace(/\D/g, '');
+        if (!d || !n) return null;
+        if (n.length === 9 && n.startsWith('9')) n = n.slice(1);
+        if (n.length !== 8) return null;
+        return d + n;
+    };
+
+    // Carrega TODOS os leads da filial pra casar por telefone/e-mail —
+    // paginado porque o PostgREST limita a 1000 linhas por página mesmo
+    // pedindo mais (mesma lição documentada em detectarLeadsATratar(),
+    // js/leads-a-tratar.js).
+    const porTelefone = new Map();
+    const porEmail = new Map();
+    const TAMANHO_PAGINA = 1000;
+    for (let de = 0; ; de += TAMANHO_PAGINA) {
+        const { data: pagina, error } = await supabaseAdmin
+            .from('leads_inscricoes')
+            .select('pessoaIdentificador, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail')
+            .eq('filial', filial)
+            .order('pessoaIdentificador', { ascending: true })
+            .range(de, de + TAMANHO_PAGINA - 1);
+        if (error) throw new Error('Erro ao buscar leads da filial: ' + error.message);
+        for (const lead of pagina || []) {
+            const chaveTel = normalizarTelefone(lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero);
+            if (chaveTel && !porTelefone.has(chaveTel)) porTelefone.set(chaveTel, lead.pessoaIdentificador);
+            const email = (lead.pessoaEmail || '').trim().toLowerCase();
+            if (email && !porEmail.has(email)) porEmail.set(email, lead.pessoaIdentificador);
+        }
+        if (!pagina || pagina.length < TAMANHO_PAGINA) break;
+    }
+
+    // Garante 1 linha em `eventos` por (nome, data) visto no comparecimento
+    // — sem sobrescrever nada de quem já existe (só exportarCatalogoEventos/
+    // sincronizarCatalogoEventosNoCrm mexem nos detalhes completos; aqui é
+    // só a base mínima, já que eventos PASSADOS nunca passam pelo
+    // catálogo — ele só lê detalhes de eventos futuros).
+    const paraISO = (dataHora) => {
+        const m = (dataHora || '').match(/(\d{2})\/(\d{2})\/(\d{4})/);
+        return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+    };
+    const eventosUnicos = new Map();
+    for (const r of registros) {
+        const dataISO = paraISO(r.eventoData);
+        if (!r.eventoNome || !dataISO) continue;
+        eventosUnicos.set(`${r.eventoNome}|||${dataISO}`, { nome: r.eventoNome, data: dataISO });
+    }
+
+    const idPorEvento = new Map();
+    for (const { nome, data } of eventosUnicos.values()) {
+        const { data: existente } = await supabaseAdmin
+            .from('eventos').select('id')
+            .eq('filial', filial).eq('nome', nome).eq('data', data)
+            .maybeSingle();
+        if (existente) {
+            idPorEvento.set(`${nome}|||${data}`, existente.id);
+            continue;
+        }
+        const { data: criado, error } = await supabaseAdmin
+            .from('eventos').insert({ filial, nome, data }).select('id').single();
+        if (error) {
+            console.warn(`[ulisses] Não consegui criar evento base "${nome}" (${data}, ${filial}):`, error.message);
+            continue;
+        }
+        idPorEvento.set(`${nome}|||${data}`, criado.id);
+    }
+
+    // Casa cada registro com um lead (telefone > e-mail) e monta a lista
+    // de vínculos candidatos.
+    const vinculos = [];
+    let semEvento = 0, semLead = 0;
+    for (const r of registros) {
+        const dataISO = paraISO(r.eventoData);
+        const eventoId = dataISO ? idPorEvento.get(`${r.eventoNome}|||${dataISO}`) : null;
+        if (!eventoId) { semEvento++; continue; }
+
+        let pessoaIdentificador = null;
+        if (r.telefone) {
+            const [ddd, ...resto] = r.telefone.split(' ');
+            pessoaIdentificador = porTelefone.get(normalizarTelefone(ddd, resto.join(''))) || null;
+        }
+        if (!pessoaIdentificador && r.email) {
+            pessoaIdentificador = porEmail.get(r.email.trim().toLowerCase()) || null;
+        }
+        if (!pessoaIdentificador) { semLead++; continue; }
+
+        vinculos.push({
+            evento_id: eventoId,
+            pessoaIdentificador,
+            compareceu: typeof r.compareceu === 'boolean' ? r.compareceu : null,
+        });
+    }
+
+    if (vinculos.length === 0) {
+        return `0 de ${registros.length} registro(s) casado(s) com um lead (${semEvento} sem evento correspondente, ${semLead} sem lead achado por telefone/e-mail) — nada a gravar.`;
+    }
+
+    // Não sobrescreve `resposta_convite`/`nota` de um vínculo que já
+    // existe (pode ter sido ajustado à mão na tela de Participantes) — só
+    // cria com resposta_convite='confirmado' (esteve na lista de
+    // pré-inscritos = confirmou interesse) quando o vínculo ainda não
+    // existe, e sempre atualiza `compareceu` (é o dado que muda com o
+    // tempo: falso/nulo antes do evento, o real depois que aconteceu).
+    const eventoIds = [...new Set(vinculos.map(v => v.evento_id))];
+    const { data: existentes } = await supabaseAdmin
+        .from('evento_leads')
+        .select('evento_id, pessoaIdentificador')
+        .in('evento_id', eventoIds);
+    const jaExiste = new Set((existentes || []).map(e => `${e.evento_id}|||${e.pessoaIdentificador}`));
+
+    const novos = vinculos
+        .filter(v => !jaExiste.has(`${v.evento_id}|||${v.pessoaIdentificador}`))
+        .map(v => ({ evento_id: v.evento_id, pessoaIdentificador: v.pessoaIdentificador, resposta_convite: 'confirmado', compareceu: v.compareceu }));
+    const paraAtualizar = vinculos.filter(v => jaExiste.has(`${v.evento_id}|||${v.pessoaIdentificador}`));
+
+    if (novos.length > 0) {
+        const { error } = await supabaseAdmin.from('evento_leads').insert(novos);
+        if (error) console.warn('[ulisses] Falha ao inserir novos vínculos evento_leads:', error.message);
+    }
+    await Promise.all(paraAtualizar.map(v =>
+        supabaseAdmin.from('evento_leads')
+            .update({ compareceu: v.compareceu })
+            .eq('evento_id', v.evento_id).eq('pessoaIdentificador', v.pessoaIdentificador)
+    ));
+
+    return `${novos.length} vínculo(s) novo(s), ${paraAtualizar.length} atualizado(s) (compareceu), de ${registros.length} registro(s) (${semEvento} sem evento correspondente, ${semLead} sem lead achado por telefone/e-mail).`;
+}
+
 // Depois de exportar o catálogo de eventos (função acima), grava cada
 // evento FUTURO direto na tabela `eventos` do CRM — sem passo manual: o
 // scraper já tem acesso de service_role ao Supabase (mesmo cliente usado
@@ -533,6 +680,7 @@ async function processarFilial(browser, filial) {
         { nome: 'catalogo-eventos', executar: () => exportarCatalogoEventos(page, filial) },
         { nome: 'sincronizar-eventos-crm', executar: () => sincronizarCatalogoEventosNoCrm(filial) },
         { nome: 'comparecimento', executar: () => exportarComparecimento(page, filial) },
+        { nome: 'sincronizar-comparecimento-crm', executar: () => sincronizarComparecimentoNoCrm(filial) },
     ];
     let algumaFalha = false;
     for (const etapa of etapas) {
