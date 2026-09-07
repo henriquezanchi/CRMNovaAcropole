@@ -538,10 +538,14 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .funnel-bar { height: 100%; background: linear-gradient(90deg, var(--na-green), var(--na-gold)); display: flex; align-items: center; padding-left: 14px; color: white; font-weight: 600; font-size: 12px; border-radius: 6px; transition: width 0.5s ease; white-space: nowrap; }
 .funnel-count { width: 70px; font-size: 13px; font-weight: 700; color: var(--na-green-dark); flex-shrink: 0; }
 
-/* Funil de Conversão (aba Relatórios, atualizarRelatorios()) — cards
-   empilhados afunilando, cor por etapa + selo de conversão na última,
-   só usado ali (as outras classes .funnel-* acima continuam servindo os
-   demais relatórios, sem mudança). */
+/* Funil de Conversão e Jornada da Base (aba Relatórios) — cards
+   empilhados e CENTRALIZADOS, afunilando de verdade (largura sempre
+   decrescente, ver calcularLargurasFunil() em js/app.js), cor por etapa
+   + selo de conversão na última. Wrapper próprio (.funil-visual) dentro
+   do container .funnel de sempre — evita mexer no .funnel compartilhado
+   com Motivos de Perda, que continua com layout esticado (.funnel-stage/
+   .funnel-bar-wrapper, sem qualquer mudança). */
+.funil-visual { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
 .funil-etapa-card { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px; border-radius: 8px; border-left: 5px solid #cbd5e1; min-width: 320px; transition: width 0.4s ease; }
 .funil-etapa-titulo { font-size: 14px; font-weight: 700; white-space: nowrap; }
 .funil-etapa-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
@@ -549,6 +553,8 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .funil-etapa-valor { font-size: 20px; font-weight: 700; }
 .funil-etapa-badge { font-size: 10px; font-weight: 700; color: white; background: var(--na-green); padding: 2px 8px; border-radius: 4px; display: inline-block; margin-top: 4px; white-space: nowrap; }
 .funil-etapa-seta { text-align: center; color: var(--text-muted); font-size: 13px; }
+.funil-base-dupla { display: flex; gap: 12px; width: 100%; justify-content: center; }
+.funil-base-item { min-width: 150px; flex-shrink: 1; }
 
 /* Tabelas dos novos relatórios (Temas de Evento / Comparação entre Filiais) */
 .tabela-relatorio { width: 100%; max-width: 760px; margin-top: 16px; border-collapse: collapse; font-size: 12px; }

@@ -2320,6 +2320,38 @@ function renderizarFeedAtividades() {
 // ==========================================
 // ABA: RELATÓRIOS (FUNIL DE CONVERSÃO)
 // ==========================================
+// Calcula a largura (%) de cada etapa de um funil visual — SEMPRE
+// decrescente (nunca duas etapas seguidas com a mesma largura), mesmo
+// quando os valores reais são iguais ou zero. Sem isso, etapas vazias
+// batiam todas no mesmo piso mínimo e ficavam com a MESMA largura —
+// visualmente parecia uma pilha de retângulos iguais ("simétrico"), não
+// um funil afunilando de verdade. `quedaMinima` garante um degrau visual
+// sempre, mesmo sem diferença real nos dados; quando a queda real é maior
+// que isso, o valor real prevalece (funil não fica "mais gordo" do que a
+// proporção verdadeira).
+function calcularLargurasFunil(valores, { minimo = 26, quedaMinima = 14 } = {}) {
+    const maior = Math.max(1, ...valores);
+    let tetoAnterior = 100;
+    return valores.map((v, i) => {
+        const pctDado = Math.round((v / maior) * 100);
+        const teto = i === 0 ? 100 : Math.max(minimo, tetoAnterior - quedaMinima);
+        const largura = i === 0 ? 100 : Math.min(Math.max(pctDado, minimo), teto);
+        tetoAnterior = largura;
+        return largura;
+    });
+}
+
+// Variante SEM decréscimo forçado — usada onde as etapas não são um
+// funil aninhado de verdade (cada uma é um subconjunto da anterior), e
+// sim categorias que podem legitimamente crescer (ex: Jornada da Base —
+// "Descoberta" pode ter MENOS gente que "Interesse Emergente" na vida
+// real, já que são grupos diferentes, não um afunilamento garantido).
+// Forçar decréscimo aqui mentiria sobre a proporção real.
+function calcularLargurasProporcionais(valores, { minimo = 30 } = {}) {
+    const maior = Math.max(1, ...valores);
+    return valores.map(v => Math.max(minimo, Math.round((v / maior) * 100)));
+}
+
 function atualizarRelatorios() {
     const container = document.getElementById('funnelChart');
     if (!container) return;
@@ -2364,10 +2396,10 @@ function atualizarRelatorios() {
         { borda: '#3b82f6', fundo: '#eff6ff', cor: 'var(--text-dark)' },
         { borda: 'var(--na-green)', fundo: '#f0fdf4', cor: 'var(--na-green-dark)' },
     ];
-    const maiorValor = Math.max(1, ...etapas.map(e => e.valor));
+    const larguras = calcularLargurasFunil(etapas.map(e => e.valor));
 
-    container.innerHTML = etapas.map((e, i) => {
-        const pct = Math.max(50, Math.round((e.valor / maiorValor) * 100));
+    container.innerHTML = `<div class="funil-visual">` + etapas.map((e, i) => {
+        const pct = larguras[i];
         const paleta = PALETA_ETAPAS[i % PALETA_ETAPAS.length];
         const ehUltima = i === etapas.length - 1;
         const anterior = i > 0 ? etapas[i - 1].valor : null;
@@ -2387,7 +2419,7 @@ function atualizarRelatorios() {
                 </div>
             </div>
         `;
-    }).join('');
+    }).join('') + `</div>`;
 
     renderizarRelatorioTemasEvento();
     renderizarRelatorioMatriculasPorMes();
@@ -2469,22 +2501,58 @@ function renderizarRelatorioJornadaBase() {
         return;
     }
 
-    const ordem = ['Descoberta', 'Interesse Emergente', 'Engajado', 'Matriculado', 'Em Recuperação'];
-    const maiorValor = Math.max(1, ...Object.values(contagem));
+    // Descoberta → Interesse Emergente → Engajado é uma progressão real
+    // (cada estágio pressupõe mais engajamento que o anterior), mas
+    // Matriculado/Em Recuperação NÃO são "o próximo passo depois de
+    // Engajado" — são 2 DESTINOS diferentes (virou aluno, ou já foi aluno
+    // e precisa ser resgatado), por isso ficam lado a lado formando a
+    // base do funil, em vez de mais uma etapa única embaixo (pedido
+    // explícito do usuário).
+    const ETAPAS_SEQUENCIA = ['Descoberta', 'Interesse Emergente', 'Engajado'];
+    const PALETA_JORNADA = [
+        { borda: '#cbd5e1', fundo: '#f1f5f9', cor: 'var(--text-dark)' },
+        { borda: 'var(--na-gold)', fundo: '#fdfaf5', cor: 'var(--text-dark)' },
+        { borda: '#3b82f6', fundo: '#eff6ff', cor: 'var(--text-dark)' },
+    ];
+    const larguras = calcularLargurasProporcionais(ETAPAS_SEQUENCIA.map(label => contagem[label]));
 
-    container.innerHTML = ordem.map(label => {
-        const valor = contagem[label];
-        const pct = Math.max(4, Math.round((valor / maiorValor) * 100));
+    const htmlSequencia = ETAPAS_SEQUENCIA.map((label, i) => {
+        const paleta = PALETA_JORNADA[i];
+        const seta = i > 0 ? `<div class="funil-etapa-seta"><i class="fa-solid fa-arrow-down"></i></div>` : '';
         return `
-            <div class="funnel-stage">
-                <div class="funnel-label">${escapeHTML(label)}</div>
-                <div class="funnel-bar-wrapper">
-                    <div class="funnel-bar" style="width:${pct}%;">${pct}%</div>
-                </div>
-                <div class="funnel-count">${valor.toLocaleString('pt-BR')}</div>
+            ${seta}
+            <div class="funil-etapa-card" style="width:${larguras[i]}%; border-left-color:${paleta.borda}; background:${paleta.fundo};">
+                <div class="funil-etapa-titulo" style="color:${paleta.cor};">${escapeHTML(label)}</div>
+                <div class="funil-etapa-valor" style="color:${paleta.cor};">${contagem[label].toLocaleString('pt-BR')}</div>
             </div>
         `;
     }).join('');
+
+    // Base dupla: largura total do par = largura da última etapa
+    // sequencial (Engajado), dividida entre os 2 destinos proporcional
+    // ao valor de cada um — visualmente "o funil se bifurca" na saída.
+    const valorMatriculado = contagem['Matriculado'];
+    const valorRecuperacao = contagem['Em Recuperação'];
+    const somaBase = Math.max(1, valorMatriculado + valorRecuperacao);
+    const larguraDisponivel = larguras[larguras.length - 1];
+    const wMatriculado = Math.max(20, Math.round(larguraDisponivel * (valorMatriculado / somaBase)));
+    const wRecuperacao = Math.max(20, Math.round(larguraDisponivel * (valorRecuperacao / somaBase)));
+
+    const htmlBase = `
+        <div class="funil-etapa-seta"><i class="fa-solid fa-arrow-down"></i></div>
+        <div class="funil-base-dupla">
+            <div class="funil-etapa-card funil-base-item" style="width:${wMatriculado}%; border-left-color:var(--na-green); background:#f0fdf4;">
+                <div class="funil-etapa-titulo" style="color:var(--na-green-dark);">Matriculado</div>
+                <div class="funil-etapa-valor" style="color:var(--na-green-dark);">${valorMatriculado.toLocaleString('pt-BR')}</div>
+            </div>
+            <div class="funil-etapa-card funil-base-item" style="width:${wRecuperacao}%; border-left-color:#b45309; background:#fffbeb;">
+                <div class="funil-etapa-titulo" style="color:#b45309;">Em Recuperação</div>
+                <div class="funil-etapa-valor" style="color:#b45309;">${valorRecuperacao.toLocaleString('pt-BR')}</div>
+            </div>
+        </div>
+    `;
+
+    container.innerHTML = `<div class="funil-visual">${htmlSequencia}${htmlBase}</div>`;
 }
 
 // Proxy sobre leadsAtuais (mesma limitação dos outros KPIs do Dashboard —
