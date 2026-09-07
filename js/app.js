@@ -1778,6 +1778,7 @@ async function renderizarListaFiliaisModal() {
             </div>
             <input type="text" value="${escapeHTML(f.nome_com_preposicao || '')}" placeholder="Como falar dela naturalmente (ex: do Jardim América, de Barra do Garças)" onchange="atualizarPreposicaoFilial(${f.id}, this.value)">
             <input type="text" value="${escapeHTML(f.whatsapp_chefe_numero || '')}" placeholder="WhatsApp do chefe de filial (E.164, ex: 5562991234567) — aviso de aniversário e resumo de lead" onchange="atualizarWhatsappChefeFilial(${f.id}, this.value)">
+            <input type="number" step="0.01" min="0" value="${f.valor_mensalidade != null ? f.valor_mensalidade : ''}" placeholder="Valor da mensalidade (R$) — base do relatório de receita/comissão" onchange="atualizarValorMensalidadeFilial(${f.id}, this.value)">
         </div>
     `).join('');
 }
@@ -1817,6 +1818,15 @@ async function atualizarWhatsappChefeFilial(id, novoValor) {
     if (error) alert('Erro ao salvar: ' + error.message);
 }
 
+// Valor da mensalidade/contribuição da filial — base do cálculo de
+// receita e comissão de SDR no relatório "Matrículas por Mês" (aba
+// Relatórios). Ver migracao_filial_valor_mensalidade.sql.
+async function atualizarValorMensalidadeFilial(id, novoValor) {
+    const numero = novoValor.trim() === '' ? null : parseFloat(novoValor.replace(',', '.'));
+    const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ valor_mensalidade: (numero === null || isNaN(numero)) ? null : numero }).eq('id', id);
+    if (error) alert('Erro ao salvar: ' + error.message);
+}
+
 
 async function adicionarFilial() {
     const nome = prompt('Nome da nova filial:');
@@ -1841,6 +1851,7 @@ const ICONES_MODULO = {
     'tab-dashboard': 'fa-solid fa-chart-line',
     'tab-crm': 'fa-solid fa-users-viewfinder',
     'tab-agenda': 'fa-solid fa-calendar-days',
+    'tab-mapa-turmas': 'fa-solid fa-table-cells',
     'tab-whatsapp': 'fa-brands fa-whatsapp',
     'tab-relatorios': 'fa-solid fa-chart-simple',
     'tab-leads-tratar': 'fa-solid fa-clone',
@@ -1870,6 +1881,7 @@ function switchModule(tabId, title, subtitle) {
     if (tabId === 'tab-dashboard') atualizarDashboard();
     if (tabId === 'tab-relatorios') atualizarRelatorios();
     if (tabId === 'tab-agenda' && typeof carregarEventos === 'function') carregarEventos();
+    if (tabId === 'tab-mapa-turmas' && typeof carregarMapaTurmas === 'function') carregarMapaTurmas();
     if (tabId === 'tab-leads-tratar' && typeof carregarLeadsATratar === 'function') carregarLeadsATratar();
     if (tabId === 'tab-whatsapp') {
         const wppSearchEl = document.getElementById('wppSearch');
@@ -2622,6 +2634,8 @@ function renderizarRelatorioTemasEvento() {
 // Diferente do relatório acima, este busca direto no banco (paginado,
 // com ORDER BY estável) — a exatidão importa mais que a velocidade aqui,
 // já que é uma métrica de negócio (não um KPI-proxy do dia a dia).
+let mesSelecionadoMatriculas = null; // "AAAA-MM" — persiste a escolha do usuário entre re-renders da mesma sessão
+
 async function renderizarRelatorioMatriculasPorMes() {
     const container = document.getElementById('relatorioMatriculasPorMes');
     if (!container || !filialAtual) return;
@@ -2657,8 +2671,62 @@ async function renderizarRelatorioMatriculasPorMes() {
     const NOMES_MES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
     const mesesOrdenados = Array.from(porMes.keys()).sort();
     const maiorValor = Math.max(1, ...porMes.values());
+    const rotuloMes = (mes) => { const [ano, mesNum] = mes.split('-'); return `${NOMES_MES[Number(mesNum) - 1]}/${ano}`; };
+
+    // Mês selecionado no <select> abaixo — padrão é o mais recente com
+    // matrícula registrada. Guardado numa variável de módulo pra
+    // sobreviver a re-renders (troca de filial reseta sozinho, já que aí
+    // os meses disponíveis mudam).
+    if (!mesSelecionadoMatriculas || !mesesOrdenados.includes(mesSelecionadoMatriculas)) {
+        mesSelecionadoMatriculas = mesesOrdenados[mesesOrdenados.length - 1];
+    }
+    const qtdSelecionado = porMes.get(mesSelecionadoMatriculas) || 0;
+
+    // Receita/comissão — só calcula se a filial tiver o valor de
+    // mensalidade configurado (migracao_filial_valor_mensalidade.sql,
+    // "Gerenciar Filiais"). Receita aqui é só a contribuição do 1º mês de
+    // cada matrícula NOVA do mês selecionado (não a mensalidade recorrente
+    // de toda a base já matriculada) — é a mesma base usada pra calcular a
+    // comissão do SDR (30% sobre a contribuição do 1º mês).
+    const filialInfo = (filiaisDisponiveis || []).find(f => f.nome === filialAtual);
+    const valorMensalidade = (filialInfo && filialInfo.valor_mensalidade != null) ? Number(filialInfo.valor_mensalidade) : null;
+    const receita = valorMensalidade != null ? qtdSelecionado * valorMensalidade : null;
+    const comissaoSdr = receita != null ? receita * 0.30 : null;
+    const formatarReal = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
     container.innerHTML = `
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;">
+            <label style="font-size:12px; font-weight:600; color:var(--text-dark);">Mês:</label>
+            <select onchange="mesSelecionadoMatriculas = this.value; renderizarRelatorioMatriculasPorMes();" style="padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; outline:none;">
+                ${mesesOrdenados.slice().reverse().map(mes => `<option value="${mes}" ${mes === mesSelecionadoMatriculas ? 'selected' : ''}>${rotuloMes(mes)}</option>`).join('')}
+            </select>
+        </div>
+
+        <div class="kpi-grid" style="grid-template-columns: repeat(3, minmax(170px, 1fr)); margin-bottom:22px;">
+            <div class="kpi-card">
+                <div class="kpi-icon" style="background:#f0fdf4; color:var(--na-green-dark);"><i class="fa-solid fa-user-graduate"></i></div>
+                <div class="kpi-info">
+                    <div class="kpi-value">${qtdSelecionado}</div>
+                    <div class="kpi-label">Matrículas em ${rotuloMes(mesSelecionadoMatriculas)}</div>
+                </div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-icon" style="background:#fdfaf5; color:var(--na-gold);"><i class="fa-solid fa-sack-dollar"></i></div>
+                <div class="kpi-info">
+                    <div class="kpi-value">${receita != null ? formatarReal(receita) : '—'}</div>
+                    <div class="kpi-label">Receita (1º mês)</div>
+                </div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-icon" style="background:#eff6ff; color:#3b82f6;"><i class="fa-solid fa-hand-holding-dollar"></i></div>
+                <div class="kpi-info">
+                    <div class="kpi-value">${comissaoSdr != null ? formatarReal(comissaoSdr) : '—'}</div>
+                    <div class="kpi-label">Comissão SDR (30%)</div>
+                </div>
+            </div>
+        </div>
+        ${valorMensalidade == null ? '<p style="font-size:11px; color:var(--text-muted); margin:-14px 0 16px;"><i class="fa-solid fa-circle-info"></i> Configure o valor da mensalidade desta filial em "Gerenciar Filiais" pra calcular receita e comissão.</p>' : ''}
+
         <div class="funnel">
             ${mesesOrdenados.map(mes => {
                 const [ano, mesNum] = mes.split('-');

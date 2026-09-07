@@ -502,16 +502,19 @@ function mesAnoDoIngresso(dataBR) {
 }
 
 // Varre TODAS as turmas da filial (menu "Turmas", uni_esctur.php) — entra
-// em cada uma, lê a tabela de alunos (Matr./Nome/Origem/Ingresso/Fone) e
-// separa quem ingressou no MÊS CORRENTE (não o padrão de 90 dias usado no
-// paste manual, ehMatriculaRecente() em js/matricula-importar.js — aqui
-// é "matriculados NESTE MÊS" de propósito, pedido explícito do usuário,
-// e o pré-filtro acontece AQUI, antes de qualquer coisa chegar na tela do
-// CRM, então esse limite não afeta em nada o fluxo manual). Quem bate é
-// colado na tela "Importar Matrícula" do CRM publicado (marco 3 —
-// scraper/importar-matricula-no-crm.js), reaproveitando 100% da lógica
-// de casamento/tags/dedup que já existe — não reimplementa nada disso
-// aqui.
+// em cada uma e faz 2 coisas:
+// (1) grava dia/horário de TODA turma em `turmas` (migracao_turmas.sql),
+//     base do "Mapa de Turmas" no CRM (js/mapa-turmas.js);
+// (2) lê a tabela de alunos (Matr./Nome/Origem/Ingresso/Fone) e separa
+//     quem ingressou no MÊS CORRENTE (não o padrão de 90 dias usado no
+//     paste manual, ehMatriculaRecente() em js/matricula-importar.js —
+//     aqui é "matriculados NESTE MÊS" de propósito, pedido explícito do
+//     usuário, e o pré-filtro acontece AQUI, antes de qualquer coisa
+//     chegar na tela do CRM, então esse limite não afeta em nada o
+//     fluxo manual). Quem bate é colado na tela "Importar Matrícula" do
+//     CRM publicado (marco 3 — scraper/importar-matricula-no-crm.js),
+//     reaproveitando 100% da lógica de casamento/tags/dedup que já
+//     existe — não reimplementa nada disso aqui.
 //
 // A "Matr." VISÍVEL nessa tabela é só um índice de linha (1, 2, 3...),
 // NÃO a matrícula real — confirmado no HTML ao vivo (a matrícula de
@@ -547,6 +550,14 @@ async function processarMatriculasRecentesTurmas(page, pageCrm, filialCrm, label
             const horarioTexto = await frameDetalhe.locator('td:has-text("Horário:")').first().innerText().catch(() => '');
             const dia = diaTexto.replace(/^Dia:\s*/i, '').trim();
             const horario = horarioTexto.replace(/^Horário:\s*/i, '').trim();
+
+            // Grava dia/horário de TODA turma visitada (tenha matrícula
+            // recente ou não) — base do "Mapa de Turmas" no CRM
+            // (migracao_turmas.sql). Best-effort, não impede o resto do
+            // processamento desta turma se falhar.
+            await supabaseAdmin.from('turmas')
+                .upsert({ filial: filialCrm, nome: nomeTurma, dia, horario, atualizado_em: new Date().toISOString() }, { onConflict: 'filial,nome' })
+                .then(({ error }) => { if (error) console.warn(`[mapa-turmas] Falha ao gravar turma "${nomeTurma}" (${filialCrm}):`, error.message); });
 
             const tabelas = frameDetalhe.locator('table');
             const totalTabelas = await tabelas.count();

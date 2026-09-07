@@ -31,6 +31,8 @@
            onclick="switchModule('tab-crm', 'Prospecção Ativa', 'CRM Modularizado VS Code')"></i>
         <i class="fa-solid fa-calendar-days sidebar-icon" data-tab="tab-agenda" title="Agenda de Eventos"
            onclick="switchModule('tab-agenda', 'Agenda de Eventos', 'Atividades e capacidade por filial')"></i>
+        <i class="fa-solid fa-table-cells sidebar-icon" data-tab="tab-mapa-turmas" title="Mapa de Turmas"
+           onclick="switchModule('tab-mapa-turmas', 'Mapa de Turmas', 'Grade semanal por dia e horário — sincronizado do Mercúrio')"></i>
         <i class="fa-brands fa-whatsapp sidebar-icon" data-tab="tab-whatsapp" title="WhatsApp Unificado"
            onclick="switchModule('tab-whatsapp', 'WhatsApp Unificado', 'Caixa de entrada centralizada')"></i>
         <i class="fa-solid fa-chart-simple sidebar-icon" data-tab="tab-relatorios" title="Relatórios"
@@ -242,6 +244,19 @@
                     </div>
                 </div>
                 <div class="agenda-lista" id="agendaLista"></div>
+            </div>
+        </div>
+
+        <!-- ==========================================================
+             ABA 2b — MAPA DE TURMAS
+        =========================================================== -->
+        <div id="tab-mapa-turmas" class="tab-pane">
+            <div class="agenda-content">
+                <div>
+                    <h3 style="font-size:16px; color:var(--na-green-dark);">Mapa de Turmas</h3>
+                    <p class="report-sub">Grade semanal de turmas desta filial — sincronizada automaticamente pelo scraper do Mercúrio. Células em branco (destacadas) são horários livres pra abrir turma nova.</p>
+                </div>
+                <div id="mapaTurmasGrade" style="margin-top:16px; overflow-x:auto;"></div>
             </div>
         </div>
 
@@ -986,6 +1001,8 @@
     <script src="js/whatsapp.js"></script>
     <!-- 3d. Módulo da Agenda de Eventos (atividades/capacidade por filial) -->
     <script src="js/eventos.js"></script>
+    <!-- 3d2. Mapa de Turmas (grade semanal dia x horário, sincronizada do Mercúrio) -->
+    <script src="js/mapa-turmas.js"></script>
     <!-- 3e. Módulo de importar matrícula via texto colado da tela do Mercúrio -->
     <script src="js/matricula-importar.js"></script>
     <!-- 3f. Central de Notificações (sino no topbar) -->

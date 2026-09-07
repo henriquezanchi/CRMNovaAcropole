@@ -553,6 +553,17 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .funil-etapa-valor { font-size: 20px; font-weight: 700; }
 .funil-etapa-badge { font-size: 10px; font-weight: 700; color: white; background: var(--na-green); padding: 2px 8px; border-radius: 4px; display: inline-block; margin-top: 4px; white-space: nowrap; }
 .funil-etapa-pct { font-size: 10px; color: var(--text-muted); margin-top: 2px; white-space: nowrap; }
+
+/* Mapa de Turmas (js/mapa-turmas.js) — grade semanal dia x horário */
+.mapa-turmas-tabela { border-collapse: collapse; width: 100%; min-width: 700px; font-size: 12px; }
+.mapa-turmas-tabela th { background: #f8fafc; padding: 8px 10px; border: 1px solid var(--border-color); font-weight: 700; color: var(--text-dark); white-space: nowrap; }
+.mapa-turmas-horario { background: #f1f5f9 !important; font-weight: 700; color: var(--text-muted); }
+.mapa-turmas-tabela td { border: 1px solid var(--border-color); padding: 8px 10px; text-align: center; vertical-align: middle; }
+.mapa-turmas-livre { background: #f0fdf4; color: #86efac; font-weight: 700; }
+.mapa-turmas-ocupado { background: white; color: var(--na-green-dark); font-weight: 600; line-height: 1.5; }
+.mapa-turmas-legenda-livre, .mapa-turmas-legenda-ocupado { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+.mapa-turmas-legenda-livre { background: #f0fdf4; border: 1px solid #bbf7d0; }
+.mapa-turmas-legenda-ocupado { background: white; border: 1px solid var(--border-color); }
 .funil-etapa-seta { text-align: center; color: var(--text-muted); font-size: 13px; }
 .funil-base-dupla { display: flex; gap: 12px; width: 100%; justify-content: center; }
 .funil-base-item { min-width: 150px; flex-shrink: 1; }
