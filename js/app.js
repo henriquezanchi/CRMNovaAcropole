@@ -2352,17 +2352,6 @@ function calcularLargurasFunil(valores, { minimo = 26, quedaMinima = 14 } = {}) 
     });
 }
 
-// Variante SEM decréscimo forçado — usada onde as etapas não são um
-// funil aninhado de verdade (cada uma é um subconjunto da anterior), e
-// sim categorias que podem legitimamente crescer (ex: Jornada da Base —
-// "Descoberta" pode ter MENOS gente que "Interesse Emergente" na vida
-// real, já que são grupos diferentes, não um afunilamento garantido).
-// Forçar decréscimo aqui mentiria sobre a proporção real.
-function calcularLargurasProporcionais(valores, { minimo = 30 } = {}) {
-    const maior = Math.max(1, ...valores);
-    return valores.map(v => Math.max(minimo, Math.round((v / maior) * 100)));
-}
-
 function atualizarRelatorios() {
     const container = document.getElementById('funnelChart');
     if (!container) return;
@@ -2525,27 +2514,42 @@ function renderizarRelatorioJornadaBase() {
         { borda: 'var(--na-gold)', fundo: '#fdfaf5', cor: 'var(--text-dark)' },
         { borda: '#3b82f6', fundo: '#eff6ff', cor: 'var(--text-dark)' },
     ];
-    const larguras = calcularLargurasProporcionais(ETAPAS_SEQUENCIA.map(label => contagem[label]));
+    // % de cada estágio sobre os "leads ÚTEIS" — quem ainda NÃO é
+    // Matriculado (Descoberta + Interesse Emergente + Engajado + Em
+    // Recuperação). **Bug real corrigido**: a versão anterior calculava
+    // a largura de cada barra como % do MAIOR valor entre os 5 grupos
+    // (ex: Interesse Emergente com 124 pessoas virava "100%" só por ser
+    // o maior, não por representar 100% de coisa nenhuma) — sem
+    // denominador que fizesse sentido, o número não dizia nada real.
+    // Agora os 4 valores do funil de prospecção sempre somam 100% entre
+    // si; Matriculado fica de fora do denominador de propósito (é a
+    // META, não faz sentido competir por fatia do funil que já converteu).
+    const totalUteis = contagem['Descoberta'] + contagem['Interesse Emergente'] + contagem['Engajado'] + contagem['Em Recuperação'];
+    const pctDe = (valor) => totalUteis > 0 ? Math.round((valor / totalUteis) * 100) : 0;
+    const larguraDe = (valor) => Math.max(15, pctDe(valor));
 
     const htmlSequencia = ETAPAS_SEQUENCIA.map((label, i) => {
         const paleta = PALETA_JORNADA[i];
         const seta = i > 0 ? `<div class="funil-etapa-seta"><i class="fa-solid fa-arrow-down"></i></div>` : '';
         return `
             ${seta}
-            <div class="funil-etapa-card" style="width:${larguras[i]}%; border-left-color:${paleta.borda}; background:${paleta.fundo};">
+            <div class="funil-etapa-card" style="width:${larguraDe(contagem[label])}%; border-left-color:${paleta.borda}; background:${paleta.fundo};">
                 <div class="funil-etapa-titulo" style="color:${paleta.cor};">${escapeHTML(label)}</div>
-                <div class="funil-etapa-valor" style="color:${paleta.cor};">${contagem[label].toLocaleString('pt-BR')}</div>
+                <div class="funil-etapa-valor-bloco">
+                    <div class="funil-etapa-valor" style="color:${paleta.cor};">${contagem[label].toLocaleString('pt-BR')}</div>
+                    <div class="funil-etapa-pct">${pctDe(contagem[label])}% dos leads úteis</div>
+                </div>
             </div>
         `;
     }).join('');
 
-    // Base dupla: largura total do par = largura da última etapa
-    // sequencial (Engajado), dividida entre os 2 destinos proporcional
-    // ao valor de cada um — visualmente "o funil se bifurca" na saída.
+    // Base dupla: largura total do par = largura da etapa "Engajado"
+    // (última sequencial), dividida entre os 2 destinos proporcional ao
+    // valor de cada um — visualmente "o funil se bifurca" na saída.
     const valorMatriculado = contagem['Matriculado'];
     const valorRecuperacao = contagem['Em Recuperação'];
     const somaBase = Math.max(1, valorMatriculado + valorRecuperacao);
-    const larguraDisponivel = larguras[larguras.length - 1];
+    const larguraDisponivel = larguraDe(contagem['Engajado']);
     const wMatriculado = Math.max(20, Math.round(larguraDisponivel * (valorMatriculado / somaBase)));
     const wRecuperacao = Math.max(20, Math.round(larguraDisponivel * (valorRecuperacao / somaBase)));
 
@@ -2559,6 +2563,7 @@ function renderizarRelatorioJornadaBase() {
             <div class="funil-etapa-card funil-base-item" style="width:${wRecuperacao}%; border-left-color:#b45309; background:#fffbeb;">
                 <div class="funil-etapa-titulo" style="color:#b45309;">Em Recuperação</div>
                 <div class="funil-etapa-valor" style="color:#b45309;">${valorRecuperacao.toLocaleString('pt-BR')}</div>
+                <div class="funil-etapa-pct">${pctDe(valorRecuperacao)}% dos leads úteis</div>
             </div>
         </div>
     `;

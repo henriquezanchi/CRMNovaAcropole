@@ -26,6 +26,10 @@ let mostrarEventosPassados = false;
 let participantesResumoPorEvento = new Map();
 let eventoParticipantesId = null;
 let participantesAtuais = []; // linhas de evento_leads + dados do lead, só do evento aberto no modal
+// "Matriculado" só faz sentido pra eventos de Abertura de Turma (pedido
+// explícito do usuário) — os demais tipos (Palestra, Workshop etc.) não
+// mostram esse campo nem no modal nem na barra de ações em massa.
+let permiteMatriculaEventoAtual = false;
 
 // Catálogo de tipos de evento (compartilhado, editável em "Gerenciar
 // Tipos") — usado pra popular o <select> do modal de Evento. Padrão
@@ -620,6 +624,10 @@ async function abrirParticipantesEvento(eventoId) {
     const tituloEl = document.getElementById('participantesEventoTitulo');
     if (tituloEl) tituloEl.innerText = ev ? (ev.participantes_unificados ? `${ev.nome} (todas as filiais do grupo)` : ev.nome) : 'Evento';
 
+    permiteMatriculaEventoAtual = !!ev && ev.tipo === 'Abertura de Turma';
+    const bulkMatriculado = document.getElementById('participantesBulkMatriculado');
+    if (bulkMatriculado) bulkMatriculado.style.display = permiteMatriculaEventoAtual ? '' : 'none';
+
     const buscaInput = document.getElementById('participantesBuscaInput');
     if (buscaInput) buscaInput.value = '';
     fecharResultadosBuscaParticipante();
@@ -718,11 +726,12 @@ function renderizarListaParticipantes() {
                     <option value="sim" ${compareceuValor === 'sim' ? 'selected' : ''}>Compareceu: Sim</option>
                     <option value="nao" ${compareceuValor === 'nao' ? 'selected' : ''}>Compareceu: Não</option>
                 </select>
+                ${permiteMatriculaEventoAtual ? `
                 <select class="participante-matriculado" onchange="atualizarMatriculadoParticipante(${p.id}, this.value)">
                     <option value="" ${matriculadoValor === '' ? 'selected' : ''}>Matriculado? --</option>
                     <option value="sim" ${matriculadoValor === 'sim' ? 'selected' : ''}>Matriculado: Sim 🎉</option>
                     <option value="nao" ${matriculadoValor === 'nao' ? 'selected' : ''}>Matriculado: Não</option>
-                </select>
+                </select>` : ''}
                 <button class="icon-btn danger" title="Remover da lista" onclick="removerParticipante(${p.id})"><i class="fa-solid fa-trash"></i></button>
             </div>
         `;
