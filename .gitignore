@@ -8,3 +8,5 @@ desktop.ini
 *.log
 scraper/playwright-report/
 scraper/test-results/
+scraper/exports/
+scraper/debug/
