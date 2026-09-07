@@ -1869,6 +1869,23 @@ bloqueado).
        rodar o scraper de novo a partir de agora não deve reproduzir o
        bug, mas duplicatas antigas de OUTRAS filiais/eventos anteriores a
        essa correção podem precisar da mesma limpeza manual se existirem.
+       **Também passou a ler Hora/Capacidade** (print real mostrou que o
+       painel de detalhes tem uma 2ª aba, "Eventos" — ao lado de "Link",
+       onde ficam os campos já lidos — com 1 linha por filial do Ulisses,
+       cada uma com seu próprio Data/Hora e "Qtd. Vagas"; é o equivalente,
+       do lado do Ulisses, do nosso conceito de evento multi-filial). A
+       função `lerDataHoraEVagas()` clica na aba "Eventos", acha a(s)
+       linha(s) com o checkbox MARCADO (a(s) filial(is) que essa conta usa)
+       e lê Data/Hora + Qtd. Vagas dos `<input>` daquela linha, depois
+       volta pra aba "Link" antes do próximo card do loop (senão a
+       espera por "Título" do próximo card nunca bateria — ela só existe
+       na aba "Link"). Alimenta as colunas `hora`/`capacidade` de
+       `eventos`, que antes ficavam sempre em branco na sincronização
+       automática. **Ainda NÃO testado de verdade** (escrito só com print
+       de tela) — mesmo estágio inicial que as outras funções deste
+       arquivo já passaram; se a leitura vier vazia/errada, mandar o HTML
+       real da aba "Eventos" (Inspecionar no checkbox marcado + a linha
+       `<tr>` toda) resolve rápido.
      - `exportarComparecimento()`: "Pré-inscrições" → "Recepção" (navega
        direto pra `#/recepcao` — o clique no menu nunca chegava lá de
        verdade, o hover é que abre o submenu, não o clique). **Testado de

@@ -155,6 +155,72 @@ export async function exportarCatalogoEventos(page, filial) {
         catch { return null; }
     };
 
+    // O painel de detalhes tem 2 abas: "Link" (Título/Imagem/Descrição
+    // etc., já lidos acima por getByLabel) e "Eventos" — uma tabela com 1
+    // linha por filial do Ulisses, cada uma com Data/Hora e Qtd. Vagas
+    // PRÓPRIAS (esse formulário é literalmente o equivalente, do lado do
+    // Ulisses, do nosso conceito de evento multi-filial — grupo_evento_id
+    // em `eventos`). Sem isso, `hora`/`capacidade` nunca eram preenchidos
+    // na sincronização. Só a(s) linha(s) da(s) filial(is) que essa conta
+    // efetivamente usa vem(êm) com o checkbox marcado — as demais linhas
+    // (outros municípios) ficam sem preencher. Escrito só com PRINT de
+    // tela (ver topo do arquivo) — sem o HTML real não dá pra ter certeza
+    // do nome/role exato das abas nem da ordem exata das colunas, por
+    // isso os vários fallbacks e o comentário de "layout observado"
+    // abaixo; se quebrar, mandar o HTML real da aba "Eventos" resolve
+    // rápido.
+    const clicarAba = async (nomeExato) => {
+        const candidatos = [
+            page.getByRole('tab', { name: nomeExato, exact: true }),
+            page.getByRole('link', { name: nomeExato, exact: true }),
+            page.getByText(nomeExato, { exact: true }),
+        ];
+        for (const loc of candidatos) {
+            try {
+                const alvo = loc.first();
+                if (await alvo.count() && await alvo.isVisible().catch(() => false)) {
+                    await alvo.click({ timeout: 2000 });
+                    return true;
+                }
+            } catch { /* tenta o próximo candidato */ }
+        }
+        return false;
+    };
+
+    // Lê Data/Hora + Qtd. Vagas da 1ª linha marcada (checkbox) da aba
+    // "Eventos" — layout observado no print: colunas [Descrição do
+    // evento, Data (DD/MM/AAAA HH:MM), Qtd. Vagas], nessa ordem, como
+    // <input> de texto dentro da linha (<tr>) do checkbox marcado.
+    const lerDataHoraEVagas = async () => {
+        try {
+            const abriuAba = await clicarAba('Eventos');
+            if (!abriuAba) return { hora: null, capacidade: null };
+            const marcados = page.locator('input[type="checkbox"]:checked');
+            await marcados.first().waitFor({ timeout: 3000 }).catch(() => {});
+            const total = await marcados.count();
+            for (let j = 0; j < total; j++) {
+                const linha = marcados.nth(j).locator('xpath=ancestor::tr[1]');
+                const inputsTexto = linha.locator('input:not([type="checkbox"])');
+                const n = await inputsTexto.count();
+                const valores = [];
+                for (let k = 0; k < n; k++) {
+                    valores.push((await inputsTexto.nth(k).inputValue().catch(() => '') || '').trim());
+                }
+                const dataHora = valores.find(v => /\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}/.test(v));
+                if (!dataHora) continue;
+                const hora = (dataHora.match(/(\d{2}:\d{2})/) || [])[1] || null;
+                const vagasTexto = valores.find(v => v !== dataHora && /^\d+$/.test(v));
+                const capacidade = vagasTexto ? parseInt(vagasTexto, 10) : null;
+                return { hora, capacidade };
+            }
+            return { hora: null, capacidade: null };
+        } catch {
+            return { hora: null, capacidade: null };
+        } finally {
+            await clicarAba('Link'); // volta pro estado esperado pelo próximo card do loop
+        }
+    };
+
     // Só vale a pena ler os detalhes completos (imagem/descrição/etc.) de
     // eventos FUTUROS — decisão do usuário: pra evento passado, o que
     // importa é só quem compareceu (ver exportarComparecimento), não mais
@@ -219,14 +285,21 @@ export async function exportarCatalogoEventos(page, filial) {
             // JUNTO com o Título (Imagem/Subtítulo, pelo caso real acima).
             await page.waitForTimeout(300);
 
-            eventos.push({
-                data: match ? `${match[3]}-${match[2]}-${match[1]}` : null,
-                titulo: tituloLido,
+            const camposLink = {
                 tipo_link: await ler('tipo link'),
                 imagem_url: await ler('imagem'),
                 subtitulo: await ler('subt[íi]tulo'),
                 informacao: await ler('informa[çc][ãa]o'),
                 descricao: await ler('descri[çc][ãa]o'),
+            };
+            const { hora, capacidade } = await lerDataHoraEVagas();
+
+            eventos.push({
+                data: match ? `${match[3]}-${match[2]}-${match[1]}` : null,
+                titulo: tituloLido,
+                hora,
+                capacidade,
+                ...camposLink,
             });
         } catch (e) {
             console.warn(`[ulisses] Não consegui ler o evento ${i} do catálogo (${filial}):`, e.message);
@@ -326,9 +399,9 @@ export async function exportarComparecimento(page, filial) {
 // js/importador.js — aqui é só um lookup de palavra-chave, baixo risco de
 // divergir, e evitar duplicar seria só possível fazendo o Playwright
 // pilotar a UI do CRM publicado, que é a decisão maior do marco 3, ainda
-// pendente). Sem "hora" — o card do Ulisses não expõe isso como campo
-// separado (o texto de Subtítulo/Informação, concatenado em `descricao`
-// abaixo, costuma trazer o horário em texto livre).
+// pendente). `hora`/`capacidade` vêm da aba "Eventos" do painel de
+// detalhes (ver lerDataHoraEVagas() em exportarCatalogoEventos) — campo
+// próprio, por filial, não o texto livre de Subtítulo/Informação.
 export async function sincronizarCatalogoEventosNoCrm(filial) {
     const caminhoJson = `${PASTA_EXPORTS}/catalogo-eventos-${filial.replace(/[^a-z0-9]/gi, '_')}.json`;
     if (!fs.existsSync(caminhoJson)) throw new Error('catalogo-eventos.json não encontrado — a etapa "catalogo-eventos" precisa rodar (e ter achado 1+ evento) antes desta.');
@@ -358,6 +431,8 @@ export async function sincronizarCatalogoEventosNoCrm(filial) {
 
         const payload = {
             filial, nome: ev.titulo, data: ev.data,
+            hora: ev.hora || null,
+            capacidade: ev.capacidade || null,
             tipo: classificarTipo(ev.titulo),
             imagem_url: ev.imagem_url || null,
             descricao: [ev.subtitulo, ev.informacao, ev.descricao].filter(Boolean).join('\n\n') || null,
