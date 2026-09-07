@@ -150,6 +150,12 @@ migracao_credenciais_scraper_mercurio_http.sql → alarga a constraint de "siste
                                      credenciais_scraper pra aceitar 'mercurio_http'
                                      (autenticação HTTP básica do Mercúrio, camada
                                      antes do Matrícula/Senha); rodar manualmente
+migracao_credenciais_scraper_crm_acesso.sql → alarga a constraint de "sistema" em
+                                     credenciais_scraper pra aceitar 'crm_acesso'
+                                     (senha do portão de acesso do próprio CRM
+                                     publicado, js/acesso.js — usada pelo scraper
+                                     pra pilotar a tela de Importar, marco 3); rodar
+                                     manualmente
 migracao_data_nascimento.sql      → coluna data_nascimento em leads_inscricoes
                                      (Aniversariantes do Mês no Dashboard); rodar
                                      manualmente
@@ -2014,14 +2020,60 @@ bloqueado).
        PRODUTO NOVO (site público de inscrição + pagamento), não uma
        extensão do scraper — fora do escopo atual, mas vale uma conversa
        de planejamento própria quando fizer sentido priorizar.
-  3. ⬜ Decisão de arquitetura pendente pra ligar os dados exportados de
-     volta no CRM: ou (a) reimplementar em Node a lógica de cruzamento/
-     tags/Lead Forte que já existe em `js/importador.js` (risco: duas
-     versões da mesma lógica podem divergir), ou (b) o próprio Playwright
-     abre o CRM publicado (ver seção "Publicação/Deploy" abaixo) e pilota
-     a tela de Importar como um usuário faria (`setInputFiles()` nos
-     inputs de arquivo + clicar Processar/Confirmar) — reaproveita 100%
-     da lógica existente, sem duplicar nada. Direção provável: (b).
+  3. ✅ **Concluído e testado de verdade (2026-09-07)** — decisão tomada:
+     opção (b), Playwright pilota o CRM PUBLICADO como um usuário faria,
+     em vez de reimplementar em Node a lógica de cruzamento/tags/Lead
+     Forte que já existe em `js/importador.js` (evita duas versões da
+     mesma lógica divergirem). Novo módulo `scraper/importar-no-crm.js`:
+     - `abrirCrmComAcesso(page)`: abre a URL publicada e passa pelo
+       portão de senha (`js/acesso.js`) se aparecer (sessão nova do
+       Playwright nunca tem nada em `localStorage` ainda) — lê a senha do
+       cofre (`credenciais_scraper`, novo `sistema='crm_acesso'`, senha
+       única/compartilhada, sem usuário — `migracao_credenciais_scraper_crm_acesso.sql`,
+       campo próprio em "Login Automático").
+     - `importarNoCrm(page, filial, { caminhoAtivos, caminhoInativos,
+       caminhoInscricoes })`: navega até a aba Importar, escolhe a filial
+       de destino, sobe os 3 CSVs (`setInputFiles`), clica em "Processar",
+       espera a prévia (sinal de que `processarPlanilhas()` terminou —
+       pode demorar de verdade), clica em "Confirmar e Enviar", espera o
+       log final (`Concluído!`/`Erro`) e devolve o log completo.
+     - **2 bugs reais achados e corrigidos testando ao vivo contra o site
+       publicado** (não só a lógica do scraper — também um bug real no
+       próprio `index.html`):
+       1. `carregarFiliais()` (assíncrona) era chamada no `DOMContentLoaded`
+          sem `await` antes de `popularFilialImportacao()` — as duas
+          corriam em paralelo, e o fallback desta última (busca própria
+          se `filiaisDisponiveis` ainda não tiver itens) podia terminar
+          DEPOIS e sobrescrever a seleção de filial já feita. O script
+          conseguia selecionar a filial certa e ela voltava sozinha pro
+          padrão um instante depois. Corrigido com `await` no `index.html`
+          (afeta também humanos, embora bem mais raro) + uma checagem
+          defensiva no scraper (reseleciona até estabilizar).
+       2. `getByRole('button', { name: /Processar/ })` ficava travado
+          (timeout, sem erro nenhum que desse pra diagnosticar sem abrir
+          o DOM cru) porque existe um SEGUNDO botão "Processar" na
+          página, escondido dentro do modal de Importar Matrícula via
+          print (`js/matricula-importar.js`, fechado/disabled) — mesmo só
+          1 dos 2 estando de fato visível. Corrigido usando seletor por
+          atributo `onclick` exato (`processarPlanilhas()`/
+          `confirmarEnviarImportacao()`/`tentarAcesso()`), sem
+          ambiguidade nenhuma — mesma lição de `mercurio.js` preferir
+          seletor estrutural a heurística de texto/role.
+     - **Teste real completo, produção de verdade** (não dado fake): os 3
+       CSVs já exportados nesta sessão (Ativos/Inativos do Mercúrio +
+       Inscrições do Ulisses, filial Barra do Garças/MT, que já tinha 893
+       leads reais no banco) foram importados via automação — log final:
+       "893 leads enviados", cruzamento/Lead Forte/Jornada calculados
+       certinho, e o aviso de "lead sumiu da planilha" (feature já
+       existente) disparou corretamente pra 2 pessoas. Confirmado no
+       banco: 895 leads na filial depois (893 atualizados + 2 novos).
+     - **Ainda não integrado num pipeline único** — hoje é uma função
+       reutilizável, chamada manualmente (ou por um script de teste) DEPOIS
+       que os CSVs de Ativos/Inativos (Mercúrio) e Inscrições (Ulisses) já
+       existem em `scraper/exports/`. Encadear isso automaticamente (rodar
+       Mercúrio + Ulisses + importar-no-crm em sequência, por filial, num
+       comando só) é trabalho futuro, não um problema de arquitetura em
+       aberto — só falta escrever o "orquestrador".
   4. ⬜ Agendamento (`schedule:` no workflow — hoje só `workflow_dispatch`,
      disparo manual, até os marcos acima estarem validados).
 
