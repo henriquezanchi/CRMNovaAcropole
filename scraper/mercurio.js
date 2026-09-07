@@ -74,7 +74,10 @@ async function loginMercurio(page, matricula, senha) {
 // Acha o texto num contexto que pode ser a página principal OU um dos
 // frames filhos (site antigo, "uni_frame.php" sugere <frameset> clássico)
 // — devolve o contexto certo (page ou Frame) pra continuar procurando
-// dentro dele, em vez de presumir qual é.
+// dentro dele, em vez de presumir qual é. Só usada pro LOGIN em si, onde
+// ainda não dá pra contar com nome de frame nenhum — a partir do login,
+// ver esperarFrame() abaixo (mais confiável: os frames pós-login têm
+// nome fixo, confirmado ao vivo).
 async function acharContextoComTexto(page, textoAlvo, timeoutMs = 10000) {
     const fim = Date.now() + timeoutMs;
     while (Date.now() < fim) {
@@ -88,6 +91,27 @@ async function acharContextoComTexto(page, textoAlvo, timeoutMs = 10000) {
         await page.waitForTimeout(300);
     }
     throw new Error(`Não encontrei "${textoAlvo}" nem na página principal nem em nenhum frame filho (timeout ${timeoutMs}ms).`);
+}
+
+// Espera um frame FILHO com o `nome` dado (atributo name="..." do
+// <frame>) existir e já ter navegado pra uma URL que bate com `regexUrl`
+// — confirmado ao vivo (Playwright DevTools) que o site usa nomes fixos
+// de frame em TODAS as telas pós-login: "cabecalho" (topo), "principal"
+// (conteúdo — é onde ficam os links "CADASTRO" logo após o login, e
+// depois as telas de Ativos/Inativos) e, dentro de uma filial (depois de
+// clicar CADASTRO), também "indice" (o menu lateral com "Ativos"/
+// "Inativos"). Bem mais confiável que procurar por texto (que já causou
+// bug real: "Turma" batia tanto na tabela de Ativos quanto no item de
+// menu "Turmas" do próprio menu lateral, sempre presente, fazendo o
+// código pensar que já estava na tela certa antes de realmente estar).
+async function esperarFrame(page, nome, regexUrl, timeoutMs = 10000) {
+    const fim = Date.now() + timeoutMs;
+    while (Date.now() < fim) {
+        const frame = page.frame({ name: nome });
+        if (frame && regexUrl.test(frame.url())) return frame;
+        await page.waitForTimeout(200);
+    }
+    throw new Error(`Frame "${nome}" não chegou numa URL batendo com ${regexUrl} a tempo (timeout ${timeoutMs}ms).`);
 }
 
 // Lê a PRIMEIRA <table> cujo cabeçalho contenha todas as colunas
@@ -125,26 +149,28 @@ function paraCSV(cabecalhos, linhas) {
     return [cabecalhos, ...linhas].map(l => l.map(escapar).join(';')).join('\r\n');
 }
 
-// Encontra cada link "CADASTRO" (1 por filial) e tenta identificar de
-// qual filial é, subindo até a célula da tabela (<td>) mais próxima e
-// pegando sua primeira linha de texto (o nome da filial em maiúsculas,
-// visto no print, vem ANTES da lista de links "CADASTRO"/"RECEPÇÃO"/etc
-// na mesma célula). Se não conseguir identificar, usa um rótulo genérico
-// (filial_N) em vez de travar tudo. Mesma lógica de "pode estar num frame
-// filho" do login (`acharContextoComTexto`) — confirmado no 4º teste real
-// que ger_frame.php também guarda o conteúdo num frame, não na página
-// principal (a busca direta em `page` não achou nenhum link).
+// Encontra cada link "CADASTRO" (1 por filial) dentro do frame
+// "principal" (confirmado ao vivo — ver esperarFrame()) e identifica de
+// qual filial é subindo até a <table class="menu"> que envolve o link (1
+// tabela por filial no HTML real) e lendo o <a class="menu_tit"> dela —
+// o cabeçalho da tabela com o NOME da filial (ex: "GOIÂNIA UNIVERSITARIO:
+// BARRA DO GARÇAS"), um elemento IRMÃO do link "CADASTRO", não ancestral
+// dele. **Bug real corrigido**: a versão anterior subia só 1 <td> (o da
+// própria célula do link "CADASTRO"), então o "nome da filial" lido era
+// sempre a palavra "CADASTRO" de novo — confirmado no 1º teste real (as
+// 4 filiais saíram todas rotuladas "CADASTRO"). Se não conseguir
+// identificar, usa um rótulo genérico (filial_N) em vez de travar tudo.
 async function listarLinksCadastro(page) {
-    const ctx = await acharContextoComTexto(page, 'CADASTRO');
-    const links = ctx.getByRole('link', { name: 'CADASTRO', exact: true });
+    const framePrincipal = await esperarFrame(page, 'principal', /ger_funcao\.php/, 15000);
+    const links = framePrincipal.getByRole('link', { name: 'CADASTRO', exact: true });
     const total = await links.count();
     const resultado = [];
     for (let i = 0; i < total; i++) {
         let label = `filial_${i + 1}`;
         try {
-            const coluna = links.nth(i).locator('xpath=ancestor::td[1]');
-            const primeiraLinha = (await coluna.innerText()).split('\n')[0]?.trim();
-            if (primeiraLinha) label = primeiraLinha;
+            const tabelaMenu = links.nth(i).locator('xpath=ancestor::table[contains(concat(" ", normalize-space(@class), " "), " menu ")][1]');
+            const texto = (await tabelaMenu.locator('a.menu_tit').first().innerText()).replace(/\s+/g, ' ').trim();
+            if (texto) label = texto;
         } catch { /* mantém o rótulo genérico */ }
         resultado.push({ label, indice: i });
     }
@@ -155,26 +181,51 @@ async function listarLinksCadastro(page) {
 // na tela "Funções do Sistema" (ger_frame.php) com os links "CADASTRO"
 // disponíveis, e que `indice` é a posição do link daquela filial entre
 // TODOS os links "CADASTRO" da página (estável entre reloads, desde que
-// a lista de filiais não mude no meio da execução). Reacha o contexto do
-// zero (não reaproveita o Frame de `listarLinksCadastro()`) porque um
-// `page.goto()` entre filiais destrói e recria os frames — um Frame
-// antigo referenciado depois disso já não é mais válido.
+// a lista de filiais não mude no meio da execução).
+//
+// Navegação mapeada ao vivo (Playwright, sessão real — não é mais só
+// PRINT): clicar num link "CADASTRO" (dentro do frame "principal")
+// navega a página INTEIRA pra um novo frameset, "unidade/uni_frame.php",
+// com 2 frames novos: "indice" (menu lateral — Ativos/Inativos/etc) e
+// "principal" de novo, agora mostrando uma tela de contato por padrão.
+// Clicar "Ativos"/"Inativos" no frame "indice" só troca o `src` do frame
+// "principal" (o frameset em si não muda de novo) — por isso não precisa
+// re-navegar pro "indice", só esperar o "principal" chegar na URL certa
+// a cada passo. **Bug real corrigido**: a versão anterior procurava a
+// tabela de Ativos usando "Turma" como texto-âncora — mas "Turma(s)" TAMBÉM
+// aparece no menu lateral (item "Turmas", sempre visível), então o código
+// achava a tabela antes mesmo da navegação de verdade acontecer, caindo
+// sempre na tela de contato padrão em vez da tabela (confirmado no 1º
+// teste real: erro "Nenhuma tabela encontrada" com o print mostrando a
+// tela "CONTATOS, SUPORTE E ORIENTAÇÕES..."). Agora usa o NOME do frame
+// (estável, visto ao vivo), não mais texto.
 async function exportarAtivosEInativos(page, label, indice) {
-    const ctxCadastro = await acharContextoComTexto(page, 'CADASTRO');
-    const links = ctxCadastro.getByRole('link', { name: 'CADASTRO', exact: true });
-    await links.nth(indice).click();
+    const framePrincipal1 = await esperarFrame(page, 'principal', /ger_funcao\.php/, 15000);
+    await framePrincipal1.getByRole('link', { name: 'CADASTRO', exact: true }).nth(indice).click();
+
+    const frameIndice = await esperarFrame(page, 'indice', /uni_indice\.php/, 15000);
 
     // ATIVOS — colunas na tela: N., Matr., Nome, Nivel, Dia, Turma, Funções
-    const ctxMenu = await acharContextoComTexto(page, 'Ativos');
-    await ctxMenu.getByText('Ativos', { exact: true }).click();
-    const ctxAtivos = await acharContextoComTexto(page, 'Turma');
-    const linhasAtivos = await lerTabelaPorCabecalho(ctxAtivos, ['Nome', 'Nivel']);
+    await frameIndice.getByText('Ativos', { exact: true }).click();
+    const framePrincipalAtivos = await esperarFrame(page, 'principal', /uni_newati\.php/, 15000);
+    const linhasAtivos = await lerTabelaPorCabecalho(framePrincipalAtivos, ['Nome', 'Nivel']);
     const registrosAtivos = linhasAtivos.map(cel => [cel[1] || '', cel[2] || '', cel[3] || '', cel[4] || '', cel[5] || '']); // Matr, Nome, Nivel, Dia, Turma
 
-    // INATIVOS — colunas na tela: Nome, Telefones, Ni, Data, Motivo
-    await ctxMenu.getByText('Inativos', { exact: true }).click();
-    const ctxInativos = await acharContextoComTexto(page, 'Motivo');
-    const linhasInativos = await lerTabelaPorCabecalho(ctxInativos, ['Nome', 'Telefones']);
+    // INATIVOS — colunas na tela: Nome, Telefones, Ni, Data, Motivo. Por
+    // padrão a tela só mostra os "RECENTES" (bem poucas linhas) — tem um
+    // <select name="cmbData"> com opção "TODOS" que traz o histórico
+    // completo (confirmado ao vivo + pelo usuário); escolher a opção já
+    // resubmete o formulário sozinho (onchange="this.form.submit()").
+    await frameIndice.getByText('Inativos', { exact: true }).click();
+    const framePrincipalInativos = await esperarFrame(page, 'principal', /uni_cadlis\.php/, 15000);
+    const seletorData = framePrincipalInativos.locator('select[name="cmbData"]');
+    if (await seletorData.count() > 0) {
+        await seletorData.selectOption({ label: 'TODOS' });
+        // Sem indicador de carregamento claro (mesmo padrão já aceito em
+        // exportarComparecimento() do Ulisses) — espera curta e fixa.
+        await page.waitForTimeout(1200);
+    }
+    const linhasInativos = await lerTabelaPorCabecalho(framePrincipalInativos, ['Nome', 'Telefones']);
     const registrosInativos = linhasInativos.map(cel => [cel[0] || '', cel[1] || '', cel[2] || '', cel[3] || '', cel[4] || '']); // Nome, Telefones, Ni, Data, Motivo
 
     fs.mkdirSync(PASTA_EXPORTS, { recursive: true });
