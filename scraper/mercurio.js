@@ -450,6 +450,51 @@ function somarDias(dataISO, dias) {
     return dt.toISOString().slice(0, 10);
 }
 
+function parseTagsMercurio(tagsData) {
+    if (!tagsData) return [];
+    if (Array.isArray(tagsData)) return tagsData;
+    try {
+        const parsed = JSON.parse(tagsData);
+        return Array.isArray(parsed) ? parsed : [tagsData];
+    } catch { return [String(tagsData).replace(/[[\]"]/g, '')]; }
+}
+
+// Avisa o chefe da filial/professor responsável quando um aluno ATIVO
+// (não qualquer lead — só quem já é aluno de verdade) faz aniversário
+// hoje. Roda logo depois de sincronizarAniversariantesNoCrm() pra essa
+// filial (que já garantiu data_nascimento preenchida em quem deu pra
+// casar por nome) — best-effort, erro aqui nunca derruba o resto do job.
+async function verificarAniversariosAtivosHoje(filialCrm) {
+    try {
+        const hoje = hojeBrasil(); // "AAAA-MM-DD"
+        const { data: leads, error } = await supabaseAdmin
+            .from('leads_inscricoes')
+            .select('pessoaIdentificador, pessoaNome, tags, data_nascimento')
+            .eq('filial', filialCrm)
+            .not('data_nascimento', 'is', null);
+        if (error) { console.warn(`[aniversario-ativo] Erro ao buscar leads de "${filialCrm}":`, error.message); return; }
+
+        const aniversariantesAtivos = (leads || []).filter(l => {
+            if (!l.data_nascimento?.endsWith(hoje.slice(4))) return false; // compara só MM-DD (ano de nascimento é diferente)
+            const tags = parseTagsMercurio(l.tags).map(t => String(t).trim());
+            return tags.includes('Ativo') || tags.includes('Aluno Ativo');
+        });
+        if (aniversariantesAtivos.length === 0) return;
+
+        for (const lead of aniversariantesAtivos) {
+            const texto = `🎂 Hoje é aniversário do(a) aluno(a) *${lead.pessoaNome}*! Que tal mandar um parabéns?`;
+            const { data: resultado, error: erroEnvio } = await supabaseAdmin.functions.invoke('whatsapp-notificar-chefe-filial', { body: { filial: filialCrm, texto } });
+            if (erroEnvio || (resultado && resultado.ok === false)) {
+                console.warn(`[aniversario-ativo] Falha ao avisar aniversário de "${lead.pessoaNome}" (${filialCrm}):`, erroEnvio?.message || JSON.stringify(resultado));
+            } else {
+                console.log(`[aniversario-ativo] Aviso de aniversário enviado — ${lead.pessoaNome} (${filialCrm}).`);
+            }
+        }
+    } catch (e) {
+        console.warn('[aniversario-ativo] Erro inesperado (não interrompe o job):', e.message);
+    }
+}
+
 // O Ulisses NUNCA vai rodar sozinho (Cloudflare exige login manual — ver
 // topo do arquivo/CLAUDE.md), então esquecer de rodar é o risco real. Em
 // vez de confiar na memória, esta checagem roda TODO DIA dentro do job
@@ -542,6 +587,8 @@ async function main() {
                 const caminhoAniversariantes = await exportarAniversariantes(page, label, indice);
                 const resultadoSync = await sincronizarAniversariantesNoCrm(label);
                 console.log(`[mercurio] Aniversariantes exportados — ${label}: ${caminhoAniversariantes} — ${resultadoSync}`);
+                const filialCrm = await resolverFilialCrm(label);
+                if (filialCrm) await verificarAniversariosAtivosHoje(filialCrm);
             } catch (e) {
                 algumaFalha = true;
                 console.error(`[mercurio] Falha ao exportar/sincronizar Aniversariantes de "${label}":`, e.message);

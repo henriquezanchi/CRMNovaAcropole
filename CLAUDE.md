@@ -163,6 +163,11 @@ migracao_filial_preposicao.sql    → coluna nome_com_preposicao em filiais (ex:
                                      Jardim América") — preenchimento automático da
                                      variável filial nos templates de WhatsApp;
                                      rodar manualmente
+migracao_filial_whatsapp_chefe.sql → coluna whatsapp_chefe_numero em filiais —
+                                     número (E.164) do chefe de filial/professor
+                                     responsável, destinatário do aviso de
+                                     aniversário de aluno Ativo e do resumo de lead
+                                     sob demanda; rodar manualmente
 ```
 
 ## Banco de dados (Supabase)
@@ -2136,6 +2141,39 @@ pública de propósito). Decisão do usuário: manter o modelo atual
 confiança se precisar) em vez de investir numa ponte seguro-o-suficiente
 (token temporário via Edge Function) — reavaliar só se isso virar
 dor real no dia a dia.
+
+### Avisos por WhatsApp pro chefe de filial
+
+Duas situações mandam mensagem pro WhatsApp do **chefe de filial/professor
+responsável** (não um lead, não o admin do scraper) — número em
+`filiais.whatsapp_chefe_numero` (`migracao_filial_whatsapp_chefe.sql`,
+E.164 sem "+", editável em "Gerenciar Filiais"). As duas passam pela MESMA
+Edge Function nova, **`whatsapp-notificar-chefe-filial`**: recebe só
+`{ filial, texto }` — o número do chefe é resolvido NO SERVIDOR a partir
+da filial, nunca exposto ao navegador; sem número configurado pra aquela
+filial, devolve erro claro (`chefe_sem_numero`) em vez de falhar
+silenciosamente. Reaproveita os mesmos secrets já existentes
+(`WHATSAPP_TOKEN`), e resolve `phone_number_id` pela filial (com
+fallback pro padrão), igual `whatsapp-send`.
+
+- **Aviso de aniversário de aluno Ativo** (`verificarAniversariosAtivosHoje()`,
+  `scraper/mercurio.js`, chamada a cada filial logo depois de
+  `sincronizarAniversariantesNoCrm()` no job diário automático): busca
+  leads da filial com `data_nascimento` de hoje E tag `"Ativo"`/`"Aluno
+  Ativo"` (só quem já é aluno de verdade — não qualquer lead com data
+  cadastrada) e manda 1 mensagem por aniversariante. Best-effort, erro
+  aqui nunca derruba o resto do job do Mercúrio.
+- **"Enviar pro Chefe" na gaveta do lead** (`enviarResumoParaChefeFilial()`,
+  `js/app.js`, botão ao lado de "Editar" no bloco "Resumo da Conversa
+  (IA)"): pedido explícito do time de SDR — avisar o chefe sobre um lead
+  específico que merece mais atenção. De propósito **não gera nada novo
+  por IA** ("de forma simples") — só manda o texto que já está no campo
+  `resumo_ia` daquele lead, com um `confirm()` antes de disparar (é uma
+  mensagem de verdade pro chefe, não uma prévia). Sem resumo escrito
+  ainda, avisa pra preencher primeiro em vez de mandar vazio.
+- Chamada pelo navegador (chave publishable) OU pelo scraper
+  (`SERVICE_ROLE_KEY`) — mantém verificação de JWT padrão, os dois já
+  mandam um Bearer válido.
 
 ## Bloqueio da API do WhatsApp (Meta) — investigado 2026-09-07
 

@@ -1777,6 +1777,7 @@ async function renderizarListaFiliaisModal() {
                 </label>
             </div>
             <input type="text" value="${escapeHTML(f.nome_com_preposicao || '')}" placeholder="Como falar dela naturalmente (ex: do Jardim América, de Barra do Garças)" onchange="atualizarPreposicaoFilial(${f.id}, this.value)">
+            <input type="text" value="${escapeHTML(f.whatsapp_chefe_numero || '')}" placeholder="WhatsApp do chefe de filial (E.164, ex: 5562991234567) — aviso de aniversário e resumo de lead" onchange="atualizarWhatsappChefeFilial(${f.id}, this.value)">
         </div>
     `).join('');
 }
@@ -1803,6 +1804,16 @@ async function atualizarAtivoFilial(id, ativo) {
 async function atualizarPreposicaoFilial(id, novoValor) {
     novoValor = novoValor.trim();
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ nome_com_preposicao: novoValor || null }).eq('id', id);
+    if (error) alert('Erro ao salvar: ' + error.message);
+}
+
+// Número de WhatsApp do chefe de filial/professor responsável — só
+// dígitos (E.164 sem "+"), destinatário do aviso de aniversário de aluno
+// Ativo (job diário do Mercúrio) e do resumo de lead sob demanda (gaveta
+// do lead). Ver migracao_filial_whatsapp_chefe.sql.
+async function atualizarWhatsappChefeFilial(id, novoValor) {
+    novoValor = novoValor.replace(/\D/g, '');
+    const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ whatsapp_chefe_numero: novoValor || null }).eq('id', id);
     if (error) alert('Erro ao salvar: ' + error.message);
 }
 
@@ -3252,6 +3263,38 @@ async function salvarResumoIA() {
         .from(NOME_TABELA)
         .update({ resumo_ia: newText })
         .eq('pessoaIdentificador', currentLeadId);
+}
+
+// "Enviar pro Chefe" — pedido explícito do time de SDR: avisar o
+// chefe de filial/professor responsável sobre um lead específico que
+// merece mais atenção, mandando o Resumo da Conversa (IA) já escrito
+// (de propósito NÃO gera nada novo por IA aqui — "de forma simples",
+// só reaproveita o texto que já existe no campo). Passa pela mesma
+// Edge Function usada pelo aviso de aniversário (whatsapp-notificar-
+// chefe-filial) — o número do chefe nunca é exposto ao navegador, só
+// resolvido no servidor a partir da filial.
+async function enviarResumoParaChefeFilial() {
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(currentLeadId));
+    if (!lead) return;
+    const resumo = (lead.resumo_ia || '').trim();
+    if (!resumo) { alert('Este lead ainda não tem um Resumo da Conversa (IA) preenchido — escreva algo em "Editar" antes de enviar.'); return; }
+    if (!confirm(`Enviar o resumo de "${lead.pessoaNome}" pro WhatsApp do chefe da filial "${lead.filial}"?`)) return;
+
+    const nomeAtendente = typeof obterNomeAtendente === 'function' ? obterNomeAtendente() : '';
+    const texto = `📋 *Resumo de acompanhamento* — ${lead.pessoaNome}\n${nomeAtendente ? `Enviado por: ${nomeAtendente}\n` : ''}\n${resumo}`;
+
+    const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-notificar-chefe-filial', {
+        body: { filial: lead.filial, texto }
+    });
+
+    if (error || (data && data.ok === false)) {
+        const motivo = (data && data.erro === 'chefe_sem_numero')
+            ? 'Essa filial ainda não tem o WhatsApp do chefe cadastrado (botão de engrenagem > Gerenciar Filiais).'
+            : ((data && data.detalhe && data.detalhe.message) || (error && error.message) || 'erro desconhecido');
+        alert('Não consegui enviar: ' + motivo);
+        return;
+    }
+    alert('Resumo enviado pro chefe da filial!');
 }
 
 // "Como Abordar" — mesmo padrão de edição do Resumo da Conversa (IA) acima,

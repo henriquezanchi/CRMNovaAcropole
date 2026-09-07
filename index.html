@@ -453,7 +453,10 @@
                 <div class="drawer-gaveta">
                     <div class="drawer-gaveta-header" onclick="toggleGavetaLead('resumo')">
                         <span class="drawer-gaveta-titulo"><i class="fa-solid fa-chevron-right" id="drawer-gaveta-seta-resumo"></i> <i class="fa-solid fa-wand-magic-sparkles" style="color:#8b5cf6;"></i> Resumo da Conversa (IA)</span>
-                        <button class="btn-add-tag" onclick="event.stopPropagation(); editarResumoIA()" style="color: #8b5cf6; border-color: #ddd6fe; background: #f5f3ff;"><i class="fa-solid fa-pen"></i> Editar</button>
+                        <span style="display:flex; gap:6px;">
+                            <button class="btn-add-tag" onclick="event.stopPropagation(); enviarResumoParaChefeFilial()" style="color:#166534; border-color:#a7f3d0; background:#ecfdf5;" title="Manda este resumo pro WhatsApp do chefe de filial"><i class="fa-brands fa-whatsapp"></i> Enviar pro Chefe</button>
+                            <button class="btn-add-tag" onclick="event.stopPropagation(); editarResumoIA()" style="color: #8b5cf6; border-color: #ddd6fe; background: #f5f3ff;"><i class="fa-solid fa-pen"></i> Editar</button>
+                        </span>
                     </div>
                     <div class="drawer-gaveta-body" id="drawer-gaveta-body-resumo" style="display:none;">
                         <div id="drawer-ai-summary" class="info-box" style="background: #f8fafc; border-color: #bfdbfe; font-size: 11px; color: #334155;">
