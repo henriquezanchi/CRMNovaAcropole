@@ -149,6 +149,24 @@ function paraCSV(cabecalhos, linhas) {
     return [cabecalhos, ...linhas].map(l => l.map(escapar).join(';')).join('\r\n');
 }
 
+// Escreve com retentativa — confirmado por teste real que o Windows às
+// vezes trava um arquivo recém-criado por um instante (EBUSY/EPERM,
+// provavelmente antivírus ou indexação de busca fazendo scan do arquivo
+// novo), fazendo a exportação de 2 filiais falhar por completo mesmo com
+// os dados já lidos certinho da tela. Um retry curto resolve sem precisar
+// entender a causa exata (fora do nosso controle).
+async function escreverComRetentativa(caminho, conteudo, encoding, tentativas = 5) {
+    for (let i = 0; i < tentativas; i++) {
+        try {
+            fs.writeFileSync(caminho, conteudo, encoding);
+            return;
+        } catch (e) {
+            if (i === tentativas - 1) throw e;
+            await new Promise(r => setTimeout(r, 400 * (i + 1)));
+        }
+    }
+}
+
 // Encontra cada link "CADASTRO" (1 por filial) dentro do frame
 // "principal" (confirmado ao vivo — ver esperarFrame()) e identifica de
 // qual filial é subindo até a <table class="menu"> que envolve o link (1
@@ -234,8 +252,8 @@ async function exportarAtivosEInativos(page, label, indice) {
     const caminhoInativos = `${PASTA_EXPORTS}/mercurio-inativos-${slug}.csv`;
     // ISO-8859-1 (latin1), mesmo encoding que a exportação manual do
     // Excel já usa — o importador (js/importador.js) já espera isso.
-    fs.writeFileSync(caminhoAtivos, paraCSV(['Matr', 'Nome', 'Nivel', 'Dia', 'Turma'], registrosAtivos), 'latin1');
-    fs.writeFileSync(caminhoInativos, paraCSV(['Nome', 'Telefones', 'Ni', 'Data', 'Motivo'], registrosInativos), 'latin1');
+    await escreverComRetentativa(caminhoAtivos, paraCSV(['Matr', 'Nome', 'Nivel', 'Dia', 'Turma'], registrosAtivos), 'latin1');
+    await escreverComRetentativa(caminhoInativos, paraCSV(['Nome', 'Telefones', 'Ni', 'Data', 'Motivo'], registrosInativos), 'latin1');
     return { caminhoAtivos, caminhoInativos };
 }
 
@@ -297,7 +315,7 @@ async function exportarAniversariantes(page, label, indice) {
     fs.mkdirSync(PASTA_EXPORTS, { recursive: true });
     const slug = label.replace(/[^a-z0-9]/gi, '_');
     const caminho = `${PASTA_EXPORTS}/mercurio-aniversariantes-${slug}.json`;
-    fs.writeFileSync(caminho, JSON.stringify(registros, null, 2), 'utf-8');
+    await escreverComRetentativa(caminho, JSON.stringify(registros, null, 2), 'utf-8');
     return caminho;
 }
 
@@ -314,6 +332,45 @@ function dataBRParaISO(dataBR) {
     return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
 }
 
+// O Mercúrio e o CRM usam vocabulários DIFERENTES pra filial — o Mercúrio
+// (visto no menu pós-login, ver listarLinksCadastro()) usa algo como
+// "GOIÂNIA UNIVERSITARIO: BARRA DO GARÇAS", enquanto o CRM usa
+// "Barra do Garças/MT" (tabela `filiais`, `js/app.js`). Sem resolver isso,
+// um `.eq('filial', <rótulo do Mercúrio>)` contra `leads_inscricoes`
+// NUNCA bate com nenhuma linha — bug real confirmado no 1º teste (0 de
+// 3129 aniversariantes casaram, mesmo filiais com centenas de leads reais
+// no banco). Resolve tirando as palavras genéricas ("GOIANIA",
+// "UNIVERSITARIO", "MT" — aparecem nos 2 lados ou só atrapalham) do nome
+// da filial do CRM, sobrando só o núcleo distintivo (ex: "GARAVELO",
+// "SETOR OESTE", "BARRA DO GARCAS"), e checando se esse núcleo aparece
+// dentro do rótulo (normalizado) que o Mercúrio deu. Evita precisar de
+// uma tabela de mapeamento hardcoded, mas ainda é uma heurística — se uma
+// filial nova tiver um nome sem nenhuma palavra em comum com o Mercúrio,
+// fica sem resolver (log de aviso, não inventa).
+const PALAVRAS_GENERICAS_FILIAL = new Set(['GOIANIA', 'UNIVERSITARIO', 'MT']);
+
+function normalizarTextoFilial(s) {
+    return String(s || '')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .toUpperCase()
+        .replace(/[^A-Z]+/g, ' ')
+        .trim();
+}
+
+async function resolverFilialCrm(labelMercurio) {
+    const { data: filiais, error } = await supabaseAdmin.from('filiais').select('nome').eq('ativo', true);
+    if (error) throw new Error('Erro ao buscar filiais do CRM: ' + error.message);
+    const labelNorm = normalizarTextoFilial(labelMercurio);
+    for (const f of filiais || []) {
+        const nucleo = normalizarTextoFilial(f.nome)
+            .split(' ')
+            .filter(p => p && !PALAVRAS_GENERICAS_FILIAL.has(p))
+            .join(' ');
+        if (nucleo && labelNorm.includes(nucleo)) return f.nome;
+    }
+    return null;
+}
+
 // Depois de exportar os aniversariantes (função acima), preenche
 // `data_nascimento` (leads_inscricoes) de quem ainda não tem essa data —
 // nenhuma das 3 planilhas de importação manual traz esse dado, então até
@@ -328,9 +385,12 @@ function dataBRParaISO(dataBR) {
 // filial) ficam de fora de propósito — sem outro dado pra desempatar,
 // arriscar a data errada é pior que não preencher. NUNCA sobrescreve uma
 // data já preenchida (pode ter sido corrigida à mão).
-export async function sincronizarAniversariantesNoCrm(filial) {
-    const caminhoJson = `${PASTA_EXPORTS}/mercurio-aniversariantes-${filial.replace(/[^a-z0-9]/gi, '_')}.json`;
+export async function sincronizarAniversariantesNoCrm(labelMercurio) {
+    const caminhoJson = `${PASTA_EXPORTS}/mercurio-aniversariantes-${labelMercurio.replace(/[^a-z0-9]/gi, '_')}.json`;
     if (!fs.existsSync(caminhoJson)) throw new Error('mercurio-aniversariantes.json não encontrado — a etapa "aniversariantes" precisa rodar antes desta.');
+
+    const filial = await resolverFilialCrm(labelMercurio);
+    if (!filial) return `Não consegui identificar a qual filial do CRM "${labelMercurio}" corresponde — pulando sincronização (o JSON exportado continua disponível).`;
 
     const registros = JSON.parse(fs.readFileSync(caminhoJson, 'utf-8'));
     if (registros.length === 0) return '0 aniversariantes exportados — nada a sincronizar.';
