@@ -181,26 +181,47 @@ export async function exportarCatalogoEventos(page, filial) {
             // sleep fixo — mas isso só detecta "o painel abriu" (útil pra
             // pular card de outra filial, que nunca abre painel nenhum).
             // NÃO detecta "os campos já atualizaram pro card novo": quando
-            // 2 cards seguidos têm o MESMO título (confirmado por teste
-            // real — "Workshop de Oratória" apareceu 2x, com descrição
-            // ERRADA no 2º, ainda a do card anterior), esperar o Título
-            // "aparecer" não serve de sinal nenhum, porque o texto dele já
-            // era esse antes mesmo do clique. Por isso, depois do painel
-            // abrir, ainda espera um instante fixo curto pros campos mais
-            // lentos (Descrição/Informação, que carregam depois do
-            // Título) terminarem de atualizar antes de ler qualquer um
-            // deles — mitigação best-effort; um sinal 100% confiável
-            // precisaria do HTML real do painel (ver topo do arquivo).
+            // 2 cards seguidos têm títulos DIFERENTES (confirmado por teste
+            // real em produção — 2 eventos ficaram salvos no CRM com o
+            // MESMO nome "Workshop de Oratória", um deles errado: o 2º
+            // card era na verdade "Bushido, o código de hora dos
+            // samurais"), esperar o Título "aparecer" não serve de sinal
+            // nenhum, porque o input já existia com o valor do card
+            // ANTERIOR antes mesmo do clique. Uma espera fixa de 600ms
+            // também não bastou: o dado real mostrou Título/Imagem/
+            // Subtítulo ainda com o valor do card anterior nesse instante,
+            // enquanto a Descrição já tinha atualizado — ou seja, o
+            // palpite anterior (Descrição/Informação são as mais lentas)
+            // estava ERRADO; é Título/Imagem/Subtítulo que atualizam mais
+            // devagar. Por isso agora espera ativamente até o campo
+            // Título bater com o texto do PRÓPRIO card (fonte confiável,
+            // já visível na lista antes de clicar) em vez de confiar em
+            // tempo fixo algum.
             const abriu = await page.getByLabel(/t[íi]tulo/i).first().waitFor({ timeout: 5000 }).then(() => true).catch(() => false);
             if (!abriu) {
                 console.warn(`[ulisses] Evento ${i} não abriu painel de detalhes a tempo (provavelmente de outra filial) — pulando (${filial}).`);
                 continue;
             }
-            await page.waitForTimeout(600);
+
+            const normalizar = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+            const textoCardNormalizado = normalizar(textoCard);
+            let tituloLido = null;
+            let bateuComCard = false;
+            for (let tentativa = 0; tentativa < 20 && !bateuComCard; tentativa++) {
+                tituloLido = await ler('t[íi]tulo');
+                bateuComCard = !!tituloLido && textoCardNormalizado.includes(normalizar(tituloLido));
+                if (!bateuComCard) await page.waitForTimeout(300);
+            }
+            if (!bateuComCard) {
+                console.warn(`[ulisses] Título do painel ("${tituloLido}") não bateu com o texto do card ${i} depois de 6s de espera — pode ter ficado com dado do card anterior; salvando mesmo assim (${filial}).`);
+            }
+            // Mais uma folga curta pros campos que costumam atualizar
+            // JUNTO com o Título (Imagem/Subtítulo, pelo caso real acima).
+            await page.waitForTimeout(300);
 
             eventos.push({
                 data: match ? `${match[3]}-${match[2]}-${match[1]}` : null,
-                titulo: await ler('t[íi]tulo'),
+                titulo: tituloLido,
                 tipo_link: await ler('tipo link'),
                 imagem_url: await ler('imagem'),
                 subtitulo: await ler('subt[íi]tulo'),

@@ -1848,14 +1848,27 @@ bloqueado).
        `#/evento`) → aba "Ativo" → clica em cada card da lista (achado
        pela data DD/MM/AAAA no texto) e lê por RÓTULO os campos do
        formulário à direita (Título, Tipo link, Imagem, Subtítulo,
-       Informação, Descrição). **Testado de verdade — funciona, com 1 bug
-       real corrigido**: quando 2 cards seguidos têm o MESMO título (ex:
-       "Workshop de Oratória" 2x, datas diferentes), o código lia a
-       Descrição ainda do card ANTERIOR (esperar o campo "Título"
-       aparecer não serve de sinal quando o texto já era esse antes do
-       clique) — mitigado com uma espera fixa curta (600ms) depois do
-       painel abrir, antes de ler qualquer campo (best-effort; um sinal
-       100% confiável ainda precisaria do HTML real do painel).
+       Informação, Descrição). **2ª rodada de correção, confirmada por
+       dado real em produção**: a mitigação anterior (espera fixa de
+       600ms depois do painel abrir) não bastou — 2 eventos DIFERENTES
+       ("Workshop de Oratória" 19/09 e "Bushido, o código de hora dos
+       samurais" 26/09) foram sincronizados no CRM com o MESMO nome
+       "Workshop de Oratória", porque Título/Imagem/Subtítulo do 2º
+       evento ainda estavam com o valor do card ANTERIOR nesse instante
+       — só a Descrição já tinha atualizado. Isso inverte o palpite
+       anterior (achava que Descrição/Informação eram as mais lentas).
+       Corrigido pra sempre validar o Título contra o texto do PRÓPRIO
+       card (fonte confiável, já visível na lista antes do clique) —
+       espera ativa em loop (até 6s) até `getByLabel(/título/i)` bater
+       com o texto do card, só então lê os outros campos (mais uma folga
+       curta de 300ms). Se nunca bater, loga aviso e segue mesmo assim
+       (não trava a exportação). O evento errado já sincronizado (id=4,
+       Garavelo) foi corrigido manualmente direto no banco nesta sessão
+       (nome + descrição; `imagem_url` foi zerada por decisão do usuário,
+       já que não tínhamos a imagem certa do Bushido à mão) — quem
+       rodar o scraper de novo a partir de agora não deve reproduzir o
+       bug, mas duplicatas antigas de OUTRAS filiais/eventos anteriores a
+       essa correção podem precisar da mesma limpeza manual se existirem.
      - `exportarComparecimento()`: "Pré-inscrições" → "Recepção" (navega
        direto pra `#/recepcao` — o clique no menu nunca chegava lá de
        verdade, o hover é que abre o submenu, não o clique). **Testado de
