@@ -565,29 +565,54 @@ export async function sincronizarComparecimentoNoCrm(filial) {
     // pré-inscritos = confirmou interesse) quando o vínculo ainda não
     // existe, e sempre atualiza `compareceu` (é o dado que muda com o
     // tempo: falso/nulo antes do evento, o real depois que aconteceu).
-    const eventoIds = [...new Set(vinculos.map(v => v.evento_id))];
+    // A mesma pessoa pode aparecer mais de 1 vez pro MESMO evento (ex:
+    // 2 opções diferentes do <select> do Ulisses acabando no mesmo par
+    // nome+data, ou 2 inscrições da mesma pessoa no evento) — confirmado
+    // por teste real: um insert em lote com (evento_id,
+    // pessoaIdentificador) repetido dá erro de chave duplicada e derruba
+    // o LOTE INTEIRO (Postgres não aceita "ON CONFLICT" resolver 2 linhas
+    // iguais dentro do mesmo INSERT). Deduplica antes, priorizando
+    // compareceu=true sobre false/null (se qualquer uma das entradas
+    // confirma presença, vale mais que uma que não confirma).
+    const vinculosPorChave = new Map();
+    for (const v of vinculos) {
+        const chave = `${v.evento_id}|||${v.pessoaIdentificador}`;
+        const atual = vinculosPorChave.get(chave);
+        if (!atual || (v.compareceu === true && atual.compareceu !== true)) {
+            vinculosPorChave.set(chave, v);
+        }
+    }
+    const vinculosUnicos = [...vinculosPorChave.values()];
+
+    const eventoIds = [...new Set(vinculosUnicos.map(v => v.evento_id))];
     const { data: existentes } = await supabaseAdmin
         .from('evento_leads')
         .select('evento_id, pessoaIdentificador')
         .in('evento_id', eventoIds);
     const jaExiste = new Set((existentes || []).map(e => `${e.evento_id}|||${e.pessoaIdentificador}`));
 
-    const novos = vinculos
+    const novos = vinculosUnicos
         .filter(v => !jaExiste.has(`${v.evento_id}|||${v.pessoaIdentificador}`))
         .map(v => ({ evento_id: v.evento_id, pessoaIdentificador: v.pessoaIdentificador, resposta_convite: 'confirmado', compareceu: v.compareceu }));
-    const paraAtualizar = vinculos.filter(v => jaExiste.has(`${v.evento_id}|||${v.pessoaIdentificador}`));
+    const paraAtualizar = vinculosUnicos.filter(v => jaExiste.has(`${v.evento_id}|||${v.pessoaIdentificador}`));
 
+    let novosGravados = 0;
     if (novos.length > 0) {
         const { error } = await supabaseAdmin.from('evento_leads').insert(novos);
-        if (error) console.warn('[ulisses] Falha ao inserir novos vínculos evento_leads:', error.message);
+        if (error) {
+            console.warn('[ulisses] Falha ao inserir novos vínculos evento_leads:', error.message);
+        } else {
+            novosGravados = novos.length;
+        }
     }
-    await Promise.all(paraAtualizar.map(v =>
+    const resultadosAtualizacao = await Promise.all(paraAtualizar.map(v =>
         supabaseAdmin.from('evento_leads')
             .update({ compareceu: v.compareceu })
             .eq('evento_id', v.evento_id).eq('pessoaIdentificador', v.pessoaIdentificador)
     ));
+    const atualizadosGravados = resultadosAtualizacao.filter(r => !r.error).length;
 
-    return `${novos.length} vínculo(s) novo(s), ${paraAtualizar.length} atualizado(s) (compareceu), de ${registros.length} registro(s) (${semEvento} sem evento correspondente, ${semLead} sem lead achado por telefone/e-mail).`;
+    return `${novosGravados} vínculo(s) novo(s), ${atualizadosGravados} atualizado(s) (compareceu), de ${registros.length} registro(s) (${semEvento} sem evento correspondente, ${semLead} sem lead achado por telefone/e-mail).`;
 }
 
 // Depois de exportar o catálogo de eventos (função acima), grava cada
