@@ -402,6 +402,131 @@ async function salvarCredencialScraper(sistema) {
     renderizarCredenciaisScraper();
 }
 
+// ==========================================
+// SINCRONIZAÇÃO AUTOMÁTICA — dispara o Mercúrio sob demanda (GitHub
+// Actions, Edge Function scraper-disparar) + acompanha o status
+// ==========================================
+// O Ulisses NUNCA aparece com botão de disparo aqui — não tem como,
+// exige login manual numa máquina de confiança (Cloudflare). Só o
+// Mercúrio (100% headless, já rodava sozinho todo dia) ganha um botão
+// de "rodar agora", que só antecipa o mesmo job automático, sem inventar
+// nada novo.
+let pollSincronizacaoTimer = null;
+
+async function abrirSincronizacaoScraper() {
+    await renderizarStatusSincronizacaoScraper();
+    document.getElementById('modalSincronizacaoScraper').classList.add('open');
+    document.getElementById('overlayModalSincronizacaoScraper').classList.add('active');
+}
+function fecharSincronizacaoScraper() {
+    document.getElementById('modalSincronizacaoScraper').classList.remove('open');
+    document.getElementById('overlayModalSincronizacaoScraper').classList.remove('active');
+    if (pollSincronizacaoTimer) { clearInterval(pollSincronizacaoTimer); pollSincronizacaoTimer = null; }
+}
+
+async function renderizarStatusSincronizacaoScraper(mensagemExtra) {
+    const container = document.getElementById('sincronizacaoScraperStatus');
+    if (!container) return;
+
+    const { data, error } = await window.supabaseClient
+        .from('status_sincronizacao_automatica')
+        .select('*')
+        .order('executado_em', { ascending: false })
+        .limit(10);
+
+    if (error) {
+        container.innerHTML = `<p style="font-size:12px; color:#dc2626;">Erro ao ler status: ${escapeHTML(error.message)}. Rode migracao_credenciais_scraper.sql se ainda não rodou.</p>`;
+        return;
+    }
+
+    const linhas = data || [];
+    const ultimoMercurio = linhas.find(l => l.sistema === 'mercurio');
+    const ultimoUlisses = linhas.find(l => l.sistema === 'ulisses');
+
+    const formatarLinha = (label, row) => {
+        if (!row) return `<div class="coluna-row" style="justify-content:space-between;"><strong style="font-size:12px;">${label}</strong><span style="font-size:11px; color:var(--text-muted);">Nunca rodou ainda</span></div>`;
+        const cor = row.sucesso ? '#15803d' : '#dc2626';
+        const icone = row.sucesso ? 'fa-circle-check' : 'fa-circle-xmark';
+        const quando = new Date(row.executado_em).toLocaleString('pt-BR');
+        return `
+            <div class="coluna-row" style="flex-direction:column; align-items:stretch; gap:2px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <strong style="font-size:12px;">${label}</strong>
+                    <span style="font-size:11px; color:${cor};"><i class="fa-solid ${icone}"></i> ${quando}</span>
+                </div>
+                <div style="font-size:11px; color:var(--text-muted);">${escapeHTML(row.mensagem || '')}</div>
+            </div>
+        `;
+    };
+
+    container.innerHTML = `
+        ${mensagemExtra ? `<p style="font-size:12px; color:var(--na-green-dark); margin-bottom:10px;"><i class="fa-solid fa-circle-notch fa-spin"></i> ${escapeHTML(mensagemExtra)}</p>` : ''}
+        ${formatarLinha('Mercúrio (última rodada)', ultimoMercurio)}
+        <div style="height:8px;"></div>
+        ${formatarLinha('Ulisses (última rodada manual)', ultimoUlisses)}
+    `;
+}
+
+async function dispararMercurioAgora() {
+    const btn = document.getElementById('btnDispararMercurio');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Disparando...'; }
+
+    // Guarda o timestamp do último "mercurio" ANTES de disparar, pra saber
+    // reconhecer quando uma rodada NOVA (não essa que já estava aí)
+    // terminar — status_sincronizacao_automatica não tem um jeito melhor
+    // de "seguir" uma execução específica, então comparar timestamp é o
+    // sinal mais simples e confiável disponível.
+    const { data: antes } = await window.supabaseClient
+        .from('status_sincronizacao_automatica')
+        .select('executado_em')
+        .eq('sistema', 'mercurio')
+        .order('executado_em', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+    const timestampAntes = antes ? antes.executado_em : null;
+
+    const { data, error } = await window.supabaseClient.functions.invoke('scraper-disparar', { body: {} });
+
+    if (error || (data && data.ok === false)) {
+        const motivo = (data && data.detalhe) || (error && error.message) || 'erro desconhecido';
+        alert('Não consegui disparar: ' + motivo);
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-play"></i> Rodar Mercúrio agora'; }
+        return;
+    }
+
+    if (btn) btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Rodando (leva alguns minutos)...';
+    await renderizarStatusSincronizacaoScraper('Disparado! Acompanhando — isso costuma levar alguns minutos (o job passa por todas as filiais).');
+
+    if (pollSincronizacaoTimer) clearInterval(pollSincronizacaoTimer);
+    const inicioPoll = Date.now();
+    const TIMEOUT_POLL_MS = 20 * 60 * 1000; // 20 min — folga generosa sobre o tempo real observado
+    pollSincronizacaoTimer = setInterval(async () => {
+        if (Date.now() - inicioPoll > TIMEOUT_POLL_MS) {
+            clearInterval(pollSincronizacaoTimer);
+            pollSincronizacaoTimer = null;
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-play"></i> Rodar Mercúrio agora'; }
+            await renderizarStatusSincronizacaoScraper('Ainda não vi terminar depois de 20min — confira direto no GitHub Actions, ou só espere e reabra esta tela depois.');
+            return;
+        }
+
+        const { data: depois } = await window.supabaseClient
+            .from('status_sincronizacao_automatica')
+            .select('executado_em')
+            .eq('sistema', 'mercurio')
+            .order('executado_em', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        const terminou = depois && depois.executado_em && depois.executado_em !== timestampAntes;
+        if (terminou) {
+            clearInterval(pollSincronizacaoTimer);
+            pollSincronizacaoTimer = null;
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-play"></i> Rodar Mercúrio agora'; }
+            await renderizarStatusSincronizacaoScraper();
+        }
+    }, 15000);
+}
+
 // Chave de telefone pra casar registros por número em vez de nome — cobre
 // os casos de erro de digitação no nome entre planilhas diferentes (a
 // mesma pessoa com o nome escrito torto numa delas, mas o telefone bate).

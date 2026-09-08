@@ -365,6 +365,7 @@
                     <div style="display:flex; gap:8px;">
                         <button class="btn-secondary" style="white-space:nowrap;" onclick="abrirConfigPontuacao()"><i class="fa-solid fa-sliders"></i> Critérios de Lead Forte</button>
                         <button class="btn-secondary" style="white-space:nowrap;" onclick="abrirCredenciaisScraper()"><i class="fa-solid fa-key"></i> Login Automático (Ulisses/Mercúrio)</button>
+                        <button class="btn-secondary" style="white-space:nowrap;" onclick="abrirSincronizacaoScraper()"><i class="fa-solid fa-robot"></i> Sincronização Automática</button>
                     </div>
                 </div>
 
@@ -975,6 +976,30 @@
         </div>
         <div class="modal-footer">
             <button class="btn-primary" onclick="fecharCredenciaisScraper()"><i class="fa-solid fa-check"></i> Concluir</button>
+        </div>
+    </div>
+
+    <!-- Modal: Sincronização Automática (dispara o Mercúrio sob demanda + status) -->
+    <div class="overlay" id="overlayModalSincronizacaoScraper" onclick="fecharSincronizacaoScraper()"></div>
+    <div class="modal" id="modalSincronizacaoScraper">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-robot"></i> Sincronização Automática</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharSincronizacaoScraper()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">
+                O Mercúrio (Ativos/Inativos/Aniversariantes/Turmas/Matrículas recentes) já roda sozinho todo dia às 05:00
+                (Brasília). Use o botão abaixo pra rodar na hora, sem esperar. O Ulisses continua manual de propósito
+                (login exige resolver um desafio de segurança — Cloudflare) — rode <code>npm run ulisses-local</code> na
+                sua máquina de confiança quando precisar.
+            </p>
+            <button class="btn-primary" id="btnDispararMercurio" onclick="dispararMercurioAgora()" style="width:100%; margin-bottom:16px;">
+                <i class="fa-solid fa-play"></i> Rodar Mercúrio agora
+            </button>
+            <div id="sincronizacaoScraperStatus"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-primary" onclick="fecharSincronizacaoScraper()"><i class="fa-solid fa-check"></i> Fechar</button>
         </div>
     </div>
 
