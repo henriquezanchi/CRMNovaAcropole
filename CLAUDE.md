@@ -870,6 +870,80 @@ mesma regra de confiança total usada pra tags/filiais/eventos.
 Cruza 3 CSVs (Ativos, Inativos, Inscrições) e gera os leads com tags.
 Decisões já tomadas (não precisam ser reabertas, a menos que o usuário peça):
 
+- **Importação PARCIAL — as 3 planilhas não precisam vir juntas.** Mercúrio
+  (Ativos/Inativos, hoje 100% automático via scraper) e Ulisses (Inscrições,
+  sempre manual — Cloudflare bloqueia IP de datacenter, ver seção do
+  scraper) andam em ritmos DIFERENTES na prática; exigir os 3 arquivos ao
+  mesmo tempo forçava esperar o mais lento. `processarPlanilhas()` agora só
+  exige 1+ arquivo, e guarda o que faltou em `resultadoImportacao.modoImportacao`
+  (`{temAtivos, temInativos, temInscricoes, temMercurio, temUlisses}` —
+  `temMercurio = temAtivos || temInativos`). **A parte delicada é NÃO
+  apagar dado bom de quem já existe no CRM só porque a planilha desta vez
+  não trouxe aquela informação** — resolvido em `confirmarEnviarImportacao()`
+  campo a campo, por FONTE de dado:
+  - **"Status"** (`ehTagStatusMercurio()`: Ativo/Inativo/Nível TA-JN-PP-N1-
+    Membro + `"Lead Forte N"` + `"Jornada: X"`) é um grupo ATÔMICO — decidido
+    de uma vez pelo if/else do passo 3 de `processarPlanilhas()` — que só é
+    confiável com dado do MERCÚRIO. `"Lead Forte N"` é literalmente o
+    fallback de "não bateu em Ativos/Inativos" e `"Jornada: X"` só é
+    calculada pra quem NÃO é Ativo/Inativo, então os dois entram no MESMO
+    grupo que Ativo/Inativo/Nível, não no grupo do Ulisses (**bug real
+    pego ao vivo escrevendo o teste de integração**: a 1ª versão só
+    preservava Ativo/Inativo/Nível e deixava "Lead Forte"/"Jornada" livres
+    pra recalcular — resultado, uma importação só-Ulisses de um lead que já
+    era "Ativo" ganhava TAMBÉM a tag "Lead Forte N" por cima, já que sem
+    Mercúrio nesta rodada `mapaAtivos`/`mapaInativos` ficam vazios e todo
+    mundo cai no fallback). Sem Ativos/Inativos nesta rodada
+    (`!temMercurio`), o grupo "status" inteiro que já existia é PRESERVADO
+    como estava (removido de `tagsNovas`, tags antigas do banco
+    reaplicadas).
+  - **"Trilha"** (`ehTagTrilha()`: `"Trilha: X"`) só depende de
+    `historico_eventos`/tipo de evento — não do status Ativo/Inativo/Lead
+    Forte — então só precisa do ULISSES, independente do Mercúrio.
+  - Telefone/e-mail/status/eventos (`historico_eventos`) também vêm do
+    ULISSES. Sem Inscrições nesta rodada (`!temUlisses`), esses campos e a
+    tag Trilha são PRESERVADOS do valor já gravado no banco em vez de
+    sobrescritos com o objeto "sem correspondência" (que vem vazio, já que
+    Ativos/Inativos não têm e-mail/histórico de evento) — sem isso, uma
+    importação só-Mercúrio apagaria telefone/e-mail/eventos de quem já
+    tinha esse dado via uma importação Ulisses anterior. O grupo "status"
+    não precisa de tratamento especial nesta metade — o passo 3 (única
+    fonte de "Lead Forte"/"Jornada") só roda com Ulisses presente, então
+    nunca aparece fresco pra atropelar nada aqui.
+  - **Testado ao vivo, 3 rodadas em sequência contra o Supabase real**
+    (filial descartável, apagada no fim): completa → confirma o
+    comportamento de sempre; só-Mercúrio (reimportando com Nível
+    diferente, Inativo removido do arquivo) → confirma que telefone/
+    e-mail/histórico de quem já existia sobrevivem intactos e que quem
+    sumiu do arquivo simplesmente não é tocado (não apagado); só-Ulisses
+    (mesma pessoa, sem Ativos/Inativos) → confirma que "Ativo" sobrevive
+    sem virar "Lead Forte", e que telefone/e-mail/eventos SÃO atualizados
+    (porque desta vez o Ulisses está presente).
+  - `"Sem Telefone"`/`"Sem E-mail"` são recalculadas por ÚLTIMO, sempre em
+    cima do valor FINAL de telefone/e-mail (já com a preservação acima
+    aplicada) — nunca em cima do dado transiente da planilha parcial,
+    senão o badge ficaria errado toda vez que o telefone/e-mail real veio
+    preservado do banco em vez desta importação.
+  - O aviso de **"lead sumiu da planilha"** (bullet próprio logo abaixo)
+    também é ESCOPADO por modo: numa importação só-Mercúrio, só considera
+    "sumido" quem já era Ativo/Inativo (não dispara pra prospectos Lead
+    Forte, que nunca estiveram em Ativos/Inativos mesmo); numa importação
+    só-Ulisses, ignora quem só existe por causa do Mercúrio (IDs sintéticos
+    ≥ `BASE_ID_ATIVOS_SEM_INSCRICAO` = 900000000) — sem isso, TODA
+    importação parcial "acharia" que metade da base sumiu, um falso-alarme
+    constante que destruiria a confiança no aviso.
+  - A tela (`index.html`, cards de Ativos/Inativos/Inscrições na aba
+    Importar) não tem mais nenhum `required` — sempre foi possível técnica
+    e visualmente subir só 1 ou 2 arquivos, só a checagem em JS que
+    bloqueava.
+  - **`scraper/importar-no-crm.js`** (`importarNoCrm()`) segue o mesmo
+    princípio: `caminhoAtivos`/`caminhoInativos`/`caminhoInscricoes` agora
+    podem vir `null` individualmente — só faz upload dos `<input>` que têm
+    caminho, o resto do fluxo (Processar → prévia → Confirmar) é idêntico.
+    Ainda não tem uma chamada automática dentro de `mercurio.js`/`main()`
+    (permanece uma função reutilizável, chamada manualmente ou por um
+    orquestrador futuro — ver marco 3 na seção do scraper) — mas já está
+    pronta pra quando isso for encadeado, sem esperar o Ulisses.
 - **Cruzamento é só por nome normalizado** (maiúsculo, sem acento, espaços
   colapsados) — as planilhas de Ativos/Inativos não têm nenhum ID em comum
   com a de Inscrições. É uma heurística, não uma garantia.
@@ -2123,6 +2197,37 @@ bloqueado).
      numa máquina de confiança (usuário decidiu manter fixo, não abrir
      mão de segurança só pra rodar de qualquer PC — ver justificativa na
      seção "Lembrete de importação do Ulisses" logo abaixo).
+  5. ✅ **Disparo sob demanda do Mercúrio, direto do CRM** — botão
+     "Sincronização Automática" na aba Importar (`abrirSincronizacaoScraper()`,
+     `js/importador.js`; `#modalSincronizacaoScraper` em `index.html`), pra
+     não esperar até às 5h quando o time quer dados frescos NA HORA. O CRM
+     (navegador, chave publishable) não pode disparar um GitHub Actions
+     diretamente — precisa de um token que nunca pode chegar ao navegador —
+     então existe uma Edge Function nova, **`scraper-disparar`**
+     (`supabase/functions/scraper-disparar/`, **já deployada**), que chama a
+     API REST do GitHub (`workflow_dispatch` em
+     `.github/workflows/scraper.yml`) usando um Personal Access Token
+     guardado como secret (`GITHUB_TOKEN_DISPATCH` — nome próprio, pra não
+     confundir com o `GITHUB_TOKEN` automático que o Actions já usa em outro
+     contexto). O botão "Rodar Mercúrio agora" (`dispararMercurioAgora()`)
+     grava o timestamp de ANTES do disparo, chama a function, e faz *poll*
+     em `status_sincronizacao_automatica` a cada 15s (até 20min) comparando
+     `executado_em` — assim que uma linha mais nova que o timestamp aparecer,
+     mostra sucesso/falha na tela em vez de deixar a pessoa adivinhando se
+     ainda está rodando. Só dispara o Mercúrio (o Ulisses fica sempre `if:
+     false` no workflow, ver Cloudflare acima — disparar o workflow inteiro
+     só roda a parte que já é 100% automática mesmo).
+     - **Setup**: `supabase functions deploy scraper-disparar` (CLI já
+       linkado ao projeto nesta sessão, deploy já feito); falta só criar um
+       GitHub Personal Access Token de *fine-grained* (github.com → foto de
+       perfil → Settings → Developer settings → Fine-grained tokens →
+       Generate new token → repositório `CRMNovaAcropole` → em
+       "Permissions", `Actions: Read and write`) e rodar
+       `supabase secrets set GITHUB_TOKEN_DISPATCH=<token>` — **isso só o
+       usuário consegue fazer** (criar o token exige login/2FA da conta
+       GitHub dele, não dá pra gerar por fora). Sem o secret configurado, o
+       botão mostra o erro claro `GITHUB_TOKEN_DISPATCH não configurado`
+       (a function já checa isso antes de tentar chamar o GitHub).
 
 ### Lembrete de importação do Ulisses (WhatsApp pro admin)
 

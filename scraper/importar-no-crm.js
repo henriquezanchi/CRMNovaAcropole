@@ -58,17 +58,27 @@ export async function abrirCrmComAcesso(page) {
     await overlay.waitFor({ state: 'hidden', timeout: 10000 });
 }
 
-// Importa os 3 arquivos (CSVs de Ativos/Inativos/Inscrições, já
-// exportados pelo Mercúrio/Ulisses) pra UMA filial, pilotando a tela de
-// Importar do CRM publicado. `arquivos` = { caminhoAtivos, caminhoInativos,
-// caminhoInscricoes } — caminhos LOCAIS de arquivo (Playwright lê do disco
-// e simula o upload, não precisa que o arquivo já esteja em lugar
-// nenhum acessível pela internet). `filial` precisa ser o nome EXATO como
-// aparece em `filiais.nome` no Supabase (mesmo texto do <option> do
-// seletor) — nome do Mercúrio/Ulisses, se vier diferente, precisa ser
-// traduzido ANTES de chamar esta função (ver resolverFilialCrm() em
-// mercurio.js pro caso do Mercúrio).
+// Importa os CSVs (Ativos/Inativos do Mercúrio, Inscrições do Ulisses) pra
+// UMA filial, pilotando a tela de Importar do CRM publicado. `arquivos` =
+// { caminhoAtivos, caminhoInativos, caminhoInscricoes } — caminhos LOCAIS
+// de arquivo (Playwright lê do disco e simula o upload, não precisa que o
+// arquivo já esteja em lugar nenhum acessível pela internet). `filial`
+// precisa ser o nome EXATO como aparece em `filiais.nome` no Supabase
+// (mesmo texto do <option> do seletor) — nome do Mercúrio/Ulisses, se vier
+// diferente, precisa ser traduzido ANTES de chamar esta função (ver
+// resolverFilialCrm() em mercurio.js pro caso do Mercúrio).
+//
+// **Qualquer um dos 3 caminhos pode vir `null`/`undefined`** — a tela de
+// Importar aceita rodar só com o que tiver (ver bullet "Importação
+// parcial" no CLAUDE.md: quem já existe no CRM não perde telefone/e-mail/
+// eventos/Lead Forte SEM Ulisses, nem Ativo/Inativo/Nível SEM Mercúrio).
+// Mercúrio (automático, roda sozinho todo dia) e Ulisses (sempre manual,
+// Cloudflare bloqueia datacenter) não precisam mais andar juntos — cada um
+// chama esta função só com os arquivos que já tem prontos.
 export async function importarNoCrm(page, filial, { caminhoAtivos, caminhoInativos, caminhoInscricoes }) {
+    if (!caminhoAtivos && !caminhoInativos && !caminhoInscricoes) {
+        throw new Error(`importarNoCrm(${filial}): nenhum arquivo informado (Ativos/Inativos/Inscrições todos vazios).`);
+    }
     await abrirCrmComAcesso(page);
 
     await page.locator('.sidebar-icon[data-tab="tab-importar"]').click();
@@ -88,9 +98,9 @@ export async function importarNoCrm(page, filial, { caminhoAtivos, caminhoInativ
         if (tentativa === 5) throw new Error(`Não consegui manter a filial "${filial}" selecionada no importador (ficou "${valorAtual}") — provável corrida na população do <select>.`);
     }
 
-    await page.locator('#fileAtivos').setInputFiles(caminhoAtivos);
-    await page.locator('#fileInativos').setInputFiles(caminhoInativos);
-    await page.locator('#fileInscricoes').setInputFiles(caminhoInscricoes);
+    if (caminhoAtivos) await page.locator('#fileAtivos').setInputFiles(caminhoAtivos);
+    if (caminhoInativos) await page.locator('#fileInativos').setInputFiles(caminhoInativos);
+    if (caminhoInscricoes) await page.locator('#fileInscricoes').setInputFiles(caminhoInscricoes);
 
     // Seletor por `onclick` exato, não por texto/role — confirmado ao
     // vivo que `getByRole('button', { name: /Processar/ })` fica

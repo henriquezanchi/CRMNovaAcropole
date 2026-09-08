@@ -727,8 +727,21 @@ async function processarPlanilhas() {
     const fileInscricoes = document.getElementById('fileInscricoes').files[0];
     const filialDestino = document.getElementById('importFilialSelect').value;
 
-    if (!fileAtivos || !fileInativos || !fileInscricoes) {
-        logImport('É preciso selecionar as 3 planilhas antes de processar.', 'err');
+    // ---- Importação PARCIAL: Mercúrio (Ativos/Inativos) e Ulisses
+    // (Inscrições) rodam em ritmos diferentes hoje (Mercúrio é automático
+    // via scraper, Ulisses continua manual/local por causa do Cloudflare —
+    // ver CLAUDE.md) — não faz sentido travar a importação esperando os 3
+    // arquivos ao mesmo tempo. Só exige pelo menos 1 planilha; o que faltar
+    // fica marcado em `modoImportacao` e usado depois, em
+    // confirmarEnviarImportacao(), pra decidir quais campos recalcular e
+    // quais preservar do que já existe no banco (nunca apaga dado bom só
+    // porque a planilha desta vez não trouxe aquela informação).
+    const temAtivos = !!fileAtivos, temInativos = !!fileInativos, temInscricoes = !!fileInscricoes;
+    const temMercurio = temAtivos || temInativos;
+    const temUlisses = temInscricoes;
+
+    if (!temMercurio && !temUlisses) {
+        logImport('Selecione ao menos uma planilha (Ativos, Inativos ou Inscrições) antes de processar.', 'err');
         return;
     }
     if (!filialDestino) {
@@ -737,27 +750,34 @@ async function processarPlanilhas() {
     }
 
     logImport(`Filial de destino: ${filialDestino}`);
-    logImport('Lendo planilhas...');
+    if (temMercurio && temUlisses) {
+        logImport('Lendo planilhas...');
+    } else if (temMercurio) {
+        logImport('Lendo planilhas — SÓ Mercúrio (Ativos/Inativos) desta vez. Telefone/e-mail/eventos/Lead Forte de quem já existe no CRM ficam como estavam.', 'warn');
+        if (!temAtivos || !temInativos) logImport(`Só ${temAtivos ? 'Ativos' : 'Inativos'} foi selecionado, sem o outro — segue só com o que tem.`, 'warn');
+    } else {
+        logImport('Lendo planilha — SÓ Ulisses (Inscrições) desta vez. Ativo/Inativo/Nível de quem já existe no CRM ficam como estavam.', 'warn');
+    }
 
-    let textoAtivos, textoInativos, textoInscricoes;
+    let textoAtivos = '', textoInativos = '', textoInscricoes = '';
     try {
         // Ativos e Inativos costumam ser exportados em ISO-8859-1 (Latin-1) pelo Excel;
         // as Inscrições (Ulisses) já vêm em UTF-8.
-        textoAtivos = await lerArquivoTexto(fileAtivos, 'ISO-8859-1');
-        textoInativos = await lerArquivoTexto(fileInativos, 'ISO-8859-1');
-        textoInscricoes = await lerArquivoTexto(fileInscricoes, 'UTF-8');
+        if (temAtivos) textoAtivos = await lerArquivoTexto(fileAtivos, 'ISO-8859-1');
+        if (temInativos) textoInativos = await lerArquivoTexto(fileInativos, 'ISO-8859-1');
+        if (temInscricoes) textoInscricoes = await lerArquivoTexto(fileInscricoes, 'UTF-8');
     } catch (e) {
         logImport('Erro lendo os arquivos: ' + e.message, 'err');
         return;
     }
 
-    const parsedAtivos = parseCSVTexto(textoAtivos, ';');
-    const parsedInativos = parseCSVTexto(textoInativos, ';');
-    const parsedInscricoes = parseCSVTexto(textoInscricoes, ',');
+    const parsedAtivos = temAtivos ? parseCSVTexto(textoAtivos, ';') : { data: [] };
+    const parsedInativos = temInativos ? parseCSVTexto(textoInativos, ';') : { data: [] };
+    const parsedInscricoes = temInscricoes ? parseCSVTexto(textoInscricoes, ',') : { data: [] };
 
-    logImport(`Ativos: ${parsedAtivos.data.length} linhas lidas.`, 'ok');
-    logImport(`Inativos: ${parsedInativos.data.length} linhas lidas.`, 'ok');
-    logImport(`Inscrições: ${parsedInscricoes.data.length} linhas lidas.`, 'ok');
+    if (temAtivos) logImport(`Ativos: ${parsedAtivos.data.length} linhas lidas.`, 'ok');
+    if (temInativos) logImport(`Inativos: ${parsedInativos.data.length} linhas lidas.`, 'ok');
+    if (temInscricoes) logImport(`Inscrições: ${parsedInscricoes.data.length} linhas lidas.`, 'ok');
 
     // ---- Auditoria: linhas das 3 planilhas que a importação IGNORA por
     // faltar o dado-chave (nome, ou pessoaIdentificador nas Inscrições) —
@@ -1023,6 +1043,10 @@ async function processarPlanilhas() {
     resultadoImportacao = {
         filial: filialDestino,
         leads: leadsFinais,
+        // Usado em confirmarEnviarImportacao() pra decidir, lead a lead, o
+        // que recalcular e o que preservar do que já existe no banco —
+        // ver bullet "Importação parcial" no CLAUDE.md.
+        modoImportacao: { temAtivos, temInativos, temInscricoes, temMercurio, temUlisses },
         resumo: {
             alunoAtivo: contAlunoAtivo + contAtivosSemInscricao,
             exAluno: contExAluno + contInativosSemInscricao,
@@ -1217,13 +1241,15 @@ async function confirmarEnviarImportacao() {
     logImport('Buscando leads já existentes nesta filial (pra não sobrescrever posição no funil, resumo de IA e tags manuais)...');
 
     // Busca o que já existe no banco pra essa filial, paginado (1000 em 1000)
+    // — traz os campos que uma importação PARCIAL pode precisar preservar
+    // (ver `modoImportacao`/bloco de merge abaixo), não só tags/funil/resumo.
     const existentes = new Map();
     let inicio = 0;
     const passo = 1000;
     while (true) {
         const { data, error } = await window.supabaseClient
             .from(NOME_TABELA)
-            .select('pessoaIdentificador, pessoaNome, tags, funil_agencia, resumo_ia')
+            .select('pessoaIdentificador, pessoaNome, tags, funil_agencia, resumo_ia, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, pessoaStatus, telemarketingStatus, eventoNome, eventoData, historico_eventos, motivo_saida, data_saida')
             .eq('filial', resultadoImportacao.filial)
             .order('pessoaIdentificador', { ascending: true })
             .range(inicio, inicio + passo - 1);
@@ -1238,19 +1264,39 @@ async function confirmarEnviarImportacao() {
     }
     logImport(`${existentes.size} leads já existiam nessa filial antes desta importação.`, 'ok');
 
+    const modo = resultadoImportacao.modoImportacao || { temMercurio: true, temUlisses: true };
+
     // ---- Alerta: leads que já existiam nesta filial mas NÃO apareceram em
-    //      nenhuma das 3 planilhas desta vez. Pode ser gente que trancou/saiu
-    //      sem que o time tivesse percebido por aqui, ou só caiu da planilha
-    //      por engano do lado de quem exportou — por isso é só INFORMATIVO,
-    //      não muda tag nem coluna de ninguém sozinho.
+    //      nenhuma planilha desta vez. Pode ser gente que trancou/saiu sem
+    //      que o time tivesse percebido por aqui, ou só caiu da planilha por
+    //      engano do lado de quem exportou — por isso é só INFORMATIVO, não
+    //      muda tag nem coluna de ninguém sozinho.
+    //      Numa importação PARCIAL, isso precisa ser ESCOPADO — senão toda
+    //      importação só-Mercúrio "acharia" que todo prospecto Lead Forte
+    //      sumiu (ele nunca esteve em Ativos/Inativos mesmo), e toda
+    //      importação só-Ulisses "acharia" que todo Ativo/Inativo sem
+    //      correspondência em Inscrições sumiu (idem, nunca esteve lá).
     const idsNestaImportacao = new Set(resultadoImportacao.leads.map(l => l.pessoaIdentificador));
-    const sumidos = Array.from(existentes.values()).filter(e => !idsNestaImportacao.has(String(e.pessoaIdentificador)));
+    let candidatosSumidos = Array.from(existentes.values());
+    if (!modo.temUlisses) {
+        // Só Mercúrio: só é razoável cobrar ausência de quem já era Ativo/Inativo.
+        candidatosSumidos = candidatosSumidos.filter(e => {
+            let t = []; try { t = JSON.parse(e.tags || '[]'); } catch (_) { t = []; }
+            return t.includes('Ativo') || t.includes('Inativo') || t.includes('Aluno Ativo') || t.includes('Ex-Aluno (Inativo)');
+        });
+    } else if (!modo.temMercurio) {
+        // Só Ulisses: ignora quem só existe por causa do Mercúrio (IDs
+        // sintéticos de "sem correspondência em Inscrições" — ver
+        // BASE_ID_ATIVOS_SEM_INSCRICAO/BASE_ID_INATIVOS_SEM_INSCRICAO).
+        candidatosSumidos = candidatosSumidos.filter(e => Number(e.pessoaIdentificador) < BASE_ID_ATIVOS_SEM_INSCRICAO);
+    }
+    const sumidos = candidatosSumidos.filter(e => !idsNestaImportacao.has(String(e.pessoaIdentificador)));
     if (sumidos.length > 0) {
-        logImport(`⚠ ${sumidos.length} lead(s) que já existiam nesta filial não apareceram em NENHUMA das 3 planilhas desta vez — revise antes de assumir que trancaram/saíram:`, 'warn');
+        logImport(`⚠ ${sumidos.length} lead(s) que já existiam nesta filial não apareceram em NENHUMA planilha desta vez — revise antes de assumir que trancaram/saíram:`, 'warn');
         sumidos.slice(0, 30).forEach(e => logImport(`   • ${e.pessoaNome || e.pessoaIdentificador}`, 'warn'));
         if (sumidos.length > 30) logImport(`   ...e mais ${sumidos.length - 30}.`, 'warn');
     } else if (existentes.size > 0) {
-        logImport('Nenhum lead sumiu das planilhas desta vez — todos os que já existiam nesta filial continuam aparecendo em pelo menos uma das 3.', 'ok');
+        logImport('Nenhum lead sumiu das planilhas desta vez.', 'ok');
     }
 
     // Tags "de sistema" (calculadas pela importação) — qualquer outra tag
@@ -1268,6 +1314,29 @@ async function confirmarEnviarImportacao() {
             || /^(TA|JN|PP|N[1-7]|Membro)$/.test(tag)
             || /^Sem (Telefone|E-mail)$/.test(tag)
             || /^(Trilha|Jornada): /.test(tag);
+    }
+    // Subconjuntos de `ehTagDeSistema()` usados só na importação PARCIAL,
+    // pra saber qual "metade" da classificação esta rodada tem autoridade
+    // pra recalcular:
+    // - "Status" (Ativo/Inativo/Nível + Lead Forte + Jornada) é um grupo
+    //   ATÔMICO decidido pelo if/else do passo 3 de processarPlanilhas() —
+    //   só confiável com dado do MERCÚRIO. "Lead Forte" é o fallback de
+    //   "não bateu em Ativos/Inativos" e "Jornada" só é calculada pra quem
+    //   NÃO é Ativo/Inativo — sem o Mercúrio pra confirmar isso, os dois
+    //   ficam sem base (foi exatamente o bug pego no teste ao vivo: uma
+    //   importação só-Ulisses recalculava "Lead Forte" por cima de um lead
+    //   que já era "Ativo", já que sem Ativos/Inativos nesta rodada
+    //   mapaAtivos/mapaInativos ficam vazios e todo mundo cai no fallback).
+    // - "Trilha" só depende de historico_eventos (tipo de evento) — não do
+    //   status Ativo/Inativo/Lead Forte — então só precisa do ULISSES.
+    function ehTagStatusMercurio(tag) {
+        return TAGS_SISTEMA_EXATAS.includes(tag)
+            || /^(TA|JN|PP|N[1-7]|Membro)$/.test(tag)
+            || /^Lead Forte( [1-3])?$/.test(tag)
+            || /^Jornada: /.test(tag);
+    }
+    function ehTagTrilha(tag) {
+        return /^Trilha: /.test(tag);
     }
     const primeiraColuna = (typeof columnsConfig !== 'undefined' && columnsConfig.length > 0) ? columnsConfig[0].key : 'Frios';
 
@@ -1293,30 +1362,76 @@ async function confirmarEnviarImportacao() {
     // qualquer jeito (não move ninguém que o time já triou manualmente).
     const registrosFinais = resultadoImportacao.leads.map(lead => {
         const existente = existentes.get(lead.pessoaIdentificador);
-        const tagsNovas = JSON.parse(lead.tags);
+        let tagsNovas = JSON.parse(lead.tags);
+        const leadFinal = { ...lead };
 
         if (existente) {
             let tagsAntigas = [];
             try { tagsAntigas = JSON.parse(existente.tags || '[]'); } catch (e) { tagsAntigas = []; }
+
+            // Importação PARCIAL sem Mercúrio (só Ulisses desta vez): não dá
+            // pra saber se a pessoa continua Ativa/Inativa/em que Nível sem
+            // a planilha — preserva o grupo "status" (Ativo/Inativo/Nível +
+            // Lead Forte + Jornada, ver ehTagStatusMercurio()) que já
+            // existia, em vez de deixar o fallback "Lead Forte" desta
+            // rodada (mapaAtivos/mapaInativos vazios = todo mundo cai no
+            // fallback) pisar em cima de um "Ativo" que já era verdade.
+            if (!modo.temMercurio) {
+                tagsNovas = tagsNovas.filter(t => !ehTagStatusMercurio(t));
+                tagsAntigas.filter(ehTagStatusMercurio).forEach(t => { if (!tagsNovas.includes(t)) tagsNovas.push(t); });
+                if (!leadFinal.motivo_saida && existente.motivo_saida) leadFinal.motivo_saida = existente.motivo_saida;
+                if (!leadFinal.data_saida && existente.data_saida) leadFinal.data_saida = existente.data_saida;
+            }
+            // Importação PARCIAL sem Ulisses (só Mercúrio desta vez): não dá
+            // pra recalcular telefone/e-mail/status/eventos/Trilha com
+            // confiança (sem histórico de evento fresco) — preserva o que
+            // já existia. "Status" (Lead Forte/Jornada) nem chega a
+            // aparecer fresco aqui (o passo 3 de processarPlanilhas() só
+            // roda com Ulisses presente), então não precisa de tratamento
+            // especial nesta metade.
+            if (!modo.temUlisses) {
+                tagsNovas = tagsNovas.filter(t => !ehTagTrilha(t));
+                tagsAntigas.filter(ehTagTrilha).forEach(t => { if (!tagsNovas.includes(t)) tagsNovas.push(t); });
+
+                if (existente.pessoaTelefoneNumero) {
+                    leadFinal.pessoaTelefoneDDD = existente.pessoaTelefoneDDD;
+                    leadFinal.pessoaTelefoneNumero = existente.pessoaTelefoneNumero;
+                }
+                if (existente.pessoaEmail) leadFinal.pessoaEmail = existente.pessoaEmail;
+                if (existente.pessoaStatus) leadFinal.pessoaStatus = existente.pessoaStatus;
+                if (existente.telemarketingStatus) leadFinal.telemarketingStatus = existente.telemarketingStatus;
+                if (existente.eventoNome) { leadFinal.eventoNome = existente.eventoNome; leadFinal.eventoData = existente.eventoData; }
+                if (existente.historico_eventos) leadFinal.historico_eventos = existente.historico_eventos;
+            }
+
+            // "Sem Telefone"/"Sem E-mail" recalculados sempre em cima do
+            // valor FINAL (já com o telefone/e-mail preservado acima, se for
+            // o caso) — nunca em cima do dado transiente da planilha
+            // parcial, senão o badge fica errado quando o campo de verdade
+            // veio preservado do banco em vez desta importação.
+            tagsNovas = tagsNovas.filter(t => t !== 'Sem Telefone' && t !== 'Sem E-mail');
+            if (!leadFinal.pessoaTelefoneNumero) tagsNovas.push('Sem Telefone');
+            if (!leadFinal.pessoaEmail) tagsNovas.push('Sem E-mail');
+
             const tagsCustomizadasMantidas = tagsAntigas.filter(t => !ehTagDeSistema(t));
             let tagsFinais = Array.from(new Set([...tagsNovas, ...tagsCustomizadasMantidas]));
 
             const estavaInativo = tagsAntigas.includes('Inativo') || tagsAntigas.includes('Ex-Aluno (Inativo)');
-            const agoraAtivo = tagsNovas.includes('Ativo');
+            const agoraAtivo = tagsFinais.includes('Ativo');
             if (estavaInativo && agoraAtivo && !tagsFinais.includes(TAG_RECUPERADO)) {
                 tagsFinais = [...tagsFinais, TAG_RECUPERADO];
                 contRecuperados++;
             }
 
             return {
-                ...lead,
+                ...leadFinal,
                 tags: JSON.stringify(tagsFinais),
                 funil_agencia: existente.funil_agencia || primeiraColuna, // preserva posição no Kanban
                 resumo_ia: existente.resumo_ia || null                    // preserva resumo de IA
             };
         }
 
-        return { ...lead, funil_agencia: primeiraColuna, resumo_ia: null };
+        return { ...leadFinal, funil_agencia: primeiraColuna, resumo_ia: null };
     });
 
     if (contRecuperados > 0) {
