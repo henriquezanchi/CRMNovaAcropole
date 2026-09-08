@@ -5,9 +5,9 @@
   "description": "Login automatizado no Ulisses (por filial) e no Mercúrio, pra manter o CRM sincronizado sem depender de exportar planilha na mão. Roda agendado via GitHub Actions (.github/workflows/scraper.yml).",
   "type": "module",
   "scripts": {
-    "ulisses": "node ulisses.js",
+    "ulisses": "node --env-file-if-exists=.env ulisses.js",
     "ulisses-local": "node ulisses-local.js",
-    "mercurio": "node mercurio.js",
+    "mercurio": "node --env-file-if-exists=.env mercurio.js",
     "run": "node run.js"
   },
   "dependencies": {
