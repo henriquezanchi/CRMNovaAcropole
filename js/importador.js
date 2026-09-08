@@ -1464,6 +1464,13 @@ async function confirmarEnviarImportacao() {
     logImport(`Importação concluída! ${enviados} leads enviados para "${resultadoImportacao.filial}".`, 'ok');
     if (label) label.innerText = 'Concluído!';
 
+    if (typeof registrarLogAtividade === 'function') {
+        registrarLogAtividade('importacao', {
+            filial: resultadoImportacao.filial,
+            detalhes: { enviados, modo: resultadoImportacao.modoImportacao, resumo: resultadoImportacao.resumo }
+        });
+    }
+
     // Varredura de "Leads a Tratar" (duplicados por telefone/nome + sem
     // telefone) — roda sempre ao final de toda importação, sobre a filial
     // inteira (não só os leads que acabaram de entrar), já que um

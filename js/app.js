@@ -1387,6 +1387,7 @@ async function aplicarTagEmMassa(modo) {
         console.error('Erros ao aplicar tag em massa:', comErro.map(r => r.error));
         alert(`Erro ao salvar a tag em ${comErro.length} lead(s) — recarregue a página e confira. Veja o console (F12) para detalhes.`);
     } else {
+        registrarLogAtividade('tag_massa', { pessoaIds: atualizacoes.map(a => a.pessoaIdentificador), detalhes: { modo, tag } });
         limparSelecao();
     }
 }
@@ -1440,7 +1441,13 @@ async function executarMovimentoParaColuna(ids, novaColuna) {
         });
         esconderUndoMovimento();
         renderizarCards();
+        return;
     }
+
+    registrarLogAtividade('mover_lead', {
+        pessoaIds: ids.map(String),
+        detalhes: { novaColuna, colunasAnteriores: [...new Set(anteriores.map(a => a.funilAnterior))] }
+    });
 }
 
 // ==========================================
@@ -1522,7 +1529,10 @@ async function registrarMotivoPerda(ids, motivo) {
     if (erro) {
         console.error('Erro ao salvar motivo de perda:', erro.error);
         alert('O lead foi movido, mas houve um erro ao salvar o motivo — confira manualmente na ficha. Veja o console (F12) para detalhes.');
+        return;
     }
+
+    registrarLogAtividade('motivo_perda', { pessoaIds: atualizacoes.map(a => a.pessoaIdentificador), detalhes: { motivo } });
 }
 
 // ==========================================
@@ -1949,6 +1959,14 @@ async function excluirLeadsDaFilial() {
         botao.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Apagando...';
     }
 
+    // Contagem ANTES de apagar — só pra registrar no log de atividade
+    // quantos leads foram perdidos nesta ação (a ação mais destrutiva do
+    // app, por isso o registro mais importante de todos).
+    const { count: totalAntes } = await window.supabaseClient
+        .from(NOME_TABELA)
+        .select('pessoaIdentificador', { count: 'exact', head: true })
+        .eq('filial', filial);
+
     const { error } = await window.supabaseClient
         .from(NOME_TABELA)
         .delete()
@@ -1961,6 +1979,8 @@ async function excluirLeadsDaFilial() {
         verificarTextoConfirmacaoExclusao();
         return;
     }
+
+    registrarLogAtividade('excluir_leads_filial', { filial, detalhes: { quantidade: totalAntes ?? null } });
 
     input.value = '';
     if (botao) botao.disabled = true;
@@ -3700,6 +3720,8 @@ async function confirmarNovaTag() {
         .from(NOME_TABELA)
         .update({ tags: JSON.stringify(tagsArray) })
         .eq('pessoaIdentificador', currentLeadId);
+
+    registrarLogAtividade('tag_adicionar', { pessoaIds: [String(currentLeadId)], detalhes: { tag: novaTagText } });
 }
 
 // Refresca o Kanban de tempos em tempos só pra atualizar a borda de SLA
@@ -3713,6 +3735,7 @@ setInterval(() => {
 async function removerTag(index) {
     const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(currentLeadId));
     let tagsArray = parseTags(leadsAtuais[leadIndex].tags);
+    const tagRemovida = tagsArray[index];
 
     tagsArray.splice(index, 1);
     leadsAtuais[leadIndex].tags = JSON.stringify(tagsArray);
@@ -3723,4 +3746,6 @@ async function removerTag(index) {
         .from(NOME_TABELA)
         .update({ tags: JSON.stringify(tagsArray) })
         .eq('pessoaIdentificador', currentLeadId);
+
+    registrarLogAtividade('tag_remover', { pessoaIds: [String(currentLeadId)], detalhes: { tag: tagRemovida } });
 }

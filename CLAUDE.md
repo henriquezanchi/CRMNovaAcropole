@@ -43,6 +43,9 @@ js/matricula-importar.js → módulo separado: importar matrícula via texto col
 js/notificacoes.js  → módulo separado: Central de Notificações (sino no topbar) — Lead
                         Forte 1 novo, evento quase lotado, lembrete vencido, WhatsApp recebido,
                         sincronização automática travada
+js/log-atividade.js  → módulo separado: Log de Atividade (auditoria durável, append-only —
+                        mover lead, tags, mesclagem, exclusão, importação; tabela sem policy
+                        de UPDATE/DELETE, nem o app consegue apagar uma linha já gravada)
 js/acesso.js         → portão de senha única do time (ver seção "Publicação/Deploy")
 scraper/             → login automatizado no Ulisses/Mercúrio via Playwright, roda fora do
                         Supabase (GitHub Actions, .github/workflows/scraper.yml) — ver seção
@@ -177,6 +180,10 @@ migracao_turmas.sql               → tabela turmas (nome/dia/horário por filia
 migracao_filial_valor_mensalidade.sql → coluna valor_mensalidade em filiais — base do
                                      cálculo de receita/comissão de SDR no relatório
                                      "Matrículas por Mês"; rodar manualmente
+migracao_log_atividade.sql        → tabela log_atividade (auditoria durável, append-only —
+                                     só policy de SELECT/INSERT, sem UPDATE/DELETE, ver seção
+                                     "Log de Atividade"); JÁ RODADA nesta sessão via
+                                     `supabase db query --linked`
 ```
 
 ## Banco de dados (Supabase)
@@ -1413,6 +1420,89 @@ nenhuma**. Zero custo, zero dependência de secret.
     colar a MESMA lista de novo não adianta pra corrigir a coluna (a linha
     vira "duplicado" e é ignorada); nesse caso o jeito é arrastar o card
     manualmente depois de criar a coluna "Ativos".
+
+## Log de Atividade (`js/log-atividade.js`)
+
+Registro **append-only** das ações mais importantes feitas no CRM —
+pedido do usuário como rede de segurança pro time começar a usar o CRM
+pra trabalho de verdade enquanto o código ainda muda muito de uma sessão
+pra outra: mesmo que um bug futuro no front-end apague/corrompa alguma
+coisa na tela, o que foi feito continua registrado, fora do alcance de
+qualquer mudança de código.
+
+- **Tabela `log_atividade`** (`migracao_log_atividade.sql` — **já rodada
+  nesta sessão**, via `supabase db query --linked`, ver nota sobre essa
+  capacidade no fim desta seção): `criado_em`, `filial`, `acao` (slug),
+  `autor` (nome do atendente, mesmo `localStorage` do WhatsApp — lido
+  DIRETO pela chave `'crm_na_nome_atendente'`, nunca chamando
+  `obterNomeAtendente()`, que dispara um `prompt()` na 1ª vez; logar em
+  segundo plano não pode interromper ninguém com uma pergunta),
+  `pessoa_ids` (jsonb, array), `detalhes` (jsonb, payload livre por tipo
+  de ação).
+  - **A garantia real de "não vai se perder" está na RLS**: diferente de
+    toda outra tabela do projeto (`for all using(true) with check(true)`,
+    acesso total), esta tabela só tem policies de `SELECT` e `INSERT` —
+    **não existe policy de `UPDATE` nem `DELETE`**. Sem policy pra essas
+    operações, o Postgres simplesmente não enxerga nenhuma linha
+    "atualizável"/"apagável" via RLS (não lança erro — a cláusula WHERE
+    não encontra nada, 0 linhas afetadas, silenciosamente). Testado ao
+    vivo: um `UPDATE`/`DELETE` disparado pelo próprio `supabaseClient`
+    (chave publishable, a mesma do navegador) não altera nem remove a
+    linha. Uma vez gravada, uma linha é permanente — nem um bug futuro no
+    app, nem ninguém mexendo direto pela chave publishable, consegue
+    apagar o rastro.
+- **`registrarLogAtividade(acao, {pessoaIds, detalhes, filial})`**
+  (`js/log-atividade.js`, carregado ANTES de `app.js`/demais módulos no
+  `index.html` já que é chamada de dentro deles): best-effort de
+  propósito — nunca usa `await` antes de disparar, sempre com `.catch`/
+  `.then` tratando erro só com `console.warn`, porque uma falha ao gravar
+  o log NUNCA pode impedir a ação real de completar (a mesma filosofia de
+  `classificar-temas`/aniversariantes no scraper).
+- **Onde já está ligado** (pontos centrais únicos, cobrem várias
+  entradas de UI de uma vez — não é uma varredura de TODA ação possível
+  do app, ver limitação conhecida abaixo):
+  - `executarMovimentoParaColuna()` (`js/app.js`) — cobre mover 1 card,
+    seleção em massa, arrastar-e-soltar, e as chamadas de
+    `js/eventos.js` (`efetivarMatriculasEmMassa`/`moverLeadsParaRecontato`).
+  - `registrarMotivoPerda()` (`js/app.js`) — Motivos de Perda.
+  - `confirmarNovaTag()`/`removerTag()`/`aplicarTagEmMassa()` (`js/app.js`)
+    — tag individual e em massa.
+  - `excluirLeadsDaFilial()` (`js/app.js`, Zona de Perigo) — a ação mais
+    destrutiva do app; loga a CONTAGEM de leads apagados (consultada
+    ANTES do `delete()`, já que depois não sobra nada pra contar).
+  - `confirmarMesclagem()` (`js/leads-a-tratar.js`) — cobre mesclagem
+    automática (grupo detectado) e manual (seleção no Kanban), com
+    `detalhes.origem` distinguindo as duas.
+  - `confirmarEnviarImportacao()` (`js/importador.js`) — 1 linha de log
+    por importação, com `modoImportacao`/resumo (ver seção "Importação
+    PARCIAL" acima).
+  - **Não coberto ainda** (limitação conhecida, não uma varredura
+    exaustiva): edição de campos individuais da gaveta (telefone/e-mail/
+    resumo_ia/abordagem_sugerida/lembrete/data_nascimento), cadastro/
+    edição de eventos, vínculo familiar, envio de WhatsApp. Estender pra
+    qualquer um desses é só mais uma chamada de `registrarLogAtividade()`
+    no fim da função que já existe — mesmo padrão dos pontos acima.
+- **Tela de consulta**: botão "Log de Atividade" na aba Relatórios
+  (`abrirLogAtividade()`, `#modalLogAtividade`) — lista as últimas 200
+  entradas da FILIAL ATUAL, mais recente primeiro, só leitura. Pensado
+  como "o que aconteceu aqui" pra conferência rápida, não um relatório
+  analítico com filtro/exportação.
+- **Testado ao vivo** contra o Supabase real (filial descartável): mover
+  lead grava `acao='mover_lead'` com `novaColuna`/`pessoa_ids` corretos,
+  adicionar tag grava `acao='tag_adicionar'`, o modal renderiza as
+  entradas, e a tentativa de `UPDATE`/`DELETE` pela chave publishable foi
+  confirmada bloqueada (linha e conteúdo intactos depois).
+- **Capacidade descoberta nesta sessão**: `supabase db query --linked
+  --file arquivo.sql` (CLI via `npx supabase`, já autenticado/linkado
+  neste ambiente) roda uma migração direto contra o projeto remoto, sem
+  precisar do usuário colar no SQL Editor manualmente — foi assim que
+  `migracao_log_atividade.sql` foi aplicada nesta sessão. As migrações
+  ANTERIORES a esta continuam listadas como "rodar manualmente" no topo
+  deste arquivo porque foram feitas antes dessa descoberta (não há como
+  saber retroativamente se cada uma já rodou ou não sem checar o schema
+  primeiro) — mas daqui pra frente, migração nova pode ser aplicada
+  direto por aqui, perguntando antes por segurança (é uma alteração de
+  schema no banco de produção).
 
 ## Central de Notificações (`js/notificacoes.js`)
 

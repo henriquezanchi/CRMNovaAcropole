@@ -888,6 +888,15 @@ async function confirmarMesclagem() {
     const { error: erroDelete } = await window.supabaseClient.from(NOME_TABELA).delete().in('pessoaIdentificador', idsOutros);
     if (erroDelete) { alert('O lead principal foi atualizado, mas houve erro ao apagar os duplicados: ' + erroDelete.message); return; }
 
+    registrarLogAtividade('mesclar_leads', {
+        pessoaIds: [String(idPrincipal), ...idsOutros],
+        detalhes: {
+            sobrevivente: principal.pessoaNome,
+            apagados: outros.map(o => o.pessoaNome),
+            origem: grupoEmMesclagem ? 'automatica' : 'manual'
+        }
+    });
+
     // grupoEmMesclagem é null pra mesclagem manual (iniciarMesclagemManual())
     // — não veio de um grupo detectado pelo sistema, então não há linha em
     // leads_a_tratar pra limpar.

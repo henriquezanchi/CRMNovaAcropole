@@ -296,7 +296,10 @@
                         <h3 style="font-size:16px; color:var(--na-green-dark);">Funil de Conversão</h3>
                         <p class="report-sub">Calculado em tempo real a partir dos leads carregados para a filial atual.</p>
                     </div>
-                    <button class="btn-secondary" style="white-space:nowrap;" onclick="exportarLeadsCSV()"><i class="fa-solid fa-file-csv"></i> Exportar Leads (CSV)</button>
+                    <div style="display:flex; gap:8px;">
+                        <button class="btn-secondary" style="white-space:nowrap;" onclick="abrirLogAtividade()"><i class="fa-solid fa-clock-rotate-left"></i> Log de Atividade</button>
+                        <button class="btn-secondary" style="white-space:nowrap;" onclick="exportarLeadsCSV()"><i class="fa-solid fa-file-csv"></i> Exportar Leads (CSV)</button>
+                    </div>
                 </div>
                 <div class="funnel" id="funnelChart"></div>
 
@@ -1007,6 +1010,25 @@
         </div>
     </div>
 
+    <div class="modal" id="modalLogAtividade">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-clock-rotate-left"></i> Log de Atividade</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharLogAtividade()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">
+                Registro das ações mais importantes feitas nesta filial (mover lead, tags, mesclagem, exclusão em massa,
+                importação de planilha...) — gravado direto no banco, fora do alcance de qualquer mudança futura no CRM.
+                Mostra as últimas 200 entradas, mais recente primeiro.
+            </p>
+            <div id="logAtividadeLista" style="max-height:60vh; overflow-y:auto; border:1px solid #eef2f7; border-radius:8px;"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="carregarLogAtividade()"><i class="fa-solid fa-rotate"></i> Atualizar</button>
+            <button class="btn-primary" onclick="fecharLogAtividade()"><i class="fa-solid fa-check"></i> Fechar</button>
+        </div>
+    </div>
+
     <!-- ⚠️ AQUI ESTÁ A SEGUNDA MÁGICA: Conectando os scripts (O Cérebro) -->
     <!-- 1. Importa a biblioteca do Supabase da internet -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -1020,6 +1042,10 @@
         window.supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
     </script>
 
+    <!-- 2b. Log de Atividade (auditoria durável, ver migracao_log_atividade.sql)
+         — carregado ANTES de app.js/demais módulos porque registrarLogAtividade()
+         é chamada de dentro deles -->
+    <script src="js/log-atividade.js"></script>
     <!-- 3. Chama o SEU arquivo de lógica que acabamos de criar -->
     <script src="js/app.js"></script>
     <!-- 3b. Módulo do importador de planilhas (Ativos/Inativos/Inscrições) -->
