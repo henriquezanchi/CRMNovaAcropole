@@ -138,6 +138,12 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
     justify-content: center; margin-bottom: 8px; transition: 0.2s; width: 100%;
 }
 .col-import-matricula-btn:hover { background: #fef3c7; border-color: #f59e0b; }
+.col-matricula-info {
+    background: #f8fafc; border: 1px dashed #cbd5e1; color: var(--text-muted); font-size: 10px; font-weight: 600;
+    cursor: pointer; padding: 6px 8px; border-radius: 6px; display: flex; align-items: center; gap: 6px;
+    justify-content: center; margin-bottom: 8px; transition: 0.2s; width: 100%;
+}
+.col-matricula-info:hover { background: #f1f5f9; color: var(--na-green-dark); border-color: var(--na-green); }
 .col-collapse-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 11px; padding: 2px 4px; border-radius: 4px; transition: 0.2s; }
 .col-collapse-btn:hover { color: var(--na-green); background: #f1f5f9; }
 .col-body { padding: 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }

@@ -31,10 +31,29 @@ export async function abrirCrmNaFilialParaMatricula(page, filial) {
 // `abrirCrmNaFilialParaMatricula` já ter rodado antes (mesma `page`,
 // mesma filial). Não damos throw em "0 processado" — algumas linhas
 // podem cair em "sem_match"/duplicado, isso é normal e não é falha.
+//
+// O botão "Importar Matrícula" saiu da coluna do Kanban (o time passou a
+// usar o disparo do Mercúrio sob demanda em vez de colar manualmente) —
+// a função `abrirImportarMatricula(colKey)` continua existindo/funcional
+// em js/matricula-importar.js, só não tem mais um elemento clicável.
+// Chamamos ela direto via page.evaluate(), com a MESMA heurística por
+// substring "matricul" já usada em js/app.js pra achar a coluna certa.
 export async function importarMatriculaViaTexto(page, textoColado) {
-    const botaoImportar = page.locator('.col-import-matricula-btn').first();
-    await botaoImportar.waitFor({ timeout: 15000 });
-    await botaoImportar.click();
+    const abriu = await page.evaluate(() => {
+        // `columnsConfig` é `let` no escopo do script (js/app.js) — não vira
+        // propriedade de `window`, mas continua acessível como identificador
+        // solto em qualquer avaliação nesse mesmo realm (mesmo princípio do
+        // console do DevTools enxergar variáveis top-level da página).
+        const col = (typeof columnsConfig !== 'undefined' ? columnsConfig : []).find(c =>
+            c.key.toLowerCase().includes('matricul') || c.label.toLowerCase().includes('matricul')
+        );
+        if (!col) return false;
+        abrirImportarMatricula(col.key);
+        return true;
+    });
+    if (!abriu) throw new Error('Nenhuma coluna com "matricul" no nome/chave encontrada no Kanban desta filial.');
+
+    await page.locator('#modalImportarMatricula.open').waitFor({ timeout: 10000 });
 
     await page.locator('#matriculaImportarTexto').fill(textoColado);
     // dispara manualmente o handler de habilitar o botão — .fill() já

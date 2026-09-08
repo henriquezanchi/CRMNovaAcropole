@@ -1186,12 +1186,39 @@ sistemas fechados).
 
 ## Importar Matrícula (`js/matricula-importar.js`)
 
-Botão "Importar Matrícula" (`.col-import-matricula-btn`), mostrado só no
-cabeçalho da coluna do Kanban cujo nome/chave contém "matricul"
-(`renderizarColunas()`, `js/app.js`) — não existe se o time nunca renomear
-uma coluna pra incluir essa palavra. Pensado pra registrar matrícula em
-lote a partir do texto copiado da tela "Aluno => Matricular" do Mercúrio,
-sem digitar nada manualmente.
+Pensado originalmente pra registrar matrícula em lote a partir do texto
+copiado da tela "Aluno => Matricular" do Mercúrio, sem digitar nada
+manualmente — **o botão que abria essa tela saiu do Kanban** (ver
+"Botão removido do Kanban" logo abaixo); a lógica/modal continuam
+existindo e funcionais, só que hoje só são acionados pelo scraper.
+
+**Botão removido do Kanban**: agora que existe o disparo do Mercúrio sob
+demanda ("Sincronização Automática" na aba Importar, ver seção do
+scraper) e a varredura diária às 5h já detecta matrícula nova sozinha
+(`processarMatriculasRecentesTurmas()`, `scraper/mercurio.js`), colar o
+texto manualmente na coluna de Matriculados deixou de ser o caminho
+principal. O botão `.col-import-matricula-btn` que ficava no cabeçalho
+da coluna (mostrado quando o nome/chave continha "matricul",
+`renderizarColunas()`, `js/app.js`) foi trocado por um texto
+informativo clicável (`.col-matricula-info`, ícone de "i", CSS
+próprio — não é mais um botão de ação, é só um lembrete + atalho) que
+leva direto pra aba Importar. **A função `abrirImportarMatricula(colKey)`
+e todo o modal (`#modalImportarMatricula`) continuam existindo
+intactos** em `js/matricula-importar.js` — só o gatilho por clique
+sumiu do Kanban; quem ainda abre esse fluxo é o SCRAPER (ver abaixo),
+chamando a função direto via `page.evaluate()`.
+- `scraper/importar-matricula-no-crm.js` (`importarMatriculaViaTexto()`)
+  dependia do elemento `.col-import-matricula-btn` pra abrir o modal por
+  clique — quebrou quando o botão saiu da tela. Corrigido chamando
+  `abrirImportarMatricula(col.key)` direto via `page.evaluate()`, achando
+  a coluna certa com a MESMA heurística por substring "matricul" (lendo
+  `columnsConfig`, variável `let` top-level de `js/app.js` — não vira
+  propriedade de `window`, mas continua acessível como identificador
+  solto dentro do `page.evaluate()`, mesmo princípio de o console do
+  DevTools enxergar variáveis top-level da página). Testado ao vivo
+  (Playwright contra o CRM servido localmente): botão sumiu, span novo
+  apareceu, e o `page.evaluate()` abriu o modal (`#modalImportarMatricula.open`)
+  normalmente.
 
 **Sem IA e sem Edge Function de propósito** — havia uma versão anterior
 que também aceitava print (imagem) via Anthropic (Edge Function

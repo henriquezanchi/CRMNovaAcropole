@@ -240,9 +240,9 @@ function renderizarColunas() {
                     <i class="fa-regular fa-square-check"></i> Selecionar visíveis
                 </button>
                 ${col.key.toLowerCase().includes('matricul') || col.label.toLowerCase().includes('matricul') ? `
-                    <button type="button" class="col-import-matricula-btn" onclick="abrirImportarMatricula('${col.key}')">
-                        <i class="fa-solid fa-graduation-cap"></i> Importar Matrícula
-                    </button>
+                    <span class="col-matricula-info" title="Matrículas novas do Mercúrio já entram sozinhas (todo dia às 5h, ou na hora pelo botão 'Sincronização Automática')" onclick="switchModule('tab-importar', 'Importar Planilhas', 'Ativos, Inativos e Inscrições → CRM')">
+                        <i class="fa-solid fa-circle-info"></i> Atualize na aba Importação
+                    </span>
                 ` : ''}
                 <div class="col-filter-wrapper">
                     <input type="text" class="col-filter-input column-search" data-col="col-${col.key}" placeholder="Buscar em ${escapeHTML(col.label)}..." onkeyup="filtroColunaComDebounce('${col.key}')">
