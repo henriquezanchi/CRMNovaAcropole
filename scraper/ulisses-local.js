@@ -66,7 +66,44 @@ const TIMEOUT_LOGIN_MANUAL_MS = 5 * 60 * 1000; // 5 min pra você fazer login na
 // preencher nada — a única ajuda que fica é mostrar o e-mail esperado
 // bem grande no terminal ANTES da janela abrir, pra digitar de cabeça
 // com confiança.
-async function aguardarLoginManual(page) {
+//
+// O terminal, porém, NÃO É CONFIÁVEL pra isso na prática — o usuário
+// relatou não ter visto a mensagem: o Chromium abre e rouba o foco na
+// hora, deixando a janela do terminal escondida atrás dele, então a
+// dica passa despercebida. Corrigido mostrando o e-mail DENTRO da
+// própria janela do navegador — uma tela intermediária (`page.setContent()`,
+// HTML local, sem rede) que exige um clique real do usuário pra
+// continuar até a tela de login de verdade. Isso garante que a
+// mensagem é vista (é a MESMA janela que a pessoa vai usar pra logar),
+// sem depender de qual janela está em primeiro plano. O e-mail também
+// continua no terminal, como registro.
+async function aguardarLoginManual(page, emailEsperado) {
+    if (emailEsperado) {
+        await page.setContent(`
+            <!doctype html><html><head><meta charset="utf-8">
+            <title>E-mail desta filial — confira antes de continuar</title>
+            <style>
+                body { font-family: -apple-system, Segoe UI, Arial, sans-serif; margin: 0; height: 100vh;
+                       display: flex; align-items: center; justify-content: center; background: #1b1b1b; color: #fff; }
+                .box { text-align: center; padding: 40px; max-width: 640px; }
+                .email { font-size: 30px; font-weight: bold; color: #4ade80; margin: 20px 0; word-break: break-all; }
+                .aviso { font-size: 15px; color: #ccc; margin-bottom: 30px; }
+                button { font-size: 18px; padding: 14px 28px; cursor: pointer; border: 0; border-radius: 8px;
+                         background: #4ade80; color: #111; font-weight: bold; }
+                button:hover { background: #22c55e; }
+            </style></head>
+            <body><div class="box">
+                <div>E-mail cadastrado pra esta filial:</div>
+                <div class="email">${emailEsperado}</div>
+                <div class="aviso">Confira que é este e-mail antes de digitar a senha na próxima tela — o campo NÃO vem preenchido sozinho, é você quem digita.</div>
+                <button id="btnContinuar" onclick="window.__ulissesLocalConfirmado = true;">Ir para a tela de login →</button>
+            </div></body></html>
+        `);
+        // Espera o CLIQUE DE VERDADE do usuário (não um clique disparado pelo
+        // próprio script) — só assim a mensagem é garantidamente vista antes
+        // de seguir pra tela de login.
+        await page.waitForFunction('window.__ulissesLocalConfirmado === true', { timeout: TIMEOUT_LOGIN_MANUAL_MS });
+    }
     await page.goto(URL_LOGIN, { waitUntil: 'domcontentloaded' });
     console.log('   Aguardando você concluir o login nessa janela (até 5 minutos)...');
     await page.getByText('Exportar CSV', { exact: false }).waitFor({ timeout: TIMEOUT_LOGIN_MANUAL_MS });
@@ -81,18 +118,18 @@ async function processarFilialLocal(browser, filial) {
     } catch {
         // Sem credencial salva no cofre ainda não impede o modo assistido
         // (você pode digitar o e-mail de cabeça) — só não dá pra mostrar
-        // a dica abaixo, nem tentar pré-preencher.
+        // a dica abaixo.
     }
     if (usuario) {
         console.log(`   >>> E-mail desta filial: ${usuario} <<<`);
-        console.log('   (confira que é este e-mail antes de digitar a senha — o campo pode já vir preenchido, mas confirme.)');
+        console.log('   (confira que é este e-mail antes de digitar a senha — também vai aparecer na própria janela do navegador.)');
     } else {
         console.log('   Nenhuma credencial salva pra essa filial ainda — digite o e-mail de cabeça.');
     }
 
     const page = await browser.newPage();
     try {
-        await aguardarLoginManual(page);
+        await aguardarLoginManual(page, usuario);
         console.log('   Login detectado — exportando...');
     } catch (e) {
         console.error(`   Não detectei login concluído a tempo: ${e.message}`);

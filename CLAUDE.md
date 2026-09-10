@@ -2704,13 +2704,34 @@ bloqueado).
          `location.search`/`location.href` pra alguma lógica própria de
          roteamento/redirect (SPA), e o parâmetro extra quebrou esse
          fluxo em vez de só ser ignorado. **Revertido**: `aguardarLoginManual()`
-         volta a navegar pra `URL_LOGIN` limpa, sem nenhum parâmetro —
-         a única ajuda que sobra é mostrar o e-mail esperado em destaque
-         no terminal ANTES da janela abrir, pra digitar de cabeça com
-         confiança. Lição: um parâmetro de URL "padrão" em outro sistema
-         nunca é garantidamente inofensivo só porque é comum — sem
-         confirmar contra o HTML/comportamento real, o risco de quebrar
-         algo é real, não hipotético.
+         volta a navegar pra `URL_LOGIN` limpa, sem nenhum parâmetro.
+         Lição: um parâmetro de URL "padrão" em outro sistema nunca é
+         garantidamente inofensivo só porque é comum — sem confirmar
+         contra o HTML/comportamento real, o risco de quebrar algo é
+         real, não hipotético.
+       - **Mostrar o e-mail só no TERMINAL não é confiável — achado
+         testando ao vivo (2026-09-10)**: usuário relatou não ter visto
+         a mensagem de forma alguma. Causa provável: o Chromium abre e
+         rouba o foco na hora que o script imprime a dica, deixando a
+         janela do terminal escondida atrás dele — fácil de nunca notar
+         se a pessoa só olha pro navegador. **Corrigido mostrando o
+         e-mail DENTRO da própria janela do navegador**: antes de ir pra
+         `URL_LOGIN` de verdade, `aguardarLoginManual()` agora renderiza
+         uma tela local (`page.setContent()`, sem rede) com o e-mail em
+         destaque e um botão "Ir para a tela de login" — só avança
+         quando esse botão é clicado DE VERDADE (`window.__ulissesLocalConfirmado`,
+         setado só pelo `onclick`; o script espera essa flag virar
+         `true` via `page.waitForFunction()`, nunca clica nele sozinho —
+         só assim garante que é um clique humano, não um passo
+         automático que passaria direto). Sem credencial salva pra
+         aquela filial, pula essa tela (nada pra mostrar) e vai direto
+         pro login, como antes. Testado com um script isolado
+         (Playwright): confirmado que o texto do e-mail aparece
+         corretamente, que a espera FICA BLOQUEADA sem clique (não
+         resolve sozinha), e que libera imediatamente depois de um
+         clique real — depois removido, não faz parte do projeto. O
+         e-mail continua sendo impresso no terminal também, como
+         registro extra.
      - Cada uma das etapas roda independente dentro de `processarFilial()`
        — uma falhar não impede as outras, e cada etapa que falha gera seu
        PRÓPRIO print de erro (`debug/ulisses-<etapa>-<filial>.png`), mais
