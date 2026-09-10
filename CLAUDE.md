@@ -1076,6 +1076,37 @@ Decisões já tomadas (não precisam ser reabertas, a menos que o usuário peça
     duplicados antigos ainda precisam de uma limpeza manual/mesclagem via
     "Leads a Tratar" em algum momento), mas garante que 1 duplicado
     nunca mais trava a importação de uma filial inteira.
+  - **Bug real #4, GRAVÍSSIMO (2026-09-10) — CAUSA RAIZ do Bug #3 e de
+    vários sintomas relatados pelo usuário**: `exportarAtivosEInativos()`/
+    `exportarAniversariantes()`/`processarMatriculasRecentesTurmas()`
+    (`scraper/mercurio.js`) recebiam um `indice` numérico (posição do link
+    "CADASTRO" daquela filial na tela `ger_funcao.php`) capturado UMA VEZ,
+    antes do laço de `main()` percorrer as 4 filiais — mas a página
+    recarrega essa mesma tela várias vezes entre uma filial e outra
+    (`page.goto(URL_FUNCOES, ...)`). Nada garante que a ORDEM dos links
+    seja estável entre um carregamento e outro — e não é: confirmado lendo
+    `log_atividade` (as mesmíssimas contagens — "171 enviados, 77 ativos,
+    94 ex-aluno" — batendo tanto pra "Goiânia - Setor Oeste" quanto pra
+    "Barra do Garças/MT" no mesmo dia, em rodadas diferentes). Resultado:
+    o scraper às vezes lia os dados REAIS de uma filial mas importava
+    tudo no CRM sob o NOME de outra. Como o Mercúrio Ativos-sem-
+    correspondência gera um `pessoaIdentificador` SINTÉTICO (900000000+)
+    quando não acha a pessoa já cadastrada NAQUELA filial (nunca sobrescreve
+    o registro real da pessoa, que continua correto na filial de verdade)
+    — o efeito prático não foi "corromper" os leads certos, foi CRIAR
+    LEADS FANTASMAS/duplicados: gente de uma filial aparecendo (com id
+    sintético, sem telefone/e-mail) na Kanban de outra. Explica: alunos
+    Ativos de Setor Oeste aparecendo em Barra do Garças; muito
+    provavelmente também explica os "leads duplicados antigos" do Bug #3
+    acima (ex: "CELSO JESUS MORAIS" 3x) — mesmo mecanismo, rodadas
+    anteriores a esta sessão. **Corrigido**: as 3 funções agora recebem só
+    o `label` (nunca mais um índice que atravessa reloads) e resolvem o
+    índice ATUAL chamando `listarLinksCadastro()` de novo bem ali, no
+    MESMO carregamento de página onde vão clicar — sem navegação alguma
+    entre "descobrir o índice" e "usar o índice", não tem como desalinhar.
+    Não foi possível testar contra o Mercúrio real (não temos acesso;
+    o bug só se manifesta entre múltiplas filiais/reloads reais) — a
+    próxima rodada do job diário valida.
   - `"Sem Telefone"`/`"Sem E-mail"` são recalculadas por ÚLTIMO, sempre em
     cima do valor FINAL de telefone/e-mail (já com a preservação acima
     aplicada) — nunca em cima do dado transiente da planilha parcial,
@@ -2716,6 +2747,48 @@ bloqueado).
          descartável): evento pré-existente com `imagem_url`/`capacidade`
          reais manteve os dois depois de sincronizar um catálogo com
          esses campos vazios; `tipo` recalculado certo ("Palestra").
+       - **Bug real #3, GRAVÍSSIMO (2026-09-10) — evento de OUTRA filial
+         sendo criado sob a filial atual**: `sincronizarComparecimentoNoCrm()`
+         criava uma linha em `eventos` pra TODO nome visto no `<select>`
+         da tela Recepção, sob a filial da conta logada — mas esse
+         `<select>` lista eventos de QUALQUER filial do Ulisses (documentado
+         desde sempre em `exportarComparecimento()`), não só da conta
+         atual. Confirmado em produção: "Bushido, o código de honra dos
+         samurais"/"Workshop de Oratória" (eventos genuínos de Garavelo)
+         apareceram TAMBÉM cadastrados sob "Goiânia - Setor Oeste", com 0
+         vínculos — o usuário via "só 1 de 2 eventos futuros" porque o
+         outro nem existia de verdade ali, e "a aba de eventos do Setor
+         Oeste mostra eventos do Garavelo". Corrigido: só cria uma linha
+         NOVA de evento se houver 1+ participante LOCAL de verdade
+         (telefone/e-mail batendo com um lead desta filial, mesma
+         checagem de nome de sempre) — sem isso, quase certo que o evento
+         não é desta filial, só "aparece na lista" (log de aviso, não
+         cria nada). Não afeta evento que já existe sob esta filial
+         (exato ou por nome parecido — esse caso já é comprovadamente
+         local). **Testado ao vivo** (filial descartável): evento sem
+         participante local não cria linha nenhuma; evento com
+         participante local continua criando normalmente.
+       - **Bug real #4 — vínculo de lead de OUTRA filial num evento**:
+         achado consultando produção depois do relato do usuário
+         ("Amelia Cristina Portugal" aparecendo na lista de um evento de
+         Barra do Garças/MT sem ter estado lá) — ela é uma lead LEGÍTIMA
+         de "Goiânia - Setor Oeste" (sintética, sem telefone/e-mail,
+         `pessoaIdentificador` 900000004), vinculada por engano a um
+         evento de outra filial. A checagem telefone/e-mail atual NUNCA
+         produziria esse match (ela não tem nem um nem outro) — é resíduo
+         de uma versão MAIS ANTIGA da lógica de casamento, de antes desta
+         sessão. Achados 9 vínculos assim no total (`evento_leads` cujo
+         evento e cujo lead têm `filial` diferente — uma regra objetiva:
+         isso NUNCA é válido), todos envolvendo eventos de Barra do
+         Garças/MT — removidos manualmente. Não é mais possível esse
+         padrão se repetir (o casamento atual já é escopado à própria
+         filial desde antes desta sessão). **Limitação conhecida, aceita
+         de propósito**: alguém cujo cadastro no Ulisses começou em OUTRA
+         filial mas que compareceu de verdade a um evento local (ex:
+         "Eliane Maria de Faria", relatada pelo usuário) não é vinculada
+         — é o preço de nunca arriscar casar com o lead errado entre
+         filiais; fica pra vínculo manual pela tela de Participantes se o
+         time souber quem é.
        - **2 bugs reais confirmados em produção (2026-09-10, achados
          diagnosticando um relato do usuário) e corrigidos em
          `sincronizarComparecimentoNoCrm()`**:

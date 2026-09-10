@@ -197,6 +197,36 @@ async function listarLinksCadastro(page) {
     return resultado;
 }
 
+// BUG REAL, GRAVÍSSIMO, confirmado em produção (2026-09-10): as 3 funções
+// abaixo (exportarAtivosEInativos/exportarAniversariantes/
+// processarMatriculasRecentesTurmas) recebiam um `indice` numérico
+// capturado UMA VEZ, antes do laço de `main()` percorrer todas as
+// filiais — mas entre uma filial e outra a página recarrega
+// `ger_funcao.php` várias vezes (`page.goto(URL_FUNCOES, ...)`, ver
+// main()). Nada garante que a ORDEM dos links "CADASTRO" nessa tela seja
+// estável entre um carregamento e outro — e, confirmado lendo
+// `log_atividade` (mesmíssimos números — "171 enviados, 77 ativos, 94
+// ex-aluno" — batendo tanto pra "Goiânia - Setor Oeste" quanto pra
+// "Barra do Garças/MT" no mesmo dia), ela NÃO é: em alguns dos ciclos do
+// dia, `indice` continuava apontando pro NÚMERO certo, mas naquele
+// carregamento específico da tela aquele número agora correspondia a
+// OUTRA filial — resultado: os dados reais de uma filial (Setor Oeste)
+// foram lidos e importados no CRM sob o nome de outra (Barra do Garças).
+// Isso explica todos os sintomas relatados: alunos Ativos aparecendo na
+// unidade errada, e eventos de uma filial aparecendo na Agenda de outra
+// (mesmo mecanismo, ver `processarMatriculasRecentesTurmas` mais abaixo).
+//
+// Corrigido eliminando `indice` como algo que "atravessa" reloads: as 3
+// funções agora recebem só o `label` e resolvem o índice ATUAL, de
+// verdade, chamando `listarLinksCadastro()` de novo bem ali, no MESMO
+// carregamento de página onde vão clicar — nunca há uma navegação entre
+// "descobrir o índice" e "usar o índice", então não tem como desalinhar.
+async function indiceAtualParaLabel(page, label) {
+    const atuais = await listarLinksCadastro(page);
+    const achado = atuais.find(c => c.label === label);
+    return achado ? achado.indice : null;
+}
+
 // Exporta Ativos + Inativos de UMA filial — assume que a página já está
 // na tela "Funções do Sistema" (ger_frame.php) com os links "CADASTRO"
 // disponíveis, e que `indice` é a posição do link daquela filial entre
@@ -219,7 +249,9 @@ async function listarLinksCadastro(page) {
 // teste real: erro "Nenhuma tabela encontrada" com o print mostrando a
 // tela "CONTATOS, SUPORTE E ORIENTAÇÕES..."). Agora usa o NOME do frame
 // (estável, visto ao vivo), não mais texto.
-async function exportarAtivosEInativos(page, label, indice) {
+async function exportarAtivosEInativos(page, label) {
+    const indice = await indiceAtualParaLabel(page, label);
+    if (indice === null) throw new Error(`Link "CADASTRO" de "${label}" não encontrado nesta tela (a ordem pode ter mudado, ou a filial não está mais listada) — pulando pra não arriscar ler dados de outra filial.`);
     const framePrincipal1 = await esperarFrame(page, 'principal', /ger_funcao\.php/, 15000);
     await framePrincipal1.getByRole('link', { name: 'CADASTRO', exact: true }).nth(indice).click();
 
@@ -276,7 +308,9 @@ const MESES_ANIVERSARIANTES = ['01', '02', '03', '04', '05', '06', '07', '08', '
 // 12 meses = 72 combinações, por filial. Colunas da tabela: Nome, Sit.,
 // Nasc. (DD/MM/AAAA — data completa, com ano), Fone, Endereço (o e-mail
 // vem embutido no fim desse texto livre, não usado aqui), Dia de Aula.
-async function exportarAniversariantes(page, label, indice) {
+async function exportarAniversariantes(page, label) {
+    const indice = await indiceAtualParaLabel(page, label);
+    if (indice === null) throw new Error(`Link "CADASTRO" de "${label}" não encontrado nesta tela (a ordem pode ter mudado, ou a filial não está mais listada) — pulando pra não arriscar ler dados de outra filial.`);
     const framePrincipal1 = await esperarFrame(page, 'principal', /ger_funcao\.php/, 15000);
     await framePrincipal1.getByRole('link', { name: 'CADASTRO', exact: true }).nth(indice).click();
     const frameIndice = await esperarFrame(page, 'indice', /uni_indice\.php/, 15000);
@@ -522,12 +556,14 @@ function mesAnoDoIngresso(dataBR) {
 // verdade só existe no href do link do nome, uni_cadfun.php?matr=XXXXX).
 // Por isso não dá pra só imitar um "copiar e colar" ingênuo — o texto
 // colado é montado aqui já com o número certo extraído do link.
-async function processarMatriculasRecentesTurmas(page, pageCrm, filialCrm, label, indice) {
+async function processarMatriculasRecentesTurmas(page, pageCrm, filialCrm, label) {
     const mesAtual = hojeBrasil().slice(0, 7); // "AAAA-MM"
     let crmAberto = false;
     let totalProcessadas = 0;
 
     const entrarNoIndiceDaFilial = async () => {
+        const indice = await indiceAtualParaLabel(page, label);
+        if (indice === null) throw new Error(`Link "CADASTRO" de "${label}" não encontrado nesta tela (a ordem pode ter mudado, ou a filial não está mais listada) — pulando pra não arriscar ler dados de outra filial.`);
         const fp = await esperarFrame(page, 'principal', /ger_funcao\.php/, 15000);
         await fp.getByRole('link', { name: 'CADASTRO', exact: true }).nth(indice).click();
         return esperarFrame(page, 'indice', /uni_indice\.php/, 15000);
@@ -703,10 +739,10 @@ async function main() {
         console.log(`[mercurio] ${cadastros.length} filial(is) encontrada(s): ${cadastros.map(c => c.label).join(', ')}`);
 
         let algumaFalha = false;
-        for (const { label, indice } of cadastros) {
+        for (const { label } of cadastros) {
             let caminhoAtivos = null, caminhoInativos = null;
             try {
-                ({ caminhoAtivos, caminhoInativos } = await exportarAtivosEInativos(page, label, indice));
+                ({ caminhoAtivos, caminhoInativos } = await exportarAtivosEInativos(page, label));
                 console.log(`[mercurio] Ativos/Inativos exportados — ${label}: ${caminhoAtivos}, ${caminhoInativos}`);
             } catch (e) {
                 algumaFalha = true;
@@ -721,7 +757,7 @@ async function main() {
             await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
             let filialCrm = null;
             try {
-                const caminhoAniversariantes = await exportarAniversariantes(page, label, indice);
+                const caminhoAniversariantes = await exportarAniversariantes(page, label);
                 const resultadoSync = await sincronizarAniversariantesNoCrm(label);
                 console.log(`[mercurio] Aniversariantes exportados — ${label}: ${caminhoAniversariantes} — ${resultadoSync}`);
                 filialCrm = await resolverFilialCrm(label);
@@ -759,7 +795,7 @@ async function main() {
 
             try {
                 if (filialCrm) {
-                    const total = await processarMatriculasRecentesTurmas(page, pageCrm, filialCrm, label, indice);
+                    const total = await processarMatriculasRecentesTurmas(page, pageCrm, filialCrm, label);
                     console.log(`[matricula-turma] ${label}: ${total} matrícula(s) do mês corrente processada(s) via varredura de turmas.`);
                 }
             } catch (e) {

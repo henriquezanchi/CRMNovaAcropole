@@ -547,6 +547,39 @@ export async function sincronizarComparecimentoNoCrm(filial) {
         eventosUnicos.set(`${r.eventoNome}|||${dataISO}`, { nome: r.eventoNome, data: dataISO });
     }
 
+    // BUG REAL GRAVÍSSIMO, confirmado em produção (2026-09-10): o <select>
+    // da tela Recepção lista eventos de QUALQUER filial do Ulisses, não só
+    // da conta logada agora (documentado desde sempre em
+    // exportarComparecimento() — "a lista INCLUI eventos de outras
+    // filiais também"). O código abaixo, ANTES desta correção, criava uma
+    // linha em `eventos` pra TODO NOME visto na lista, sob a filial ATUAL
+    // — mesmo pra eventos de OUTRA filial que essa conta só consegue ver
+    // de longe, sem nenhum participante local de verdade. Resultado real:
+    // "Bushido..."/"Workshop de Oratória" (eventos genuínos de Garavelo)
+    // apareceram também cadastrados sob "Goiânia - Setor Oeste", com 0
+    // vínculos — pura sujeira. Corrigido: só cria uma linha NOVA de evento
+    // se existir 1+ participante LOCAL de verdade (telefone/e-mail batendo
+    // com um lead desta filial, passando a mesma checagem de nome já
+    // usada abaixo) — sem isso, o evento nem pertence de fato a esta
+    // filial, só "aparece na lista". Não se aplica a evento que JÁ EXISTE
+    // sob esta filial (exato ou por nome parecido, ver fallback mais
+    // abaixo) — esse caso é seguro de tocar (já era comprovadamente desta
+    // filial antes).
+    const chavesComParticipanteLocal = new Set();
+    for (const r of registros) {
+        const dataISO = paraISO(r.eventoData);
+        if (!r.eventoNome || !dataISO) continue;
+        let candidato = null;
+        if (r.telefone) {
+            const [ddd, ...resto] = r.telefone.split(' ');
+            candidato = porTelefone.get(normalizarTelefone(ddd, resto.join(''))) || null;
+        }
+        if (!candidato && r.email) candidato = porEmail.get(r.email.trim().toLowerCase()) || null;
+        if (candidato && primeiroNomeParecidoUlisses(r.nome, candidato.nome)) {
+            chavesComParticipanteLocal.add(`${r.eventoNome}|||${dataISO}`);
+        }
+    }
+
     const tiposEvento = await carregarTiposEventoUlisses();
     const idPorEvento = new Map();
     for (const { nome, data } of eventosUnicos.values()) {
@@ -600,6 +633,17 @@ export async function sincronizarComparecimentoNoCrm(filial) {
             const tipo = !existente.tipo ? classificarTipoEventoUlisses(nome, tiposEvento) : null;
             const payloadUpdate = { ativo: true, ...(tipo ? { tipo } : {}) };
             await supabaseAdmin.from('eventos').update(payloadUpdate).eq('id', existente.id);
+            continue;
+        }
+
+        // Não existe ainda sob esta filial (nem exato, nem por nome
+        // parecido) — só cria de verdade se tiver 1+ participante LOCAL
+        // (ver chavesComParticipanteLocal acima). Sem isso, é bem provável
+        // que esse evento simplesmente NÃO seja desta filial — só
+        // "aparece na lista" porque a tela Recepção mistura todo o
+        // sistema.
+        if (!chavesComParticipanteLocal.has(`${nome}|||${data}`)) {
+            console.warn(`[ulisses] Evento "${nome}" (${data}) apareceu na lista da Recepção mas não tem NENHUM participante local em "${filial}" — não é desta filial, pulando (não cria linha nova).`);
             continue;
         }
         const { data: criado, error } = await supabaseAdmin
