@@ -2684,21 +2684,33 @@ bloqueado).
          e-mail) — confirmado em produção no momento deste ajuste: 1004
          vínculos já gravados dessa forma. O que estava faltando de
          verdade era só o `tipo` de evento passado (item acima).
-       - **Importar 1 filial só de cada vez, e e-mail pré-preenchido**
-         (`ulisses-local.js`) — o usuário relatou ter se confundido sobre
-         qual filial estava logando e digitado a senha errada na janela
-         errada, cadastrando eventos de uma filial em outra (já limpou os
-         eventos futuros incorretos manualmente antes de reimportar).
-         Duas respostas: (1) **já era possível** rodar 1 filial só —
-         `npm run ulisses-local -- "Setor Oeste"` — só não estava em
-         destaque no topo do arquivo, agora está; (2) `aguardarLoginManual()`
-         passou a tentar pré-preencher o e-mail via `login_hint` na URL
-         (parâmetro padrão OIDC/Auth0 que apps com `auth0-spa-js` costumam
-         repassar sozinhos pro Universal Login) — **não confirmado contra
-         o app real**, se não funcionar nada quebra, só continua como
-         antes (campo vazio). O e-mail esperado também aparece em
-         destaque no terminal ANTES da janela abrir, pra conferir de
-         qualquer forma.
+       - **Importar 1 filial só de cada vez** (`ulisses-local.js`) — o
+         usuário relatou ter se confundido sobre qual filial estava
+         logando e digitado a senha errada na janela errada, cadastrando
+         eventos de uma filial em outra (já limpou os eventos futuros
+         incorretos manualmente antes de reimportar). Resposta: **já era
+         possível** rodar 1 filial só — `npm run ulisses-local -- "Setor
+         Oeste"` — só não estava em destaque no topo do arquivo, agora
+         está.
+       - **Tentativa de pré-preencher o e-mail via `login_hint` na URL —
+         TESTADA e REVERTIDA (2026-09-10)**: a ideia era passar
+         `?login_hint=...` pra `login.html` (parâmetro padrão OIDC/Auth0
+         que apps com `auth0-spa-js` costumam repassar sozinhos pro
+         Universal Login), documentada como best-effort que "se não
+         funcionar, nada quebra". Isso era ERRADO: o usuário testou e
+         relatou telas BRANCAS com a URL mudando sozinha, sem nenhuma
+         informação na tela — a página de login nunca chegou a carregar
+         o formulário de verdade. `login.html` provavelmente usa
+         `location.search`/`location.href` pra alguma lógica própria de
+         roteamento/redirect (SPA), e o parâmetro extra quebrou esse
+         fluxo em vez de só ser ignorado. **Revertido**: `aguardarLoginManual()`
+         volta a navegar pra `URL_LOGIN` limpa, sem nenhum parâmetro —
+         a única ajuda que sobra é mostrar o e-mail esperado em destaque
+         no terminal ANTES da janela abrir, pra digitar de cabeça com
+         confiança. Lição: um parâmetro de URL "padrão" em outro sistema
+         nunca é garantidamente inofensivo só porque é comum — sem
+         confirmar contra o HTML/comportamento real, o risco de quebrar
+         algo é real, não hipotético.
      - Cada uma das etapas roda independente dentro de `processarFilial()`
        — uma falhar não impede as outras, e cada etapa que falha gera seu
        PRÓPRIO print de erro (`debug/ulisses-<etapa>-<filial>.png`), mais

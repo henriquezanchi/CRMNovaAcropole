@@ -37,7 +37,8 @@
 //   npm run ulisses-local -- "Setor Oeste"
 // Sem esse argumento, roda TODAS as filiais ativas em sequência, uma
 // janela por vez (nunca 2 ao mesmo tempo) — ver aguardarLoginManual()
-// mais abaixo pra como o e-mail esperado é mostrado/pré-preenchido.
+// mais abaixo pra como o e-mail esperado é mostrado no terminal (o campo
+// da tela de login NÃO é pré-preenchido — ver comentário ali).
 import 'dotenv/config';
 import { chromium } from 'playwright';
 import { supabaseAdmin, lerCredencial, registrarStatusSincronizacao } from './lib/supabaseAdmin.js';
@@ -53,20 +54,20 @@ const TIMEOUT_LOGIN_MANUAL_MS = 5 * 60 * 1000; // 5 min pra você fazer login na
 // certo (o menu "Exportar CSV", que só aparece autenticado — mesmo sinal
 // que loginUlisses() já usa no modo automático).
 //
-// O E-MAIL, porém, tentamos PRÉ-PREENCHER — pedido do usuário depois de
-// confundir a filial e digitar a senha errada na janela errada (login
-// automático não avisa "essa senha é de outra filial", só falha ou, pior,
-// loga em conta errada se a senha coincidir). Passamos `login_hint` na
-// URL — parâmetro padrão do Auth0/OIDC que a maioria dos apps que usam o
-// SDK de redirect (auth0-spa-js) já repassa sozinho pro Universal Login,
-// pré-preenchendo o campo de e-mail. **Não confirmado contra o app real**
-// (não sei se ele de fato repassa esse parâmetro) — se não funcionar,
-// nada quebra, só continua exatamente como antes (campo vazio, você
-// digita os dois). De qualquer forma, o e-mail esperado sempre aparece
-// no terminal ANTES de abrir a janela, pra conferir antes de digitar.
-async function aguardarLoginManual(page, emailEsperado) {
-    const url = emailEsperado ? `${URL_LOGIN}?login_hint=${encodeURIComponent(emailEsperado)}` : URL_LOGIN;
-    await page.goto(url, { waitUntil: 'domcontentloaded' });
+// O E-MAIL: tentamos PRÉ-PREENCHER via `login_hint` na URL (parâmetro
+// padrão do Auth0/OIDC) numa versão anterior — **testado ao vivo pelo
+// usuário e revertido**: em vez de só "não funcionar silenciosamente"
+// como esperado, o parâmetro quebrou a navegação de verdade (telas
+// brancas, URL mudando sozinha em loop, login.html nunca chegou a
+// carregar o formulário) — pior que o problema que tentava resolver.
+// `login.html` provavelmente lê `location.search`/`location.href` pra
+// alguma lógica própria de roteamento/redirect e não esperava esse
+// parâmetro extra. Voltamos a navegar pra URL limpa, sem tentar
+// preencher nada — a única ajuda que fica é mostrar o e-mail esperado
+// bem grande no terminal ANTES da janela abrir, pra digitar de cabeça
+// com confiança.
+async function aguardarLoginManual(page) {
+    await page.goto(URL_LOGIN, { waitUntil: 'domcontentloaded' });
     console.log('   Aguardando você concluir o login nessa janela (até 5 minutos)...');
     await page.getByText('Exportar CSV', { exact: false }).waitFor({ timeout: TIMEOUT_LOGIN_MANUAL_MS });
 }
@@ -91,7 +92,7 @@ async function processarFilialLocal(browser, filial) {
 
     const page = await browser.newPage();
     try {
-        await aguardarLoginManual(page, usuario);
+        await aguardarLoginManual(page);
         console.log('   Login detectado — exportando...');
     } catch (e) {
         console.error(`   Não detectei login concluído a tempo: ${e.message}`);
