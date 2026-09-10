@@ -3383,6 +3383,31 @@ bloqueado).
        `scraper-disparar` sob a mesma pressa de corrigir a concorrência;
        renomear o arquivo é só cosmético e fica pra depois se ainda
        importar.
+     - **Bug real relatado pelo usuário (2026-09-10): "parei direto no
+       github, mas continue rodando no crm"** — cancelar a run pela UI do
+       GitHub mata o processo do `mercurio.js` com SIGINT/SIGTERM; sem
+       handler nenhum pra esses sinais, ele morria sem gravar NADA em
+       `status_sincronizacao_automatica`. Como o poll do CRM
+       (`iniciarAcompanhamentoMercurio()`) só detecta "terminou" vendo uma
+       linha NOVA aparecer, cancelamento pelo GitHub simplesmente não
+       produz sinal nenhum pro CRM enxergar — fica "Rodando..." até o
+       timeout de 20min. **2 correções**: (1) `mercurio.js` agora escuta
+       `SIGINT`/`SIGTERM` (`tratarCancelamento()`, no fim do arquivo) e
+       tenta gravar um status de cancelamento em até 5s antes de sair —
+       best-effort, dentro da folga de ~7.5s que o GitHub Actions dá entre
+       o sinal e o SIGKILL final. (2) Rede de segurança no lado do CRM,
+       pro caso desse aviso não chegar a tempo (ex: SIGKILL direto, sem
+       folga): link "Cancelei no GitHub, parar de acompanhar" no próprio
+       aviso "Rodando..." (`cancelarAcompanhamentoMercurio()`) — limpa o
+       estado local (memória + `localStorage`) e reabilita o botão na
+       hora, sem esperar nada do servidor. Esse link também sobrevive a
+       fechar/reabrir o modal (`abrirSincronizacaoScraper()` agora
+       reconstrói o aviso "Rodando..." se `disparoMercurioEmAndamento`
+       ainda for `true`, em vez de só mostrar o card de status parado,
+       que já era um gap pequeno de antes). Testado ao vivo (Playwright):
+       simulando um acompanhamento em andamento, chamar
+       `cancelarAcompanhamentoMercurio()` reabilita o botão e limpa o
+       `localStorage` imediatamente.
      - **Bug real relacionado, achado no mesmo incidente — filtro de
        filial não batia com o rótulo do Mercúrio**: o novo seletor de
        filial (bullet acima) manda o `filiais.nome` inteiro do CRM (ex:

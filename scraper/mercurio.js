@@ -858,4 +858,28 @@ async function main() {
     }
 }
 
+// Cancelar o workflow direto no GitHub Actions mata o processo com
+// SIGINT/SIGTERM — sem um handler, ele simplesmente morre sem gravar
+// NADA em status_sincronizacao_automatica, e a tela "Sincronização
+// Automática" do CRM fica presa em "Rodando..." até o timeout de 20min do
+// poll (bug real relatado pelo usuário, 2026-09-10: "parei direto no
+// github, mas continue rodando no crm"). GitHub Actions dá ~7.5s de
+// folga entre o SIGINT e o SIGKILL final — best-effort, com timeout
+// próprio pra nunca segurar o processo além dessa janela.
+let cancelamentoEmAndamento = false;
+async function tratarCancelamento(sinal) {
+    if (cancelamentoEmAndamento) return;
+    cancelamentoEmAndamento = true;
+    console.error(`[mercurio] Recebido ${sinal} — gravando status de cancelamento antes de sair...`);
+    try {
+        await Promise.race([
+            registrarStatusSincronizacao('mercurio', null, false, `Cancelado (${sinal}) — provavelmente cancelamento manual direto no GitHub Actions. Nenhum dado foi processado por esta rodada.`),
+            new Promise(resolve => setTimeout(resolve, 5000)),
+        ]);
+    } catch { /* melhor esforço — sair é mais importante que garantir o registro */ }
+    process.exit(1);
+}
+process.on('SIGINT', () => tratarCancelamento('SIGINT'));
+process.on('SIGTERM', () => tratarCancelamento('SIGTERM'));
+
 main();

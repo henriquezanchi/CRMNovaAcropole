@@ -436,7 +436,15 @@ async function popularFiltroFilialMercurio() {
 
 async function abrirSincronizacaoScraper() {
     await popularFiltroFilialMercurio();
-    await renderizarStatusSincronizacaoScraper();
+    // Reabrir o modal com uma rodada já em andamento não deve "esconder"
+    // o aviso de "rodando" + o link de cancelar (ver cancelarAcompanhamentoMercurio()) —
+    // sem isso, fechar e reabrir o modal fazia o aviso desaparecer mesmo
+    // com o botão ainda desabilitado.
+    if (disparoMercurioEmAndamento) {
+        await renderizarStatusSincronizacaoScraper('Rodando — acompanhando, isso costuma levar alguns minutos.', true);
+    } else {
+        await renderizarStatusSincronizacaoScraper();
+    }
     document.getElementById('modalSincronizacaoScraper').classList.add('open');
     document.getElementById('overlayModalSincronizacaoScraper').classList.add('active');
 }
@@ -450,7 +458,7 @@ function fecharSincronizacaoScraper() {
 // JUNTO das informações daquele sistema (não os 2 empilhados no fim da
 // tela) — por isso 2 containers separados, um logo abaixo do botão do
 // Mercúrio e outro logo abaixo do botão do Ulisses, em vez de 1 só.
-async function renderizarStatusSincronizacaoScraper(mensagemExtraMercurio) {
+async function renderizarStatusSincronizacaoScraper(mensagemExtraMercurio, mostrarCancelar) {
     const containerMercurio = document.getElementById('sincronizacaoScraperStatusMercurio');
     const containerUlisses = document.getElementById('sincronizacaoScraperStatusUlisses');
     if (!containerMercurio || !containerUlisses) return;
@@ -489,7 +497,9 @@ async function renderizarStatusSincronizacaoScraper(mensagemExtraMercurio) {
     };
 
     containerMercurio.innerHTML = `
-        ${mensagemExtraMercurio ? `<p style="font-size:12px; color:var(--na-green-dark); margin-bottom:10px;"><i class="fa-solid fa-circle-notch fa-spin"></i> ${escapeHTML(mensagemExtraMercurio)}</p>` : ''}
+        ${mensagemExtraMercurio ? `<p style="font-size:12px; color:var(--na-green-dark); margin-bottom:10px;"><i class="fa-solid fa-circle-notch fa-spin"></i> ${escapeHTML(mensagemExtraMercurio)}
+            ${mostrarCancelar ? ` — <a href="#" onclick="event.preventDefault(); cancelarAcompanhamentoMercurio();" style="color:inherit; text-decoration:underline;">Cancelei no GitHub, parar de acompanhar</a>` : ''}
+        </p>` : ''}
         ${formatarLinha('Mercúrio (última rodada)', ultimoMercurio)}
     `;
     containerUlisses.innerHTML = formatarLinha('Ulisses (última rodada manual)', ultimoUlisses);
@@ -585,11 +595,25 @@ async function dispararMercurioAgora(filial = null) {
 // acompanhamento salvo em localStorage (ver restaurarAcompanhamentoMercurioSeHouver()
 // mais abaixo) — o comportamento de "acompanhar até terminar ou dar
 // timeout" é idêntico nos 2 casos, só a origem do timestamp muda.
+// Escape manual pra quem já sabe que a rodada foi cancelada por fora
+// (ex: direto no GitHub Actions) e não quer esperar o poll perceber —
+// mercurio.js tenta gravar um status de cancelamento sozinho ao receber
+// SIGINT/SIGTERM (ver comentário no fim de scraper/mercurio.js), mas é
+// best-effort (~5s de janela); isso aqui é a rede de segurança do lado
+// do CRM pra quando esse aviso não chegar a tempo.
+function cancelarAcompanhamentoMercurio() {
+    if (pollSincronizacaoTimer) { clearInterval(pollSincronizacaoTimer); pollSincronizacaoTimer = null; }
+    disparoMercurioEmAndamento = false;
+    limparAcompanhamentoMercurioLocal();
+    atualizarBotoesDispararMercurio(false, '<i class="fa-solid fa-play"></i> Rodar Mercúrio Agora');
+    renderizarStatusSincronizacaoScraper('Acompanhamento cancelado manualmente — confira o status real na aba Actions do GitHub se precisar.');
+}
+
 async function iniciarAcompanhamentoMercurio(timestampAntes, inicioPoll, filial) {
     disparoMercurioEmAndamento = true;
     const sufixoFiltro = filial ? ` (filtro: "${filial}")` : ' (todas as filiais)';
     atualizarBotoesDispararMercurio(true, '<i class="fa-solid fa-circle-notch fa-spin"></i> Rodando (leva alguns minutos)...');
-    await renderizarStatusSincronizacaoScraper(`Disparado${sufixoFiltro}! Acompanhando — isso costuma levar alguns minutos.`);
+    await renderizarStatusSincronizacaoScraper(`Disparado${sufixoFiltro}! Acompanhando — isso costuma levar alguns minutos.`, true);
 
     if (pollSincronizacaoTimer) clearInterval(pollSincronizacaoTimer);
     const TIMEOUT_POLL_MS = 20 * 60 * 1000; // 20 min — folga generosa sobre o tempo real observado
