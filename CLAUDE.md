@@ -2631,27 +2631,33 @@ bloqueado).
        `comparecimento` — roda independente das outras (mesmo padrão de
        isolamento de falha).
      - **Ajustes 2026-09-10 (pedido do usuário: "corrigir a importação de
-       eventos no Ulisses")**:
-       - **Corte de 3 anos pra trás, não mais "qualquer passado pulado"**
-         — antes, `exportarCatalogoEventos()` pulava TODO evento com data
-         no passado sem nem abrir o painel de detalhes (só ganhava uma
-         linha "base", nome+data, via `sincronizarComparecimentoNoCrm()`).
-         Agora lê os detalhes completos (imagem/tipo/capacidade/ingresso)
-         de qualquer evento até 3 anos atrás, mesmo corte já usado em
-         `exportarComparecimento()`. **Ponto de atenção pra quem for
-         testar**: o clique inicial em "Ativo" (filtro da lista de
-         cards) pode continuar escondendo cards antigos ANTES de chegar
-         no corte de data do código — se depois de rodar
-         `ulisses-local.js` os eventos passados ainda vierem só com a
-         linha "base" (sem imagem/tipo), é sinal de que existe outro
-         filtro/aba (ex: "Encerrado"/"Todos") que precisa ser clicado
-         também; mandar o HTML real dessa tela resolve rápido.
+       eventos no Ulisses")** — escopo REVISADO com o usuário no meio do
+       trabalho (a 1ª versão lia detalhes completos até 3 anos pra trás
+       pra QUALQUER evento; o usuário esclareceu que evento PASSADO só
+       precisa de nome/data/tipo/inscritos-comparecimento, não imagem/
+       ingresso/capacidade — versão final é mais simples e mais rápida):
+       - **`exportarCatalogoEventos()` continua só pra eventos FUTUROS**
+         (voltou a pular todo evento com data no passado, como já era) —
+         é o único caminho que lê imagem/capacidade/ingresso, e esses
+         detalhes só importam pra evento que ainda vai acontecer.
+       - **`tipo` de evento PASSADO agora vem de `sincronizarComparecimentoNoCrm()`**
+         (extraído pra uma função compartilhada,
+         `classificarTipoEventoUlisses()`/`carregarTiposEventoUlisses()`,
+         mesmo catálogo `tipos_evento`/`palavras_chave` de sempre) — antes
+         essa função só criava a linha "base" (nome+data) SEM classificar
+         nada; agora classifica na criação, e também faz um UPDATE pontual
+         se encontrar um evento já existente com `tipo` ainda `null`
+         (nunca sobrescreve um `tipo` que já tinha valor). É essa função
+         que cobre evento passado — não precisa abrir o painel de
+         detalhes pra isso, só o `<select>` da tela Recepção (bem mais
+         rápido, e evita o risco de abrir o card errado de OUTRA filial).
        - **Tentativa de ler "Ingresso"/"Valor"/"Preço"** (`eventos.ingresso`,
-         já existia como campo editável manualmente, nunca preenchido
-         pelo scraper) — best-effort, **NÃO confirmado contra o HTML
-         real** (não sei se esse rótulo existe no painel do Ulisses;
-         `ler()` já devolve `null` sem quebrar nada se não existir). Se
-         vier sempre vazio, mandar o HTML real do painel resolve.
+         só pra evento FUTURO, já existia como campo editável manualmente,
+         nunca preenchido pelo scraper) — best-effort, **NÃO confirmado
+         contra o HTML real** (não sei se esse rótulo existe no painel do
+         Ulisses; `ler()` já devolve `null` sem quebrar nada se não
+         existir). Se vier sempre vazio, mandar o HTML real do painel
+         resolve.
        - **Preservação em `sincronizarCatalogoEventosNoCrm()`**: a
          atualização de um evento já existente agora NUNCA sobrescreve
          com `null` um campo que já tinha valor (`hora`/`capacidade`/
@@ -2661,7 +2667,10 @@ bloqueado).
          mão na Agenda. `tipo` fica de fora dessa preservação de
          propósito — é sempre recalculado pelo catálogo de
          palavras-chave, pra uma reclassificação em "Gerenciar Tipos"
-         valer já na próxima rodada.
+         valer já na próxima rodada. **Testado ao vivo** (filial
+         descartável): evento pré-existente com `imagem_url`/`capacidade`
+         reais manteve os dois depois de sincronizar um catálogo com
+         esses campos vazios; `tipo` recalculado certo ("Palestra").
        - **Mensagem de status corrigida**: `processarFilial()`/
          `processarFilialLocal()` diziam "(marco 2 — ainda não alimenta
          o CRM automaticamente)" mesmo depois de `sincronizarCatalogoEventosNoCrm()`/
@@ -2674,9 +2683,22 @@ bloqueado).
          `resposta_convite='confirmado'` pra quem casa por telefone/
          e-mail) — confirmado em produção no momento deste ajuste: 1004
          vínculos já gravados dessa forma. O que estava faltando de
-         verdade era só a extensão de 3 anos pro CATÁLOGO (item acima) —
-         sem os detalhes completos de um evento, ele aparecia "pela
-         metade" mesmo já tendo inscritos vinculados.
+         verdade era só o `tipo` de evento passado (item acima).
+       - **Importar 1 filial só de cada vez, e e-mail pré-preenchido**
+         (`ulisses-local.js`) — o usuário relatou ter se confundido sobre
+         qual filial estava logando e digitado a senha errada na janela
+         errada, cadastrando eventos de uma filial em outra (já limpou os
+         eventos futuros incorretos manualmente antes de reimportar).
+         Duas respostas: (1) **já era possível** rodar 1 filial só —
+         `npm run ulisses-local -- "Setor Oeste"` — só não estava em
+         destaque no topo do arquivo, agora está; (2) `aguardarLoginManual()`
+         passou a tentar pré-preencher o e-mail via `login_hint` na URL
+         (parâmetro padrão OIDC/Auth0 que apps com `auth0-spa-js` costumam
+         repassar sozinhos pro Universal Login) — **não confirmado contra
+         o app real**, se não funcionar nada quebra, só continua como
+         antes (campo vazio). O e-mail esperado também aparece em
+         destaque no terminal ANTES da janela abrir, pra conferir de
+         qualquer forma.
      - Cada uma das etapas roda independente dentro de `processarFilial()`
        — uma falhar não impede as outras, e cada etapa que falha gera seu
        PRÓPRIO print de erro (`debug/ulisses-<etapa>-<filial>.png`), mais

@@ -30,10 +30,14 @@
 //      login deu certo. Pode deixar a janela em segundo plano enquanto
 //      espera; não precisa voltar pro terminal.
 //
-// Testar com 1 filial só (mais rápido enquanto ainda está em ajuste, não
-// precisa logar em todas de novo a cada tentativa): passe um pedaço do
-// nome da filial depois de "--":
+// Rodar 1 filial só de cada vez (recomendado se você tende a se confundir
+// sobre qual filial está logando em qual janela — cada rodada abre só 1
+// janela, e o e-mail certo aparece bem grande no terminal ANTES dela
+// abrir): passe um pedaço do nome da filial depois de "--":
 //   npm run ulisses-local -- "Setor Oeste"
+// Sem esse argumento, roda TODAS as filiais ativas em sequência, uma
+// janela por vez (nunca 2 ao mesmo tempo) — ver aguardarLoginManual()
+// mais abaixo pra como o e-mail esperado é mostrado/pré-preenchido.
 import 'dotenv/config';
 import { chromium } from 'playwright';
 import { supabaseAdmin, lerCredencial, registrarStatusSincronizacao } from './lib/supabaseAdmin.js';
@@ -42,14 +46,27 @@ import { exportarCsvInscricoes, exportarCatalogoEventos, exportarComparecimento,
 const URL_LOGIN = 'https://www.acropolebrasil.com.br/login.html';
 const TIMEOUT_LOGIN_MANUAL_MS = 5 * 60 * 1000; // 5 min pra você fazer login na janela
 
-// Sem tentar preencher nada nem adivinhar seletor do Auth0 aqui de
-// propósito — é exatamente essa parte "cega" (escrita só com prints, sem
-// HTML real) que já causou retrabalho no modo automático. Você faz a tela
-// inteira de login à mão; o script só espera o sinal de que deu certo (o
-// menu "Exportar CSV", que só aparece autenticado — mesmo sinal que
-// loginUlisses() já usa no modo automático).
-async function aguardarLoginManual(page) {
-    await page.goto(URL_LOGIN, { waitUntil: 'domcontentloaded' });
+// Não preenchemos SENHA nem clicamos em nada do Auth0 aqui de propósito
+// — é exatamente essa parte "cega" (escrita só com prints, sem HTML real)
+// que já causou retrabalho no modo automático. Você digita a senha e
+// resolve o Cloudflare se aparecer; o script só espera o sinal de que deu
+// certo (o menu "Exportar CSV", que só aparece autenticado — mesmo sinal
+// que loginUlisses() já usa no modo automático).
+//
+// O E-MAIL, porém, tentamos PRÉ-PREENCHER — pedido do usuário depois de
+// confundir a filial e digitar a senha errada na janela errada (login
+// automático não avisa "essa senha é de outra filial", só falha ou, pior,
+// loga em conta errada se a senha coincidir). Passamos `login_hint` na
+// URL — parâmetro padrão do Auth0/OIDC que a maioria dos apps que usam o
+// SDK de redirect (auth0-spa-js) já repassa sozinho pro Universal Login,
+// pré-preenchendo o campo de e-mail. **Não confirmado contra o app real**
+// (não sei se ele de fato repassa esse parâmetro) — se não funcionar,
+// nada quebra, só continua exatamente como antes (campo vazio, você
+// digita os dois). De qualquer forma, o e-mail esperado sempre aparece
+// no terminal ANTES de abrir a janela, pra conferir antes de digitar.
+async function aguardarLoginManual(page, emailEsperado) {
+    const url = emailEsperado ? `${URL_LOGIN}?login_hint=${encodeURIComponent(emailEsperado)}` : URL_LOGIN;
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
     console.log('   Aguardando você concluir o login nessa janela (até 5 minutos)...');
     await page.getByText('Exportar CSV', { exact: false }).waitFor({ timeout: TIMEOUT_LOGIN_MANUAL_MS });
 }
@@ -63,13 +80,18 @@ async function processarFilialLocal(browser, filial) {
     } catch {
         // Sem credencial salva no cofre ainda não impede o modo assistido
         // (você pode digitar o e-mail de cabeça) — só não dá pra mostrar
-        // a dica abaixo.
+        // a dica abaixo, nem tentar pré-preencher.
     }
-    if (usuario) console.log(`   E-mail cadastrado pra essa filial: ${usuario}`);
+    if (usuario) {
+        console.log(`   >>> E-mail desta filial: ${usuario} <<<`);
+        console.log('   (confira que é este e-mail antes de digitar a senha — o campo pode já vir preenchido, mas confirme.)');
+    } else {
+        console.log('   Nenhuma credencial salva pra essa filial ainda — digite o e-mail de cabeça.');
+    }
 
     const page = await browser.newPage();
     try {
-        await aguardarLoginManual(page);
+        await aguardarLoginManual(page, usuario);
         console.log('   Login detectado — exportando...');
     } catch (e) {
         console.error(`   Não detectei login concluído a tempo: ${e.message}`);

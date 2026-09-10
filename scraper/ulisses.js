@@ -138,17 +138,6 @@ export async function exportarCatalogoEventos(page, filial) {
         // elemento que precisamos, mais abaixo.
         await page.goto('https://www.acropolebrasil.com.br/#/evento', { waitUntil: 'domcontentloaded' });
     }
-    // ⚠️ Ponto de atenção pra quem for testar a extensão de 3 anos pra
-    // trás (ver corte de data mais abaixo): esse clique em "Ativo" pode
-    // ser um FILTRO da lista de cards, não só uma aba de detalhe — se a
-    // lista em si já vier só com eventos "ativos"/recentes ANTES de
-    // chegar no loop abaixo, nenhum evento antigo vai aparecer aqui pra
-    // gente nem tentar ler, independente do corte de 3 anos no código.
-    // Se depois de rodar `ulisses-local.js` os eventos passados ainda
-    // vierem sem imagem/tipo/capacidade (só a linha "base" que
-    // sincronizarComparecimentoNoCrm() já cria), é sinal de que existe
-    // outra aba/filtro (ex: "Encerrado"/"Todos") que precisa ser clicado
-    // aqui também — mandar o HTML real dessa tela resolve rápido.
     await page.getByRole('button', { name: /^ativo$/i }).click({ timeout: 5000 }).catch(() => {});
 
     const cards = page.locator('text=/\\d{2}\\/\\d{2}\\/\\d{4}/').locator('..');
@@ -238,19 +227,19 @@ export async function exportarCatalogoEventos(page, filial) {
         }
     };
 
-    // Lê os detalhes completos (imagem/descrição/etc.) de eventos FUTUROS
-    // e de PASSADOS até 3 anos atrás — pedido explícito do usuário
-    // ("eventos futuros são imprescindíveis, e eventos passados somente
-    // até 3 anos atrás"), mesmo corte já usado em exportarComparecimento().
-    // Antes disso, TODO evento passado era pulado sem abrir o painel — só
-    // ganhava uma linha "base" (nome+data, sem imagem/tipo/capacidade) via
-    // sincronizarComparecimentoNoCrm(). Mais que 3 anos continua pulado,
-    // até pra não gastar tempo com a grande maioria dos cards de OUTRA
-    // filial (na prática, quase todos antigos).
+    // Só vale a pena ler os detalhes COMPLETOS (imagem/capacidade/ingresso/
+    // etc.) de eventos FUTUROS — decisão revisada com o usuário 2026-09-10:
+    // pra evento PASSADO, o que importa é nome, data, tipo e quem se
+    // inscreveu/compareceu, nada de imagem/ingresso/capacidade — esse
+    // "básico" já vem de outro lugar mais barato (a linha "base" que
+    // sincronizarComparecimentoNoCrm() cria a partir da tela Recepção,
+    // que também já lê `tipo` — ver ajuste lá). Abrir o painel de
+    // detalhes de TODO evento dos últimos 3 anos seria lento à toa
+    // (a lista "Ativo" tem muitos cards de OUTRAS filiais, que nunca
+    // abrem painel mesmo, e cada tentativa custa alguns segundos) sem
+    // ganhar nenhum dado que o usuário pediu de verdade.
     const hoje = new Date();
     hoje.setHours(0, 0, 0, 0);
-    const TRES_ANOS_ATRAS = new Date(hoje);
-    TRES_ANOS_ATRAS.setFullYear(TRES_ANOS_ATRAS.getFullYear() - 3);
 
     const eventos = [];
     for (let i = 0; i < total; i++) {
@@ -258,7 +247,7 @@ export async function exportarCatalogoEventos(page, filial) {
             const textoCard = await cards.nth(i).innerText().catch(() => '');
             const match = textoCard.match(/(\d{2})\/(\d{2})\/(\d{4})/);
             const dataEvento = match ? new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1])) : null;
-            if (dataEvento && dataEvento < TRES_ANOS_ATRAS) continue; // mais de 3 anos — não abre o painel, nem gasta tempo
+            if (dataEvento && dataEvento < hoje) continue; // passado — não abre o painel, nem gasta tempo
 
             // O aviso do PagSeguro (ver fecharAvisosBloqueantes) confirmado
             // reaparecendo ao voltar pra essa tela — tenta fechar de novo a
@@ -521,10 +510,15 @@ export async function sincronizarComparecimentoNoCrm(filial) {
     }
 
     // Garante 1 linha em `eventos` por (nome, data) visto no comparecimento
-    // — sem sobrescrever nada de quem já existe (só exportarCatalogoEventos/
-    // sincronizarCatalogoEventosNoCrm mexem nos detalhes completos; aqui é
-    // só a base mínima, já que eventos PASSADOS nunca passam pelo
-    // catálogo — ele só lê detalhes de eventos futuros).
+    // — sem sobrescrever detalhes COMPLETOS de quem já existe (imagem/
+    // capacidade/ingresso continuam só por conta de exportarCatalogoEventos/
+    // sincronizarCatalogoEventosNoCrm, e só pra evento FUTURO — decisão do
+    // usuário: evento passado não precisa disso). `tipo` é a EXCEÇÃO: é
+    // classificado por palavra-chave aqui também (mesmo catálogo
+    // `tipos_evento`), porque é justamente o campo que o usuário PEDIU pra
+    // evento passado ("nome, data, tipo, e quem se inscreveu/compareceu")
+    // — sem isso, todo evento passado (a maioria da base, sem nunca passar
+    // pelo catálogo completo) ficava com `tipo` pra sempre em branco.
     const paraISO = (dataHora) => {
         const m = (dataHora || '').match(/(\d{2})\/(\d{2})\/(\d{4})/);
         return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
@@ -536,18 +530,26 @@ export async function sincronizarComparecimentoNoCrm(filial) {
         eventosUnicos.set(`${r.eventoNome}|||${dataISO}`, { nome: r.eventoNome, data: dataISO });
     }
 
+    const tiposEvento = await carregarTiposEventoUlisses();
     const idPorEvento = new Map();
     for (const { nome, data } of eventosUnicos.values()) {
         const { data: existente } = await supabaseAdmin
-            .from('eventos').select('id')
+            .from('eventos').select('id, tipo')
             .eq('filial', filial).eq('nome', nome).eq('data', data)
             .maybeSingle();
         if (existente) {
             idPorEvento.set(`${nome}|||${data}`, existente.id);
+            // Só classifica se ainda não tinha `tipo` — não pisa numa
+            // classificação já feita pelo catálogo completo (mesma lógica,
+            // então nunca deveria divergir, mas por segurança não sobrescreve).
+            if (!existente.tipo) {
+                const tipo = classificarTipoEventoUlisses(nome, tiposEvento);
+                if (tipo) await supabaseAdmin.from('eventos').update({ tipo }).eq('id', existente.id);
+            }
             continue;
         }
         const { data: criado, error } = await supabaseAdmin
-            .from('eventos').insert({ filial, nome, data }).select('id').single();
+            .from('eventos').insert({ filial, nome, data, tipo: classificarTipoEventoUlisses(nome, tiposEvento) }).select('id').single();
         if (error) {
             console.warn(`[ulisses] Não consegui criar evento base "${nome}" (${data}, ${filial}):`, error.message);
             continue;
@@ -641,21 +643,40 @@ export async function sincronizarComparecimentoNoCrm(filial) {
     return `${novosGravados} vínculo(s) novo(s), ${atualizadosGravados} atualizado(s) (compareceu), de ${registros.length} registro(s) (${semEvento} sem evento correspondente, ${semLead} sem lead achado por telefone/e-mail).`;
 }
 
+// Classificação de tipo por palavra-chave — MESMA tabela `tipos_evento`/
+// `palavras_chave` que a Agenda usa em "Gerenciar Tipos" (pequena
+// duplicação deliberada da lógica de classificarTipoEvento() em
+// js/importador.js — aqui é só um lookup de palavra-chave, baixo risco de
+// divergir, e evitar duplicar seria só possível fazendo o Playwright
+// pilotar a UI do CRM publicado). Compartilhada entre
+// sincronizarCatalogoEventosNoCrm() (eventos futuros, catálogo completo)
+// e sincronizarComparecimentoNoCrm() (linha "base" de qualquer evento,
+// passado ou futuro, achado na tela Recepção) — sem isso, evento PASSADO
+// nunca ganhava `tipo` nenhum (só existia via a linha "base", que não
+// classificava nada).
+async function carregarTiposEventoUlisses() {
+    const { data } = await supabaseAdmin.from('tipos_evento').select('nome, ordem, palavras_chave').order('ordem', { ascending: true });
+    return data || [];
+}
+function classificarTipoEventoUlisses(nomeEvento, tiposEvento) {
+    const escaparRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    for (const t of tiposEvento || []) {
+        const chaves = String(t.palavras_chave || '').split(',').map(p => p.trim()).filter(Boolean);
+        if (chaves.some(p => new RegExp(escaparRegex(p), 'i').test(nomeEvento))) return t.nome;
+    }
+    return null; // sem palavra-chave batendo — fica em branco, o usuário classifica na Agenda
+}
+
 // Depois de exportar o catálogo de eventos (função acima), grava cada
 // evento FUTURO direto na tabela `eventos` do CRM — sem passo manual: o
 // scraper já tem acesso de service_role ao Supabase (mesmo cliente usado
 // pras credenciais/status de sincronização), então não faz sentido exigir
 // que alguém abra o JSON e cadastre na mão. Casa por (filial, nome, data)
 // — reexecutar o scraper atualiza imagem/descrição de um evento já
-// importado em vez de duplicar. Tipo é classificado pela MESMA tabela
-// `tipos_evento`/`palavras_chave` que a Agenda usa em "Gerenciar Tipos"
-// (pequena duplicação deliberada da lógica de classificarTipoEvento() em
-// js/importador.js — aqui é só um lookup de palavra-chave, baixo risco de
-// divergir, e evitar duplicar seria só possível fazendo o Playwright
-// pilotar a UI do CRM publicado, que é a decisão maior do marco 3, ainda
-// pendente). `hora`/`capacidade` vêm da aba "Eventos" do painel de
-// detalhes (ver lerDataHoraEVagas() em exportarCatalogoEventos) — campo
-// próprio, por filial, não o texto livre de Subtítulo/Informação.
+// importado em vez de duplicar. `hora`/`capacidade` vêm da aba "Eventos"
+// do painel de detalhes (ver lerDataHoraEVagas() em
+// exportarCatalogoEventos) — campo próprio, por filial, não o texto
+// livre de Subtítulo/Informação.
 export async function sincronizarCatalogoEventosNoCrm(filial) {
     const caminhoJson = `${PASTA_EXPORTS}/catalogo-eventos-${filial.replace(/[^a-z0-9]/gi, '_')}.json`;
     if (!fs.existsSync(caminhoJson)) throw new Error('catalogo-eventos.json não encontrado — a etapa "catalogo-eventos" precisa rodar (e ter achado 1+ evento) antes desta.');
@@ -663,16 +684,7 @@ export async function sincronizarCatalogoEventosNoCrm(filial) {
     const eventos = JSON.parse(fs.readFileSync(caminhoJson, 'utf-8'));
     if (eventos.length === 0) return '0 eventos no catálogo — nada a sincronizar.';
 
-    const { data: tiposEvento } = await supabaseAdmin.from('tipos_evento').select('nome, ordem, palavras_chave').order('ordem', { ascending: true });
-    const escaparRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const classificarTipo = (nomeEvento) => {
-        for (const t of tiposEvento || []) {
-            const chaves = String(t.palavras_chave || '').split(',').map(p => p.trim()).filter(Boolean);
-            if (chaves.some(p => new RegExp(escaparRegex(p), 'i').test(nomeEvento))) return t.nome;
-        }
-        return null; // sem palavra-chave batendo — fica em branco, o usuário classifica na Agenda
-    };
-
+    const tiposEvento = await carregarTiposEventoUlisses();
     let criados = 0, atualizados = 0, ignorados = 0;
     for (const ev of eventos) {
         if (!ev.data || !ev.titulo) { ignorados++; continue; } // sem data/título não dá pra casar nem cadastrar
@@ -699,7 +711,7 @@ export async function sincronizarCatalogoEventosNoCrm(filial) {
             // na próxima rodada, não travar no valor antigo.
             const payload = {
                 filial, nome: ev.titulo, data: ev.data,
-                tipo: classificarTipo(ev.titulo),
+                tipo: classificarTipoEventoUlisses(ev.titulo, tiposEvento),
                 hora: ev.hora || existente.hora,
                 capacidade: ev.capacidade ?? existente.capacidade,
                 imagem_url: ev.imagem_url || existente.imagem_url,
@@ -713,7 +725,7 @@ export async function sincronizarCatalogoEventosNoCrm(filial) {
                 filial, nome: ev.titulo, data: ev.data,
                 hora: ev.hora || null,
                 capacidade: ev.capacidade || null,
-                tipo: classificarTipo(ev.titulo),
+                tipo: classificarTipoEventoUlisses(ev.titulo, tiposEvento),
                 imagem_url: ev.imagem_url || null,
                 ingresso: ev.ingresso || null,
                 descricao: descricaoNova,
