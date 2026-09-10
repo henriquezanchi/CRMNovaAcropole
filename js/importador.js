@@ -343,9 +343,10 @@ async function renderizarCredenciaisScraper() {
 
     container.innerHTML = `
         ${error ? `<p style="font-size:12px; color:#dc2626;">Aviso: não consegui ler o status atual (${escapeHTML(error.message)}). Rode migracao_credenciais_scraper.sql se ainda não rodou — mesmo assim, dá pra tentar salvar novas senhas abaixo.</p>` : ''}
-        <div class="tag-filter-grupo-titulo">CRM Publicado — senha do portão de acesso (js/acesso.js), pro scraper conseguir subir as planilhas sozinho na tela de Importar</div>
+        <div class="tag-filter-grupo-titulo">CRM Publicado — login do portão de acesso (js/acesso.js), pro scraper conseguir subir as planilhas sozinho na tela de Importar. Desde que o login passou a ser nominal (nome + senha), precisa de uma conta própria pro scraper em "Gerenciar Usuários" (ex: "Scraper Automatico", com o módulo "Importar Planilhas" liberado) — informe o NOME dessa conta aqui.</div>
         <div class="coluna-row">
-            <input type="password" id="credSenhaCrmAcesso" placeholder="Senha de acesso ao CRM" style="flex:1;">
+            <input type="text" id="credUsuarioCrmAcesso" placeholder="Nome da conta (ex: Scraper Automatico)" style="flex:1;">
+            <input type="password" id="credSenhaCrmAcesso" placeholder="Senha dessa conta" style="flex:1;">
             <button class="btn-secondary" onclick="salvarCredencialScraper('crm_acesso', null)"><i class="fa-solid fa-floppy-disk"></i> Salvar</button>
         </div>
         <p style="font-size:11px; margin:-4px 0 14px;">${formatarStatus('crm_acesso|GLOBAL')}</p>
@@ -379,7 +380,7 @@ async function salvarCredencialScraper(sistema) {
     const idsPorSistema = {
         mercurio: { usuario: 'credUsuarioMercurio', senha: 'credSenhaMercurio' },
         mercurio_http: { usuario: 'credUsuarioMercurioHttp', senha: 'credSenhaMercurioHttp' },
-        crm_acesso: { usuario: null, senha: 'credSenhaCrmAcesso' }, // sem usuário — é só a senha do portão
+        crm_acesso: { usuario: 'credUsuarioCrmAcesso', senha: 'credSenhaCrmAcesso' },
     };
     const ids = idsPorSistema[sistema];
     const inputSenha = ids ? document.getElementById(ids.senha) : null;

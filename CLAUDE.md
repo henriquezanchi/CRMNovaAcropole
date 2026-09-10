@@ -49,7 +49,13 @@ js/log-atividade.js  → módulo separado: Log de Atividade (auditoria durável,
 js/importar-conversa-whatsapp.js → módulo separado: cola o .txt exportado de uma conversa de
                         WhatsApp feita fora do CRM (API bloqueada) e grava no histórico do
                         lead, via Edge Function whatsapp-importar-conversa
-js/acesso.js         → portão de senha única do time (ver seção "Publicação/Deploy")
+js/acesso.js         → login NOMINAL por conta (nome + senha), ver seção "Contas de Usuário" —
+                        substituiu o antigo portão de senha única do time
+js/usuarios.js       → módulo separado: tela "Gerenciar Usuários" (só admin) + aplicação da
+                        permissão por módulo na sidebar, ver seção "Contas de Usuário"
+js/visao-geral.js    → módulo separado: "Agenda do Dia — Todas as Filiais", bloco no topo da
+                        aba Visão Geral/Dashboard que cruza TODAS as filiais de uma vez,
+                        independente da filial selecionada — ver seção própria
 scraper/             → login automatizado no Ulisses/Mercúrio via Playwright, roda fora do
                         Supabase (GitHub Actions, .github/workflows/scraper.yml) — ver seção
                         própria "Scraper Ulisses/Mercúrio"
@@ -62,6 +68,9 @@ supabase/functions/gerenciar-credenciais/ → Edge Function: cifra e grava senha
 supabase/functions/whatsapp-importar-conversa/ → Edge Function: grava em lote uma conversa de
                                      WhatsApp importada de fora do CRM (mensagens_whatsapp não
                                      tem policy de INSERT pro público, só service_role)
+supabase/functions/resumo-semanal-chefe/ → Edge Function: monta e manda pro chefe de filial o
+                                     resumo agregado da semana (log_atividade dos últimos 7
+                                     dias) — ver seção "Resumo Semanal pro Chefe"
 migracao_filiais.sql              → já rodada (cria tabela filiais + coluna filial)
 migracao_historico_eventos.sql    → já rodada (coluna historico_eventos + constraint UNIQUE)
 migracao_whatsapp.sql             → tabela mensagens_whatsapp + view vw_wpp_conversas
@@ -201,6 +210,21 @@ migracao_agendamento_mercurio_pgcron.sql → habilita pg_cron/pg_net e cria o cr
 migracao_filial_endereco.sql      → coluna endereco em filiais, mostrado na gaveta de qualquer
                                      lead daquela filial junto com valor_mensalidade; JÁ RODADA
                                      nesta sessão via `supabase db query --linked`
+migracao_usuarios_crm.sql         → tabela usuarios_crm (login NOMINAL por conta, com permissão
+                                     por módulo — substitui a senha única do portão de acesso;
+                                     ver seção "Contas de Usuário"); JÁ RODADA nesta sessão via
+                                     `supabase db query --linked` — já vem com um usuário admin
+                                     inicial ("Henrique", senha temporária "trocar123")
+migracao_whatsapp_atendente.sql   → coluna atendente_nome em mensagens_whatsapp (nome do usuário
+                                     logado que enviou cada mensagem); JÁ RODADA nesta sessão via
+                                     `supabase db query --linked`
+migracao_rpc_leads_agenda_geral.sql → função leads_agenda_geral_prioritarios() (RPC — filtra
+                                     `tags` por conteúdo sem o PostgREST tropeçar no tipo jsonb;
+                                     ver seção "Agenda do Dia"); JÁ RODADA nesta sessão via
+                                     `supabase db query --linked`
+migracao_agendamento_resumo_semanal.sql → cron job que dispara o resumo semanal (agregado) pro
+                                     chefe de cada filial toda segunda-feira 08:00 Brasília; JÁ
+                                     RODADA nesta sessão via `supabase db query --linked`
 ```
 
 ## Banco de dados (Supabase)
@@ -1589,6 +1613,199 @@ qualquer mudança de código.
   primeiro) — mas daqui pra frente, migração nova pode ser aplicada
   direto por aqui, perguntando antes por segurança (é uma alteração de
   schema no banco de produção).
+
+## Contas de Usuário e Login Nominal (`js/acesso.js`, `js/usuarios.js`)
+
+Pedido do usuário: "implementar acessos por usuário ao sistema... para que
+eu possa escolher quais módulos cada usuário terá acesso, e no whatsapp
+precisa aparecer o nome do usuário que está logado" — pensado pra liberar
+o CRM pros voluntários das escolas (acompanhar conversas, escolher leads,
+tratar informações), cada um só com os módulos que faz sentido pra ele.
+
+- **Substituiu o portão de senha única** (`js/acesso.js` original) — em
+  vez de UMA senha compartilhada pelo time inteiro, cada pessoa agora
+  entra com NOME (escolhido num `<select>`, populado a partir de
+  `usuarios_crm`) + senha PRÓPRIA.
+- **MESMO MODELO DE SEGURANÇA de antes, documentado explicitamente no
+  topo de `js/acesso.js`**: isto NÃO é proteção contra um atacante
+  técnico determinado — a chave publishable do Supabase já dá acesso
+  total a quem tiver o código-fonte, com ou sem login (e `usuarios_crm`
+  segue o padrão de acesso público do resto do projeto, `using(true)`,
+  então até o HASH da senha é visível por quem inspecionar as chamadas de
+  rede). É só "manter gente honesta honesta" e dar IDENTIDADE a cada
+  atendente — nunca foi vendido como mais que isso, nem antes nem agora.
+  A senha nunca fica em texto puro, só o hash SHA-256
+  (`usuarios_crm.senha_hash`, calculado no navegador).
+- **Tabela `usuarios_crm`** (`migracao_usuarios_crm.sql`): `nome` (único),
+  `senha_hash`, `modulos` (jsonb — array de `tab-id`'s liberados, ex:
+  `["tab-crm","tab-whatsapp"]`), `eh_admin` (só admin vê/edita a tela de
+  usuários), `ativo` (desativar em vez de apagar — preserva o nome como
+  autor no `log_atividade`/histórico de WhatsApp já gravado). Já vem
+  com 1 usuário admin inicial (`nome = 'Henrique'`, senha temporária
+  `trocar123`, todos os módulos) pra ninguém ficar sem acesso na hora da
+  troca — **trocar essa senha** pela tela "Gerenciar Usuários" assim que
+  entrar a primeira vez.
+- **`aplicarPermissoesModulosUsuario()`** (`js/usuarios.js`, chamada logo
+  depois do login e no boot da página se já tinha sessão salva): esconde
+  (`style.display='none'`) qualquer ícone da sidebar cujo `data-tab` não
+  esteja na lista `modulos` do usuário — os `.tab-pane` em si não são
+  tocados, só o ÍCONE de navegação; se a aba que estava aberta no momento
+  não é permitida (login novo, ou a permissão mudou), pula sozinho pra
+  primeira aba liberada. Também mostra/esconde o botão de engrenagem
+  "Gerenciar Usuários" (`#btnGerenciarUsuarios`) conforme `eh_admin`.
+- **Tela "Gerenciar Usuários"** (`abrirGerenciarUsuarios()`, só admin):
+  cria conta nova (nome + senha, módulos padrão `tab-crm`+`tab-whatsapp`),
+  marca/desmarca cada módulo por checkbox (salva a cada `onchange`, sem
+  botão "Salvar" separado), alterna Admin/Ativo, reseta senha
+  (`prompt()` + hash), exclui. Se a pessoa editar os PRÓPRIOS módulos
+  (raro, mas possível se um admin se autoedita), a sessão local já é
+  atualizada na hora (`localStorage`), sem precisar deslogar/logar de
+  novo.
+- **Nome do usuário aparece nas mensagens de WhatsApp** — `obterNomeAtendente()`
+  (`js/whatsapp.js`) agora prioriza o usuário LOGADO (sem perguntar nada);
+  o fluxo antigo (prompt salvo em `localStorage`, sem login) fica só como
+  fallback de transição pra sessões que ainda não fizeram o login novo.
+  A Edge Function `whatsapp-send` recebe um novo campo `atendenteNome` no
+  corpo da chamada e grava em `mensagens_whatsapp.atendente_nome`
+  (`migracao_whatsapp_atendente.sql`) — `htmlMensagemWpp()` mostra esse
+  nome abaixo de cada mensagem de SAÍDA (mensagens de entrada/antigas não
+  têm). O `autor` do `log_atividade` (ver seção acima) também passou a
+  priorizar o usuário logado pela mesma lógica.
+- **Bug real achado e corrigido enquanto isso era construído**: o botão
+  "Salvar" do bloco "CRM Publicado" na tela "Login Automático" (aba
+  Importar) SEMPRE retornava erro — a Edge Function `gerenciar-credenciais`
+  nunca tinha sido atualizada pra aceitar `sistema = 'crm_acesso'` na
+  validação (só aceitava `ulisses`/`mercurio`/`mercurio_http`), mesmo a
+  constraint do BANCO já tendo sido alargada pra isso numa sessão
+  anterior (`migracao_credenciais_scraper_crm_acesso.sql`). Corrigido —
+  esse bloco também passou a exigir um campo de USUÁRIO (antes só tinha
+  senha, já que o portão era senha única): é o NOME de uma conta em
+  `usuarios_crm` dedicada ao scraper.
+- **Conta dedicada pro scraper**: criada `usuarios_crm.nome = 'Scraper
+  Automatico'` (admin, todos os módulos — evita qualquer surpresa de
+  módulo faltando em alguma automação futura) e salva como credencial
+  `crm_acesso` (usuario + senha) via a própria tela/Edge Function. Ajuste
+  em `scraper/importar-no-crm.js` (`abrirCrmComAcesso()`): antes só
+  preenchia a senha (`#acessoSenhaInput`); agora também SELECIONA o nome
+  certo em `#acessoNomeInput` antes de preencher a senha e clicar
+  "Entrar" — testado ao vivo (Playwright contra uma cópia local do CRM,
+  usando a credencial real do cofre): login do scraper funciona
+  normalmente com o novo fluxo nominal. `scraper/importar-matricula-no-crm.js`
+  reaproveita a mesma `abrirCrmComAcesso()`, sem precisar de ajuste
+  próprio.
+- **Testado ao vivo**: login como admin mostra os 8 ícones + engrenagem
+  de usuários; criar um usuário só com `tab-crm` e logar como ele mostra
+  SÓ esse ícone, sem a engrenagem de usuários — confirmado por
+  automação (Playwright).
+
+## Agenda do Dia — Todas as Filiais (`js/visao-geral.js`)
+
+Bloco no TOPO da aba "Visão Geral" (o nome que a própria sidebar já dá
+pro `tab-dashboard` — ver `title="Visão Geral"` no ícone) — pedido do
+usuário: "quero uma parte da 'visão geral' que junte todas as filiais,
+com uma 'agenda' para o trabalho daquele dia, independente se a filial
+está selecionada ou não". Diferente do resto do Dashboard (que é sempre
+sobre a filial escolhida no topo), este bloco cruza TODAS as filiais de
+uma vez — chamado por `atualizarAgendaGeral()`, disparada de dentro de
+`switchModule()` sempre que a aba abre, e por um botão "Atualizar" manual
+(é uma consulta pesada o bastante pra NÃO entrar no polling automático
+de 3 minutos que o resto do Dashboard já tem).
+
+5 seções, lado a lado num grid:
+
+1. **Aniversariantes de Hoje** (todas as filiais) — mesma lógica de
+   `atualizarAniversariantes()` (Dashboard por filial), só que sem o
+   filtro de `filial` e só o dia de HOJE (não o mês inteiro, já que aqui
+   é "agenda do dia").
+2. **50 Leads Prioritários pra Contatar, no TOTAL** (não 50 por filial —
+   uma lista ÚNICA "quem ligar primeiro hoje" cruzando todas as unidades).
+   Critério, em ordem: (1) tem uma inscrição FUTURA numa Abertura de
+   Turma (`historico_eventos[].tipo === 'Abertura de Turma'`, data ainda
+   não passou) — ordenado pela data mais PRÓXIMA primeiro, é quem tem
+   prazo real; (2) o resto, ordenado pelo funil de conversão: `rankLeadForte()`
+   (Lead Forte 1 antes de 2 antes de 3) e depois `Jornada: Engajado` >
+   `Interesse Emergente` > `Descoberta` (mesmas tags de sistema já
+   calculadas na importação — ver "Sistema de follow-up" na seção de
+   Tags). Exclui quem já está numa coluna de Matriculados (substring
+   "matricul" no `funil_agencia`) — não precisa ser contatado pra isso.
+   **Bug real achado testando ao vivo**: filtrar candidatos por conteúdo
+   de `tags` (jsonb) direto via `.ilike()`/`.or()` do supabase-js dá
+   `"operator does not exist: jsonb ~~* unknown"` — o PostgREST não
+   aceita cast (`coluna::tipo`) nem solto nem dentro do filtro `or=(...)`.
+   Resolvido com uma função SQL simples,
+   `leads_agenda_geral_prioritarios()` (`migracao_rpc_leads_agenda_geral.sql`),
+   chamada via `.rpc(...)` — faz o cast/`ilike` direto em SQL puro, sem
+   essa limitação.
+3. **WhatsApp Recente** — últimas 20 mensagens de `mensagens_whatsapp`,
+   TODAS as filiais, mais recente primeiro (seta ↑/↓ pra saída/entrada).
+4. **Instagram Recente** — **ainda NÃO existe integração com Instagram
+   no CRM** (decisão registrada nesta sessão: só WhatsApp via Meta Cloud
+   API está construído). Este bloco fica como um placeholder explicando
+   isso, pronto pra receber mensagens de verdade quando essa integração
+   for priorizada (mesmo modelo do WhatsApp — Edge Function própria +
+   tabela própria + setup de app na Meta, que só o usuário consegue
+   fazer). Não construído por decisão de escopo desta sessão, não por
+   limitação técnica.
+5. **Inscritos em Eventos Recentes — confirmar presença** — eventos de
+   QUALQUER filial com `data` nos últimos 7 dias, cruzando `evento_leads`
+   (resposta `confirmado`/`pendente`) e filtrando quem AINDA não teve o
+   comparecimento marcado (`compareceu is null`) — é quem precisa da
+   ligação "você veio? o que achou?" logo depois do evento.
+- **Botão "Rodar Mercúrio Agora"** dentro do próprio cabeçalho do bloco —
+  reaproveita `dispararMercurioAgora()` (`js/importador.js`, já existente
+  desde a sessão anterior) sem nenhuma mudança; é o "botão pra acionar o
+  scraper de dentro do CRM" que o usuário pediu ficar visível também
+  aqui, não só na aba Importar.
+- **Testado ao vivo** (Playwright, cópia local do CRM contra o Supabase
+  real): as 5 seções renderizam sem erro; clicar em qualquer item chama
+  `abrirResultadoBuscaGlobal()` (mesma função da busca global — funciona
+  mesmo pra um lead de OUTRA filial além da selecionada no topbar, já que
+  essa função busca por id direto, sem filtrar por `filialAtual`).
+
+## Resumo Semanal pro Chefe (`supabase/functions/resumo-semanal-chefe/`)
+
+Pedido do usuário: substituir/complementar o resumo individual (por
+lead, `enviarResumoParaChefeFilial()`, ver seção WhatsApp abaixo) por um
+resumo AGREGADO — "mandar o resumo do trabalho da semana, apontando
+quais os leads foram contatados, e qual o resultado de cada contato".
+
+- **Fonte dos dados: `log_atividade`** (auditoria durável já existente,
+  ver seção própria acima) — não é gerado por IA, é um resumo BASEADO EM
+  DADOS: junta todo `pessoa_ids` de entradas dos últimos 7 dias com
+  `acao` em `mover_lead`/`tag_adicionar`/`tag_remover`/`tag_massa`/
+  `mesclar_leads`, busca o nome + estado ATUAL (coluna do funil + tags)
+  de cada lead único encontrado, e monta uma mensagem de texto simples
+  (até 40 leads listados, o resto só contado). "Resultado do contato" =
+  onde o lead está e quais tags tem HOJE — não é uma transcrição de
+  conversa (isso viria de `mensagens_whatsapp`, mas cruzar as duas fontes
+  numa análise mais rica de "sentimento por contato" ficou fora do
+  escopo desta rodada — ver "Não construído" abaixo).
+- **2 formas de disparar, mesma função**: `{ filial: "X" }` processa só
+  essa filial (botão "Resumo Semanal pro Chefe" na aba Relatórios,
+  `enviarResumoSemanalChefe()` em `js/app.js`, sempre a filial ATUAL);
+  `{}` (sem `filial`) processa TODAS as filiais que têm
+  `whatsapp_chefe_numero` configurado — é o modo usado pelo `pg_cron`
+  semanal (`migracao_agendamento_resumo_semanal.sql`, toda SEGUNDA-FEIRA
+  08:00 Brasília = 11:00 UTC, mesmo raciocínio de fuso de
+  `migracao_agendamento_mercurio_pgcron.sql`).
+- **Reaproveita `whatsapp-notificar-chefe-filial`** (já existente, resolve
+  o número do chefe a partir da filial) via chamada SERVIDOR-A-SERVIDOR
+  (`fetch` pra própria URL de functions, com `SUPABASE_SERVICE_ROLE_KEY`
+  como Bearer) — evita duplicar a lógica de resolver telefone/enviar.
+- **Testado ao vivo** contra produção, com uma filial descartável sem
+  nenhuma atividade em `log_atividade` (`{"filial":"ZZZ_TESTE_..."}`) —
+  confirma que o caminho "sem atividade nenhuma" responde
+  `{ok:true, semAtividade:true}` sem tentar enviar nada. **Não testado
+  o modo `{}` (todas as filiais)** de propósito — evita risco de mandar
+  uma mensagem de verdade pro WhatsApp de um chefe real durante o teste
+  (mesmo com o bloqueio atual da API da Meta reduzindo bastante esse
+  risco, ver seção "Bloqueio da API do WhatsApp"); a lógica desse branch
+  é só 1 `select` de filiais antes de cair no mesmo caminho já testado.
+- **Não construído nesta rodada** (fora de escopo, registrado pra
+  quando fizer sentido priorizar): cruzar o conteúdo real das conversas
+  (`mensagens_whatsapp.corpo_texto`) pra um resumo por IA de "como foi
+  cada contato" (positivo/negativo/objeção) — hoje o resumo é só
+  factual (mudou de coluna, ganhou/perdeu tag).
 
 ## Central de Notificações (`js/notificacoes.js`)
 

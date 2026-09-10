@@ -34,6 +34,7 @@ Deno.serve(async (req) => {
         templatePreview?: string;
         imagemUrl?: string;
         caption?: string;
+        atendenteNome?: string;
     };
     try {
         corpoReq = await req.json();
@@ -41,7 +42,7 @@ Deno.serve(async (req) => {
         return json({ ok: false, erro: "json_invalido" }, 400);
     }
 
-    const { pessoaIdentificador, tipo, texto, templateNome, templateParams, templatePreview, imagemUrl, caption } = corpoReq;
+    const { pessoaIdentificador, tipo, texto, templateNome, templateParams, templatePreview, imagemUrl, caption, atendenteNome } = corpoReq;
     if (!pessoaIdentificador || !tipo) return json({ ok: false, erro: "parametros_faltando" }, 400);
     if (tipo === "texto" && !texto?.trim()) return json({ ok: false, erro: "texto_vazio" }, 400);
     if (tipo === "template" && !templateNome) return json({ ok: false, erro: "template_nome_faltando" }, 400);
@@ -144,6 +145,7 @@ Deno.serve(async (req) => {
             wa_status_erro: respJson?.error ?? { message: "erro desconhecido" },
             phone_number_id_meta: phoneNumberId,
             payload_bruto: { ...respJson, ...payloadExtra },
+            atendente_nome: atendenteNome || null,
         });
 
         return json({ ok: false, erro: foraDaJanela ? "janela_fechada" : "erro_meta", detalhe: respJson?.error }, 200);
@@ -161,6 +163,7 @@ Deno.serve(async (req) => {
         wa_status: "enviado",
         phone_number_id_meta: phoneNumberId,
         payload_bruto: { ...respJson, ...payloadExtra },
+        atendente_nome: atendenteNome || null,
     });
 
     return json({ ok: true, wa_message_id: waMessageId });

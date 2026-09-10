@@ -166,9 +166,18 @@ function htmlMensagemWpp(m) {
     const corpoHTML = imagemUrl
         ? `<img src="${escapeHTML(imagemUrl)}" alt="Imagem" style="max-width:100%; border-radius:6px; display:block; margin-bottom:${m.corpo_texto ? '4px' : '0'};">${m.corpo_texto ? escapeHTML(m.corpo_texto) : ''}`
         : escapeHTML(m.corpo_texto || '');
+    // Nome do usuário logado (js/usuarios.js) que enviou esta mensagem —
+    // pedido do usuário ("no whatsapp precisa aparecer o nome do usuário
+    // que está logado"). Só existe em mensagens de SAÍDA a partir da
+    // migração migracao_whatsapp_atendente.sql; mensagens antigas/de
+    // entrada não têm.
+    const atendenteHTML = (m.direcao === 'saida' && m.atendente_nome)
+        ? `<div class="msg-atendente">${escapeHTML(m.atendente_nome)}</div>`
+        : '';
     return `
         <div class="msg ${classeDirecao} ${classeExtra}">
             ${corpoHTML}
+            ${atendenteHTML}
             <div class="msg-time">${badgeImportada}${formatarHoraWpp(m.criado_em)}${m.direcao === 'saida' ? statusIconHTML(m) : ''}</div>
         </div>
     `;
@@ -249,7 +258,7 @@ function criarChatController({ messagesId, inputAreaId }) {
 
             botao.disabled = true;
             const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
-                body: { pessoaIdentificador: leadId, tipo: 'template', templateNome: tpl.nome, templateParams: params, templatePreview: preview }
+                body: { pessoaIdentificador: leadId, tipo: 'template', templateNome: tpl.nome, templateParams: params, templatePreview: preview, atendenteNome: obterNomeAtendente() }
             });
             botao.disabled = false;
 
@@ -297,7 +306,7 @@ function criarChatController({ messagesId, inputAreaId }) {
         input.disabled = true;
 
         const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
-            body: { pessoaIdentificador: leadId, tipo: 'texto', texto }
+            body: { pessoaIdentificador: leadId, tipo: 'texto', texto, atendenteNome: obterNomeAtendente() }
         });
         input.disabled = false;
 
@@ -387,11 +396,17 @@ const chatDrawer = criarChatController({ messagesId: 'drawer-messages', inputAre
 const CONVITE_EVENTO_NAO_ALUNO = `Olá, {nome}! Tudo bem? Aqui é {atendente}, da Nova Acrópole - {filial}. 😊 Vai rolar {evento}{quando} e eu queria muito te convidar pra vir!{interesses} Posso te passar mais detalhes?`;
 const CONVITE_EVENTO_ATIVO = `Olá, {nome}! Tudo bem? Aqui é {atendente}, da Nova Acrópole - {filial}. 😊 Vai rolar {evento}{quando}, e você é muito importante nesse momento! Você pode: 1) encaminhar esse convite pra quem você acha que ia gostar de conhecer; 2) me passar o telefone de alguém que valeria a pena a gente chamar pessoalmente; ou 3) topar ser voluntário(a) no dia, ajudando a receber o pessoal. Me conta o que topa fazer? 🙏`;
 
-// Nome de quem está mandando — perguntado uma vez, guardado só neste
-// navegador (não tem login no CRM pra puxar isso de outro jeito).
+// Nome de quem está mandando. Prioriza o usuário LOGADO (js/usuarios.js,
+// login nominal por conta) — nesse caso não pergunta nada, o nome já é o
+// da conta. Só cai no prompt() antigo (localStorage próprio, sem login)
+// pra sessões que ainda não fizeram o login novo — mantido só de
+// transição, tende a desaparecer conforme todo mundo passar a logar.
 const CHAVE_STORAGE_NOME_ATENDENTE = 'crm_na_nome_atendente';
 const TEXTO_PROMPT_NOME_ATENDENTE = 'Como você quer aparecer nas mensagens pros leads?\n\nPode escrever com artigo, do jeito que soa mais natural pra você (ex: "o Henrique", "a Lilica"), ou só o nome puro (ex: "Henrique") — o que você digitar aqui entra EXATAMENTE assim em todo lugar que precisar do seu nome (convites, modelos de WhatsApp).';
 function obterNomeAtendente() {
+    const logado = typeof usuarioLogado === 'function' ? usuarioLogado() : null;
+    if (logado && logado.nome) return logado.nome;
+
     let nome = localStorage.getItem(CHAVE_STORAGE_NOME_ATENDENTE);
     if (!nome) {
         nome = prompt(TEXTO_PROMPT_NOME_ATENDENTE + '\n\n(fica salvo só neste navegador — dá pra mudar depois clicando no lápis ao lado do botão de convite)');
@@ -508,7 +523,7 @@ async function confirmarConviteComFoto() {
     fecharSeletorConviteEvento();
 
     const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
-        body: { pessoaIdentificador: currentLeadId, tipo: 'imagem', imagemUrl: evento.imagem_url, caption }
+        body: { pessoaIdentificador: currentLeadId, tipo: 'imagem', imagemUrl: evento.imagem_url, caption, atendenteNome: obterNomeAtendente() }
     });
     if (error) { alert('Erro ao enviar: ' + error.message); return; }
     if (!data.ok) {

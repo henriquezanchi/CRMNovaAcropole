@@ -16,11 +16,19 @@
 function registrarLogAtividade(acao, { pessoaIds = null, detalhes = null, filial = null } = {}) {
     try {
         if (!window.supabaseClient) return;
-        // Lê o nome do atendente direto do localStorage (mesma chave de
-        // js/whatsapp.js) — NUNCA chama obterNomeAtendente(), que dispara
-        // um prompt() na primeira vez; logar em segundo plano não pode
-        // interromper a pessoa com uma pergunta.
-        const autor = localStorage.getItem('crm_na_nome_atendente') || null;
+        // Prioriza o nome do usuário LOGADO (js/usuarios.js — login nominal
+        // por conta, ver migracao_usuarios_crm.sql); cai pro nome antigo de
+        // atendente (localStorage, js/whatsapp.js) só pra sessões que ainda
+        // não fizeram o login novo. Lido direto do localStorage (nunca
+        // chama obterNomeAtendente(), que dispara um prompt() na 1ª vez —
+        // logar em segundo plano não pode interromper a pessoa com uma
+        // pergunta).
+        let autor = null;
+        try {
+            const usuarioBruto = localStorage.getItem('crm_na_usuario_logado');
+            if (usuarioBruto) autor = JSON.parse(usuarioBruto).nome || null;
+        } catch { /* ignora */ }
+        if (!autor) autor = localStorage.getItem('crm_na_nome_atendente') || null;
         const filialFinal = filial || (typeof filialAtual !== 'undefined' ? filialAtual : null);
         window.supabaseClient.from('log_atividade').insert({
             acao,

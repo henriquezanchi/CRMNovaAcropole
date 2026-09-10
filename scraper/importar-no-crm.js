@@ -49,10 +49,17 @@ async function esperarTexto(page, seletor, regex, timeoutMs) {
 export async function abrirCrmComAcesso(page) {
     await page.goto(URL_CRM, { waitUntil: 'domcontentloaded' });
     const overlay = page.locator('#acessoOverlay');
-    const precisaSenha = await overlay.isVisible().catch(() => false);
-    if (!precisaSenha) return;
+    const precisaLogin = await overlay.isVisible().catch(() => false);
+    if (!precisaLogin) return;
 
-    const { senha } = await lerCredencial('crm_acesso', null);
+    // Login NOMINAL (js/acesso.js/js/usuarios.js, 2026-09-10) — precisa de
+    // uma conta própria em "Gerenciar Usuários" pro scraper (ex: nome
+    // "Scraper Automatico", com o módulo "Importar Planilhas" liberado).
+    // O NOME dessa conta agora vai no campo `usuario` da credencial
+    // crm_acesso (antes só tinha senha — o portão era senha única).
+    const { usuario, senha } = await lerCredencial('crm_acesso', null);
+    if (!usuario) throw new Error('Credencial "crm_acesso" sem usuário salvo — desde que o login do CRM ficou nominal, é preciso informar o NOME da conta do scraper (tela "Login Automático" na aba Importar).');
+    await page.locator('#acessoNomeInput').selectOption({ label: usuario });
     await page.locator('#acessoSenhaInput').fill(senha);
     await page.locator('button[onclick="tentarAcesso()"]').click();
     await overlay.waitFor({ state: 'hidden', timeout: 10000 });

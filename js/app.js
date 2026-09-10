@@ -1898,7 +1898,10 @@ function switchModule(tabId, title, subtitle) {
     if (topbarSubtitle) topbarSubtitle.innerText = subtitle;
 
     // Atualiza o conteúdo da aba que acabou de ficar visível
-    if (tabId === 'tab-dashboard') atualizarDashboard();
+    if (tabId === 'tab-dashboard') {
+        atualizarDashboard();
+        if (typeof atualizarAgendaGeral === 'function') atualizarAgendaGeral();
+    }
     if (tabId === 'tab-relatorios') atualizarRelatorios();
     if (tabId === 'tab-agenda' && typeof carregarEventos === 'function') carregarEventos();
     if (tabId === 'tab-mapa-turmas' && typeof carregarMapaTurmas === 'function') carregarMapaTurmas();
@@ -3427,6 +3430,34 @@ async function enviarResumoParaChefeFilial() {
         return;
     }
     alert('Resumo enviado pro chefe da filial!');
+}
+
+// Resumo SEMANAL (agregado) pro chefe de filial — pedido do usuário pra
+// substituir/complementar o resumo individual acima: "mandar o resumo do
+// trabalho da semana, apontando quais os leads foram contatados, e qual
+// o resultado de cada contato". Botão manual na aba Relatórios; a mesma
+// Edge Function (resumo-semanal-chefe) também roda sozinha, por
+// pg_cron, uma vez por semana pra TODAS as filiais (ver CLAUDE.md).
+async function enviarResumoSemanalChefe() {
+    if (!filialAtual) return;
+    if (!confirm(`Montar e enviar o resumo semanal (últimos 7 dias) pro WhatsApp do chefe da filial "${filialAtual}"?`)) return;
+
+    const { data, error } = await window.supabaseClient.functions.invoke('resumo-semanal-chefe', {
+        body: { filial: filialAtual }
+    });
+
+    if (error) { alert('Erro ao enviar: ' + error.message); return; }
+    const resultado = data && data.resultados && data.resultados[filialAtual];
+    if (!resultado) { alert('Não obtive resposta clara — veja o console.'); console.error(data); return; }
+    if (resultado.semAtividade) { alert('Nenhum lead foi tocado (mover/tag/mesclar) nesta filial nos últimos 7 dias — nada pra resumir.'); return; }
+    if (resultado.ok === false) {
+        const motivo = resultado.erro === 'chefe_sem_numero'
+            ? 'Essa filial ainda não tem o WhatsApp do chefe cadastrado (botão de engrenagem > Gerenciar Filiais).'
+            : (resultado.detalhe?.message || resultado.erro || 'erro desconhecido');
+        alert('Não consegui enviar: ' + motivo);
+        return;
+    }
+    alert('Resumo semanal enviado pro chefe da filial!');
 }
 
 // "Como Abordar" — mesmo padrão de edição do Resumo da Conversa (IA) acima,

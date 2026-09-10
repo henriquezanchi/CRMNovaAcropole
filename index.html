@@ -18,9 +18,12 @@
     <div id="acessoOverlay" style="display:none; position:fixed; inset:0; z-index:99999; background:var(--na-green-dark, #0a3d33); align-items:center; justify-content:center; flex-direction:column; gap:16px; font-family:'Inter',sans-serif;">
         <img src="img/logo-nova-acropole.png" alt="" style="width:64px; height:64px;" onerror="this.style.display='none';">
         <div style="color:white; font-size:18px; font-weight:600;">CRM Nova Acrópole</div>
-        <input type="password" id="acessoSenhaInput" placeholder="Senha de acesso" style="padding:10px 14px; border-radius:8px; border:none; width:240px; font-size:14px;">
+        <select id="acessoNomeInput" style="padding:10px 14px; border-radius:8px; border:none; width:260px; font-size:14px;">
+            <option value="">Carregando usuários...</option>
+        </select>
+        <input type="password" id="acessoSenhaInput" placeholder="Senha" style="padding:10px 14px; border-radius:8px; border:none; width:240px; font-size:14px;">
         <button onclick="tentarAcesso()" style="padding:10px 20px; border-radius:8px; border:none; background:var(--na-gold, #c9a24b); color:#3a2e0f; font-weight:600; cursor:pointer;">Entrar</button>
-        <div id="acessoErro" style="display:none; color:#fca5a5; font-size:12px;">Senha incorreta.</div>
+        <div id="acessoErro" style="display:none; color:#fca5a5; font-size:12px;">Nome ou senha incorretos.</div>
     </div>
 
     <!-- Sidebar: Navegação Multi-Abas -->
@@ -61,6 +64,11 @@
                     <option value="">Carregando filiais...</option>
                 </select>
                 <button class="btn-toggle" onclick="abrirGerenciarFiliais()" title="Gerenciar Filiais"><i class="fa-solid fa-gear"></i></button>
+                <button class="btn-toggle" id="btnGerenciarUsuarios" onclick="abrirGerenciarUsuarios()" title="Gerenciar Usuários" style="display:none;"><i class="fa-solid fa-users-gear"></i></button>
+                <div class="usuario-logado-pill" id="usuarioLogadoPill" style="display:none; align-items:center; gap:6px; font-size:12px; font-weight:600; color:var(--text-muted); padding:6px 10px; border:1px solid #ccc; border-radius:6px;">
+                    <i class="fa-solid fa-circle-user"></i> <span id="usuarioLogadoNome"></span>
+                    <i class="fa-solid fa-right-from-bracket" style="cursor:pointer; opacity:0.6;" title="Sair" onclick="sairDoCrm()"></i>
+                </div>
                 <div class="notificacoes-wrapper">
                     <button class="btn-toggle notificacoes-sino" onclick="togglePainelNotificacoes()" title="Notificações">
                         <i class="fa-solid fa-bell"></i>
@@ -82,6 +90,45 @@
         =========================================================== -->
         <div id="tab-dashboard" class="tab-pane">
             <div class="dashboard-content">
+                <!-- ==========================================================
+                     AGENDA DO DIA — TODAS AS FILIAIS (js/visao-geral.js)
+                     Independente da filial selecionada no topo — junta o que
+                     precisa de atenção HOJE em qualquer unidade.
+                =========================================================== -->
+                <div class="agenda-geral-card">
+                    <div class="agenda-geral-header">
+                        <div><i class="fa-solid fa-calendar-day"></i> Agenda do Dia — Todas as Filiais</div>
+                        <div class="agenda-geral-actions">
+                            <button class="btn-toggle" onclick="dispararMercurioAgora()" title="Roda o scraper do Mercúrio agora, sem esperar até às 5h"><i class="fa-solid fa-robot"></i> Rodar Mercúrio Agora</button>
+                            <button class="btn-toggle" onclick="atualizarAgendaGeral()" title="Atualizar esta agenda"><i class="fa-solid fa-rotate"></i></button>
+                        </div>
+                    </div>
+                    <div class="agenda-geral-grid">
+                        <div class="activity-card" style="flex:none; max-height:280px;">
+                            <div class="activity-header"><i class="fa-solid fa-cake-candles"></i> Aniversariantes de Hoje</div>
+                            <div class="activity-list" id="agendaGeralAniversariantes"></div>
+                        </div>
+                        <div class="activity-card" style="flex:none; max-height:280px;">
+                            <div class="activity-header"><i class="fa-solid fa-phone"></i> 50 Leads Prioritários pra Contatar</div>
+                            <div class="activity-list" id="agendaGeralLeadsPrioritarios"></div>
+                        </div>
+                        <div class="activity-card" style="flex:none; max-height:280px;">
+                            <div class="activity-header"><i class="fa-brands fa-whatsapp"></i> WhatsApp Recente</div>
+                            <div class="activity-list" id="agendaGeralWhatsapp"></div>
+                        </div>
+                        <div class="activity-card" style="flex:none; max-height:280px;">
+                            <div class="activity-header"><i class="fa-brands fa-instagram"></i> Instagram Recente</div>
+                            <div class="activity-list" id="agendaGeralInstagram">
+                                <div style="font-size:12px; color:var(--text-muted); padding:4px;">Ainda não existe integração com Instagram no CRM — este bloco fica pronto pra receber mensagens quando essa integração for construída (mesmo modelo do WhatsApp, exige configurar um app na Meta antes).</div>
+                            </div>
+                        </div>
+                        <div class="activity-card" style="flex:none; max-height:280px; grid-column: 1 / -1;">
+                            <div class="activity-header"><i class="fa-solid fa-user-check"></i> Inscritos em Eventos Recentes — confirmar presença</div>
+                            <div class="activity-list" id="agendaGeralEventosRecentes"></div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="kpi-grid">
                     <div class="kpi-card">
                         <div class="kpi-icon" style="background:#eef2ff; color:#4338ca;"><i class="fa-solid fa-magnifying-glass"></i></div>
@@ -298,6 +345,7 @@
                     </div>
                     <div style="display:flex; gap:8px;">
                         <button class="btn-secondary" style="white-space:nowrap;" onclick="abrirLogAtividade()"><i class="fa-solid fa-clock-rotate-left"></i> Log de Atividade</button>
+                        <button class="btn-secondary" style="white-space:nowrap;" onclick="enviarResumoSemanalChefe()"><i class="fa-brands fa-whatsapp"></i> Resumo Semanal pro Chefe</button>
                         <button class="btn-secondary" style="white-space:nowrap;" onclick="exportarLeadsCSV()"><i class="fa-solid fa-file-csv"></i> Exportar Leads (CSV)</button>
                     </div>
                 </div>
@@ -1058,6 +1106,29 @@
         </div>
     </div>
 
+    <!-- Gerenciar Usuários (login nominal + permissão por módulo) — só admin, js/usuarios.js -->
+    <div class="modal" id="modalGerenciarUsuarios" style="max-width:640px;">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-users-gear"></i> Gerenciar Usuários</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharGerenciarUsuarios()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">
+                Cada usuário só vê, na sidebar, os módulos marcados abaixo. "Admin" também vê e edita esta tela.
+                O nome de quem está logado aparece nas mensagens de WhatsApp enviadas por ele.
+            </p>
+            <div id="listaUsuariosCrm"></div>
+            <div style="display:flex; gap:8px; margin-top:14px; padding-top:14px; border-top:1px solid var(--border-color);">
+                <input type="text" id="novoUsuarioNome" placeholder="Nome do novo usuário" style="flex:1; padding:8px 10px; border-radius:6px; border:1px solid #cbd5e1; font-size:13px;">
+                <input type="password" id="novoUsuarioSenha" placeholder="Senha" style="width:140px; padding:8px 10px; border-radius:6px; border:1px solid #cbd5e1; font-size:13px;">
+                <button class="btn-primary" onclick="criarUsuarioCrm()"><i class="fa-solid fa-plus"></i> Criar</button>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-primary" onclick="fecharGerenciarUsuarios()"><i class="fa-solid fa-check"></i> Fechar</button>
+        </div>
+    </div>
+
     <!-- ⚠️ AQUI ESTÁ A SEGUNDA MÁGICA: Conectando os scripts (O Cérebro) -->
     <!-- 1. Importa a biblioteca do Supabase da internet -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -1095,6 +1166,10 @@
     <script src="js/matricula-importar.js"></script>
     <!-- 3f. Central de Notificações (sino no topbar) -->
     <script src="js/notificacoes.js"></script>
+    <!-- 3f2. Agenda do Dia — Todas as Filiais (topo da aba Visão Geral/Dashboard) -->
+    <script src="js/visao-geral.js"></script>
+    <!-- 3f3. Contas de usuário (login nominal + permissão por módulo) -->
+    <script src="js/usuarios.js"></script>
     <!-- 3g. Portão de acesso (senha única do time) — carregado por último só
          por convenção de organização; a checagem roda em DOMContentLoaded,
          então a ordem dos scripts não afeta quando o overlay aparece -->
