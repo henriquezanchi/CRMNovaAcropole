@@ -388,6 +388,23 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
    e badges com estilo inline, aparecia). */
 .agenda-geral-grid .activity-card { min-height: 0; color: var(--text-dark); }
 
+/* Calendário de Eventos Futuros — 3 níveis de destaque visual (não é uma
+   pontuação exibida, só prioridade de leitura): Abertura de Turma (peso
+   2, mais chamativo) > Palestra (peso 1) > demais (peso 0, sem destaque). */
+.calendario-eventos-lista { overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.calendario-evento-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; font-size: 12px; }
+.calendario-evento-info { min-width: 0; }
+.calendario-evento-nome { font-weight: 600; }
+.calendario-evento-meta { color: var(--text-muted); font-size: 11px; margin-top: 1px; }
+.calendario-evento-tipo { font-size: 10px; font-weight: 400; color: var(--text-muted); }
+.calendario-evento-peso0 { background: #f8fafc; }
+.calendario-evento-peso0 i { color: #94a3b8; }
+.calendario-evento-peso1 { background: #eff6ff; border-left: 3px solid #2563eb; }
+.calendario-evento-peso1 i { color: #2563eb; }
+.calendario-evento-peso2 { background: linear-gradient(90deg, #fffbeb, #fef3c7); border-left: 4px solid var(--na-gold, #c9a24b); }
+.calendario-evento-peso2 .calendario-evento-nome { font-size: 13px; }
+.calendario-evento-peso2 i { color: var(--na-gold, #c9a24b); font-size: 16px; }
+
 .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
 .kpi-card {
     background: white; border: 1px solid var(--border-color); border-radius: 10px;

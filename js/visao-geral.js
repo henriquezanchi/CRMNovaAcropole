@@ -17,6 +17,70 @@ async function atualizarAgendaGeral() {
     carregarAgendaGeralLeadsPrioritarios();
     carregarAgendaGeralWhatsapp();
     carregarAgendaGeralEventosRecentes();
+    carregarAgendaGeralCalendarioEventos();
+}
+
+// ---------------------------------------------------------
+// 5. Calendário de Eventos Futuros — todas as filiais ATIVAS, cronológico
+// ---------------------------------------------------------
+// Pedido do usuário: "deve haver um calendário dos eventos futuros
+// organizados de forma cronológica, juntando todos os eventos futuros
+// das filiais ativas... Deve haver destaque para aberturas de turma
+// (peso 2), e palestras (peso 1). Os demais são eventos sem peso
+// diferenciado." O "peso" é só visual (badge/destaque maior ou menor),
+// não um número mostrado — ninguém pediu pontuação na tela, só
+// prioridade de leitura visual (Abertura de Turma > Palestra > resto).
+function _pesoTipoEvento(tipo) {
+    if (tipo === 'Abertura de Turma') return 2;
+    if (tipo === 'Palestra') return 1;
+    return 0;
+}
+
+async function carregarAgendaGeralCalendarioEventos() {
+    const container = document.getElementById('agendaGeralCalendario');
+    if (!container) return;
+    container.innerHTML = '<div style="font-size:12px; color:var(--text-muted);">Carregando...</div>';
+
+    const hojeISO = new Date().toISOString().slice(0, 10);
+    const { data, error } = await window.supabaseClient
+        .from('eventos')
+        .select('id, nome, data, hora, tipo, filial, capacidade')
+        .eq('ativo', true)
+        .gte('data', hojeISO)
+        .order('data', { ascending: true })
+        .limit(200);
+
+    if (error) {
+        container.innerHTML = `<div style="font-size:11px; color:var(--text-muted);">Erro ao carregar eventos — veja o console.</div>`;
+        console.error(error);
+        return;
+    }
+
+    // Só filiais ATIVAS (pedido explícito) — filiaisDisponiveis já vem só
+    // com as ativas (carregarFiliais(), js/app.js), então basta cruzar.
+    const nomesFiliaisAtivas = new Set((typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : []).map(f => f.nome));
+    const eventosFuturos = (data || []).filter(e => nomesFiliaisAtivas.has(e.filial));
+
+    if (eventosFuturos.length === 0) {
+        container.innerHTML = '<div style="font-size:12px; color:var(--text-muted);">Nenhum evento futuro cadastrado em nenhuma filial ativa.</div>';
+        return;
+    }
+
+    container.innerHTML = eventosFuturos.map(e => {
+        const peso = _pesoTipoEvento(e.tipo);
+        const dataFmt = (typeof formatarDataEvento === 'function') ? formatarDataEvento(e.data) : e.data;
+        const horaFmt = e.hora ? ` às ${String(e.hora).slice(0, 5)}` : '';
+        const classe = peso === 2 ? 'calendario-evento-peso2' : (peso === 1 ? 'calendario-evento-peso1' : 'calendario-evento-peso0');
+        const icone = peso === 2 ? 'fa-graduation-cap' : (peso === 1 ? 'fa-chalkboard-user' : 'fa-calendar-day');
+        return `
+            <div class="calendario-evento-item ${classe}">
+                <i class="fa-solid ${icone}"></i>
+                <div class="calendario-evento-info">
+                    <div class="calendario-evento-nome">${escapeHTML(e.nome)}${e.tipo ? ` <span class="calendario-evento-tipo">${escapeHTML(e.tipo)}</span>` : ''}</div>
+                    <div class="calendario-evento-meta">${escapeHTML(dataFmt)}${horaFmt} — ${escapeHTML(e.filial)}${e.capacidade ? ` — ${e.capacidade} vaga(s)` : ''}</div>
+                </div>
+            </div>`;
+    }).join('');
 }
 
 // ---------------------------------------------------------

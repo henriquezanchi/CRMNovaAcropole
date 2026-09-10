@@ -1816,6 +1816,20 @@ de 3 minutos que o resto do Dashboard já tem).
    (resposta `confirmado`/`pendente`) e filtrando quem AINDA não teve o
    comparecimento marcado (`compareceu is null`) — é quem precisa da
    ligação "você veio? o que achou?" logo depois do evento.
+6. **Calendário de Eventos Futuros** (`carregarAgendaGeralCalendarioEventos()`,
+   2026-09-10, pedido explícito do usuário) — TODOS os eventos com `data
+   >= hoje` de TODAS as filiais ATIVAS (cruza com `filiaisDisponiveis`,
+   que já só lista as ativas), ordenados cronologicamente. **3 níveis de
+   destaque visual** (não é uma pontuação exibida na tela, só prioridade
+   de leitura — `_pesoTipoEvento()`): "Abertura de Turma" (peso 2, faixa
+   dourada + ícone de capelo, texto maior), "Palestra" (peso 1, faixa
+   azul + ícone de apresentação), qualquer outro tipo (peso 0, sem
+   destaque, cinza neutro). O peso é decidido pelo NOME EXATO do `tipo`
+   (mesma classificação automática por palavra-chave de
+   `sincronizarCatalogoEventosNoCrm()`/`classificarTipoEvento()`) — editar
+   o nome desses 2 tipos em "Gerenciar Tipos" mudaria qual `tipo` bate
+   aqui também. Testado ao vivo com 3 eventos de teste (Abertura/Palestra/
+   Café Cultural): ordem cronológica e classes CSS de peso confirmadas.
 - **Botão "Rodar Mercúrio Agora"** dentro do próprio cabeçalho do bloco —
   reaproveita `dispararMercurioAgora()` (`js/importador.js`, já existente
   desde a sessão anterior) sem nenhuma mudança; é o "botão pra acionar o
@@ -2616,6 +2630,53 @@ bloqueado).
        `processarFilialLocal()`, entre `catalogo-eventos` e
        `comparecimento` — roda independente das outras (mesmo padrão de
        isolamento de falha).
+     - **Ajustes 2026-09-10 (pedido do usuário: "corrigir a importação de
+       eventos no Ulisses")**:
+       - **Corte de 3 anos pra trás, não mais "qualquer passado pulado"**
+         — antes, `exportarCatalogoEventos()` pulava TODO evento com data
+         no passado sem nem abrir o painel de detalhes (só ganhava uma
+         linha "base", nome+data, via `sincronizarComparecimentoNoCrm()`).
+         Agora lê os detalhes completos (imagem/tipo/capacidade/ingresso)
+         de qualquer evento até 3 anos atrás, mesmo corte já usado em
+         `exportarComparecimento()`. **Ponto de atenção pra quem for
+         testar**: o clique inicial em "Ativo" (filtro da lista de
+         cards) pode continuar escondendo cards antigos ANTES de chegar
+         no corte de data do código — se depois de rodar
+         `ulisses-local.js` os eventos passados ainda vierem só com a
+         linha "base" (sem imagem/tipo), é sinal de que existe outro
+         filtro/aba (ex: "Encerrado"/"Todos") que precisa ser clicado
+         também; mandar o HTML real dessa tela resolve rápido.
+       - **Tentativa de ler "Ingresso"/"Valor"/"Preço"** (`eventos.ingresso`,
+         já existia como campo editável manualmente, nunca preenchido
+         pelo scraper) — best-effort, **NÃO confirmado contra o HTML
+         real** (não sei se esse rótulo existe no painel do Ulisses;
+         `ler()` já devolve `null` sem quebrar nada se não existir). Se
+         vier sempre vazio, mandar o HTML real do painel resolve.
+       - **Preservação em `sincronizarCatalogoEventosNoCrm()`**: a
+         atualização de um evento já existente agora NUNCA sobrescreve
+         com `null` um campo que já tinha valor (`hora`/`capacidade`/
+         `imagem_url`/`ingresso`/`descricao`) — antes, uma leitura
+         inconsistente entre 2 rodadas (card que não abriu o painel a
+         tempo, por exemplo) apagava silenciosamente um dado editado à
+         mão na Agenda. `tipo` fica de fora dessa preservação de
+         propósito — é sempre recalculado pelo catálogo de
+         palavras-chave, pra uma reclassificação em "Gerenciar Tipos"
+         valer já na próxima rodada.
+       - **Mensagem de status corrigida**: `processarFilial()`/
+         `processarFilialLocal()` diziam "(marco 2 — ainda não alimenta
+         o CRM automaticamente)" mesmo depois de `sincronizarCatalogoEventosNoCrm()`/
+         `sincronizarComparecimentoNoCrm()` já estarem chamadas e
+         funcionando — texto estava só desatualizado (marco 3 já foi
+         feito), corrigido pra refletir a realidade.
+       - **"Inscritos automáticos" já existia** (`sincronizarComparecimentoNoCrm()`,
+         apesar do nome — lê a MESMA tela "Pré-inscrições → Recepção" que
+         o usuário pediu pra cruzar, e já grava `evento_leads` com
+         `resposta_convite='confirmado'` pra quem casa por telefone/
+         e-mail) — confirmado em produção no momento deste ajuste: 1004
+         vínculos já gravados dessa forma. O que estava faltando de
+         verdade era só a extensão de 3 anos pro CATÁLOGO (item acima) —
+         sem os detalhes completos de um evento, ele aparecia "pela
+         metade" mesmo já tendo inscritos vinculados.
      - Cada uma das etapas roda independente dentro de `processarFilial()`
        — uma falhar não impede as outras, e cada etapa que falha gera seu
        PRÓPRIO print de erro (`debug/ulisses-<etapa>-<filial>.png`), mais

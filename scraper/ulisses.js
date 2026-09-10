@@ -1,9 +1,11 @@
-// Scraper do Ulisses (acropolebrasil.com.br) — MARCO 2: login + exportar
-// (a) o CSV de Inscrições, (b) o catálogo de eventos (título/imagem/
-// descrição, tela "Links") e (c) comparecimento por evento (tela
-// "Pré-inscrições" > "Recepção") — por filial. Arquivos salvos em
-// scraper/exports/ (o workflow sobe como artifact) — ainda NÃO alimenta o
-// CRM sozinho (marco 3, pendente da mesma peça do lado do Mercúrio).
+// Scraper do Ulisses (acropolebrasil.com.br) — login + exportar (a) o CSV
+// de Inscrições, (b) o catálogo de eventos (título/imagem/descrição/
+// ingresso/capacidade, tela "Links") e (c) inscritos/comparecimento por
+// evento (tela "Pré-inscrições" > "Recepção") — por filial. Arquivos
+// salvos em scraper/exports/ (o workflow sobe como artifact) E JÁ
+// ALIMENTAM o CRM automaticamente (sincronizarCatalogoEventosNoCrm() e
+// sincronizarComparecimentoNoCrm(), chamadas dentro de processarFilial()/
+// processarFilialLocal()) — ver seção "Ulisses" no CLAUDE.md.
 //
 // (a) e (b) foram escritos só com PRINTS de tela, sem o HTML real — login
 // é a única parte confirmada de verdade contra o site real; (a) já
@@ -136,6 +138,17 @@ export async function exportarCatalogoEventos(page, filial) {
         // elemento que precisamos, mais abaixo.
         await page.goto('https://www.acropolebrasil.com.br/#/evento', { waitUntil: 'domcontentloaded' });
     }
+    // ⚠️ Ponto de atenção pra quem for testar a extensão de 3 anos pra
+    // trás (ver corte de data mais abaixo): esse clique em "Ativo" pode
+    // ser um FILTRO da lista de cards, não só uma aba de detalhe — se a
+    // lista em si já vier só com eventos "ativos"/recentes ANTES de
+    // chegar no loop abaixo, nenhum evento antigo vai aparecer aqui pra
+    // gente nem tentar ler, independente do corte de 3 anos no código.
+    // Se depois de rodar `ulisses-local.js` os eventos passados ainda
+    // vierem sem imagem/tipo/capacidade (só a linha "base" que
+    // sincronizarComparecimentoNoCrm() já cria), é sinal de que existe
+    // outra aba/filtro (ex: "Encerrado"/"Todos") que precisa ser clicado
+    // aqui também — mandar o HTML real dessa tela resolve rápido.
     await page.getByRole('button', { name: /^ativo$/i }).click({ timeout: 5000 }).catch(() => {});
 
     const cards = page.locator('text=/\\d{2}\\/\\d{2}\\/\\d{4}/').locator('..');
@@ -225,13 +238,19 @@ export async function exportarCatalogoEventos(page, filial) {
         }
     };
 
-    // Só vale a pena ler os detalhes completos (imagem/descrição/etc.) de
-    // eventos FUTUROS — decisão do usuário: pra evento passado, o que
-    // importa é só quem compareceu (ver exportarComparecimento), não mais
-    // os detalhes de divulgação. Isso também evita a grande maioria dos
-    // cards de outra filial na prática (são quase todos antigos).
+    // Lê os detalhes completos (imagem/descrição/etc.) de eventos FUTUROS
+    // e de PASSADOS até 3 anos atrás — pedido explícito do usuário
+    // ("eventos futuros são imprescindíveis, e eventos passados somente
+    // até 3 anos atrás"), mesmo corte já usado em exportarComparecimento().
+    // Antes disso, TODO evento passado era pulado sem abrir o painel — só
+    // ganhava uma linha "base" (nome+data, sem imagem/tipo/capacidade) via
+    // sincronizarComparecimentoNoCrm(). Mais que 3 anos continua pulado,
+    // até pra não gastar tempo com a grande maioria dos cards de OUTRA
+    // filial (na prática, quase todos antigos).
     const hoje = new Date();
     hoje.setHours(0, 0, 0, 0);
+    const TRES_ANOS_ATRAS = new Date(hoje);
+    TRES_ANOS_ATRAS.setFullYear(TRES_ANOS_ATRAS.getFullYear() - 3);
 
     const eventos = [];
     for (let i = 0; i < total; i++) {
@@ -239,7 +258,7 @@ export async function exportarCatalogoEventos(page, filial) {
             const textoCard = await cards.nth(i).innerText().catch(() => '');
             const match = textoCard.match(/(\d{2})\/(\d{2})\/(\d{4})/);
             const dataEvento = match ? new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1])) : null;
-            if (dataEvento && dataEvento < hoje) continue; // passado — não abre o painel, nem gasta tempo
+            if (dataEvento && dataEvento < TRES_ANOS_ATRAS) continue; // mais de 3 anos — não abre o painel, nem gasta tempo
 
             // O aviso do PagSeguro (ver fecharAvisosBloqueantes) confirmado
             // reaparecendo ao voltar pra essa tela — tenta fechar de novo a
@@ -295,6 +314,13 @@ export async function exportarCatalogoEventos(page, filial) {
                 subtitulo: await ler('subt[íi]tulo'),
                 informacao: await ler('informa[çc][ãa]o'),
                 descricao: await ler('descri[çc][ãa]o'),
+                // "todos os dados possíveis" (pedido do usuário) — tentativa
+                // best-effort, NUNCA confirmada contra o HTML real (não sei
+                // se o painel do Ulisses tem um campo de rótulo
+                // "Ingresso"/"Valor"/"Preço" — ler() já devolve null sem
+                // quebrar nada se o rótulo não existir). Se vier sempre
+                // null, mandar o HTML real do painel resolve rápido.
+                ingresso: await ler('ingresso') || await ler('valor') || await ler('pre[çc]o'),
             };
             const { hora, capacidade } = await lerDataHoraEVagas();
 
@@ -653,23 +679,45 @@ export async function sincronizarCatalogoEventosNoCrm(filial) {
 
         const { data: existente } = await supabaseAdmin
             .from('eventos')
-            .select('id')
+            .select('id, hora, capacidade, tipo, imagem_url, ingresso, descricao')
             .eq('filial', filial).eq('nome', ev.titulo).eq('data', ev.data)
             .maybeSingle();
 
-        const payload = {
-            filial, nome: ev.titulo, data: ev.data,
-            hora: ev.hora || null,
-            capacidade: ev.capacidade || null,
-            tipo: classificarTipo(ev.titulo),
-            imagem_url: ev.imagem_url || null,
-            descricao: [ev.subtitulo, ev.informacao, ev.descricao].filter(Boolean).join('\n\n') || null,
-        };
+        const descricaoNova = [ev.subtitulo, ev.informacao, ev.descricao].filter(Boolean).join('\n\n') || null;
 
         if (existente) {
+            // NUNCA sobrescreve com `null` um campo que já tinha valor —
+            // sem isso, um campo lido de forma inconsistente entre 2
+            // rodadas (ex: "Ingresso" ainda não confirmado contra o HTML
+            // real, ou um card que não abriu o painel a tempo) apagaria um
+            // dado editado manualmente na Agenda (ex: descrição/imagem
+            // ajustada à mão) na PRÓXIMA sincronização. `tipo` fica de
+            // fora dessa preservação de propósito — é sempre RECALCULADO
+            // pelo catálogo de palavras-chave (mesma lógica de
+            // classificarTipoEvento() em js/importador.js), então uma
+            // reclassificação em "Gerenciar Tipos" precisa refletir aqui
+            // na próxima rodada, não travar no valor antigo.
+            const payload = {
+                filial, nome: ev.titulo, data: ev.data,
+                tipo: classificarTipo(ev.titulo),
+                hora: ev.hora || existente.hora,
+                capacidade: ev.capacidade ?? existente.capacidade,
+                imagem_url: ev.imagem_url || existente.imagem_url,
+                ingresso: ev.ingresso || existente.ingresso,
+                descricao: descricaoNova || existente.descricao,
+            };
             await supabaseAdmin.from('eventos').update(payload).eq('id', existente.id);
             atualizados++;
         } else {
+            const payload = {
+                filial, nome: ev.titulo, data: ev.data,
+                hora: ev.hora || null,
+                capacidade: ev.capacidade || null,
+                tipo: classificarTipo(ev.titulo),
+                imagem_url: ev.imagem_url || null,
+                ingresso: ev.ingresso || null,
+                descricao: descricaoNova,
+            };
             await supabaseAdmin.from('eventos').insert(payload);
             criados++;
         }
@@ -721,7 +769,7 @@ async function processarFilial(browser, filial) {
 
     await registrarStatusSincronizacao('ulisses', filial, !algumaFalha, algumaFalha
         ? 'Login OK, mas 1+ exportação falhou — ver logs e prints do workflow.'
-        : 'Login + exportação de Inscrições, catálogo de eventos e comparecimento OK (marco 2 — ainda não alimenta o CRM automaticamente).');
+        : 'Login + exportação de Inscrições, catálogo de eventos e comparecimento OK (já sincronizados no CRM: eventos + evento_leads).');
 
     await page.close();
 }
