@@ -8,6 +8,11 @@ name: Scraper Ulisses/Mercúrio
 # confiança) sempre que precisar reimportar de verdade.
 on:
   workflow_dispatch:
+    inputs:
+      filial:
+        description: 'Rodar só 1 filial (trecho do nome, ex: "Garavelo") — vazio roda todas'
+        required: false
+        default: ''
   # O `schedule:` do GitHub Actions foi REMOVIDO daqui de propósito
   # (2026-09-10) — comprovadamente pouco confiável no plano gratuito: 2
   # dias seguidos com ~4h40 de atraso, e um dia em que simplesmente não
@@ -56,7 +61,9 @@ jobs:
         run: node ulisses.js
         continue-on-error: true
 
-      - name: Mercúrio — login + exportar Ativos e Inativos (todas as filiais)
+      - name: Mercúrio — login + exportar Ativos e Inativos
+        env:
+          FILTRO_FILIAL: ${{ github.event.inputs.filial }}
         run: node mercurio.js
         continue-on-error: true
 

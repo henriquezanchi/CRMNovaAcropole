@@ -34,6 +34,19 @@ Deno.serve(async (req) => {
     if (req.method !== "POST") return json({ ok: false, erro: "method_not_allowed" }, 405);
     if (!GITHUB_TOKEN) return json({ ok: false, erro: "GITHUB_TOKEN_DISPATCH não configurado (supabase secrets set)" }, 500);
 
+    // `filial` opcional — pedido do usuário (2026-09-10): rodar só 1
+    // filial pra testar mais rápido, e evitar tráfego desnecessário no
+    // Mercúrio conforme mais filiais forem entrando. String vazia/ausente
+    // = comportamento de sempre (todas). Repassado como `inputs.filial`
+    // pro workflow_dispatch — o próprio `mercurio.js` já sabe filtrar por
+    // esse valor (env `FILTRO_FILIAL`, mesmo filtro do uso local por
+    // linha de comando).
+    let filial = "";
+    try {
+        const body = await req.json();
+        if (body && typeof body.filial === "string") filial = body.filial;
+    } catch { /* corpo vazio ({}) é o caso normal (todas as filiais) */ }
+
     try {
         const resp = await fetch(
             `https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${GITHUB_WORKFLOW}/dispatches`,
@@ -45,7 +58,7 @@ Deno.serve(async (req) => {
                     "Content-Type": "application/json",
                     "User-Agent": "crm-nova-acropole-scraper-disparar",
                 },
-                body: JSON.stringify({ ref: GITHUB_REF }),
+                body: JSON.stringify({ ref: GITHUB_REF, inputs: { filial } }),
             },
         );
 

@@ -414,7 +414,28 @@ async function salvarCredencialScraper(sistema) {
 // nada novo.
 let pollSincronizacaoTimer = null;
 
+// Popula o filtro de filial do botão "Rodar Mercúrio Agora" (dentro
+// deste modal só — o botão da Agenda do Dia continua sempre "todas",
+// ver index.html) — mesma fonte (`filiaisDisponiveis`) que qualquer outro
+// seletor de filial do app, com fallback pra buscar direto se ainda não
+// tiver carregado.
+async function popularFiltroFilialMercurio() {
+    const select = document.getElementById('mercurioFilialFiltro');
+    if (!select) return;
+    let lista = (typeof filiaisDisponiveis !== 'undefined' && filiaisDisponiveis.length > 0)
+        ? filiaisDisponiveis
+        : null;
+    if (!lista) {
+        const { data } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).select('*').eq('ativo', true).order('ordem', { ascending: true });
+        lista = data || [];
+    }
+    const valorAnterior = select.value;
+    select.innerHTML = '<option value="">Todas as filiais</option>' + lista.map(f => `<option value="${escapeHTML(f.nome)}">${escapeHTML(f.nome)}</option>`).join('');
+    select.value = valorAnterior || '';
+}
+
 async function abrirSincronizacaoScraper() {
+    await popularFiltroFilialMercurio();
     await renderizarStatusSincronizacaoScraper();
     document.getElementById('modalSincronizacaoScraper').classList.add('open');
     document.getElementById('overlayModalSincronizacaoScraper').classList.add('active');
@@ -497,7 +518,28 @@ function atualizarBotoesDispararMercurio(disabled, html) {
     botoesDispararMercurio().forEach(b => { b.disabled = disabled; if (html) b.innerHTML = html; });
 }
 
-async function dispararMercurioAgora() {
+// Chave de localStorage — bug real relatado pelo usuário (2026-09-10):
+// "atualizei a página e aparentemente ele parou de rodar". Não parou — o
+// job em si roda no GitHub Actions, 100% independente do navegador; o que
+// se perdia era só o ACOMPANHAMENTO (`disparoMercurioEmAndamento` e o
+// `setInterval` de poll são só memória JS, zeram ao recarregar). Sem
+// nenhum jeito de saber que já tinha um disparo em andamento, a pessoa via
+// o botão "solto" de novo e clicava outra vez — foi exatamente isso que
+// aconteceu (confirmado consultando a API do GitHub: 2 rodadas extras
+// disparadas poucos minutos depois de uma que já tinha terminado com
+// sucesso). Persistindo o timestamp "antes" e o início do poll aqui, uma
+// página recarregada RETOMA o mesmo acompanhamento (mesmo orçamento de 20
+// min, não reinicia do zero) em vez de perder o rastro.
+const CHAVE_LS_MERCURIO_EM_ANDAMENTO = 'crm_na_mercurio_disparo_em_andamento';
+
+function salvarAcompanhamentoMercurioLocal(timestampAntes, inicioPoll, filial) {
+    try { localStorage.setItem(CHAVE_LS_MERCURIO_EM_ANDAMENTO, JSON.stringify({ timestampAntes, inicioPoll, filial })); } catch { /* ignora */ }
+}
+function limparAcompanhamentoMercurioLocal() {
+    try { localStorage.removeItem(CHAVE_LS_MERCURIO_EM_ANDAMENTO); } catch { /* ignora */ }
+}
+
+async function dispararMercurioAgora(filial = null) {
     if (disparoMercurioEmAndamento) {
         alert('Já tem uma rodada do Mercúrio em andamento — acompanhe na tela "Sincronização Automática" (aba Importar) em vez de disparar de novo.');
         if (typeof abrirSincronizacaoScraper === 'function') abrirSincronizacaoScraper();
@@ -520,7 +562,7 @@ async function dispararMercurioAgora() {
         .maybeSingle();
     const timestampAntes = antes ? antes.executado_em : null;
 
-    const { data, error } = await window.supabaseClient.functions.invoke('scraper-disparar', { body: {} });
+    const { data, error } = await window.supabaseClient.functions.invoke('scraper-disparar', { body: { filial: filial || '' } });
 
     if (error || (data && data.ok === false)) {
         const motivo = (data && data.detalhe) || (error && error.message) || 'erro desconhecido';
@@ -533,17 +575,30 @@ async function dispararMercurioAgora() {
     // Abre (ou já deixa aberta) a tela de status — sempre que disparado,
     // de qualquer botão, pra nunca mais parecer que "não fez nada".
     if (typeof abrirSincronizacaoScraper === 'function') await abrirSincronizacaoScraper();
+    const inicioPoll = Date.now();
+    salvarAcompanhamentoMercurioLocal(timestampAntes, inicioPoll, filial || null);
+    await iniciarAcompanhamentoMercurio(timestampAntes, inicioPoll, filial || null);
+}
+
+// Extraído de dispararMercurioAgora() pra poder ser chamado tanto por um
+// disparo novo quanto por uma página recém-recarregada que encontrou um
+// acompanhamento salvo em localStorage (ver restaurarAcompanhamentoMercurioSeHouver()
+// mais abaixo) — o comportamento de "acompanhar até terminar ou dar
+// timeout" é idêntico nos 2 casos, só a origem do timestamp muda.
+async function iniciarAcompanhamentoMercurio(timestampAntes, inicioPoll, filial) {
+    disparoMercurioEmAndamento = true;
+    const sufixoFiltro = filial ? ` (filtro: "${filial}")` : ' (todas as filiais)';
     atualizarBotoesDispararMercurio(true, '<i class="fa-solid fa-circle-notch fa-spin"></i> Rodando (leva alguns minutos)...');
-    await renderizarStatusSincronizacaoScraper('Disparado! Acompanhando — isso costuma levar alguns minutos (o job passa por todas as filiais).');
+    await renderizarStatusSincronizacaoScraper(`Disparado${sufixoFiltro}! Acompanhando — isso costuma levar alguns minutos.`);
 
     if (pollSincronizacaoTimer) clearInterval(pollSincronizacaoTimer);
-    const inicioPoll = Date.now();
     const TIMEOUT_POLL_MS = 20 * 60 * 1000; // 20 min — folga generosa sobre o tempo real observado
     pollSincronizacaoTimer = setInterval(async () => {
         if (Date.now() - inicioPoll > TIMEOUT_POLL_MS) {
             clearInterval(pollSincronizacaoTimer);
             pollSincronizacaoTimer = null;
             disparoMercurioEmAndamento = false;
+            limparAcompanhamentoMercurioLocal();
             atualizarBotoesDispararMercurio(false, '<i class="fa-solid fa-play"></i> Rodar Mercúrio Agora');
             await renderizarStatusSincronizacaoScraper('Ainda não vi terminar depois de 20min — confira direto no GitHub Actions, ou só espere e reabra esta tela depois.');
             return;
@@ -562,11 +617,25 @@ async function dispararMercurioAgora() {
             clearInterval(pollSincronizacaoTimer);
             pollSincronizacaoTimer = null;
             disparoMercurioEmAndamento = false;
+            limparAcompanhamentoMercurioLocal();
             atualizarBotoesDispararMercurio(false, '<i class="fa-solid fa-play"></i> Rodar Mercúrio Agora');
             await renderizarStatusSincronizacaoScraper();
         }
     }, 15000);
 }
+
+// Roda 1x ao carregar a página — se havia um acompanhamento em andamento
+// no momento do reload (dentro do orçamento de 20min), retoma sozinho em
+// vez de deixar o botão "solto" (ver comentário de
+// CHAVE_LS_MERCURIO_EM_ANDAMENTO acima).
+function restaurarAcompanhamentoMercurioSeHouver() {
+    let salvo = null;
+    try { salvo = JSON.parse(localStorage.getItem(CHAVE_LS_MERCURIO_EM_ANDAMENTO) || 'null'); } catch { /* ignora */ }
+    if (!salvo || typeof salvo.inicioPoll !== 'number') return;
+    if (Date.now() - salvo.inicioPoll > 20 * 60 * 1000) { limparAcompanhamentoMercurioLocal(); return; }
+    iniciarAcompanhamentoMercurio(salvo.timestampAntes, salvo.inicioPoll, salvo.filial || null);
+}
+document.addEventListener('DOMContentLoaded', restaurarAcompanhamentoMercurioSeHouver);
 
 // Chave de telefone pra casar registros por número em vez de nome — cobre
 // os casos de erro de digitação no nome entre planilhas diferentes (a

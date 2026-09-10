@@ -1067,7 +1067,10 @@
                 O Mercúrio (Ativos/Inativos/Aniversariantes/Turmas/Matrículas recentes) já roda sozinho todo dia às 05:00
                 (Brasília). Use o botão abaixo pra rodar na hora, sem esperar.
             </p>
-            <button class="btn-primary btn-disparar-mercurio" onclick="dispararMercurioAgora()" style="width:100%; margin-bottom:10px;">
+            <select id="mercurioFilialFiltro" style="width:100%; margin-bottom:8px; padding:8px; border:1px solid #cbd5e1; border-radius:6px; box-sizing:border-box; font-size:12px;">
+                <option value="">Todas as filiais</option>
+            </select>
+            <button class="btn-primary btn-disparar-mercurio" onclick="dispararMercurioAgora(document.getElementById('mercurioFilialFiltro').value || null)" style="width:100%; margin-bottom:10px;">
                 <i class="fa-solid fa-play"></i> Rodar Mercúrio Agora
             </button>
             <div id="sincronizacaoScraperStatusMercurio" style="margin-bottom:18px;"></div>

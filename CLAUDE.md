@@ -3272,6 +3272,75 @@ bloqueado).
        GitHub dele, não dá pra gerar por fora). Sem o secret configurado, o
        botão mostra o erro claro `GITHUB_TOKEN_DISPATCH não configurado`
        (a function já checa isso antes de tentar chamar o GitHub).
+     - **Disparo por 1 filial só (2026-09-10, pedido do usuário)**: motivo
+       duplo — testar uma mudança numa filial só sem esperar as outras 3, e
+       evitar tráfego desnecessário no Mercúrio conforme mais filiais forem
+       entrando (login/exportação de todas de uma vez fica cada vez mais
+       pesado). `<select id="mercurioFilialFiltro">` dentro do modal
+       (populado a partir de `filiaisDisponiveis`, "Todas as filiais" como
+       padrão) — o botão da Agenda do Dia (Dashboard) continua sempre
+       disparando TODAS, de propósito (é o botão "atualiza tudo" do
+       cross-filial, não faria sentido restringir a 1). O valor escolhido
+       vai em `{filial}` no corpo de `scraper-disparar` -> repassado como
+       `inputs.filial` no `workflow_dispatch` (novo `on.workflow_dispatch.inputs.filial`
+       em `scraper.yml`) -> chega em `mercurio.js` via `process.env.FILTRO_FILIAL`
+       -> cai no MESMO `filtro` que já existia pra uso local
+       (`node mercurio.js -- "Garavelo"`, agora com 2 fontes possíveis:
+       argv OU env var). String vazia/omitida em qualquer ponto da cadeia =
+       comportamento de sempre (todas as filiais). **Não testado de ponta
+       a ponta contra o GitHub Actions real** (deploy da Edge Function já
+       feito; evitei disparar mais uma rodada real logo depois de já ter
+       corrigido 2 rodadas redundantes na produção, ver bullet abaixo) — a
+       próxima vez que o usuário escolher 1 filial no seletor valida o
+       caminho completo.
+     - **Bug real relatado pelo usuário (2026-09-10): "atualizei a página
+       e pareceu que parou de rodar"** — não parou: o job roda inteiramente
+       no GitHub Actions, sem nenhuma dependência do navegador continuar
+       aberto. O que se perdia era só o ACOMPANHAMENTO visual
+       (`disparoMercurioEmAndamento`/`pollSincronizacaoTimer` são só
+       memória JS, zeram com qualquer F5) — sem nenhum sinal de "ainda tem
+       uma rodada rolando", o botão "Rodar Mercúrio Agora" voltava a
+       aparecer solto/clicável, convidando a clicar de novo. **Foi
+       exatamente isso que aconteceu**, confirmado consultando a API REST
+       do GitHub (`api.github.com/repos/.../actions/workflows/scraper.yml/runs`,
+       pública, sem token — o repositório é público): a rodada que o
+       usuário via completar às 16:00:59 (Brasília) era real e tinha
+       terminado com sucesso, mas 2 rodadas REDUNDANTES foram disparadas
+       poucos minutos depois (16:09 e 16:16), quase certamente pelo mesmo
+       clique repetido depois do reload. Corrigido persistindo
+       `{timestampAntes, inicioPoll, filial}` em `localStorage`
+       (`crm_na_mercurio_disparo_em_andamento`) a cada disparo — a lógica
+       de acompanhamento foi extraída pra `iniciarAcompanhamentoMercurio()`,
+       chamada tanto por um disparo novo quanto por
+       `restaurarAcompanhamentoMercurioSeHouver()` (roda 1x no
+       `DOMContentLoaded`): se sobrar um acompanhamento salvo e ainda
+       dentro do orçamento de 20min, RETOMA sozinho (mesmo timestamp,
+       mesmo relógio de início — não reinicia a janela de timeout), sem
+       deixar o botão parecer "livre" enquanto ainda tem uma rodada de
+       verdade em andamento no GitHub. **As 2 rodadas redundantes da
+       produção não foram canceladas** (não tenho o token
+       `GITHUB_TOKEN_DISPATCH` neste ambiente pra chamar a API de
+       cancelamento) — são só um desperdício de tempo de CI, não
+       corrompem nada (o Mercúrio faz upsert, reimportar 2x a mesma coisa
+       é inofensivo); se quiser, cancelar manualmente pela aba Actions do
+       GitHub.
+     - **Achado incidental investigando o bug acima**: as tentativas
+       manuais de Ulisses do próprio dia (13:49-14:26 Brasília, ANTES da
+       limpeza total desta sessão) mostraram URLs com
+       `?login_hint=...@...` nos logs de erro — o parâmetro que já tinha
+       sido testado e REVERTIDO (ver bullet "Tentativa de pré-preencher o
+       e-mail via login_hint... TESTADA e REVERTIDA" mais abaixo). Ou seja,
+       `C:\Scrapper` estava rodando uma cópia DESATUALIZADA de
+       `ulisses-local.js` (o revert existia no código-fonte/git, mas nunca
+       tinha sido copiado pra lá) — explica pelo menos parte das falhas
+       reais de Garavelo/Jardim América naquele dia. **Lição**: depois de
+       qualquer edição em `scraper/*.js` nesta sessão (ou em qualquer
+       sessão futura), reconferir que `C:\Scrapper` foi realmente
+       ressincronizado ANTES da próxima rodada real — "committei e
+       documentei" não é o mesmo que "está rodando de verdade na máquina
+       que importa". `ulisses-local.js`/`verificar-eventos-publicos.js`/
+       `mercurio.js` foram resincronizados nesta sessão (ver histórico
+       acima) — já sem esse parâmetro.
 
 ### Lembrete de importação do Ulisses (WhatsApp pro admin)
 

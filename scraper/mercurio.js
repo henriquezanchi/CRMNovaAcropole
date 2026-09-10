@@ -731,7 +731,14 @@ async function main() {
         // Filtro opcional por linha de comando (node mercurio.js -- "Garavelo"
         // ou npm run mercurio -- "Garavelo") — mesmo padrão de
         // ulisses-local.js, útil pra testar 1 filial só sem esperar todas.
-        const filtro = process.argv[2];
+        // `FILTRO_FILIAL` (env var) é o MESMO filtro, só que vindo do
+        // workflow_dispatch do GitHub Actions (ver .github/workflows/
+        // scraper.yml + supabase/functions/scraper-disparar) — é assim que
+        // o botão "Rodar Mercúrio Agora" do CRM consegue disparar só 1
+        // filial em vez de sempre rodar as 4 (pedido do usuário 2026-09-10:
+        // testar mudança numa filial só, e evitar tráfego desnecessário no
+        // Mercúrio conforme mais filiais forem entrando).
+        const filtro = process.argv[2] || process.env.FILTRO_FILIAL || null;
         const cadastros = filtro
             ? cadastrosTodos.filter(c => c.label.toLowerCase().includes(filtro.toLowerCase()))
             : cadastrosTodos;
@@ -809,9 +816,10 @@ async function main() {
             await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
         }
 
+        const sufixoFiltro = filtro ? ` (filtro: "${filtro}")` : '';
         await registrarStatusSincronizacao('mercurio', null, !algumaFalha, algumaFalha
-            ? 'Login OK, mas 1+ exportação (Ativos/Inativos ou Aniversariantes) falhou — ver logs e prints do workflow.'
-            : `Login + exportação de Ativos/Inativos + Aniversariantes (já sincronizados no CRM) OK para ${cadastros.length} filial(is).`);
+            ? `Login OK, mas 1+ exportação (Ativos/Inativos ou Aniversariantes) falhou — ver logs e prints do workflow.${sufixoFiltro}`
+            : `Login + exportação de Ativos/Inativos + Aniversariantes (já sincronizados no CRM) OK para ${cadastros.length} filial(is)${sufixoFiltro}.`);
 
         // Roda sempre, mesmo se alguma filial falhou acima — o lembrete de
         // rodar o Ulisses importa MAIS ainda quando algo deu errado.
