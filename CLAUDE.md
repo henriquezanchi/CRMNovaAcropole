@@ -1021,6 +1021,34 @@ Decisões já tomadas (não precisam ser reabertas, a menos que o usuário peça
     importação de Ativos/Inativos no job DIÁRIO automático do scraper —
     ver `importarNoCrm()` dentro de `main()` em `scraper/mercurio.js`
     (seção do scraper) e "Inscrito: Abertura de Turma" logo abaixo.
+  - **Bug real #3 (2026-09-10, achado em produção)**: mesmo com o bug #2
+    corrigido, a importação automática travou de verdade em 2 filiais
+    (Barra do Garças/MT e Goiânia - Garavelo) com o erro do Postgres
+    `"ON CONFLICT DO UPDATE command cannot affect row a second time"` —
+    significa que o LOTE enviado ao `.upsert()` tinha 2+ linhas com o
+    MESMO `pessoaIdentificador` (o Postgres recusa o lote INTEIRO nesse
+    caso, não só a linha repetida). Investigação extensa (replicando a
+    lógica de redirecionamento em Node contra os CSVs reais exportados
+    daquela rodada, via artifact do GitHub Actions, e contra um dump dos
+    leads existentes) não conseguiu isolar 100% a origem exata do
+    duplicado com o snapshot do banco já um pouco adiante no tempo — mas
+    achou evidência de que a filial já tem leads DUPLICADOS de antes
+    desta sessão (ex: "CELSO JESUS MORAIS" existe 3x com
+    `pessoaIdentificador` diferentes em Barra do Garças — resíduo do Bug
+    #2 de quando ele ainda não existia, cada rodada só-Mercúrio antiga
+    criando um sintético novo). O redirecionamento por nome corretamente
+    SE RECUSA a redirecionar quando há homônimo ambíguo (>1 candidato),
+    então esse resíduo específico não é redirecionado — mas não dá pra
+    garantir que outro padrão parecido não gere 2 redirecionamentos pro
+    MESMO alvo em condições de dado ainda não replicadas. **Resolvido com
+    uma rede de segurança, não uma correção pontual**: antes do
+    `.upsert()`, `registrosFinais` passa por um `Map` por
+    `pessoaIdentificador` (fica só 1 registro por id, o último) — se
+    houver qualquer duplicado, um aviso aparece no log em vez da
+    importação INTEIRA falhar. Não elimina o problema de origem (leads
+    duplicados antigos ainda precisam de uma limpeza manual/mesclagem via
+    "Leads a Tratar" em algum momento), mas garante que 1 duplicado
+    nunca mais trava a importação de uma filial inteira.
   - `"Sem Telefone"`/`"Sem E-mail"` são recalculadas por ÚLTIMO, sempre em
     cima do valor FINAL de telefone/e-mail (já com a preservação acima
     aplicada) — nunca em cima do dado transiente da planilha parcial,

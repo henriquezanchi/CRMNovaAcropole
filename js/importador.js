@@ -1600,12 +1600,32 @@ async function confirmarEnviarImportacao() {
         logImport(`${contRecuperados} lead(s) estavam Inativos e voltaram a ser Ativos nesta importação — marcados com a tag "Recuperado".`, 'ok');
     }
 
-    logImport(`Enviando ${registrosFinais.length} leads ao Supabase, em lotes de 500...`);
+    // Rede de segurança: um upsert com `pessoaIdentificador` REPETIDO no
+    // MESMO lote faz o Postgres rejeitar o lote INTEIRO com "ON CONFLICT
+    // DO UPDATE command cannot affect row a second time" — bug real
+    // achado em produção (2026-09-10, Barra do Garças e Garavelo, ambos
+    // travaram o job automático do Mercúrio; a causa exata de origem do
+    // duplicado não foi 100% isolada — investigação apontou pra dados já
+    // duplicados de ANTES da correção do "Bug real #2" acima, que o
+    // redirecionamento por nome não consegue desfazer sozinho quando o
+    // duplicado já está nos dois lados). Em vez de deixar a importação
+    // INTEIRA falhar por causa de 1 registro colidindo, deduplica por
+    // `pessoaIdentificador` aqui — fica com o ÚLTIMO valor de cada id
+    // repetido (mais recente no processamento) e avisa no log, pra nunca
+    // travar a importação inteira por isso.
+    const porId = new Map();
+    registrosFinais.forEach(r => porId.set(r.pessoaIdentificador, r));
+    if (porId.size < registrosFinais.length) {
+        logImport(`Aviso: ${registrosFinais.length - porId.size} registro(s) com pessoaIdentificador repetido no mesmo lote — mantido só 1 por id, pra não travar a importação inteira (revise possíveis duplicados nesta filial depois).`, 'warn');
+    }
+    const registrosDedupe = [...porId.values()];
+
+    logImport(`Enviando ${registrosDedupe.length} leads ao Supabase, em lotes de 500...`);
 
     const TAMANHO_LOTE_ENVIO = 500;
     let enviados = 0;
-    for (let i = 0; i < registrosFinais.length; i += TAMANHO_LOTE_ENVIO) {
-        const lote = registrosFinais.slice(i, i + TAMANHO_LOTE_ENVIO);
+    for (let i = 0; i < registrosDedupe.length; i += TAMANHO_LOTE_ENVIO) {
+        const lote = registrosDedupe.slice(i, i + TAMANHO_LOTE_ENVIO);
         const { error } = await window.supabaseClient
             .from(NOME_TABELA)
             .upsert(lote, { onConflict: 'pessoaIdentificador' });
@@ -1618,9 +1638,9 @@ async function confirmarEnviarImportacao() {
         }
 
         enviados += lote.length;
-        const pct = Math.round((enviados / registrosFinais.length) * 100);
+        const pct = Math.round((enviados / registrosDedupe.length) * 100);
         if (preenchimento) preenchimento.style.width = pct + '%';
-        if (label) label.innerText = `${enviados} / ${registrosFinais.length} enviados (${pct}%)`;
+        if (label) label.innerText = `${enviados} / ${registrosDedupe.length} enviados (${pct}%)`;
     }
 
     logImport(`Importação concluída! ${enviados} leads enviados para "${resultadoImportacao.filial}".`, 'ok');
@@ -1639,7 +1659,7 @@ async function confirmarEnviarImportacao() {
     // Participantes; pedido do usuário depois de um caso real (SDR ligou
     // oferecendo matrícula pra quem já tinha se inscrito numa Abertura de
     // Turma, sem que a Agenda mostrasse isso).
-    await vincularEventoLeadsAutomaticamente(resultadoImportacao.filial, registrosFinais);
+    await vincularEventoLeadsAutomaticamente(resultadoImportacao.filial, registrosDedupe);
 
     // Varredura de "Leads a Tratar" (duplicados por telefone/nome + sem
     // telefone) — roda sempre ao final de toda importação, sobre a filial
