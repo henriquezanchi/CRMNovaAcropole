@@ -27,11 +27,13 @@ Deno.serve(async (req) => {
 
     let corpoReq: {
         pessoaIdentificador?: string;
-        tipo?: "texto" | "template";
+        tipo?: "texto" | "template" | "imagem";
         texto?: string;
         templateNome?: string;
         templateParams?: string[];
         templatePreview?: string;
+        imagemUrl?: string;
+        caption?: string;
     };
     try {
         corpoReq = await req.json();
@@ -39,10 +41,11 @@ Deno.serve(async (req) => {
         return json({ ok: false, erro: "json_invalido" }, 400);
     }
 
-    const { pessoaIdentificador, tipo, texto, templateNome, templateParams, templatePreview } = corpoReq;
+    const { pessoaIdentificador, tipo, texto, templateNome, templateParams, templatePreview, imagemUrl, caption } = corpoReq;
     if (!pessoaIdentificador || !tipo) return json({ ok: false, erro: "parametros_faltando" }, 400);
     if (tipo === "texto" && !texto?.trim()) return json({ ok: false, erro: "texto_vazio" }, 400);
     if (tipo === "template" && !templateNome) return json({ ok: false, erro: "template_nome_faltando" }, 400);
+    if (tipo === "imagem" && !imagemUrl?.trim()) return json({ ok: false, erro: "imagem_url_faltando" }, 400);
 
     // Busca telefone/filial do lead no servidor — não confia no que vier do front.
     const { data: lead, error: erroLead } = await supabaseAdmin
@@ -80,6 +83,22 @@ Deno.serve(async (req) => {
                 }],
             },
         }
+        : tipo === "imagem"
+        ? {
+            // "link" (não upload de mídia) — a própria Meta busca a imagem
+            // nessa URL pra montar a mensagem; o destinatário recebe a FOTO
+            // de verdade (mensagem de mídia real, não um link de texto pra
+            // clicar) — pedido explícito do usuário ("não deve ser
+            // compartilhado o link da imagem, e sim a imagem propriamente
+            // dita"). Pensado pro "Convite Compartilhável": a pessoa recebe
+            // a foto do evento já pronta pra repassar no Status/Stories
+            // (o próprio WhatsApp já tem um botão de "compartilhar" nativo
+            // em qualquer imagem recebida).
+            messaging_product: "whatsapp",
+            to: numeroE164,
+            type: "image",
+            image: caption ? { link: imagemUrl, caption } : { link: imagemUrl },
+        }
         : {
             messaging_product: "whatsapp",
             to: numeroE164,
@@ -87,7 +106,12 @@ Deno.serve(async (req) => {
             text: { body: texto },
         };
 
-    const corpoTexto = tipo === "template" ? (templatePreview || `[Template: ${templateNome}]`) : texto;
+    const corpoTexto = tipo === "template" ? (templatePreview || `[Template: ${templateNome}]`) : tipo === "imagem" ? (caption || "[Imagem]") : texto;
+    // Guarda a URL da imagem junto do payload bruto — a resposta da Graph
+    // API não devolve a URL de volta, e o chat da gaveta precisa dela pra
+    // RENDERIZAR a imagem de verdade (não só a legenda). Ver htmlMensagemWpp()
+    // em js/whatsapp.js.
+    const payloadExtra = tipo === "imagem" ? { imagem_url: imagemUrl } : {};
 
     let respGraph: Response;
     let respJson: any;
@@ -119,7 +143,7 @@ Deno.serve(async (req) => {
             wa_status: "falhou",
             wa_status_erro: respJson?.error ?? { message: "erro desconhecido" },
             phone_number_id_meta: phoneNumberId,
-            payload_bruto: respJson,
+            payload_bruto: { ...respJson, ...payloadExtra },
         });
 
         return json({ ok: false, erro: foraDaJanela ? "janela_fechada" : "erro_meta", detalhe: respJson?.error }, 200);
@@ -136,7 +160,7 @@ Deno.serve(async (req) => {
         wa_message_id: waMessageId,
         wa_status: "enviado",
         phone_number_id_meta: phoneNumberId,
-        payload_bruto: respJson,
+        payload_bruto: { ...respJson, ...payloadExtra },
     });
 
     return json({ ok: true, wa_message_id: waMessageId });

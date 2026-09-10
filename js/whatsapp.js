@@ -159,9 +159,16 @@ function htmlMensagemWpp(m) {
     const badgeImportada = m.importado_manualmente
         ? ' <i class="fa-solid fa-file-import" title="Importada de uma conversa feita fora do CRM" style="opacity:.6; font-size:10px;"></i>'
         : '';
+    // Mensagem de imagem (Convite Compartilhável, ver confirmarConviteComFoto())
+    // — a URL não vem de volta na resposta da Meta, foi guardada em
+    // payload_bruto.imagem_url na hora do envio (ver whatsapp-send).
+    const imagemUrl = m.tipo === 'imagem' ? (m.payload_bruto && m.payload_bruto.imagem_url) : null;
+    const corpoHTML = imagemUrl
+        ? `<img src="${escapeHTML(imagemUrl)}" alt="Imagem" style="max-width:100%; border-radius:6px; display:block; margin-bottom:${m.corpo_texto ? '4px' : '0'};">${m.corpo_texto ? escapeHTML(m.corpo_texto) : ''}`
+        : escapeHTML(m.corpo_texto || '');
     return `
         <div class="msg ${classeDirecao} ${classeExtra}">
-            ${escapeHTML(m.corpo_texto || '')}
+            ${corpoHTML}
             <div class="msg-time">${badgeImportada}${formatarHoraWpp(m.criado_em)}${m.direcao === 'saida' ? statusIconHTML(m) : ''}</div>
         </div>
     `;
@@ -449,6 +456,7 @@ function abrirSeletorConviteEvento() {
 
     select.innerHTML = lista.map(ev => `<option value="${ev.id}">${escapeHTML(ev.nome)} — ${typeof formatarDataEvento === 'function' ? formatarDataEvento(ev.data) : ev.data}</option>`).join('');
     form.style.display = 'flex';
+    atualizarBotaoConviteFoto();
 }
 
 function fecharSeletorConviteEvento() {
@@ -462,6 +470,57 @@ function confirmarConviteEvento() {
     const evento = (typeof eventosAtuais !== 'undefined' ? eventosAtuais : []).find(e => e.id === eventoId);
     fecharSeletorConviteEvento();
     if (evento) enviarConviteEvento(evento);
+}
+
+// Só mostra "Compartilhar Foto" quando o evento escolhido no <select> tem
+// imagem cadastrada (imagem_url — vem do catálogo sincronizado do
+// Ulisses ou cadastrada na mão na Agenda) — sem imagem, não tem o que
+// compartilhar.
+function atualizarBotaoConviteFoto() {
+    const select = document.getElementById('drawerConviteEventoSelect');
+    const btnFoto = document.getElementById('drawerConviteEventoBtnFoto');
+    if (!select || !btnFoto) return;
+    const evento = (typeof eventosAtuais !== 'undefined' ? eventosAtuais : []).find(e => e.id === Number(select.value));
+    btnFoto.style.display = (evento && evento.imagem_url) ? 'inline-flex' : 'none';
+}
+
+// "Convite Compartilhável": manda a FOTO de verdade do evento (Graph API
+// image.link — a Meta busca a imagem nessa URL, o destinatário recebe uma
+// mensagem de mídia real, nunca um link de texto pra clicar) + legenda
+// curta, já pronta pra a pessoa repassar no Status do WhatsApp/Stories do
+// Instagram (o próprio WhatsApp tem um botão de compartilhar nativo em
+// qualquer imagem recebida — não precisamos reinventar isso). Diferente
+// de "Gerar Texto" (só preenche a caixa, nunca envia sozinho), este botão
+// ENVIA de verdade — por isso pede confirmação antes.
+async function confirmarConviteComFoto() {
+    const select = document.getElementById('drawerConviteEventoSelect');
+    const eventoId = select ? Number(select.value) : null;
+    const evento = (typeof eventosAtuais !== 'undefined' ? eventosAtuais : []).find(e => e.id === eventoId);
+    if (!evento || !evento.imagem_url) return;
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(currentLeadId));
+    if (!lead) return;
+
+    const primeiroNome = primeiroNomeFormatado(lead.pessoaNome);
+    const dataFormatada = (typeof formatarDataEvento === 'function') ? formatarDataEvento(evento.data) : evento.data;
+    const caption = `📢 ${evento.nome} — ${dataFormatada}! Compartilhe no seu Status do WhatsApp ou nos Stories do Instagram e ajude a divulgar 💙`;
+
+    if (!confirm(`Enviar a foto do evento "${evento.nome}" pra ${primeiroNome}, pronta pra ela compartilhar no Status/Stories?\n\nLegenda: "${caption}"`)) return;
+    fecharSeletorConviteEvento();
+
+    const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
+        body: { pessoaIdentificador: currentLeadId, tipo: 'imagem', imagemUrl: evento.imagem_url, caption }
+    });
+    if (error) { alert('Erro ao enviar: ' + error.message); return; }
+    if (!data.ok) {
+        if (data.erro === 'janela_fechada') {
+            alert('Essa conversa está fora da janela de 24h — não dá pra enviar uma foto agora fora da janela (só template aprovado funciona fora dela, e templates não têm imagem configurada ainda). Espere a pessoa mandar mensagem pra reabrir a janela.');
+        } else {
+            console.error('Erro ao enviar convite com foto:', data.detalhe || data.erro);
+            alert('Não foi possível enviar: ' + mensagemErroWpp(data));
+        }
+        return;
+    }
+    await chatDrawer.abrir(currentLeadId); // recarrega o chat pra já mostrar a foto enviada
 }
 
 // Só preenche a caixa de texto do chat da gaveta (não envia sozinho) —

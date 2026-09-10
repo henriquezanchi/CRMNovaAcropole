@@ -1969,6 +1969,60 @@ uso principal do CRM é resgate de leads frios.
   preencher, só template aprovado); nesse caso mostra o texto num
   `alert()` pra copiar manualmente.
 
+### Convite Compartilhável (foto real, pronta pra Status/Stories)
+
+Pedido do usuário: mandar pro MEMBRO (aluno Ativo) uma mensagem com a
+foto de verdade do evento (não um link) + legenda curta, pra ele
+repassar no Status do WhatsApp ou nos Stories do Instagram — o WhatsApp
+já tem um botão nativo de "compartilhar" em qualquer imagem recebida, não
+precisamos reinventar isso, só entregar a foto certa na hora certa.
+
+- **Botão "Compartilhar Foto"** (`#drawerConviteEventoBtnFoto`, ao lado de
+  "Gerar Texto" no seletor de "Convidar pra Evento" já existente, gaveta
+  do lead) — só aparece quando o evento escolhido tem `imagem_url`
+  preenchida (`atualizarBotaoConviteFoto()`, chamado no `onchange` do
+  `<select>` e ao abrir o seletor). Sem imagem cadastrada no evento, não
+  tem o que compartilhar — segue só com "Gerar Texto" (fluxo de sempre).
+- **`confirmarConviteComFoto()`** (`js/whatsapp.js`) monta uma legenda
+  automática (`"📢 {evento} — {data}! Compartilhe no seu Status do
+  WhatsApp ou nos Stories do Instagram..."`), pede confirmação (`confirm()`
+  — diferente de "Gerar Texto", este botão ENVIA de verdade, não só
+  preenche a caixa) e chama `whatsapp-send` com `{tipo: 'imagem',
+  imagemUrl, caption}`.
+- **`whatsapp-send` estendida** pra aceitar `tipo: 'imagem'` — monta
+  `{type: "image", image: {link: imagemUrl, caption}}` pra Graph API. Usa
+  **`link`, não upload de mídia** — a própria Meta busca a imagem nessa
+  URL; o destinatário recebe uma mensagem de MÍDIA REAL (uma foto de
+  verdade no chat), nunca um link de texto pra clicar — foi exatamente
+  isso que o usuário pediu ("não deve ser compartilhado o link da imagem,
+  e sim a imagem propriamente dita"). Mesma regra de sempre: só funciona
+  dentro da janela de 24h (mensagem de mídia livre também é sujeita à
+  janela, igual texto livre — só template aprovado escapa disso, e
+  templates com imagem não estão configurados ainda).
+- **`imagem_url` do evento** já existe (`eventos.imagem_url`,
+  `migracao_eventos_multifilial.sql`) — alimentada automaticamente pelo
+  scraper (`sincronizarCatalogoEventosNoCrm()`, captura do Ulisses) ou
+  cadastrada na mão na Agenda. Nenhuma tabela/coluna nova precisou ser
+  criada pra este recurso.
+- **Renderização no chat**: como a resposta da Graph API não devolve a
+  URL da imagem de volta, `whatsapp-send` guarda `{imagem_url}` dentro de
+  `payload_bruto` (tanto no envio com sucesso quanto na falha) —
+  `htmlMensagemWpp()` (`js/whatsapp.js`) lê `m.payload_bruto.imagem_url`
+  pra desenhar um `<img>` de verdade acima da legenda, quando
+  `m.tipo === 'imagem'`.
+- **Testado ao vivo** (payload construído e enviado de verdade pra Graph
+  API — recebeu o mesmo erro conhecido "API access blocked" do bloqueio
+  atual, confirmando que o request chegou formatado corretamente; a
+  linha gravada em `mensagens_whatsapp` tem `tipo='imagem'`,
+  `payload_bruto.imagem_url` preservado, e a legenda em `corpo_texto`) e
+  a renderização (`<img>`) foi confirmada visualmente com uma imagem de
+  teste. **Ainda não testado com entrega real** — depende do
+  desbloqueio da API (ver seção "Bloqueio da API do WhatsApp").
+- **Só existe hoje pra 1 lead por vez**, a partir da gaveta (mesmo ponto
+  de entrada de "Convidar pra Evento") — envio em massa pra vários
+  membros de uma vez (ex: via seleção no Kanban) não foi construído,
+  fica como extensão natural se o volume pedir.
+
 ### Setup pendente (só o usuário consegue fazer, fora do código)
 Checklist completo: Business Manager → App tipo "Business" com produto
 WhatsApp → número de teste ou verificado (anotar `phone_number_id` e WABA
