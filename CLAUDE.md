@@ -1699,6 +1699,20 @@ qualquer mudança de código.
   entradas da FILIAL ATUAL, mais recente primeiro, só leitura. Pensado
   como "o que aconteceu aqui" pra conferência rápida, não um relatório
   analítico com filtro/exportação.
+  - **Bug real relatado pelo usuário (2026-09-10): a entrada não dizia
+    QUEM** — `mover_lead` mostrava só "1 lead(s) · novaColuna: Matriculados
+    · colunasAnteriores: [Frios]", sem nome nenhum, inútil pra auditoria de
+    verdade ("qual lead foi movido?"). Corrigido: `carregarLogAtividade()`
+    resolve `pessoa_ids` -> nome em 1 query em lote
+    (`resolverNomesLeadsLog()`) e `formatarDetalhesLog()` monta uma frase
+    por tipo de `acao` em vez do dump genérico "chave: valor" — ex: "moveu
+    **Fulano de Tal** de Frios para Matriculados". Cada nome é um link
+    clicável (`renderizarNomesLog()`, chama `abrirResultadoBuscaGlobal()`)
+    que abre o lead na hora; id sem nome resolvido (lead já apagado/
+    mesclado desde então) mostra "lead #ID (não encontrado)" em vez de
+    sumir. Ação em massa mostra só os 6 primeiros nomes + "e mais N"
+    (`LIMITE_NOMES_LOG_ATIVIDADE`), pra não virar um bloco gigante numa
+    edição de tag em 500 leads.
 - **Testado ao vivo** contra o Supabase real (filial descartável): mover
   lead grava `acao='mover_lead'` com `novaColuna`/`pessoa_ids` corretos,
   adicionar tag grava `acao='tag_adicionar'`, o modal renderiza as
@@ -2747,27 +2761,92 @@ bloqueado).
          descartável): evento pré-existente com `imagem_url`/`capacidade`
          reais manteve os dois depois de sincronizar um catálogo com
          esses campos vazios; `tipo` recalculado certo ("Palestra").
-       - **Bug real #3, GRAVÍSSIMO (2026-09-10) — evento de OUTRA filial
-         sendo criado sob a filial atual**: `sincronizarComparecimentoNoCrm()`
-         criava uma linha em `eventos` pra TODO nome visto no `<select>`
-         da tela Recepção, sob a filial da conta logada — mas esse
-         `<select>` lista eventos de QUALQUER filial do Ulisses (documentado
-         desde sempre em `exportarComparecimento()`), não só da conta
-         atual. Confirmado em produção: "Bushido, o código de honra dos
-         samurais"/"Workshop de Oratória" (eventos genuínos de Garavelo)
-         apareceram TAMBÉM cadastrados sob "Goiânia - Setor Oeste", com 0
-         vínculos — o usuário via "só 1 de 2 eventos futuros" porque o
-         outro nem existia de verdade ali, e "a aba de eventos do Setor
-         Oeste mostra eventos do Garavelo". Corrigido: só cria uma linha
-         NOVA de evento se houver 1+ participante LOCAL de verdade
-         (telefone/e-mail batendo com um lead desta filial, mesma
-         checagem de nome de sempre) — sem isso, quase certo que o evento
-         não é desta filial, só "aparece na lista" (log de aviso, não
-         cria nada). Não afeta evento que já existe sob esta filial
-         (exato ou por nome parecido — esse caso já é comprovadamente
-         local). **Testado ao vivo** (filial descartável): evento sem
-         participante local não cria linha nenhuma; evento com
-         participante local continua criando normalmente.
+       - **Bug real #3 — DIAGNÓSTICO ORIGINAL CORRIGIDO (2026-09-10, o
+         usuário apontou o erro com prints reais do Ulisses)**: a versão
+         anterior deste bullet afirmava que o `<select>` da tela Recepção
+         lista eventos de QUALQUER filial do sistema, indiscriminadamente
+         — **isso é FALSO**, correção direta do usuário. O que a tela
+         Recepção de uma filial mostra são as **inscrições feitas PARA
+         aquela filial especificamente** — inclusive de um evento CRIADO
+         (aba Links) por OUTRA conta. É assim porque existem eventos
+         **centralizados**: a filial Setor Universitário, por exemplo,
+         centraliza a criação dos eventos de "Abertura de Turma" pra toda
+         a região de Goiânia — por isso a aba Links de uma filial comum
+         nunca mostra esses eventos (não foram criados por ela), mas a
+         Recepção mostra corretamente, porque quem se inscreveu escolheu
+         aquela unidade especificamente no formulário público de
+         inscrição (`inscricao.acropolebrasil.com.br`, que lista TODAS as
+         unidades com sua data/hora própria num rádio "Selecione a
+         unidade de interesse" — confirmado por print real). Isso é
+         legítimo e intencional, não um vazamento cross-filial.
+         Confirmado consultando o export real da Recepção de Setor Oeste
+         (`comparecimento-Goi_nia___Setor_Oeste.json`): o mesmo nome
+         `"Novas turmas do Curso de Filosofia para Viver"` aparece com 3
+         datas BEM diferentes (14/10/2026, 28/05/2026, 27/11/2025) — são
+         3 ciclos reais e distintos dessa campanha recorrente, cada um
+         com gente que de fato se inscreveu para Setor Oeste naquele
+         ciclo, não "vazamento" de outra filial.
+         **O que ainda não está 100% explicado**: "Bushido, o código de
+         honra dos samurais"/"Workshop de Oratória" (criados pela aba
+         Links de Garavelo) existem em produção como linhas PRÓPRIAS
+         também sob "Goiânia - Setor Oeste" (`eventos.id` 203/202), com a
+         MESMA data exata de Garavelo e 0 vínculos cada — diferente do
+         padrão "Novas turmas" acima (datas distintas por ciclo). Duas
+         explicações possíveis, não confirmadas: (a) são eventos de
+         ocorrência única (1 data, 1 local — talvez sediado em Garavelo)
+         pros quais Setor Oeste também pode inscrever seu próprio público
+         (mesmo padrão de evento multi-filial que `grupo_evento_id` já
+         modela no CRM, ver seção "Eventos multi-filial" — nesse caso as
+         2 linhas de Setor Oeste são legítimas e vão ganhar vínculos
+         assim que alguém de lá se inscrever/comparecer), ou (b) alguma
+         outra causa ainda não diagnosticada. **A trava adicionada
+         (`chavesComParticipanteLocal`, só criar uma linha NOVA de evento
+         se houver 1+ participante local de verdade batendo telefone/
+         e-mail) foi MANTIDA no código** — é uma rede de segurança
+         razoável independente do diagnóstico (nunca cria uma linha vazia
+         "só por aparecer na lista"), mas a JUSTIFICATIVA original
+         ("dropdown global") estava errada e foi removida daqui. Se
+         Setor Oeste realmente hospeda sessão própria de Bushido/Workshop,
+         essa trava não impede nada — a linha já existe, só falta alguém
+         local ser vinculado (manualmente pela tela de Participantes, ou
+         automaticamente quando/se um participante local for encontrado
+         numa rodada futura).
+       - **RESOLVIDO (2026-09-10, o usuário confirmou direto)**: são
+         exclusivos do Garavelo mesmo — confirmado consultando os sites
+         públicos das 3 outras filiais (`acropole.org.br/goiania-
+         setoroeste/`, `.../goiania-jardimamerica/`, `.../barradogarcas/`)
+         via WebFetch: nenhum menciona "Bushido"/"Workshop de Oratória".
+         A causa mais provável (não 100% confirmada — sem log de sessão
+         do Playwright pra provar) é confusão humana no login manual
+         (`ulisses-local.js`): digitar/aceitar a senha de UMA filial na
+         janela que o script abriu pensando ser OUTRA — o mesmo padrão já
+         registrado antes neste arquivo ("usuário relatou ter se
+         confundido sobre qual filial estava logando"). **2 defesas
+         novas**: (1) `verificarFilialLogada()` em `ulisses-local.js` —
+         depois do login, clica no link "Filial" do menu do Ulisses e lê
+         o texto da página; se bater com uma filial DIFERENTE da
+         esperada, ABORTA sem exportar/gravar nada nessa filial (escrito
+         sem HTML real confirmado — próxima rodada valida o seletor). (2)
+         `scraper/verificar-eventos-publicos.js`, NOVO — ao final de
+         `npm run ulisses-local`, confere cada evento futuro que ficou em
+         `eventos` contra o site público da MESMA filial
+         (`filiais.slug_site_publico`, `migracao_filial_slug_site_publico.sql`,
+         já preenchido pras 4 filiais ativas), avisando (nunca apaga
+         nada sozinho) qualquer evento que o site público da filial não
+         confirma. **Ação tomada em produção**: dado o volume de
+         contaminação cross-filial confirmado (Mercúrio: índice stale
+         entre reloads, bug já corrigido; Ulisses: login/sessão trocada
+         entre filiais) e a dificuldade de confiar seletivamente no que
+         estava certo, o usuário decidiu apagar TUDO (leads + eventos,
+         não WhatsApp/turmas/log) das 4 filiais pra reimportar do zero já
+         com as 2 correções acima. Apagados: 14.084 leads, 277 eventos,
+         1.731 vínculos (`evento_leads`, cascade junto com os eventos) —
+         `leads_a_tratar`/`leads_a_tratar_ignorados` também limpos (ficariam
+         órfãos). Registrado em `log_atividade` (`acao =
+         'limpeza_total_reimportacao'`, 1 linha por filial, com as
+         contagens de antes). Não tocado: `mensagens_whatsapp` (histórico
+         de conversa real), `turmas` (grade do Mercúrio, não é o problema
+         relatado), `log_atividade` (append-only por design), `filiais`.
        - **Bug real #4 — vínculo de lead de OUTRA filial num evento**:
          achado consultando produção depois do relato do usuário
          ("Amelia Cristina Portugal" aparecendo na lista de um evento de

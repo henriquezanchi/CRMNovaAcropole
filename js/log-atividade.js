@@ -67,7 +67,90 @@ const ROTULOS_ACAO_LOG = {
     excluir_leads_filial: 'Excluiu leads da filial (Zona de Perigo)',
     importacao: 'Importação de planilha',
     motivo_perda: 'Registrou motivo de perda',
+    limpeza_total_reimportacao: 'Limpeza total pra reimportação',
+    importar_conversa_whatsapp: 'Importou conversa de WhatsApp',
 };
+
+// Mostra até esse nº de nomes por entrada antes de resumir em "e mais N" —
+// evita um bloco gigante numa ação em massa (ex: tag_massa em 500 leads).
+const LIMITE_NOMES_LOG_ATIVIDADE = 6;
+
+// Resolve pessoa_ids -> nome pra deixar CADA entrada legível ("quem foi
+// movido", não só "1 lead(s)") — bug real relatado pelo usuário
+// (2026-09-10): o log registrava a ação certa, mas nunca dizia QUEM,
+// deixando a auditoria inútil pra reconstruir "o que aconteceu com o
+// Fulano". 1 única query em lote (todos os ids de todas as entradas da
+// página, não 1 query por linha) — mesmo padrão de eficiência já usado em
+// outros lugares do app (ex: `carregarResumoParticipantes()`).
+async function resolverNomesLeadsLog(entradas) {
+    const idsUnicos = [...new Set(
+        entradas.flatMap(l => Array.isArray(l.pessoa_ids) ? l.pessoa_ids : [])
+    )];
+    const mapa = new Map();
+    if (idsUnicos.length === 0) return mapa;
+    const { data, error } = await window.supabaseClient
+        .from(NOME_TABELA)
+        .select('pessoaIdentificador, pessoaNome')
+        .in('pessoaIdentificador', idsUnicos);
+    if (error) { console.warn('[log-atividade] Falha ao resolver nomes:', error.message); return mapa; }
+    (data || []).forEach(l => mapa.set(String(l.pessoaIdentificador), l.pessoaNome));
+    return mapa;
+}
+
+// Monta "Fulano, Ciclano, Beltrano e mais 3" a partir de uma lista de ids —
+// cada nome é um link clicável que abre o lead na hora (mesma função da
+// busca global). Id sem nome resolvido (lead já apagado/mesclado desde
+// então) mostra "lead #ID (não encontrado)" em vez de sumir silenciosamente
+// — é informação relevante pra auditoria, não um erro a esconder.
+function renderizarNomesLog(ids, mapaNomes) {
+    if (!Array.isArray(ids) || ids.length === 0) return '';
+    const visiveis = ids.slice(0, LIMITE_NOMES_LOG_ATIVIDADE);
+    const resto = ids.length - visiveis.length;
+    const links = visiveis.map(id => {
+        const nome = mapaNomes.get(String(id));
+        const rotulo = nome ? escapeHTML(nome) : `lead #${escapeHTML(String(id))} (não encontrado)`;
+        return `<a href="#" onclick="event.preventDefault(); abrirResultadoBuscaGlobal('${escapeHTML(String(id))}');" style="color:var(--na-green-dark,#166534); text-decoration:underline;">${rotulo}</a>`;
+    });
+    return links.join(', ') + (resto > 0 ? ` e mais ${resto}` : '');
+}
+
+// Descrição por tipo de ação, cruzando `detalhes` (payload livre já
+// gravado por cada chamador) com os nomes resolvidos acima — substitui o
+// dump genérico "chave: valor" de antes, que exigia adivinhar o que
+// "novaColuna"/"colunasAnteriores" significavam. Ação não reconhecida cai
+// no dump genérico como fallback (nunca escondido, só menos bonito).
+function formatarDetalhesLog(l, mapaNomes) {
+    const d = l.detalhes || {};
+    const nomes = renderizarNomesLog(l.pessoa_ids, mapaNomes);
+    switch (l.acao) {
+        case 'mover_lead': {
+            const de = Array.isArray(d.colunasAnteriores) ? d.colunasAnteriores.join(', ') : '?';
+            return `moveu ${nomes || '(sem lead identificado)'} de <strong>${escapeHTML(de)}</strong> para <strong>${escapeHTML(d.novaColuna || '?')}</strong>`;
+        }
+        case 'tag_adicionar':
+            return `adicionou a tag <strong>"${escapeHTML(d.tag || '?')}"</strong> em ${nomes || '(sem lead identificado)'}`;
+        case 'tag_remover':
+            return `removeu a tag <strong>"${escapeHTML(d.tag || '?')}"</strong> de ${nomes || '(sem lead identificado)'}`;
+        case 'tag_massa':
+            return `${d.modo === 'remove' ? 'removeu' : 'adicionou'} a tag <strong>"${escapeHTML(d.tag || '?')}"</strong> em massa, em ${nomes || '(sem lead identificado)'}`;
+        case 'mesclar_leads': {
+            const apagados = Array.isArray(d.apagados) ? d.apagados.map(escapeHTML).join(', ') : '?';
+            return `mesclou (${d.origem === 'automatica' ? 'sugestão do sistema' : 'seleção manual'}) — manteve <strong>${escapeHTML(d.sobrevivente || '?')}</strong>, apagou: ${apagados}`;
+        }
+        case 'excluir_leads_filial':
+            return `apagou <strong>${escapeHTML(String(d.quantidade ?? '?'))} lead(s)</strong> de "${escapeHTML(l.filial || '?')}" pela Zona de Perigo`;
+        case 'limpeza_total_reimportacao':
+            return `apagou <strong>${escapeHTML(String(d.leads ?? '?'))} lead(s)</strong>, <strong>${escapeHTML(String(d.eventos ?? '?'))} evento(s)</strong> e <strong>${escapeHTML(String(d.vinculos ?? '?'))} vínculo(s)</strong> de "${escapeHTML(l.filial || '?')}" — ${escapeHTML(d.motivo || 'dado do scraper considerado não confiável')}`;
+        case 'motivo_perda':
+            return `registrou motivo de perda (<strong>${escapeHTML(d.motivo || '?')}</strong>) em ${nomes || '(sem lead identificado)'}`;
+        case 'importacao':
+            return `importou planilha em "${escapeHTML(l.filial || '?')}" (modo: ${escapeHTML(d.modo ? JSON.stringify(d.modo) : '?')}) — ${escapeHTML(String(d.enviados ?? '?'))} lead(s) enviado(s)`;
+        case 'importar_conversa_whatsapp':
+            return `importou ${escapeHTML(String(d.quantidade ?? '?'))} mensagem(ns) de WhatsApp em ${nomes || '(sem lead identificado)'}`;
+        default:
+            return Object.entries(d).map(([k, v]) => `${escapeHTML(k)}: ${escapeHTML(typeof v === 'object' ? JSON.stringify(v) : String(v))}`).join(' · ');
+    }
+}
 
 async function carregarLogAtividade() {
     const container = document.getElementById('logAtividadeLista');
@@ -91,12 +174,12 @@ async function carregarLogAtividade() {
         return;
     }
 
+    const mapaNomes = await resolverNomesLeadsLog(data);
+
     container.innerHTML = data.map(l => {
         const data_ = new Date(l.criado_em);
         const dataFmt = data_.toLocaleString('pt-BR');
         const rotulo = ROTULOS_ACAO_LOG[l.acao] || l.acao;
-        const qtd = Array.isArray(l.pessoa_ids) ? l.pessoa_ids.length : null;
-        const detalhesTxt = l.detalhes ? Object.entries(l.detalhes).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ') : '';
         return `
             <div style="padding:8px 10px; border-bottom:1px solid #eef2f7; font-size:12px;">
                 <div style="display:flex; justify-content:space-between; gap:10px;">
@@ -104,7 +187,7 @@ async function carregarLogAtividade() {
                     <span style="color:var(--text-muted); white-space:nowrap;">${escapeHTML(dataFmt)}</span>
                 </div>
                 <div style="color:var(--text-muted); margin-top:2px;">
-                    ${l.autor ? `por ${escapeHTML(l.autor)} · ` : ''}${qtd !== null ? `${qtd} lead(s) · ` : ''}${escapeHTML(detalhesTxt)}
+                    ${l.autor ? `por ${escapeHTML(l.autor)} · ` : ''}${formatarDetalhesLog(l, mapaNomes)}
                 </div>
             </div>
         `;

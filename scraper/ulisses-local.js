@@ -43,6 +43,7 @@ import 'dotenv/config';
 import { chromium } from 'playwright';
 import { supabaseAdmin, lerCredencial, registrarStatusSincronizacao } from './lib/supabaseAdmin.js';
 import { exportarCsvInscricoes, exportarCatalogoEventos, exportarComparecimento, sincronizarCatalogoEventosNoCrm, sincronizarComparecimentoNoCrm, salvarScreenshotErro } from './ulisses.js';
+import { verificarEventosPublicosDeTodasAsFiliais } from './verificar-eventos-publicos.js';
 
 const URL_LOGIN = 'https://www.acropolebrasil.com.br/login.html';
 const TIMEOUT_LOGIN_MANUAL_MS = 5 * 60 * 1000; // 5 min pra você fazer login na janela
@@ -109,7 +110,62 @@ async function aguardarLoginManual(page, emailEsperado) {
     await page.getByText('Exportar CSV', { exact: false }).waitFor({ timeout: TIMEOUT_LOGIN_MANUAL_MS });
 }
 
-async function processarFilialLocal(browser, filial) {
+// Tira "Goiânia - " do começo e "/MT" do fim, deixando só a parte que
+// distingue uma filial da outra (ex: "SETOR OESTE", "GARAVELO", "JARDIM
+// AMERICA", "BARRA DO GARCAS") — usado pra checar, por TEXTO da própria
+// tela do Ulisses, se a sessão logada é realmente da filial esperada.
+function normalizarTextoFilial(s) {
+    // Tira acento filtrando por code point (0x300-0x36f = marcas de
+    // combinação Unicode) em vez de um range num regex literal — evita
+    // depender de escape \u dentro de um /[...]/ (frágil de digitar/
+    // salvar corretamente em edição de texto).
+    const semAcento = Array.from((s || '').normalize('NFD'))
+        .filter(ch => { const c = ch.codePointAt(0); return c < 0x300 || c > 0x36f; })
+        .join('');
+    return semAcento.toUpperCase().replace(/\s+/g, ' ').trim();
+}
+function tokenDistintivoFilial(nomeFilial) {
+    return normalizarTextoFilial(nomeFilial).replace(/^GOIANIA\s*-\s*/, '').replace(/\/MT$/, '').trim();
+}
+
+// Confirma, por um sinal da PRÓPRIA tela do Ulisses, que a sessão logada
+// nesta janela é de fato da filial esperada — bug real achado pelo
+// usuário (2026-09-10): eventos genuinamente exclusivos do Garavelo
+// ("Bushido, o código de honra dos samurais"/"Workshop de Oratória",
+// confirmados ausentes do site público de Setor Oeste/Jardim América)
+// apareceram cadastrados sob "Goiânia - Setor Oeste" no CRM. Não é bug
+// de lógica do scraper (ver CLAUDE.md, correção do diagnóstico anterior)
+// — a explicação mais provável é confusão humana no login manual: digitar
+// a senha (ou aceitar uma senha salva no gerenciador do navegador) de UMA
+// filial na janela que o script abriu pensando ser de OUTRA — o script
+// então roda achando que está exportando/gravando dados de "Setor Oeste",
+// mas na verdade está autenticado como Garavelo. Clica no link "Filial"
+// do menu do Ulisses (mesmo padrão já visto no topo de toda tela:
+// "Links | Emails | Pré-inscrições | Relatórios | Exportar CSV | Filial")
+// e lê o texto da página resultante — se bater com uma filial DIFERENTE
+// da esperada, ABORTA sem exportar nem gravar nada (evita repetir o
+// mesmo mistura-de-filial). Escrito sem HTML real confirmado — se o
+// seletor "Filial" não achar nada ou o texto não bater com nenhuma
+// filial conhecida, best-effort: avisa e SEGUE mesmo assim (nunca
+// bloqueia por uma leitura inconclusiva).
+async function verificarFilialLogada(page, filialEsperada, todasFiliaisNomes) {
+    try {
+        await page.getByRole('link', { name: 'Filial', exact: true }).first().click({ timeout: 5000 });
+        await page.waitForTimeout(600);
+        const texto = normalizarTextoFilial(await page.locator('body').innerText());
+        const tokenEsperado = tokenDistintivoFilial(filialEsperada);
+        if (tokenEsperado && texto.includes(tokenEsperado)) return { ok: true };
+        const outraBatendo = todasFiliaisNomes.find(f => f !== filialEsperada && texto.includes(tokenDistintivoFilial(f)));
+        if (outraBatendo) {
+            return { ok: false, motivo: `A tela "Filial" do Ulisses mostra "${outraBatendo}", não "${filialEsperada}" — a sessão logada nesta janela parece ser de outra filial (senha da conta errada?).` };
+        }
+        return { ok: null, motivo: 'Não consegui confirmar automaticamente a filial logada (o texto da tela "Filial" não bateu com nenhuma filial conhecida) — seguindo mesmo assim, confira manualmente se os dados exportados fazem sentido.' };
+    } catch (e) {
+        return { ok: null, motivo: `Não consegui abrir/ler a tela "Filial" pra confirmar (${e.message}) — seguindo mesmo assim.` };
+    }
+}
+
+async function processarFilialLocal(browser, filial, todasFiliaisNomes) {
     console.log(`\n[ulisses-local] Filial: ${filial}`);
 
     let usuario = null;
@@ -130,7 +186,7 @@ async function processarFilialLocal(browser, filial) {
     const page = await browser.newPage();
     try {
         await aguardarLoginManual(page, usuario);
-        console.log('   Login detectado — exportando...');
+        console.log('   Login detectado — confirmando filial...');
     } catch (e) {
         console.error(`   Não detectei login concluído a tempo: ${e.message}`);
         await salvarScreenshotErro(page, filial, 'login-manual');
@@ -138,6 +194,17 @@ async function processarFilialLocal(browser, filial) {
         await page.close();
         return;
     }
+
+    const verificacao = await verificarFilialLogada(page, filial, todasFiliaisNomes);
+    if (verificacao.ok === false) {
+        console.error(`   🛑 ${verificacao.motivo}`);
+        await salvarScreenshotErro(page, filial, 'verificacao-filial');
+        await registrarStatusSincronizacao('ulisses', filial, false, verificacao.motivo + ' Nada foi exportado nem gravado nesta rodada, pra não misturar dados entre filiais.');
+        await page.close();
+        return;
+    }
+    if (verificacao.ok === null) console.warn(`   ⚠️  ${verificacao.motivo}`);
+    else console.log('   Filial confirmada — exportando...');
 
     const etapas = [
         { nome: 'exportar-csv-inscricoes', executar: () => exportarCsvInscricoes(page, filial) },
@@ -184,12 +251,17 @@ async function main() {
     console.log(`${filiais.length} filial(is) ativa(s): ${filiais.map(f => f.nome).join(', ')}`);
     console.log('Uma janela do Chromium vai abrir por vez — faça login em cada uma quando ela aparecer.\n');
 
+    const todasFiliaisNomes = (filiaisTodas || []).map(f => f.nome);
     const browser = await chromium.launch({ headless: false });
     for (const f of filiais) {
-        await processarFilialLocal(browser, f.nome);
+        await processarFilialLocal(browser, f.nome, todasFiliaisNomes);
     }
     await browser.close();
     console.log('\nConcluído. Arquivos em scraper/exports/.');
+
+    await verificarEventosPublicosDeTodasAsFiliais().catch(e =>
+        console.warn('[ulisses-local] Falha na auditoria contra os sites públicos (não bloqueia nada, é só um alerta):', e.message)
+    );
 }
 
 main().catch(e => { console.error('[ulisses-local] Erro fatal:', e); process.exit(1); });
