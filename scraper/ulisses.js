@@ -356,12 +356,28 @@ export async function exportarComparecimento(page, filial) {
     // já ter a base do evento no CRM (nome + data), mesmo sem os detalhes
     // completos (esses só vêm de exportarCatalogoEventos, só p/ eventos
     // futuros da própria filial).
+    // Bug real confirmado em produção (2026-09-10, Garavelo e Jardim
+    // América — as 2 filiais com MAIS histórico de eventos): `waitFor()`
+    // só garante que a TAG <select> existe, não que suas <option>s de
+    // verdade já carregaram — pro Angular popular uma lista de milhares de
+    // eventos (Garavelo: 6439 linhas no histórico completo) demora mais
+    // que pra só desenhar o elemento vazio. Print de erro real mostrou a
+    // tela sempre no estado PADRÃO ("- Selecione um evento -", tabela
+    // vazia) — sinal de que o erro "Nenhum evento encontrado" abaixo
+    // disparava ANTES das opções de verdade chegarem, não porque elas não
+    // existissem. Corrigido com espera ATIVA (poll) em vez de uma leitura
+    // única — mesmo padrão já usado em exportarCatalogoEventos() pro
+    // Título do card.
     const combobox = page.locator('select').first();
     await combobox.waitFor({ timeout: 10000 });
-    const opcoes = (await combobox.locator('option').allTextContents())
-        .map(t => t.trim())
-        .filter(t => t && !t.toLowerCase().startsWith('- selecione'));
-    if (opcoes.length === 0) throw new Error('Nenhum evento encontrado no seletor da tela de Recepção.');
+    let opcoes = [];
+    for (let tentativa = 0; tentativa < 40 && opcoes.length === 0; tentativa++) {
+        opcoes = (await combobox.locator('option').allTextContents())
+            .map(t => t.trim())
+            .filter(t => t && !t.toLowerCase().startsWith('- selecione'));
+        if (opcoes.length === 0) await page.waitForTimeout(500);
+    }
+    if (opcoes.length === 0) throw new Error('Nenhum evento encontrado no seletor da tela de Recepção (esperei 20s pelas opções carregarem).');
 
     // Filtra pros últimos 3 anos — o seletor lista TODO o histórico do
     // Ulisses (confirmado por teste real: 522 eventos numa única filial),

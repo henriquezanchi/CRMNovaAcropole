@@ -2717,6 +2717,42 @@ bloqueado).
             parecido (variação de grafia) aceito normalmente; evento com
             nome levemente diferente na mesma data reaproveitou o id
             existente em vez de duplicar.
+       - **3º bug real confirmado em produção (2026-09-10) — timing em
+         `exportarComparecimento()`**: usuário relatou 2 filiais (Garavelo,
+         Jardim América — justamente as com MAIS histórico de eventos)
+         com status "login OK, mas 1+ exportação falhou". Prints de erro
+         reais (`debug/ulisses-comparecimento-*.png`) mostraram a tela
+         sempre no estado PADRÃO ("- Selecione um evento -", tabela vazia)
+         — sinal de que o erro disparava ANTES de qualquer opção real
+         carregar, não porque elas não existissem. Causa: `combobox.waitFor()`
+         só garante que a tag `<select>` existe, não que o Angular já
+         populou as `<option>`s de verdade — pra uma lista de milhares de
+         eventos (Garavelo: 6439 linhas de histórico) isso demora mais que
+         pra só desenhar o elemento vazio. Corrigido com espera ATIVA (poll
+         de 500ms, até 20s) em vez de 1 leitura única — mesmo padrão já
+         usado em `exportarCatalogoEventos()` pro Título do card. **Ainda
+         NÃO testado contra o Ulisses real** (é um ajuste de timing puro,
+         sem como reproduzir a demora real do Angular fora do site) — a
+         próxima rodada do usuário confirma se resolveu.
+       - **Setor Oeste sem NENHUM evento futuro no catálogo (usuário
+         relatou "tem vários")** — investigado, mas SEM DIAGNÓSTICO
+         CONCLUSIVO ainda: o arquivo `catalogo-eventos-*.json` daquela
+         rodada veio vazio (`[]`), e como a etapa não lançou erro (só
+         "encontrou 0 eventos futuros que abriram painel", não "erro"),
+         não sobrou print de falha pra investigar (a função só salva
+         screenshot quando lança excepion — ver `salvarScreenshotErro()`
+         chamado só no `catch` de cada etapa em `processarFilialLocal()`).
+         Duas causas possíveis, não distinguidas ainda: (a) os cards
+         futuros de Setor Oeste, por algum motivo, não abrem o painel de
+         detalhes a tempo (tratados como "de outra filial", pulados
+         silenciosamente — só um `console.warn`, que não fica salvo em
+         lugar nenhum depois que o terminal fecha); (b) esses eventos não
+         estão marcados "Ativo" no Ulisses (filtro de aba, decisão do
+         lado de lá, não um bug daqui). Pedido ao usuário: rodar
+         `npm run ulisses-local -- "Setor Oeste"` direto no terminal (não
+         pelo `.bat`, pra não perder a saída) e mandar o texto impresso —
+         qualquer linha `[ulisses] Evento N não abriu painel...` confirma
+         a causa (a).
        - **Mensagem de status corrigida**: `processarFilial()`/
          `processarFilialLocal()` diziam "(marco 2 — ainda não alimenta
          o CRM automaticamente)" mesmo depois de `sincronizarCatalogoEventosNoCrm()`/
