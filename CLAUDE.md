@@ -1689,7 +1689,20 @@ tratar informações), cada um só com os módulos que faz sentido pra ele.
 - **Conta dedicada pro scraper**: criada `usuarios_crm.nome = 'Scraper
   Automatico'` (admin, todos os módulos — evita qualquer surpresa de
   módulo faltando em alguma automação futura) e salva como credencial
-  `crm_acesso` (usuario + senha) via a própria tela/Edge Function. Ajuste
+  `crm_acesso` (usuario + senha) via a própria tela/Edge Function.
+  **Armadilha real**: a senha da conta em `usuarios_crm` e a senha
+  guardada no cofre (`credenciais_scraper`, sistema `crm_acesso`) são 2
+  lugares INDEPENDENTES — se alguém usar "Resetar Senha" (🔑) na linha
+  "Scraper Automatico" dentro de "Gerenciar Usuários" sem também
+  atualizar o cofre, o login do scraper passa a falhar (silenciosamente
+  do ponto de vista do robô: o clique em "Entrar" simplesmente não some
+  a tela, e `abrirCrmComAcesso()` estoura o timeout de 10s esperando o
+  portão fechar) — foi exatamente o que aconteceu 2026-09-10 (achado lendo
+  o log real do GitHub Actions: `locator.waitFor: Timeout 10000ms
+  exceeded` nas 4 filiais). Se isso acontecer de novo: gere uma senha
+  nova, grave em `usuarios_crm` (hash SHA-256) E no cofre (`gerenciar-credenciais`,
+  `{sistema:'crm_acesso', usuario:'Scraper Automatico', senha:...}`) NA
+  MESMA hora — nunca só um dos dois. Ajuste
   em `scraper/importar-no-crm.js` (`abrirCrmComAcesso()`): antes só
   preenchia a senha (`#acessoSenhaInput`); agora também SELECIONA o nome
   certo em `#acessoNomeInput` antes de preencher a senha e clicar
