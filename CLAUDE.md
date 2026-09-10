@@ -230,6 +230,10 @@ migracao_rpc_leads_agenda_geral.sql → função leads_agenda_geral_prioritarios
 migracao_agendamento_resumo_semanal.sql → cron job que dispara o resumo semanal (agregado) pro
                                      chefe de cada filial toda segunda-feira 08:00 Brasília; JÁ
                                      RODADA nesta sessão via `supabase db query --linked`
+migracao_rpc_aniversariantes.sql  → função aniversariantes_por_mes() — filtra por mês/filial
+                                     direto no banco, corrige truncamento silencioso do limite
+                                     de 1000 linhas do PostgREST (ver seção "Agenda do Dia");
+                                     JÁ RODADA nesta sessão via `supabase db query --linked`
 ```
 
 ## Banco de dados (Supabase)
@@ -1759,10 +1763,25 @@ de 3 minutos que o resto do Dashboard já tem).
 
 5 seções, lado a lado num grid:
 
-1. **Aniversariantes de Hoje** (todas as filiais) — mesma lógica de
+1. **Aniversariantes de Hoje** (todas as filiais) — mesma ideia de
    `atualizarAniversariantes()` (Dashboard por filial), só que sem o
    filtro de `filial` e só o dia de HOJE (não o mês inteiro, já que aqui
-   é "agenda do dia").
+   é "agenda do dia"). **Bug real achado em produção (2026-09-10)**: com
+   a base já passando de ~3000 leads com `data_nascimento` preenchida
+   (bem acima do limite PADRÃO de 1000 linhas por página do PostgREST), o
+   `.select()` original vinha TRUNCADO silenciosamente — 3 dos 6
+   aniversariantes reais do dia nunca chegavam ao navegador, sem erro
+   nenhum aparecendo em lugar nenhum (usuário reportou "só aparecem 3",
+   confirmado comparando com uma consulta direta no banco). Corrigido com
+   uma função SQL, `aniversariantes_por_mes(p_mes, p_filial default null)`
+   (`migracao_rpc_aniversariantes.sql`) — filtra por MÊS (e opcionalmente
+   filial) DIRETO NO BANCO; o filtro fino por DIA continua no navegador,
+   mas agora sobre um resultado já pequeno. A mesma função também passou
+   a alimentar `atualizarAniversariantes()` (Dashboard por filial, antes
+   buscava só por filial sem filtro de mês — mesma classe de risco pra
+   filiais grandes, mesmo sem ter estourado ainda de verdade). Testado ao
+   vivo: os 6 aniversariantes reais do dia (antes só 3 apareciam)
+   confirmados na tela depois do fix.
 2. **50 Leads Prioritários pra Contatar, no TOTAL** (não 50 por filial —
    uma lista ÚNICA "quem ligar primeiro hoje" cruzando todas as unidades).
    Critério, em ordem: (1) tem uma inscrição FUTURA numa Abertura de

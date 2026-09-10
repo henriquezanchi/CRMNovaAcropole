@@ -27,19 +27,24 @@ async function carregarAgendaGeralAniversariantes() {
     if (!container) return;
     container.innerHTML = '<div style="font-size:12px; color:var(--text-muted);">Carregando...</div>';
 
-    const { data, error } = await window.supabaseClient
-        .from(NOME_TABELA)
-        .select('pessoaIdentificador, pessoaNome, data_nascimento, filial')
-        .not('data_nascimento', 'is', null);
-
-    if (error) {
-        container.innerHTML = '<div style="font-size:11px; color:var(--text-muted);">Indisponível (rode migracao_data_nascimento.sql).</div>';
-        return;
-    }
-
     const hoje = new Date();
     const mesAtual = hoje.getMonth() + 1;
     const diaAtual = hoje.getDate();
+
+    // RPC (não `.select()` direto): com a base já passando de ~3000 leads
+    // com data_nascimento preenchida, o limite PADRÃO de 1000 linhas do
+    // PostgREST truncava o resultado silenciosamente — alguns
+    // aniversariantes de hoje simplesmente nunca chegavam ao navegador
+    // (bug real, achado em produção). Filtra por MÊS direto no banco
+    // (`aniversariantes_por_mes()`, migracao_rpc_aniversariantes.sql);
+    // o filtro fino por DIA continua no navegador, sobre um resultado
+    // já pequeno (só o mês, todas as filiais).
+    const { data, error } = await window.supabaseClient.rpc('aniversariantes_por_mes', { p_mes: mesAtual });
+
+    if (error) {
+        container.innerHTML = '<div style="font-size:11px; color:var(--text-muted);">Indisponível (rode migracao_rpc_aniversariantes.sql).</div>';
+        return;
+    }
 
     const doDia = (data || []).filter(l => {
         const [, mes, dia] = l.data_nascimento.split('-').map(Number);

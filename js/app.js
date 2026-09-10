@@ -2190,27 +2190,28 @@ async function atualizarAniversariantes() {
     const container = document.getElementById('aniversariantesFeed');
     if (!container || !filialAtual) return;
 
-    const { data, error } = await window.supabaseClient
-        .from(NOME_TABELA)
-        .select('pessoaIdentificador, pessoaNome, data_nascimento')
-        .eq('filial', filialAtual)
-        .not('data_nascimento', 'is', null);
-
-    if (error) {
-        container.innerHTML = '<div style="font-size:11px; color:var(--text-muted);">Aniversariantes indisponíveis (rode migracao_data_nascimento.sql).</div>';
-        return;
-    }
-
     const hoje = new Date();
     const mesAtual = hoje.getMonth() + 1;
     const diaAtual = hoje.getDate();
+
+    // RPC, não `.select()` direto — bug real achado em produção: com a
+    // base passando de ~3000 leads com data_nascimento preenchida, um
+    // `.select()` sem filtro de mês no servidor arrisca truncar no
+    // limite PADRÃO de 1000 linhas do PostgREST em filiais grandes,
+    // perdendo aniversariante sem erro nenhum. `aniversariantes_por_mes()`
+    // (migracao_rpc_aniversariantes.sql) filtra mês + filial direto no banco.
+    const { data, error } = await window.supabaseClient.rpc('aniversariantes_por_mes', { p_mes: mesAtual, p_filial: filialAtual });
+
+    if (error) {
+        container.innerHTML = '<div style="font-size:11px; color:var(--text-muted);">Aniversariantes indisponíveis (rode migracao_rpc_aniversariantes.sql).</div>';
+        return;
+    }
 
     const doMes = (data || [])
         .map(l => {
             const [, mes, dia] = l.data_nascimento.split('-').map(Number);
             return { ...l, mes, dia };
         })
-        .filter(l => l.mes === mesAtual)
         // Aniversariante de HOJE sempre no topo (é o que precisa de ação
         // AGORA), o resto do mês segue em ordem cronológica normal.
         .sort((a, b) => {
