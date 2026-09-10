@@ -21,8 +21,9 @@
 //      identificado" que o webhook já usa) + `nome_bruto_importado`
 //      (rótulo do remetente como apareceu no .txt exportado, só pra
 //      ajudar a identificar visualmente na tela "Leads a Tratar" >
-//      "Conversas Importadas"). `filial` é OBRIGATÓRIA nesse modo (não
-//      tem lead pra derivar de onde ela é).
+//      "Conversas Importadas"). O casamento do LOTE é feito contra TODAS
+//      as filiais de uma vez (não pede pra escolher 1 antes de subir os
+//      .zip) — `filial` fica `null` até alguém vincular manualmente.
 //
 // Chamada pelo frontend via supabaseClient.functions.invoke(...). Mantém
 // verificação de JWT padrão.
@@ -68,12 +69,9 @@ Deno.serve(async (req) => {
         return json({ ok: false, erro: "json_invalido" }, 400);
     }
 
-    const { pessoaIdentificador, filial: filialSemLead, nomeBruto, telefoneDetectado, loteImportacaoId, mensagens } = corpoReq;
+    const { pessoaIdentificador, nomeBruto, telefoneDetectado, loteImportacaoId, mensagens } = corpoReq;
     if (!Array.isArray(mensagens) || mensagens.length === 0) {
         return json({ ok: false, erro: "parametros_faltando" }, 400);
-    }
-    if (!pessoaIdentificador && !filialSemLead) {
-        return json({ ok: false, erro: "filial_obrigatoria_sem_lead" }, 400);
     }
     if (mensagens.length > LIMITE_MENSAGENS_POR_IMPORTACAO) {
         return json({ ok: false, erro: "conversa_grande_demais" }, 400);
@@ -85,7 +83,7 @@ Deno.serve(async (req) => {
     }
 
     let telefoneWhatsapp: string | null = null;
-    let filial: string | null | undefined = filialSemLead;
+    let filial: string | null | undefined = null;
 
     if (pessoaIdentificador) {
         // Busca telefone/filial do lead no servidor — não confia no que vier do front.

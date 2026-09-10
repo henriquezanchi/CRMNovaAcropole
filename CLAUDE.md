@@ -3078,14 +3078,19 @@ vez, casando cada uma com o lead certo automaticamente quando possível.
   escolher um `.zip` já extrai e processa automaticamente
   (`processarZipConversaWpp()`), sem precisar copiar/colar nada.
 - **Botão "Importar Conversas em Lote"** (ícone de zip, ao lado da busca
-  na aba WhatsApp Unificada, `abrirImportarConversasLote()`): escolhe a
-  FILIAL de destino, digita "seu nome nas conversas" (o nome EXATO que
-  aparece nos exports como remetente — é sempre o mesmo em todas as
-  conversas exportadas do MESMO celular/conta, então só precisa digitar
-  uma vez pro lote inteiro) e sobe 1+ arquivos `.zip` de uma vez
-  (`processarLoteConversasWpp()`).
-- **Casamento por conversa, em ordem de confiança** (pedido explícito do
-  usuário — telefone > nome exato > manual):
+  na aba WhatsApp Unificada, `abrirImportarConversasLote()`): digita "seu
+  nome nas conversas" (o nome EXATO que aparece nos exports como
+  remetente — é sempre o mesmo em todas as conversas exportadas do MESMO
+  celular/conta, então só precisa digitar uma vez pro lote inteiro) e
+  sobe 1+ arquivos `.zip` de uma vez (`processarLoteConversasWpp()`).
+  **Sem seletor de filial de propósito** — pedido explícito do usuário:
+  "o ideal seria não separar a importação por filial. Eu queria importar
+  todas as conversas de uma vez, e depois procurar os leads em cada
+  filial pra fazer a atribuição correta" (ver "Bug real" mais abaixo,
+  achado exatamente por causa da versão com filial obrigatória).
+- **Casamento por conversa contra a BASE INTEIRA (todas as filiais de uma
+  vez), em ordem de confiança** (pedido explícito do usuário — telefone
+  > nome exato > manual):
   1. **Telefone**: se o rótulo do OUTRO remetente (não o "seu nome")
      "parece um telefone" (`pareceTelefone()` — 10 a 13 dígitos depois de
      tirar tudo que não é número; é assim que o WhatsApp mostra quando o
@@ -3094,13 +3099,19 @@ vez, casando cada uma com o lead certo automaticamente quando possível.
      (`normalizarDigitosTelefoneBr()` — tira o "55" do DDI se sobrar
      DDD+8/9 dígitos depois) e casa por
      `normalizarTelefoneParaChave()` (mesma função já usada em
-     `js/importador.js`/Leads a Tratar) contra os leads da filial
-     escolhida — só resolve se achar exatamente 1 candidato.
+     `js/importador.js`/Leads a Tratar) contra TODOS os leads
+     (`carregarTodosLeadsParaMatchLoteConversas()`, paginado 1000 em
+     1000, sem filtro de filial) — só resolve se achar exatamente 1
+     candidato em QUALQUER filial (2 leads com o mesmo telefone em
+     filiais diferentes = ambíguo, cai pra triagem).
   2. **Nome exato**: se não parecer telefone (contato estava salvo, o
      rótulo é um nome), casa por `normalizarNomeImport()` — só resolve
-     com exatamente 1 candidato (homônimo = ambíguo demais, não arrisca).
+     com exatamente 1 candidato em toda a base (homônimo, mesmo de
+     filiais diferentes, = ambíguo demais, não arrisca).
   3. **Manual**: sem match (ou ambíguo) — grava mesmo assim, com
-     `pessoaIdentificador = null`, mas SEM SE PERDER (ver schema abaixo).
+     `pessoaIdentificador = null` e `filial = null`, mas SEM SE PERDER
+     (ver schema abaixo) — é aqui que entra "procurar o lead em cada
+     filial", na tela de triagem.
   - **Direção das mensagens também depende de bater "seu nome"**: se a
     conversa tiver os 2 remetentes e nenhum bater com o nome informado
     (nem um jeito nem outro — checagem nas 2 direções, `includes()` cruzado),
@@ -3119,33 +3130,52 @@ vez, casando cada uma com o lead certo automaticamente quando possível.
   DIFERENTES que coincidentemente exportaram com o mesmo nome salvo
   (ex: 2 "Maria" diferentes, cada uma seu próprio lote).
 - **Edge Function `whatsapp-importar-conversa` ganhou um 2º modo**: sem
-  `pessoaIdentificador`, exige `filial` explícita (não tem lead pra
-  derivar) e aceita `nomeBruto`/`telefoneDetectado`/`loteImportacaoId` —
-  grava do mesmo jeito (`importado_manualmente = true`), só que com
-  `pessoaIdentificador = null`.
-- **Tela de triagem: "Leads a Tratar" &gt; "Conversas Importadas"** (NÃO
-  misturada com "não identificados" do WhatsApp Unificado — que é sobre
-  mensagem RECEBIDA de verdade pela API sem bater telefone; aqui a query
-  de "não identificados" em `js/whatsapp.js` passou a excluir
+  `pessoaIdentificador`, aceita `nomeBruto`/`telefoneDetectado`/
+  `loteImportacaoId` — grava do mesmo jeito (`importado_manualmente =
+  true`), só que com `pessoaIdentificador = null` e `filial = null` (não
+  tem lead pra derivar, e não pede mais pra escolher uma de antemão).
+- **Tela de triagem: "Leads a Tratar" &gt; "Conversas Importadas"** — SEM
+  filtro de filial (`carregarConversasImportadasATratar()`, mostra
+  TODAS as pendentes, de qualquer unidade, já que o casamento também não
+  é mais por filial). NÃO misturada com "não identificados" do WhatsApp
+  Unificado (que é sobre mensagem RECEBIDA de verdade pela API sem bater
+  telefone; a query de "não identificados" em `js/whatsapp.js` exclui
   explicitamente `nome_bruto_importado is not null`, pra não duplicar/
   confundir os 2 conceitos). Lista cada LOTE (1 `.zip` = 1 card, agrupado
   por `lote_importacao_id`) com o nome/telefone bruto exportado e a
   última mensagem; botão "Vincular" abre uma busca por nome/telefone
-  (mesmo padrão de `buscarLeadParaVinculoFamiliar()`) e, ao escolher um
-  lead, faz 1 `UPDATE` em todas as linhas daquele lote de uma vez
-  (`.eq('lote_importacao_id', ...)`). **Sem Edge Function nova pra
-  vincular** — reaproveita a MESMA policy de UPDATE que já existia pra
-  "vincular conversa não identificada" (`migracao_whatsapp.sql`: só
-  libera linhas que AINDA estão com `pessoaIdentificador is null`).
-- **Testado ao vivo, ponta a ponta** (filial/leads descartáveis, 3 `.zip`
-  de teste gerados com `Compress-Archive`): 1 conversa casou por telefone,
-  1 por nome exato, 1 foi pra triagem — confirmado no banco (id certo,
-  `telefone_whatsapp`/`nome_bruto_importado`/`lote_importacao_id`
-  corretos, direção saída/entrada certa mesmo na não-resolvida). Vincular
-  manualmente pela tela "Conversas Importadas" — busca encontrou o lead
-  certo, `UPDATE` aplicou, card saiu da lista. Upload de `.zip` único na
-  gaveta de 1 lead também confirmado (extrai o texto e já processa,
-  mesmo fluxo de sempre a partir daí).
+  TAMBÉM sem filtro de filial (mostra a filial de cada resultado, pra
+  diferenciar homônimos de unidades diferentes) e, ao escolher um lead,
+  faz 1 `UPDATE` em todas as linhas daquele lote de uma vez
+  (`.eq('lote_importacao_id', ...)`) — grava `pessoaIdentificador` E
+  `filial` (a do lead escolhido; até então estava `null`, senão o selo
+  de filial da conversa ficaria em branco pra sempre na aba WhatsApp).
+  **Sem Edge Function nova pra vincular** — reaproveita a MESMA policy de
+  UPDATE que já existia pra "vincular conversa não identificada"
+  (`migracao_whatsapp.sql`: só libera linhas que AINDA estão com
+  `pessoaIdentificador is null`).
+- **Bug real, achado pelo usuário na primeira versão (com filial
+  obrigatória)**: importou 1 conversa que foi pra triagem, mas na tela
+  "Conversas Importadas" não aparecia nada. Causa: a 1ª versão pedia pra
+  escolher a FILIAL no modal de upload (pra restringir o casamento a ela)
+  — a conversa foi salva com essa filial, mas a tela de triagem filtrava
+  pela filial SELECIONADA NO TOPBAR no momento em que a pessoa checou a
+  lista, que era outra. A conversa existia no banco, só nunca aparecia
+  pra quem olhava com outra filial selecionada. Resolvido removendo o
+  conceito de "filial do lote" inteiramente (ver bullets acima) — não só
+  corrige o sintoma, é a mudança de design que o usuário pediu direto.
+- **Testado ao vivo, ponta a ponta, 2 vezes** (filiais/leads descartáveis,
+  `.zip` de teste gerados com `Compress-Archive`): 1ª rodada (mesma
+  filial) — 1 conversa casou por telefone, 1 por nome exato, 1 foi pra
+  triagem, vínculo manual funcionou. 2ª rodada (DEPOIS da mudança pra
+  cross-filial) — 2 leads em 2 filiais DIFERENTES casaram certo (1 por
+  telefone, 1 por nome) sem escolher filial nenhuma antes, confirmando
+  que o casamento cross-filial funciona e grava a filial certa em cada
+  caso; e confirmado que a conversa órfã ("Gisele Múcia", presa numa
+  filial que não era a selecionada no topbar) passou a aparecer na tela
+  de triagem independente da filial atual, depois do fix. Upload de
+  `.zip` único na gaveta de 1 lead também confirmado (extrai o texto e já
+  processa, mesmo fluxo de sempre a partir daí).
 - **Não construído nesta rodada**: "Descartar"/ignorar um lote sem
   vincular (hoje só dá pra vincular; pra descartar de vez seria preciso
   uma Edge Function nova, já que a policy de UPDATE pública não cobre
@@ -3159,19 +3189,16 @@ a ter uma publicação pública (Vercel, escolha do usuário — Netlify também
 serviria, é só HTML/CSS/JS estático, sem build) porque o scraper (marco 3
 acima, opção b) precisa conseguir abrir o CRM de fora da rede local.
 
-- **`js/acesso.js`** — portão de senha ÚNICA compartilhada pelo time
-  (não é um sistema de login de verdade, sem usuários individuais):
-  necessário porque, sem ele, publicar o CRM numa URL pública deixaria
-  qualquer pessoa com o link ver/editar todos os leads (o app não tem
-  autenticação nenhuma — a chave publishable do Supabase já garante
-  acesso total a quem tiver o HTML, publicado ou não). Overlay de tela
-  cheia (`#acessoOverlay` em `index.html`) até a senha certa ser digitada;
-  fica salvo em `localStorage` depois disso (não pede de novo no mesmo
-  navegador). A senha certa NUNCA fica em texto puro no código — só o
-  hash SHA-256 dela (`SENHA_ACESSO_HASH`); instrução de como gerar o hash
-  está comentada no topo do arquivo. **Não é proteção contra um atacante
-  determinado** (a chave publishable já fica visível vendo o código-fonte,
-  com ou sem esse portão) — é só pra impedir que alguém ache o link à toa.
+- **`js/acesso.js`** — login NOMINAL por conta (nome + senha), ver seção
+  "Contas de Usuário e Login Nominal" — substituiu o portão de senha
+  única original desta seção (histórico: era uma senha só, compartilhada
+  pelo time inteiro, sem usuários individuais). Necessário porque, sem
+  ele, publicar o CRM numa URL pública deixaria qualquer pessoa com o
+  link ver/editar todos os leads (o app não tem autenticação de verdade —
+  a chave publishable do Supabase já garante acesso total a quem tiver o
+  HTML, publicado ou não, com ou sem login). **Não é proteção contra um
+  atacante determinado** — é só pra impedir acesso casual e dar
+  identidade a cada atendente.
 - Repositório Git local iniciado nesta sessão (antes não existia nenhum)
   — necessário tanto pra publicar via Vercel quanto pro GitHub Actions do
   scraper rodar.

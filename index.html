@@ -402,7 +402,7 @@
                      identificado com confiança — js/importar-conversa-whatsapp.js -->
                 <div style="margin-top:24px; border-top:1px solid var(--border-color); padding-top:16px;">
                     <h3 style="font-size:15px; color:var(--na-green-dark);"><i class="fa-solid fa-file-zipper"></i> Conversas Importadas (sem lead vinculado)</h3>
-                    <p class="report-sub">Conversas de WhatsApp importadas em lote que não casaram com confiança por telefone/nome nesta filial. Vincule manualmente ao lead certo.</p>
+                    <p class="report-sub">Conversas de WhatsApp importadas em lote que não casaram com confiança por telefone/nome — de QUALQUER filial. Busque e vincule ao lead certo, em qualquer unidade.</p>
                     <div id="conversasImportadasATratarLista" style="margin-top:8px;"></div>
                 </div>
             </div>
@@ -1109,15 +1109,12 @@
         <div class="modal-body">
             <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
                 Suba os .zip exportados de várias conversas de uma vez (menu da conversa → Exportar conversa).
-                Cada arquivo é casado com um lead da filial escolhida por TELEFONE (quando o contato não estava
+                Cada arquivo é casado com um lead de QUALQUER filial por TELEFONE (quando o contato não estava
                 salvo, o próprio nome exportado já é o número) e, se não der, por NOME EXATO. O que não casar com
-                confiança vai pra "Leads a Tratar" &gt; "Conversas Importadas", pra você vincular na mão.
+                confiança (ou bater em mais de 1 filial) vai pra "Leads a Tratar" &gt; "Conversas Importadas",
+                pra você procurar e vincular na mão, em qualquer filial.
             </p>
             <div class="coluna-row">
-                <label style="font-size:12px; font-weight:600; white-space:nowrap;">Filial:</label>
-                <select id="loteConversasFilial" style="flex:1;"></select>
-            </div>
-            <div class="coluna-row" style="margin-top:8px;">
                 <label style="font-size:12px; font-weight:600; white-space:nowrap;">Seu nome nas conversas:</label>
                 <input type="text" id="loteConversasMeuNome" placeholder="Exatamente como aparece nos .zip exportados" style="flex:1;">
             </div>

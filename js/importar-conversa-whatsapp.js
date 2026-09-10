@@ -223,8 +223,10 @@ async function confirmarImportarConversaWpp() {
 // IMPORTAÇÃO EM LOTE — vários .zip de uma vez (js/leads-a-tratar.js
 // mostra o que não casou com confiança, na seção "Conversas Importadas").
 // ==========================================================
-// Pedido do usuário: subir os .zip de várias conversas de uma vez, casando
-// cada uma com um lead da filial por TELEFONE (quando o contato exportado
+// Pedido do usuário: subir os .zip de várias conversas de uma vez, SEM
+// separar por filial antes (casa contra a base INTEIRA de uma vez, e
+// deixa pra "procurar o lead em cada filial" só quem ficar ambíguo) —
+// casando cada uma com um lead por TELEFONE (quando o contato exportado
 // não estava salvo, o "nome" que aparece já É o número) e, se não bater,
 // por NOME EXATO — o que não resolver com confiança vai pra uma tela "a
 // tratar" pra vinculação manual, nunca decidido sozinho na duvida.
@@ -246,13 +248,7 @@ function normalizarDigitosTelefoneBr(digitos) {
     return { ddd: d.slice(0, 2), numero: d.slice(2) };
 }
 
-let conversasLoteFiliaisPopuladas = false;
 async function abrirImportarConversasLote() {
-    if (!conversasLoteFiliaisPopuladas) {
-        const select = document.getElementById('loteConversasFilial');
-        select.innerHTML = (filiaisDisponiveis || []).map(f => `<option value="${escapeHTML(f.nome)}" ${f.nome === filialAtual ? 'selected' : ''}>${escapeHTML(f.nome)}</option>`).join('');
-        conversasLoteFiliaisPopuladas = true;
-    }
     const meuNomeEl = document.getElementById('loteConversasMeuNome');
     if (!meuNomeEl.value && typeof obterNomeAtendente === 'function') {
         const nome = obterNomeAtendente();
@@ -265,21 +261,23 @@ function fecharImportarConversasLote() {
     document.getElementById('modalImportarConversasLote').classList.remove('open');
 }
 
-// Busca TODOS os leads da filial escolhida (paginado, mesmo padrão de
+// Busca TODOS os leads de TODAS as filiais (paginado, mesmo padrão de
 // exatidão de detectarLeadsATratar()/carregarLeadsParaMatchMatricula()) —
-// usado só na hora de processar o lote, não fica em cache entre aberturas
-// do modal (a base pode ter mudado).
-async function carregarLeadsParaMatchLoteConversas(filial) {
+// pedido do usuário: não separar a importação por filial, casar contra a
+// base inteira e deixar o que ficar ambíguo (ex: mesmo nome em 2 filiais
+// diferentes) pra resolução manual. Usado só na hora de processar o
+// lote, não fica em cache entre aberturas do modal (a base pode ter
+// mudado).
+async function carregarTodosLeadsParaMatchLoteConversas() {
     const TAMANHO_PAGINA = 1000;
     let todos = [];
     for (let de = 0; ; de += TAMANHO_PAGINA) {
         const { data, error } = await window.supabaseClient
             .from(NOME_TABELA)
-            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero')
-            .eq('filial', filial)
+            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, filial')
             .order('pessoaIdentificador', { ascending: true })
             .range(de, de + TAMANHO_PAGINA - 1);
-        if (error) throw new Error('Erro ao carregar leads da filial: ' + error.message);
+        if (error) throw new Error('Erro ao carregar leads: ' + error.message);
         todos = todos.concat(data || []);
         if (!data || data.length < TAMANHO_PAGINA) break;
     }
@@ -287,19 +285,17 @@ async function carregarLeadsParaMatchLoteConversas(filial) {
 }
 
 async function processarLoteConversasWpp() {
-    const filial = document.getElementById('loteConversasFilial').value;
     const meuNome = document.getElementById('loteConversasMeuNome').value.trim();
     const arquivos = [...document.getElementById('loteConversasArquivos').files];
     const resultadoEl = document.getElementById('loteConversasResultado');
 
-    if (!filial) { alert('Escolha a filial.'); return; }
     if (!meuNome) { alert('Preencha "Seu nome nas conversas" — é como o CRM identifica qual dos 2 remetentes é você (o atendente), não o lead.'); return; }
     if (arquivos.length === 0) { alert('Escolha 1 ou mais arquivos .zip.'); return; }
 
-    resultadoEl.innerHTML = `<p><i class="fa-solid fa-circle-notch fa-spin"></i> Carregando leads da filial...</p>`;
+    resultadoEl.innerHTML = `<p><i class="fa-solid fa-circle-notch fa-spin"></i> Carregando leads de todas as filiais...</p>`;
     let leads;
     try {
-        leads = await carregarLeadsParaMatchLoteConversas(filial);
+        leads = await carregarTodosLeadsParaMatchLoteConversas();
     } catch (e) {
         resultadoEl.innerHTML = `<p style="color:#dc2626;">${escapeHTML(e.message)}</p>`;
         return;
@@ -364,7 +360,7 @@ async function processarLoteConversasWpp() {
 
             const corpo = pessoaIdentificador
                 ? { pessoaIdentificador, mensagens: mensagensPayload }
-                : { filial, nomeBruto: rotuloLead, telefoneDetectado, loteImportacaoId: crypto.randomUUID(), mensagens: mensagensPayload };
+                : { nomeBruto: rotuloLead, telefoneDetectado, loteImportacaoId: crypto.randomUUID(), mensagens: mensagensPayload };
 
             const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-importar-conversa', { body: corpo });
             if (error || !data || !data.ok) { comErro++; continue; }
@@ -396,19 +392,22 @@ async function processarLoteConversasWpp() {
 // ==========================================================
 async function carregarConversasImportadasATratar() {
     const container = document.getElementById('conversasImportadasATratarLista');
-    if (!container || !filialAtual) return;
+    if (!container) return;
     container.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Carregando...</p>';
 
+    // Sem filtro de filial de propósito — a Importação em Lote casa
+    // contra a base INTEIRA (todas as filiais), então o que sobrou sem
+    // lead também precisa aparecer aqui independente de qual filial está
+    // selecionada no topo agora.
     const { data, error } = await window.supabaseClient
         .from('mensagens_whatsapp')
         .select('lote_importacao_id, nome_bruto_importado, telefone_whatsapp, corpo_texto, criado_em')
-        .eq('filial', filialAtual)
         .is('pessoaIdentificador', null)
         .not('lote_importacao_id', 'is', null)
         .order('criado_em', { ascending: true });
 
     if (error) { container.innerHTML = `<p style="color:#dc2626; font-size:12px;">Erro: ${escapeHTML(error.message)}</p>`; return; }
-    if (!data || data.length === 0) { container.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Nenhuma conversa importada pendente de vínculo nesta filial.</p>'; return; }
+    if (!data || data.length === 0) { container.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Nenhuma conversa importada pendente de vínculo.</p>'; return; }
 
     const porLote = new Map();
     data.forEach(m => {
@@ -453,32 +452,39 @@ function buscarLeadParaVincularConversa() {
         const termo = input.value.trim();
         if (termo.length < 2) { resultados.innerHTML = ''; return; }
 
+        // Sem filtro de filial — busca em QUALQUER unidade (pedido do
+        // usuário: "procurar os leads em cada filial pra fazer a
+        // atribuição correta"), por isso mostra a filial de cada
+        // resultado, pra diferenciar homônimos de unidades diferentes.
         const termoSeguro = termo.replace(/,/g, ' ');
         const { data, error } = await window.supabaseClient
             .from(NOME_TABELA)
-            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero')
-            .eq('filial', filialAtual)
+            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, filial')
             .or(`pessoaNome.ilike.%${termoSeguro}%,pessoaTelefoneNumero.ilike.%${termoSeguro}%`)
-            .limit(10);
+            .limit(15);
 
         if (error) { resultados.innerHTML = `<p style="font-size:11px; color:#dc2626;">Erro: ${escapeHTML(error.message)}</p>`; return; }
         if (!data || data.length === 0) { resultados.innerHTML = '<p style="font-size:11px; color:var(--text-muted);">Nenhum lead encontrado.</p>'; return; }
 
         resultados.innerHTML = data.map(r => `
-            <div class="info-box" style="cursor:pointer; margin-bottom:4px;" onclick="vincularConversaImportada('${r.pessoaIdentificador}')">
-                <i class="fa-solid fa-user-plus"></i> ${escapeHTML(r.pessoaNome)} <span style="color:var(--text-muted); font-size:11px;">(${escapeHTML(r.pessoaTelefoneDDD || '')} ${escapeHTML(r.pessoaTelefoneNumero || 'sem tel.')})</span>
+            <div class="info-box" style="cursor:pointer; margin-bottom:4px;" onclick="vincularConversaImportada('${r.pessoaIdentificador}', '${escapeHTML(r.filial || '').replace(/'/g, "\\'")}')">
+                <i class="fa-solid fa-user-plus"></i> ${escapeHTML(r.pessoaNome)} <span style="color:var(--text-muted); font-size:11px;">(${escapeHTML(r.pessoaTelefoneDDD || '')} ${escapeHTML(r.pessoaTelefoneNumero || 'sem tel.')} — ${escapeHTML(r.filial || '?')})</span>
             </div>
         `).join('');
     }, 300);
 }
 
-async function vincularConversaImportada(idLead) {
+async function vincularConversaImportada(idLead, filialLead) {
     if (!loteImportacaoIdEmVinculacao) return;
     // Mesma policy de UPDATE já usada pra "não identificados" (webhook) —
-    // só libera linhas que AINDA estão sem pessoaIdentificador.
+    // só libera linhas que AINDA estão sem pessoaIdentificador. Grava
+    // também a filial do lead escolhido (as linhas ficam com filial=null
+    // até serem vinculadas, já que a Importação em Lote não pede pra
+    // escolher filial de antemão) — sem isso, o selo de filial da
+    // conversa na aba WhatsApp Unificada ficaria em branco pra sempre.
     const { error } = await window.supabaseClient
         .from('mensagens_whatsapp')
-        .update({ pessoaIdentificador: idLead })
+        .update({ pessoaIdentificador: idLead, filial: filialLead || null })
         .eq('lote_importacao_id', loteImportacaoIdEmVinculacao)
         .is('pessoaIdentificador', null);
     if (error) { alert('Erro ao vincular: ' + error.message); return; }
