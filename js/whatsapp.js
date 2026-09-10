@@ -685,6 +685,11 @@ async function renderizarContatosWpp(filtro = '') {
             .from('mensagens_whatsapp')
             .select('telefone_whatsapp, corpo_texto, criado_em')
             .is('pessoaIdentificador', null)
+            // Exclui conversas da Importação em Lote sem lead vinculado
+            // (nome_bruto_importado preenchido) — essas têm tela própria
+            // ("Leads a Tratar" > "Conversas Importadas", js/leads-a-tratar.js);
+            // aqui é só quem chegou de verdade pela API sem bater com ninguém.
+            .is('nome_bruto_importado', null)
             .order('criado_em', { ascending: false })
             .limit(50);
         const vistos = new Set();

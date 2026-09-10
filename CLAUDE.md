@@ -210,6 +210,11 @@ migracao_agendamento_mercurio_pgcron.sql → habilita pg_cron/pg_net e cria o cr
 migracao_filial_endereco.sql      → coluna endereco em filiais, mostrado na gaveta de qualquer
                                      lead daquela filial junto com valor_mensalidade; JÁ RODADA
                                      nesta sessão via `supabase db query --linked`
+migracao_whatsapp_importacao_lote.sql → telefone_whatsapp deixa de ser NOT NULL +
+                                     nome_bruto_importado + lote_importacao_id em
+                                     mensagens_whatsapp (base da Importação em Lote de
+                                     Conversas, .zip); JÁ RODADA nesta sessão via
+                                     `supabase db query --linked`
 migracao_usuarios_crm.sql         → tabela usuarios_crm (login NOMINAL por conta, com permissão
                                      por módulo — substitui a senha única do portão de acesso;
                                      ver seção "Contas de Usuário"); JÁ RODADA nesta sessão via
@@ -2658,6 +2663,21 @@ bloqueado).
        Importador) — a próxima execução real do job (agendada ou pelo
        botão "Rodar Mercúrio agora") vai validar isso; Ulisses continua
        de fora deste encadeamento (sempre manual).
+       - **Armadilha real de timing, achada em 2026-09-10** (é a causa
+         raiz de "pessoas inativas sem a tag de Inativo" persistir mesmo
+         DEPOIS desta correção existir): o commit que liga esta importação
+         (`d4c1961`) só foi feito/pushado às 07:56 (Brasília) do dia
+         10/09 — mas a última execução automática do Mercúrio antes disso
+         tinha rodado às 07:01, ainda com o código ANTIGO (só exportava
+         CSV, nunca escrevia no CRM). Confirmado lendo o LOG REAL do
+         GitHub Actions daquela execução (`gh`/API do GitHub,
+         `actions/runs/.../jobs/.../logs`) — via commit `head_sha` de cada
+         run comparado com `git merge-base --is-ancestor`. Toda automação
+         que dependa de "a próxima execução agendada" precisa considerar
+         que o GITHUB ACTIONS usa o `main` de QUANDO O JOB DISPARA, não
+         de quando o código foi escrito na sessão — uma correção só entra
+         de verdade na PRÓXIMA execução DEPOIS do push, nunca na que já
+         estava em andamento ou já tinha rodado antes do push.
   4. ✅ **Agendamento do Mercúrio, via `pg_cron` do Supabase** (05:00 em
      Brasília todo dia) — só a parte do Mercúrio, que já roda 100%
      headless sem bloqueio nenhum. O Ulisses **nunca** vai ter
@@ -2721,6 +2741,20 @@ bloqueado).
      ainda está rodando. Só dispara o Mercúrio (o Ulisses fica sempre `if:
      false` no workflow, ver Cloudflare acima — disparar o workflow inteiro
      só roda a parte que já é 100% automática mesmo).
+     - **Bug real achado (2026-09-10)**: passou a existir um 2º botão
+       "Rodar Mercúrio Agora" (na Agenda do Dia do Dashboard, ver seção
+       própria) sem o `id="btnDispararMercurio"` que a função usava pra
+       mostrar spinner/mensagem — clicar nele disparava o scraper DE
+       VERDADE, mas sem NENHUM feedback visual (a confirmação só aparecia
+       dentro do modal de Sincronização, que nem abria sozinho), parecendo
+       que "não fez nada". Isso levou a um clique duplicado (no botão
+       certo, tentando de novo) que chegou a disparar o workflow 2 VEZES
+       em paralelo contra o Mercúrio real. Corrigido: qualquer botão com a
+       classe `.btn-disparar-mercurio` funciona igual (via
+       `querySelectorAll`, não mais 1 ID fixo), a tela de Sincronização
+       abre AUTOMATICAMENTE ao disparar de qualquer lugar, e uma trava
+       global (`disparoMercurioEmAndamento`) impede clique duplicado
+       enquanto uma rodada já está em andamento.
      - **Setup**: `supabase functions deploy scraper-disparar` (CLI já
        linkado ao projeto nesta sessão, deploy já feito); falta só criar um
        GitHub Personal Access Token de *fine-grained* (github.com → foto de
@@ -3011,10 +3045,99 @@ precisa de um seletor de filial/busca de lead separado.
   formato de export confirmado (o de outro aparelho/idioma pode precisar
   de ajuste no regex de `RE_INICIO_LINHA_WPP` se aparecer um formato
   diferente — não adivinhar, pedir uma amostra real primeiro, mesmo
-  principio de sempre). Entrada só pela gaveta do lead — não existe (ainda)
-  um fluxo pra "colei uma conversa mas não sei de qual lead é", que
-  precisaria de um seletor de filial + busca de lead por nome/telefone
-  (ideia registrada, não construída).
+  principio de sempre). Entrada pela gaveta do lead aceita **texto colado
+  OU um arquivo .zip** (ver bullet abaixo) — pra "colei/subi uma conversa
+  mas não sei de qual lead é", ver "Importação em Lote de Conversas".
+
+### Importação em Lote de Conversas (.zip, várias de uma vez)
+
+O WhatsApp empacota o export em `.zip` (não só `.txt`) quando inclui mídia
+— e em alguns aparelhos mesmo "Sem mídia" já vem em `.zip`. Pedido do
+usuário: sustentar esse formato E permitir subir VÁRIAS conversas de uma
+vez, casando cada uma com o lead certo automaticamente quando possível.
+
+- **Leitura do .zip no navegador** (`extrairTextoDoZip()`,
+  `js/importar-conversa-whatsapp.js`): usa **JSZip** (CDN, `index.html`)
+  — abre o `.zip`, acha o primeiro arquivo `.txt` dentro (ignora mídia) e
+  devolve o texto, que passa pelo MESMO `parseTextoConversaWhatsApp()` de
+  sempre. **Botão de importação de 1 lead (gaveta) também ganhou um
+  `<input type="file" accept=".zip">`** ao lado da caixa de colar texto —
+  escolher um `.zip` já extrai e processa automaticamente
+  (`processarZipConversaWpp()`), sem precisar copiar/colar nada.
+- **Botão "Importar Conversas em Lote"** (ícone de zip, ao lado da busca
+  na aba WhatsApp Unificada, `abrirImportarConversasLote()`): escolhe a
+  FILIAL de destino, digita "seu nome nas conversas" (o nome EXATO que
+  aparece nos exports como remetente — é sempre o mesmo em todas as
+  conversas exportadas do MESMO celular/conta, então só precisa digitar
+  uma vez pro lote inteiro) e sobe 1+ arquivos `.zip` de uma vez
+  (`processarLoteConversasWpp()`).
+- **Casamento por conversa, em ordem de confiança** (pedido explícito do
+  usuário — telefone > nome exato > manual):
+  1. **Telefone**: se o rótulo do OUTRO remetente (não o "seu nome")
+     "parece um telefone" (`pareceTelefone()` — 10 a 13 dígitos depois de
+     tirar tudo que não é número; é assim que o WhatsApp mostra quando o
+     contato NÃO estava salvo no celular de quem exportou, ex: "+55 62
+     99999-8888"), normaliza pro formato brasileiro
+     (`normalizarDigitosTelefoneBr()` — tira o "55" do DDI se sobrar
+     DDD+8/9 dígitos depois) e casa por
+     `normalizarTelefoneParaChave()` (mesma função já usada em
+     `js/importador.js`/Leads a Tratar) contra os leads da filial
+     escolhida — só resolve se achar exatamente 1 candidato.
+  2. **Nome exato**: se não parecer telefone (contato estava salvo, o
+     rótulo é um nome), casa por `normalizarNomeImport()` — só resolve
+     com exatamente 1 candidato (homônimo = ambíguo demais, não arrisca).
+  3. **Manual**: sem match (ou ambíguo) — grava mesmo assim, com
+     `pessoaIdentificador = null`, mas SEM SE PERDER (ver schema abaixo).
+  - **Direção das mensagens também depende de bater "seu nome"**: se a
+    conversa tiver os 2 remetentes e nenhum bater com o nome informado
+    (nem um jeito nem outro — checagem nas 2 direções, `includes()` cruzado),
+    o arquivo é IGNORADO por completo (contado em "sem atendente
+    identificado" no relatório final) — sem isso, arriscaria gravar a
+    direção errada (quem mandou o quê) mesmo num arquivo que casaria bem
+    com um lead.
+- **Schema** (`migracao_whatsapp_importacao_lote.sql`): `telefone_whatsapp`
+  deixou de ser `NOT NULL` (uma conversa sem lead E sem telefone
+  detectável — contato salvo por nome — não tem telefone nenhum pra
+  gravar); `nome_bruto_importado` (texto, só preenchido em conversas SEM
+  lead) guarda o rótulo original do remetente, pra a pessoa reconhecer de
+  quem é na tela de triagem; `lote_importacao_id` (uuid, gerado no
+  navegador por ARQUIVO — `crypto.randomUUID()`) identifica todas as
+  linhas de UM `.zip` — evita juntar por engano 2 conversas de pessoas
+  DIFERENTES que coincidentemente exportaram com o mesmo nome salvo
+  (ex: 2 "Maria" diferentes, cada uma seu próprio lote).
+- **Edge Function `whatsapp-importar-conversa` ganhou um 2º modo**: sem
+  `pessoaIdentificador`, exige `filial` explícita (não tem lead pra
+  derivar) e aceita `nomeBruto`/`telefoneDetectado`/`loteImportacaoId` —
+  grava do mesmo jeito (`importado_manualmente = true`), só que com
+  `pessoaIdentificador = null`.
+- **Tela de triagem: "Leads a Tratar" &gt; "Conversas Importadas"** (NÃO
+  misturada com "não identificados" do WhatsApp Unificado — que é sobre
+  mensagem RECEBIDA de verdade pela API sem bater telefone; aqui a query
+  de "não identificados" em `js/whatsapp.js` passou a excluir
+  explicitamente `nome_bruto_importado is not null`, pra não duplicar/
+  confundir os 2 conceitos). Lista cada LOTE (1 `.zip` = 1 card, agrupado
+  por `lote_importacao_id`) com o nome/telefone bruto exportado e a
+  última mensagem; botão "Vincular" abre uma busca por nome/telefone
+  (mesmo padrão de `buscarLeadParaVinculoFamiliar()`) e, ao escolher um
+  lead, faz 1 `UPDATE` em todas as linhas daquele lote de uma vez
+  (`.eq('lote_importacao_id', ...)`). **Sem Edge Function nova pra
+  vincular** — reaproveita a MESMA policy de UPDATE que já existia pra
+  "vincular conversa não identificada" (`migracao_whatsapp.sql`: só
+  libera linhas que AINDA estão com `pessoaIdentificador is null`).
+- **Testado ao vivo, ponta a ponta** (filial/leads descartáveis, 3 `.zip`
+  de teste gerados com `Compress-Archive`): 1 conversa casou por telefone,
+  1 por nome exato, 1 foi pra triagem — confirmado no banco (id certo,
+  `telefone_whatsapp`/`nome_bruto_importado`/`lote_importacao_id`
+  corretos, direção saída/entrada certa mesmo na não-resolvida). Vincular
+  manualmente pela tela "Conversas Importadas" — busca encontrou o lead
+  certo, `UPDATE` aplicou, card saiu da lista. Upload de `.zip` único na
+  gaveta de 1 lead também confirmado (extrai o texto e já processa,
+  mesmo fluxo de sempre a partir daí).
+- **Não construído nesta rodada**: "Descartar"/ignorar um lote sem
+  vincular (hoje só dá pra vincular; pra descartar de vez seria preciso
+  uma Edge Function nova, já que a policy de UPDATE pública não cobre
+  DELETE) — fica como extensão natural se aparecer volume de conversas
+  que realmente não são de ninguém no CRM.
 
 ## Publicação/Deploy — CRM público (Vercel) + portão de acesso
 

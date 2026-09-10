@@ -1906,6 +1906,7 @@ function switchModule(tabId, title, subtitle) {
     if (tabId === 'tab-agenda' && typeof carregarEventos === 'function') carregarEventos();
     if (tabId === 'tab-mapa-turmas' && typeof carregarMapaTurmas === 'function') carregarMapaTurmas();
     if (tabId === 'tab-leads-tratar' && typeof carregarLeadsATratar === 'function') carregarLeadsATratar();
+    if (tabId === 'tab-leads-tratar' && typeof carregarConversasImportadasATratar === 'function') carregarConversasImportadasATratar();
     if (tabId === 'tab-whatsapp') {
         const wppSearchEl = document.getElementById('wppSearch');
         renderizarContatosWpp(wppSearchEl ? wppSearchEl.value : '');

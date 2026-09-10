@@ -2,14 +2,27 @@
 // (enquanto a API do Meta está bloqueada — ver "Bloqueio da API do
 // WhatsApp" no CLAUDE.md). Recebe as mensagens já PARSEADAS no navegador
 // (parseTextoConversaWhatsApp(), js/importar-conversa-whatsapp.js) a
-// partir do .txt exportado nativamente pelo WhatsApp, e grava em lote em
-// mensagens_whatsapp.
+// partir do .txt exportado nativamente pelo WhatsApp (colado direto, ou
+// extraído de um .zip — ver js/importar-conversa-whatsapp.js), e grava em
+// lote em mensagens_whatsapp.
 //
 // Só existe porque mensagens_whatsapp NÃO tem policy de INSERT pro
 // público (só Edge Functions com service_role escrevem nela — ver
 // migracao_whatsapp.sql) — mesmo padrão de whatsapp-send/whatsapp-webhook.
 // Telefone/filial são resolvidos aqui a partir do lead, nunca confiando no
 // que vier do navegador (mesmo cuidado de whatsapp-send).
+//
+// **2 modos** (ver "Importação em Lote de Conversas" no CLAUDE.md):
+//   1. `pessoaIdentificador` presente — modo de sempre, 1 conversa pro
+//      lead certo (gaveta do lead OU já casada com confiança no lote).
+//   2. `pessoaIdentificador` ausente — conversa do LOTE que não bateu com
+//      nenhum lead (telefone/nome ambíguo ou sem correspondência): grava
+//      com `pessoaIdentificador = null` (mesmo estado de "não
+//      identificado" que o webhook já usa) + `nome_bruto_importado`
+//      (rótulo do remetente como apareceu no .txt exportado, só pra
+//      ajudar a identificar visualmente na tela "Leads a Tratar" >
+//      "Conversas Importadas"). `filial` é OBRIGATÓRIA nesse modo (não
+//      tem lead pra derivar de onde ela é).
 //
 // Chamada pelo frontend via supabaseClient.functions.invoke(...). Mantém
 // verificação de JWT padrão.
@@ -41,16 +54,26 @@ Deno.serve(async (req) => {
 
     if (req.method !== "POST") return json({ ok: false, erro: "method_not_allowed" }, 405);
 
-    let corpoReq: { pessoaIdentificador?: string; mensagens?: MensagemImportada[] };
+    let corpoReq: {
+        pessoaIdentificador?: string;
+        filial?: string;
+        nomeBruto?: string;
+        telefoneDetectado?: string;
+        loteImportacaoId?: string;
+        mensagens?: MensagemImportada[];
+    };
     try {
         corpoReq = await req.json();
     } catch {
         return json({ ok: false, erro: "json_invalido" }, 400);
     }
 
-    const { pessoaIdentificador, mensagens } = corpoReq;
-    if (!pessoaIdentificador || !Array.isArray(mensagens) || mensagens.length === 0) {
+    const { pessoaIdentificador, filial: filialSemLead, nomeBruto, telefoneDetectado, loteImportacaoId, mensagens } = corpoReq;
+    if (!Array.isArray(mensagens) || mensagens.length === 0) {
         return json({ ok: false, erro: "parametros_faltando" }, 400);
+    }
+    if (!pessoaIdentificador && !filialSemLead) {
+        return json({ ok: false, erro: "filial_obrigatoria_sem_lead" }, 400);
     }
     if (mensagens.length > LIMITE_MENSAGENS_POR_IMPORTACAO) {
         return json({ ok: false, erro: "conversa_grande_demais" }, 400);
@@ -61,23 +84,34 @@ Deno.serve(async (req) => {
         if (!m.timestamp || Number.isNaN(new Date(m.timestamp).getTime())) return json({ ok: false, erro: "timestamp_invalido" }, 400);
     }
 
-    // Busca telefone/filial do lead no servidor — não confia no que vier do front.
-    const { data: lead, error: erroLead } = await supabaseAdmin
-        .from(NOME_TABELA_LEADS)
-        .select("pessoaTelefoneDDD, pessoaTelefoneNumero, filial")
-        .eq("pessoaIdentificador", pessoaIdentificador)
-        .single();
-    if (erroLead || !lead) return json({ ok: false, erro: "lead_nao_encontrado" }, 404);
+    let telefoneWhatsapp: string | null = null;
+    let filial: string | null | undefined = filialSemLead;
 
-    // Sem telefone cadastrado ainda é um estado válido (mensagens_whatsapp
-    // exige telefone_whatsapp NOT NULL) — string vazia sinaliza "desconhecido",
-    // sem inventar um número que não existe.
-    const telefoneWhatsapp = montarNumeroE164(lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero) || "";
+    if (pessoaIdentificador) {
+        // Busca telefone/filial do lead no servidor — não confia no que vier do front.
+        const { data: lead, error: erroLead } = await supabaseAdmin
+            .from(NOME_TABELA_LEADS)
+            .select("pessoaTelefoneDDD, pessoaTelefoneNumero, filial")
+            .eq("pessoaIdentificador", pessoaIdentificador)
+            .single();
+        if (erroLead || !lead) return json({ ok: false, erro: "lead_nao_encontrado" }, 404);
+
+        // Sem telefone cadastrado ainda é um estado válido — string vazia
+        // sinaliza "desconhecido", sem inventar um número que não existe.
+        telefoneWhatsapp = montarNumeroE164(lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero) || "";
+        filial = lead.filial;
+    } else {
+        // Modo "sem lead" (lote): telefone só existe se o .txt exportado
+        // mostrava um número crú (contato não salvo) em vez de um nome.
+        telefoneWhatsapp = telefoneDetectado || null;
+    }
 
     const linhas = mensagens.map((m) => ({
-        pessoaIdentificador,
+        pessoaIdentificador: pessoaIdentificador || null,
         telefone_whatsapp: telefoneWhatsapp,
-        filial: lead.filial,
+        filial,
+        nome_bruto_importado: pessoaIdentificador ? null : (nomeBruto || null),
+        lote_importacao_id: pessoaIdentificador ? null : (loteImportacaoId || null),
         direcao: m.direcao,
         tipo: "texto",
         corpo_texto: m.texto,

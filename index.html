@@ -313,8 +313,9 @@
         <div id="tab-whatsapp" class="tab-pane">
             <div class="wpp-layout">
                 <div class="wpp-sidebar">
-                    <div class="wpp-sidebar-header">
-                        <input type="text" id="wppSearch" placeholder="Buscar conversa ou nome de lead p/ iniciar..." oninput="filtrarContatosWpp(this.value)">
+                    <div class="wpp-sidebar-header" style="display:flex; gap:6px;">
+                        <input type="text" id="wppSearch" placeholder="Buscar conversa ou nome de lead p/ iniciar..." oninput="filtrarContatosWpp(this.value)" style="flex:1;">
+                        <button class="btn-toggle" onclick="abrirImportarConversasLote()" title="Importar várias conversas de uma vez (.zip exportados do WhatsApp)"><i class="fa-solid fa-file-zipper"></i></button>
                     </div>
                     <div class="wpp-contact-list" id="wppContactList"></div>
                 </div>
@@ -396,6 +397,14 @@
                     <button class="btn-primary" id="btnVerificarLeadsATratar" style="white-space:nowrap;" onclick="verificarLeadsATratarAgora()"><i class="fa-solid fa-magnifying-glass"></i> Verificar Agora</button>
                 </div>
                 <div class="agenda-lista" id="leadsATratarLista"></div>
+
+                <!-- Conversas de WhatsApp importadas em lote (.zip) sem lead
+                     identificado com confiança — js/importar-conversa-whatsapp.js -->
+                <div style="margin-top:24px; border-top:1px solid var(--border-color); padding-top:16px;">
+                    <h3 style="font-size:15px; color:var(--na-green-dark);"><i class="fa-solid fa-file-zipper"></i> Conversas Importadas (sem lead vinculado)</h3>
+                    <p class="report-sub">Conversas de WhatsApp importadas em lote que não casaram com confiança por telefone/nome nesta filial. Vincule manualmente ao lead certo.</p>
+                    <div id="conversasImportadasATratarLista" style="margin-top:8px;"></div>
+                </div>
             </div>
         </div>
 
@@ -1073,17 +1082,67 @@
         <div class="modal-body">
             <p style="font-size:12px; color:var(--text-muted); margin-bottom:6px;">
                 Enquanto a API do WhatsApp está bloqueada, cole aqui a conversa exportada direto do WhatsApp
-                (na conversa → menu ⋮ → Mais → Exportar conversa → <strong>Sem mídia</strong>) — as mensagens
-                entram no histórico deste lead, marcadas como importadas.
+                (na conversa → menu ⋮ → Mais → Exportar conversa → <strong>Sem mídia</strong>), ou envie direto
+                o arquivo <strong>.zip</strong> (Exportar conversa → Anexar mídia, ou "Sem mídia" em alguns
+                aparelhos já vem em .zip) — as mensagens entram no histórico deste lead, marcadas como importadas.
             </p>
             <p style="font-size:12px; font-weight:600; margin-bottom:8px;">Lead: <span id="importarConversaWppLeadInfo"></span></p>
-            <textarea id="importarConversaWppTexto" rows="8" style="width:100%; font-size:11px; font-family:monospace; padding:8px; border:1px solid #cbd5e1; border-radius:6px; box-sizing:border-box;" placeholder="Cole aqui o conteúdo do .txt exportado..."></textarea>
+            <input type="file" id="importarConversaWppArquivoZip" accept=".zip" style="margin-bottom:8px; font-size:12px;" onchange="processarZipConversaWpp(this.files[0])">
+            <textarea id="importarConversaWppTexto" rows="8" style="width:100%; font-size:11px; font-family:monospace; padding:8px; border:1px solid #cbd5e1; border-radius:6px; box-sizing:border-box;" placeholder="...ou cole aqui o conteúdo do .txt exportado"></textarea>
             <button class="btn-secondary" style="margin-top:8px;" onclick="processarConversaWpp()"><i class="fa-solid fa-gears"></i> Processar</button>
             <div id="importarConversaWppRevisao" style="display:none; margin-top:14px;"></div>
         </div>
         <div class="modal-footer">
             <button class="btn-secondary" onclick="fecharImportarConversaWpp()">Cancelar</button>
             <button class="btn-primary" id="importarConversaWppBtnConfirmar" style="display:none;" onclick="confirmarImportarConversaWpp()"><i class="fa-solid fa-check"></i> Confirmar Importação</button>
+        </div>
+    </div>
+
+    <!-- Importação em LOTE de conversas de WhatsApp (.zip), várias de uma vez —
+         js/importar-conversa-whatsapp.js. Conversas sem lead identificado com
+         confiança vão pra "Leads a Tratar" > "Conversas Importadas". -->
+    <div class="modal" id="modalImportarConversasLote" style="max-width:640px;">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-file-zipper"></i> Importar Conversas em Lote</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharImportarConversasLote()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
+                Suba os .zip exportados de várias conversas de uma vez (menu da conversa → Exportar conversa).
+                Cada arquivo é casado com um lead da filial escolhida por TELEFONE (quando o contato não estava
+                salvo, o próprio nome exportado já é o número) e, se não der, por NOME EXATO. O que não casar com
+                confiança vai pra "Leads a Tratar" &gt; "Conversas Importadas", pra você vincular na mão.
+            </p>
+            <div class="coluna-row">
+                <label style="font-size:12px; font-weight:600; white-space:nowrap;">Filial:</label>
+                <select id="loteConversasFilial" style="flex:1;"></select>
+            </div>
+            <div class="coluna-row" style="margin-top:8px;">
+                <label style="font-size:12px; font-weight:600; white-space:nowrap;">Seu nome nas conversas:</label>
+                <input type="text" id="loteConversasMeuNome" placeholder="Exatamente como aparece nos .zip exportados" style="flex:1;">
+            </div>
+            <input type="file" id="loteConversasArquivos" accept=".zip" multiple style="margin-top:10px; font-size:12px;">
+            <button class="btn-secondary" style="margin-top:8px;" onclick="processarLoteConversasWpp()"><i class="fa-solid fa-gears"></i> Processar</button>
+            <div id="loteConversasResultado" style="margin-top:14px; font-size:12px;"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-primary" onclick="fecharImportarConversasLote()"><i class="fa-solid fa-check"></i> Fechar</button>
+        </div>
+    </div>
+
+    <!-- Vincular manualmente uma conversa importada em lote sem lead identificado -->
+    <div class="modal" id="modalVincularConversaImportada" style="max-width:480px;">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-link"></i> Vincular Conversa</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharVincularConversaImportada()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; margin-bottom:10px;">Conversa exportada como: <strong id="vincularConversaNomeOriginal"></strong></p>
+            <input type="text" id="vincularConversaBuscaInput" placeholder="Buscar lead por nome ou telefone..." style="width:100%; padding:8px; border:1px solid #cbd5e1; border-radius:6px; box-sizing:border-box;" oninput="buscarLeadParaVincularConversa()">
+            <div id="vincularConversaBuscaResultados" style="margin-top:8px;"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="fecharVincularConversaImportada()">Cancelar</button>
         </div>
     </div>
 
@@ -1134,6 +1193,8 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <!-- 1b. Papa Parse: leitura robusta de CSV (campos com vírgula/aspas, encoding, etc.) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <!-- 1c. JSZip: lê o .zip exportado do WhatsApp direto no navegador (Importação em Lote de Conversas) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
     <!-- 2. Faz a conexão segura com a sua conta -->
     <script>
