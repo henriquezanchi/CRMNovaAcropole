@@ -1,11 +1,13 @@
-name: Scraper Ulisses/Mercúrio
+name: Scraper Mercúrio
 
-# Mercúrio roda 100% headless, sem bloqueio (confirmado em teste real) —
-# por isso já dá pra agendar sozinho, todo dia, sem precisar de ninguém
-# (ver `schedule:` abaixo). O Ulisses continua manual (Cloudflare barra
-# IP de datacenter, ver comentário no passo abaixo) — pra isso, use o
-# modo local/assistido (`npm run ulisses-local` na sua máquina de
-# confiança) sempre que precisar reimportar de verdade.
+# Só o Mercúrio roda aqui — o Ulisses NUNCA rodou neste workflow de
+# verdade (Cloudflare bloqueia IP de datacenter, ver comentário que
+# existia aqui antes) e o passo dele foi REMOVIDO por completo
+# (2026-09-10, pedido do usuário: "quero um scraper só para o mercúrio, e
+# um só para o ulisses" — o Ulisses já vive 100% separado, em
+# `ulisses-local.js`, rodado manualmente na máquina de confiança do
+# usuário; deixar aqui um passo sempre-pulado (`if: false`) só confundia,
+# sugerindo uma dependência que nunca existiu).
 on:
   workflow_dispatch:
     inputs:
@@ -23,6 +25,33 @@ on:
   # `scraper-disparar` — ela é quem aciona este workflow via
   # `workflow_dispatch`. O agendador do Postgres é muito mais preciso que
   # a fila compartilhada de `schedule:` de contas gratuitas do Actions.
+
+# GRAVÍSSIMO, achado em produção (2026-09-10): 2+ disparos concorrentes
+# (clique duplicado no CRM, sem o lock de localStorage que existe hoje +
+# o cron diário caindo no meio) fizeram 2-3 sessões do Mercúrio rodarem
+# SIMULTANEAMENTE, todas logadas com a MESMA credencial compartilhada
+# (Matrícula/Senha, `sistema='mercurio'`, `filial='GLOBAL'` no cofre — só
+# existe 1 login pra todas as filiais). Evidência real, achada consultando
+# `log_atividade`: uma importação com `enviados=117`/`alunoAtivo=33`/
+# `exAluno=84` (a ASSINATURA EXATA de Barra do Garças) foi gravada com
+# `filial='Goiânia - Jardim América'` — ou seja, uma sessão concorrente
+# contaminou o "filial atual" da outra no meio da navegação, mesmo cada
+# sessão rodando em runners/browsers totalmente isolados (só a CONTA do
+# Mercúrio é compartilhada — é bem provável que a sessão do lado do
+# Mercúrio, server-side, não isole bem 2 logins simultâneos da MESMA
+# matrícula). Isso é EXATAMENTE a classe de bug já documentada como "Bug
+# real #4 GRAVÍSSIMO" (índice de link stale) — só que a causa raiz real
+# nunca era o índice ficar stale sozinho, era SEMPRE concorrência (2
+# sessões pisando uma na outra), e o índice era só o sintoma mais fácil de
+# enxergar. `concurrency` do GitHub Actions garante que só 1 execução
+# deste workflow roda por vez — qualquer disparo novo enquanto outro já
+# está rodando CANCELA o anterior (nunca deixa 2 ao mesmo tempo). Resolve
+# na raiz, sem precisar confiar em nenhum lock do lado do CRM/navegador
+# (que só protege contra clique duplicado NO MESMO navegador — não contra
+# o cron diário, outro dispositivo, ou outra aba).
+concurrency:
+  group: scraper-mercurio
+  cancel-in-progress: true
 
 jobs:
   scraper:
@@ -46,20 +75,6 @@ jobs:
 
       - name: Instalar navegador (Chromium)
         run: npx playwright install --with-deps chromium
-
-      # Pausado por decisão explícita (2026-09-06): o Cloudflare na frente
-      # do acropolebrasil.com.br barra qualquer acesso vindo do IP de
-      # datacenter do GitHub Actions com um challenge "Verify you are
-      # human" — nunca chega nem no Auth0. Não é um bug de código, é uma
-      # proteção deliberada contra automação; não vamos tentar contornar.
-      # Ulisses segue no fluxo manual (planilha) até decidirmos rodar isso
-      # de um IP residencial/self-hosted, ou conseguirmos allowlist com
-      # quem administra o site. Ver CLAUDE.md, seção do scraper. Pra
-      # reativar, é só apagar o `if: false` abaixo.
-      - name: Ulisses — login + exportar Inscrições, catálogo de eventos e comparecimento (todas as filiais)
-        if: false
-        run: node ulisses.js
-        continue-on-error: true
 
       - name: Mercúrio — login + exportar Ativos e Inativos
         env:

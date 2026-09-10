@@ -393,15 +393,30 @@ function normalizarTextoFilial(s) {
         .trim();
 }
 
+// Extraído pra ser reaproveitado também pelo filtro de filial (`--`/
+// `FILTRO_FILIAL`, ver `main()`) — bug real achado em produção
+// (2026-09-10): o filtro comparava o valor bruto de `filiais.nome` (ex:
+// "Goiânia - Garavelo", vindo direto do `<select>` do CRM) contra o
+// rótulo do Mercúrio com um `.includes()` NAIVE, sem tirar acento nem
+// palavra genérica — "goiânia - garavelo" nunca aparece dentro de
+// "goiânia universitario: goiania garavelo" (estrutura de texto
+// diferente: um usa " - ", o outro usa ": "), então filtrar por
+// "Goiânia - Garavelo" ou "Barra do Garças/MT" (que tem o "/MT" que o
+// Mercúrio não tem) sempre dava "Nenhuma filial bate com o filtro" — a
+// causa exata do erro que o usuário viu ao tentar rodar só o Garavelo.
+function nucleoDistintivoFilial(nomeFilial) {
+    return normalizarTextoFilial(nomeFilial)
+        .split(' ')
+        .filter(p => p && !PALAVRAS_GENERICAS_FILIAL.has(p))
+        .join(' ');
+}
+
 async function resolverFilialCrm(labelMercurio) {
     const { data: filiais, error } = await supabaseAdmin.from('filiais').select('nome').eq('ativo', true);
     if (error) throw new Error('Erro ao buscar filiais do CRM: ' + error.message);
     const labelNorm = normalizarTextoFilial(labelMercurio);
     for (const f of filiais || []) {
-        const nucleo = normalizarTextoFilial(f.nome)
-            .split(' ')
-            .filter(p => p && !PALAVRAS_GENERICAS_FILIAL.has(p))
-            .join(' ');
+        const nucleo = nucleoDistintivoFilial(f.nome);
         if (nucleo && labelNorm.includes(nucleo)) return f.nome;
     }
     return null;
@@ -738,9 +753,15 @@ async function main() {
         // filial em vez de sempre rodar as 4 (pedido do usuário 2026-09-10:
         // testar mudança numa filial só, e evitar tráfego desnecessário no
         // Mercúrio conforme mais filiais forem entrando).
+        // Comparação ROBUSTA (mesma técnica de resolverFilialCrm() acima):
+        // tira acento e palavra genérica dos 2 lados antes de comparar, não
+        // um `.includes()` bruto — funciona tanto pra uma palavra simples
+        // digitada à mão ("Garavelo") quanto pro `filiais.nome` inteiro
+        // vindo do CRM ("Goiânia - Garavelo", "Barra do Garças/MT").
         const filtro = process.argv[2] || process.env.FILTRO_FILIAL || null;
-        const cadastros = filtro
-            ? cadastrosTodos.filter(c => c.label.toLowerCase().includes(filtro.toLowerCase()))
+        const filtroNucleo = filtro ? nucleoDistintivoFilial(filtro) : null;
+        const cadastros = filtroNucleo
+            ? cadastrosTodos.filter(c => normalizarTextoFilial(c.label).includes(filtroNucleo))
             : cadastrosTodos;
         if (cadastros.length === 0) throw new Error(`Nenhuma filial bate com o filtro "${filtro}" (filiais encontradas: ${cadastrosTodos.map(c => c.label).join(', ')}).`);
         console.log(`[mercurio] ${cadastros.length} filial(is) encontrada(s): ${cadastros.map(c => c.label).join(', ')}`);

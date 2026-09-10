@@ -3317,13 +3317,85 @@ bloqueado).
        dentro do orçamento de 20min, RETOMA sozinho (mesmo timestamp,
        mesmo relógio de início — não reinicia a janela de timeout), sem
        deixar o botão parecer "livre" enquanto ainda tem uma rodada de
-       verdade em andamento no GitHub. **As 2 rodadas redundantes da
-       produção não foram canceladas** (não tenho o token
-       `GITHUB_TOKEN_DISPATCH` neste ambiente pra chamar a API de
-       cancelamento) — são só um desperdício de tempo de CI, não
-       corrompem nada (o Mercúrio faz upsert, reimportar 2x a mesma coisa
-       é inofensivo); se quiser, cancelar manualmente pela aba Actions do
-       GitHub.
+       verdade em andamento no GitHub. **CORREÇÃO do que foi escrito
+       aqui**: "reimportar 2x a mesma coisa é inofensivo" estava ERRADO —
+       ver bullet "GRAVÍSSIMO" logo abaixo, achado poucos minutos depois:
+       rodadas concorrentes não são inofensivas, corrompem dado de
+       verdade.
+     - **GRAVÍSSIMO, achado em produção minutos depois do bullet acima
+       (2026-09-10)**: o usuário relatou "rodei o Mercúrio e não importou
+       Garavelo nem Barra do Garças" — a causa real não era nenhuma
+       filial ficar de fora, era CONCORRÊNCIA: as 2 rodadas redundantes
+       do bullet anterior (mais outras disparadas em seguida tentando
+       "corrigir") ficaram rodando PARCIALMENTE AO MESMO TEMPO (confirmado
+       via API do GitHub: run concluindo às 19:18:21 enquanto outro run já
+       tinha começado às 19:16:10), todas logadas com a MESMA credencial
+       compartilhada do Mercúrio (Matrícula/Senha, `filial='GLOBAL'` no
+       cofre — só existe 1 login pra todas as filiais). Evidência
+       definitiva, achada consultando `log_atividade` diretamente: uma
+       importação com `enviados=117`/`resumo.alunoAtivo=33`/
+       `resumo.exAluno=84` — a ASSINATURA EXATA de Barra do Garças, igual
+       bit a bit a outras importações confirmadas daquela filial — foi
+       gravada com `"filial": "Goiânia - Jardim América"`. Ou seja: uma
+       sessão concorrente leu/exportou os dados REAIS de uma filial mas o
+       dado foi importado no CRM sob o NOME de outra — **exatamente a
+       mesma classe de sintoma já documentada como "Bug real #4
+       GRAVÍSSIMO" (índice de link CADASTRO stale entre reloads,
+       corrigido com `indiceAtualParaLabel()`)**, só que aquela correção
+       resolve a navegação DENTRO de uma única sessão; nunca protegia
+       contra 2 sessões inteiras rodando ao mesmo tempo pisando uma na
+       outra do lado do SERVIDOR do Mercúrio (é bem provável que o
+       Mercúrio não isole bem 2 logins simultâneos da mesma matrícula —
+       nada que o nosso código sozinho resolvesse). Isso explica também,
+       retroativamente, o "CELSO JESUS MORAIS existe 3x" e outros
+       duplicados antigos nunca 100% explicados: sempre foi concorrência,
+       o índice stale era só o sintoma mais fácil de flagrar, não a causa
+       raiz completa. **Corrigido na raiz**: `concurrency: {group:
+       scraper-mercurio, cancel-in-progress: true}` em `scraper.yml` —
+       recurso NATIVO do GitHub Actions, garante que só 1 execução deste
+       workflow roda por vez (um disparo novo CANCELA o anterior em vez
+       de rodar em paralelo). Resolve pra sempre, sem depender de nenhum
+       lock do lado do CRM (que só protege clique duplicado NO MESMO
+       navegador — nunca protegeria contra o cron diário caindo no meio,
+       outro dispositivo, ou outra aba). O passo do Ulisses (sempre `if:
+       false`, nunca executava de verdade) foi REMOVIDO do arquivo por
+       completo nesta mesma limpeza — pedido explícito do usuário
+       ("quero um scraper só para o mercúrio, e um só para o ulisses"):
+       tecnicamente já eram 100% separados (scripts diferentes,
+       `ulisses-local.js` roda só na máquina local do usuário, nunca no
+       GitHub Actions), mas o passo morto sugerindo uma dependência que
+       nunca existiu só confundia. `name:` do workflow trocado pra
+       "Scraper Mercúrio" pra reforçar isso visualmente na aba Actions do
+       GitHub. **Arquivo continua `scraper.yml`** (não renomeado pra
+       `mercurio.yml`) — decisão de escopo, pra não ter que coordenar
+       trocar o default de `GITHUB_WORKFLOW_FILE` na Edge Function
+       `scraper-disparar` sob a mesma pressa de corrigir a concorrência;
+       renomear o arquivo é só cosmético e fica pra depois se ainda
+       importar.
+     - **Bug real relacionado, achado no mesmo incidente — filtro de
+       filial não batia com o rótulo do Mercúrio**: o novo seletor de
+       filial (bullet acima) manda o `filiais.nome` inteiro do CRM (ex:
+       "Goiânia - Garavelo", "Barra do Garças/MT") como filtro — mas o
+       `.includes()` original era LITERAL, sem tirar acento nem palavra
+       genérica, então nunca batia (a etiqueta do Mercúrio usa outra
+       estrutura de texto: "GOIÂNIA UNIVERSITARIO: GOIANIA GARAVELO", sem
+       o " - "; e não tem o "/MT" que sobra em "Barra do Garças/MT").
+       Confirmado no próprio `status_sincronizacao_automatica`: tentar
+       rodar só "Goiânia - Garavelo" deu
+       `"Nenhuma filial bate com o filtro"`. Corrigido reaproveitando a
+       MESMA técnica que `resolverFilialCrm()` já usava com sucesso
+       (extraída pra `nucleoDistintivoFilial()`): tira acento
+       (`normalizarTextoFilial()`) e palavra genérica (`GOIANIA`/
+       `UNIVERSITARIO`/`MT`) dos 2 lados antes de comparar — testado
+       isoladamente (fora do navegador real) contra os 4 rótulos reais do
+       Mercúrio: as 4 filiais batem certo agora. **As rodadas concorrentes
+       do incidente acima também produziram novos leads possivelmente
+       mesclados/duplicados** (contagem de Jardim América oscilando
+       durante a investigação, 2743 -> 2572, entre auto-merges de
+       `detectarLeadsATratar()` disparados por 2 importações da MESMA
+       filial ao mesmo tempo) — recomendado fazer OUTRA limpeza total +
+       reimportação única (sem concorrência, já com os 2 fixes acima)
+       antes de confiar no dado das 4 filiais de novo.
      - **Achado incidental investigando o bug acima**: as tentativas
        manuais de Ulisses do próprio dia (13:49-14:26 Brasília, ANTES da
        limpeza total desta sessão) mostraram URLs com
