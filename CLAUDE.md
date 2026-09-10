@@ -46,6 +46,9 @@ js/notificacoes.js  → módulo separado: Central de Notificações (sino no top
 js/log-atividade.js  → módulo separado: Log de Atividade (auditoria durável, append-only —
                         mover lead, tags, mesclagem, exclusão, importação; tabela sem policy
                         de UPDATE/DELETE, nem o app consegue apagar uma linha já gravada)
+js/importar-conversa-whatsapp.js → módulo separado: cola o .txt exportado de uma conversa de
+                        WhatsApp feita fora do CRM (API bloqueada) e grava no histórico do
+                        lead, via Edge Function whatsapp-importar-conversa
 js/acesso.js         → portão de senha única do time (ver seção "Publicação/Deploy")
 scraper/             → login automatizado no Ulisses/Mercúrio via Playwright, roda fora do
                         Supabase (GitHub Actions, .github/workflows/scraper.yml) — ver seção
@@ -56,6 +59,9 @@ supabase/functions/whatsapp-webhook/    → Edge Function: recebe mensagens/stat
 supabase/functions/classificar-temas/   → Edge Function: classifica tema de evento por IA (Anthropic)
 supabase/functions/gerenciar-credenciais/ → Edge Function: cifra e grava senha do Ulisses/Mercúrio
                                      (cofre do futuro scraper — só escrita, nunca lê de volta)
+supabase/functions/whatsapp-importar-conversa/ → Edge Function: grava em lote uma conversa de
+                                     WhatsApp importada de fora do CRM (mensagens_whatsapp não
+                                     tem policy de INSERT pro público, só service_role)
 migracao_filiais.sql              → já rodada (cria tabela filiais + coluna filial)
 migracao_historico_eventos.sql    → já rodada (coluna historico_eventos + constraint UNIQUE)
 migracao_whatsapp.sql             → tabela mensagens_whatsapp + view vw_wpp_conversas
@@ -184,6 +190,10 @@ migracao_log_atividade.sql        → tabela log_atividade (auditoria durável, 
                                      só policy de SELECT/INSERT, sem UPDATE/DELETE, ver seção
                                      "Log de Atividade"); JÁ RODADA nesta sessão via
                                      `supabase db query --linked`
+migracao_whatsapp_importado.sql   → coluna importado_manualmente em mensagens_whatsapp (marca
+                                     mensagem trazida de conversa feita fora do CRM, ver seção
+                                     "Importar Conversa de WhatsApp"); JÁ RODADA nesta sessão
+                                     via `supabase db query --linked`
 ```
 
 ## Banco de dados (Supabase)
@@ -2512,6 +2522,95 @@ funcionava). Investigação (consultando `mensagens_whatsapp` direto):
   lead frio, e o lembrete de importação do Ulisses (seção acima) — ainda
   assim, o código do lembrete foi escrito e já fica pronto pra funcionar
   assim que o bloqueio for resolvido.
+
+## Importar Conversa de WhatsApp (feita fora do CRM)
+
+Enquanto a API do Meta está bloqueada (seção acima), o time continua
+atendendo pelo WhatsApp de verdade, fora do CRM — esse recurso traz essas
+conversas de volta pro histórico do lead, sem precisar digitar mensagem
+por mensagem na mão. Botão "Importar Conversa" no cabeçalho do chat da
+GAVETA do lead (`abrirImportarConversaWpp()`, `js/importar-conversa-whatsapp.js`)
+— de propósito só ali (não na aba WhatsApp unificada): a filial e o lead
+já estão fixos pelo simples fato de a gaveta estar aberta, então não
+precisa de um seletor de filial/busca de lead separado.
+
+- **Formato de entrada, confirmado contra um export real** (pedido ao
+  usuário antes de escrever qualquer parser, mesmo princípio já usado pro
+  HTML do Ulisses/Mercúrio — nunca adivinhar formato de sistema externo):
+  menu da conversa → Exportar conversa → **Sem mídia** → `.txt` com 1
+  linha por mensagem, `DD/MM/AAAA HH:MM - Remetente: texto` (SEM vírgula
+  entre data e hora, SEM segundos — formato pode variar em outro
+  aparelho/idioma, ainda não testado). Mensagens de SISTEMA (aviso de
+  criptografia etc.) não têm o padrão "Nome: texto" e são ignoradas
+  automaticamente. Mensagens multi-parágrafo (texto colado com quebras de
+  linha) são reconhecidas por CONTINUAÇÃO — qualquer linha que não comece
+  com o timestamp é concatenada na mensagem anterior. `<Mídia oculta>`
+  (mídia não incluída no export) entra como texto literal mesmo — sem
+  fingir que tem uma imagem/áudio de verdade ali.
+- **`parseTextoConversaWhatsApp(texto)`** (`js/importar-conversa-whatsapp.js`)
+  é 100% local/síncrono, sem chamada de rede — devolve os textos JÁ
+  concatenados e aparados. Se achar mais de 2 remetentes distintos, avisa
+  que parece ser conversa em GRUPO (só funciona 1-a-1) e bloqueia a
+  importação.
+- **"Quem é quem" (direção de cada mensagem)**: depois de processar, um
+  rádio deixa marcar qual dos até-2 remetentes distintos é VOCÊ
+  (atendente) — o outro nome vira "o lead" (`direcao: 'entrada'`), o
+  marcado vira "atendente" (`direcao: 'saida'`). Pré-marcado por PALPITE
+  (o remetente cujo primeiro nome bate com o primeiro nome do lead já
+  aberto na gaveta vira "não-atendente" automaticamente), mas sempre
+  exige confirmação visual antes de importar — nunca decide sozinho.
+  Uma prévia (primeiras/últimas mensagens, com setas de direção) atualiza
+  em tempo real se o rádio for trocado.
+- **Grava via Edge Function nova, `whatsapp-importar-conversa`** (não
+  direto do navegador): `mensagens_whatsapp` **não tem policy de INSERT
+  pro público** (só service_role escreve, ver `migracao_whatsapp.sql`) —
+  testado ao vivo que um INSERT direto pela chave publishable é
+  bloqueado pela RLS, então essa function segue o MESMO padrão de
+  `whatsapp-send`/`whatsapp-webhook`: recebe só `{pessoaIdentificador,
+  mensagens: [{direcao, texto, timestamp}]}`, resolve telefone/filial do
+  lead NO SERVIDOR (nunca confia no que vier do navegador). Cada mensagem
+  grava `importado_manualmente = true` (`migracao_whatsapp_importado.sql`)
+  — a ÚNICA diferença de schema entre uma mensagem importada e uma real
+  da API. Timestamp: como o `.txt` só tem HH:MM (sem segundos), o
+  navegador soma um deslocamento de alguns ms por índice global antes de
+  mandar (`Date` normaliza overflow de ms sozinho) — só pra garantir ordem
+  cronológica estável entre mensagens do MESMO minuto, sem inventar
+  segundo nenhum de verdade.
+- **Badge visível no chat** (`htmlMensagemWpp()`, `js/whatsapp.js`): toda
+  mensagem com `importado_manualmente = true` ganha um ícone pequeno
+  (`fa-file-import`, título "Importada de uma conversa feita fora do
+  CRM") ao lado do horário — pra NUNCA confundir com uma mensagem enviada/
+  recebida de verdade pela API (importante justamente porque a API está
+  bloqueada agora; sem essa distinção visual, uma mensagem "enviada" com
+  sucesso apareceria igual a um envio real que na verdade está falhando
+  silenciosamente hoje). O chat da gaveta já enxerga as linhas novas pelo
+  MESMO canal Realtime que já existia (`criarChatController()`,
+  `js/whatsapp.js, filtro por pessoaIdentificador`) — nenhum reload manual
+  precisou ser escrito.
+- **Testado ao vivo, ponta a ponta, contra o Supabase real** (filial/lead
+  descartáveis): parser confirmado contra o export de verdade que o
+  usuário mandou (25 mensagens, aviso de criptografia ignorado, mensagem
+  de 6 parágrafos concatenada certa, `<Mídia oculta>` atribuída ao
+  remetente certo); fluxo completo pela UI (abrir gaveta → Importar
+  Conversa → colar → Processar → confirmar quem é o atendente →
+  Confirmar Importação) grava as linhas certas (direção, texto, telefone
+  resolvido do lead, filial, ordem cronológica sem empate); badge aparece
+  no HTML renderizado do chat. **Achado no teste**: `mensagens_whatsapp`
+  também não tem policy de DELETE pro público (só INSERT/SELECT/UPDATE
+  parcial, ver `migracao_whatsapp.sql`) — limpeza de dado de teste nessa
+  tabela precisa passar por acesso privilegiado (`supabase db query
+  --linked`), a chave publishable não consegue apagar uma linha ali de
+  jeito nenhum (mesma garantia de "não se perde" documentada pra
+  `log_atividade`, só que não foi de propósito nesta tabela — é
+  consequência de nunca ter existido policy de escrita pública alguma).
+- **Limitação conhecida, de propósito**: só cobre conversa 1-a-1, e só o
+  formato de export confirmado (o de outro aparelho/idioma pode precisar
+  de ajuste no regex de `RE_INICIO_LINHA_WPP` se aparecer um formato
+  diferente — não adivinhar, pedir uma amostra real primeiro, mesmo
+  principio de sempre). Entrada só pela gaveta do lead — não existe (ainda)
+  um fluxo pra "colei uma conversa mas não sei de qual lead é", que
+  precisaria de um seletor de filial + busca de lead por nome/telefone
+  (ideia registrada, não construída).
 
 ## Publicação/Deploy — CRM público (Vercel) + portão de acesso
 

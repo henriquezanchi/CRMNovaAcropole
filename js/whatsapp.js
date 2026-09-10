@@ -153,10 +153,16 @@ function statusIconHTML(m) {
 function htmlMensagemWpp(m) {
     const classeDirecao = m.direcao === 'saida' ? 'msg-out' : 'msg-in';
     const classeExtra = m.wa_status === 'falhou' ? 'msg-falhou' : '';
+    // Mensagem trazida de fora do CRM (js/importar-conversa-whatsapp.js,
+    // enquanto a API do WhatsApp está bloqueada) — badge visível pra nunca
+    // confundir com uma mensagem de verdade enviada/recebida pela API.
+    const badgeImportada = m.importado_manualmente
+        ? ' <i class="fa-solid fa-file-import" title="Importada de uma conversa feita fora do CRM" style="opacity:.6; font-size:10px;"></i>'
+        : '';
     return `
         <div class="msg ${classeDirecao} ${classeExtra}">
             ${escapeHTML(m.corpo_texto || '')}
-            <div class="msg-time">${formatarHoraWpp(m.criado_em)}${m.direcao === 'saida' ? statusIconHTML(m) : ''}</div>
+            <div class="msg-time">${badgeImportada}${formatarHoraWpp(m.criado_em)}${m.direcao === 'saida' ? statusIconHTML(m) : ''}</div>
         </div>
     `;
 }
