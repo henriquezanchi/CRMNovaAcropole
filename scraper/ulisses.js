@@ -551,7 +551,7 @@ export async function sincronizarComparecimentoNoCrm(filial) {
     const idPorEvento = new Map();
     for (const { nome, data } of eventosUnicos.values()) {
         let { data: existente } = await supabaseAdmin
-            .from('eventos').select('id, tipo, nome')
+            .from('eventos').select('id, tipo, nome, ativo')
             .eq('filial', filial).eq('nome', nome).eq('data', data)
             .maybeSingle();
 
@@ -571,7 +571,7 @@ export async function sincronizarComparecimentoNoCrm(filial) {
         // só uma correção pontual deste caso.
         if (!existente) {
             const { data: candidatosMesmaData } = await supabaseAdmin
-                .from('eventos').select('id, tipo, nome')
+                .from('eventos').select('id, tipo, nome, ativo')
                 .eq('filial', filial).eq('data', data);
             const normNome = normalizarNomeUlisses(nome);
             const parecido = (candidatosMesmaData || []).find(c => {
@@ -586,17 +586,24 @@ export async function sincronizarComparecimentoNoCrm(filial) {
 
         if (existente) {
             idPorEvento.set(`${nome}|||${data}`, existente.id);
-            // Só classifica se ainda não tinha `tipo` — não pisa numa
+            // Só classifica `tipo` se ainda não tinha — não pisa numa
             // classificação já feita pelo catálogo completo (mesma lógica,
             // então nunca deveria divergir, mas por segurança não sobrescreve).
-            if (!existente.tipo) {
-                const tipo = classificarTipoEventoUlisses(nome, tiposEvento);
-                if (tipo) await supabaseAdmin.from('eventos').update({ tipo }).eq('id', existente.id);
-            }
+            // `ativo`, porém, SEMPRE reativa — bug real confirmado em
+            // produção (2026-09-10, Garavelo): usuário tinha desativado
+            // (não apagado) eventos futuros antes de deixar o scraper
+            // recadastrar do zero; como nada aqui tocava em `ativo`, o
+            // evento voltava com dado correto mas continuava invisível na
+            // Agenda, parecendo que só 1 de 2 eventos futuros tinha sido
+            // capturado. Se o Ulisses ainda lista o evento, ele deveria
+            // estar ATIVO na nossa Agenda também.
+            const tipo = !existente.tipo ? classificarTipoEventoUlisses(nome, tiposEvento) : null;
+            const payloadUpdate = { ativo: true, ...(tipo ? { tipo } : {}) };
+            await supabaseAdmin.from('eventos').update(payloadUpdate).eq('id', existente.id);
             continue;
         }
         const { data: criado, error } = await supabaseAdmin
-            .from('eventos').insert({ filial, nome, data, tipo: classificarTipoEventoUlisses(nome, tiposEvento) }).select('id').single();
+            .from('eventos').insert({ filial, nome, data, ativo: true, tipo: classificarTipoEventoUlisses(nome, tiposEvento) }).select('id').single();
         if (error) {
             console.warn(`[ulisses] Não consegui criar evento base "${nome}" (${data}, ${filial}):`, error.message);
             continue;
@@ -621,6 +628,15 @@ export async function sincronizarComparecimentoNoCrm(filial) {
     // Levenshtein — "Samara"/"Samar" continuam batendo) — não bloqueia
     // quando falta nome de um dos lados (não temos como avaliar; melhor
     // manter o comportamento antigo do que rejeitar à toa).
+    // Comparação por STRING (YYYY-MM-DD), não Date/fuso horário — mesmo
+    // cuidado já documentado em dataBRParaISO() (js/matricula-importar.js):
+    // Date() interpretaria uma data-só-dia como UTC meia-noite, que pode
+    // virar "ontem" ou "hoje" dependendo do fuso de quem roda o scraper.
+    // Comparação lexicográfica de string funciona perfeitamente pro
+    // formato YYYY-MM-DD.
+    const agora = new Date();
+    const hojeISO = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}-${String(agora.getDate()).padStart(2, '0')}`;
+
     const vinculos = [];
     let semEvento = 0, semLead = 0, nomeDivergente = 0;
     for (const r of registros) {
@@ -644,10 +660,26 @@ export async function sincronizarComparecimentoNoCrm(filial) {
             continue;
         }
 
+        // Evento AINDA NÃO ACONTECEU — pedido explícito do usuário
+        // (2026-09-10): (1) ausência de "check" de comparecimento (o
+        // padrão pra QUALQUER pré-inscrito antes do evento rolar) não
+        // significa "não compareceu" — significa "ainda não sabemos",
+        // então fica `null` ("em branco"), nunca `false`; só um
+        // `compareceu=true` de verdade (recepção já fez check-in
+        // adiantado, raro mas possível) é registrado. (2)
+        // `resposta_convite` some INSCRIÇÃO no Ulisses não é confirmação
+        // de presença — vira `'pendente'` em vez de `'confirmado'`,
+        // porque isso depende de o time ENTRAR EM CONTATO e a pessoa
+        // confirmar de verdade que vai. Evento PASSADO mantém o
+        // comportamento de sempre (pré-inscrição é sinal real, e o check
+        // de comparecimento já reflete o que de fato aconteceu).
+        const eventoFuturo = dataISO >= hojeISO;
+        const compareceuLido = typeof r.compareceu === 'boolean' ? r.compareceu : null;
         vinculos.push({
             evento_id: eventoId,
             pessoaIdentificador: leadCandidato.id,
-            compareceu: typeof r.compareceu === 'boolean' ? r.compareceu : null,
+            compareceu: eventoFuturo && compareceuLido !== true ? null : compareceuLido,
+            futuro: eventoFuturo,
         });
     }
 
@@ -657,11 +689,12 @@ export async function sincronizarComparecimentoNoCrm(filial) {
 
     // Não sobrescreve `resposta_convite`/`nota` de um vínculo que já
     // existe (pode ter sido ajustado à mão na tela de Participantes) — só
-    // cria com resposta_convite='confirmado' (esteve na lista de
-    // pré-inscritos = confirmou interesse) quando o vínculo ainda não
-    // existe, e sempre atualiza `compareceu` (é o dado que muda com o
-    // tempo: falso/nulo antes do evento, o real depois que aconteceu).
-    // A mesma pessoa pode aparecer mais de 1 vez pro MESMO evento (ex:
+    // cria quando o vínculo ainda não existe (`resposta_convite`
+    // 'pendente' pra evento futuro, 'confirmado' pra passado — ver
+    // comentário no push() acima), e sempre atualiza `compareceu` (é o
+    // dado que muda com o tempo: `null` antes do evento — ver mesmo
+    // comentário — o real depois que aconteceu). A mesma pessoa pode
+    // aparecer mais de 1 vez pro MESMO evento (ex:
     // 2 opções diferentes do <select> do Ulisses acabando no mesmo par
     // nome+data, ou 2 inscrições da mesma pessoa no evento) — confirmado
     // por teste real: um insert em lote com (evento_id,
@@ -689,7 +722,7 @@ export async function sincronizarComparecimentoNoCrm(filial) {
 
     const novos = vinculosUnicos
         .filter(v => !jaExiste.has(`${v.evento_id}|||${v.pessoaIdentificador}`))
-        .map(v => ({ evento_id: v.evento_id, pessoaIdentificador: v.pessoaIdentificador, resposta_convite: 'confirmado', compareceu: v.compareceu }));
+        .map(v => ({ evento_id: v.evento_id, pessoaIdentificador: v.pessoaIdentificador, resposta_convite: v.futuro ? 'pendente' : 'confirmado', compareceu: v.compareceu }));
     const paraAtualizar = vinculosUnicos.filter(v => jaExiste.has(`${v.evento_id}|||${v.pessoaIdentificador}`));
 
     let novosGravados = 0;
@@ -820,6 +853,16 @@ export async function sincronizarCatalogoEventosNoCrm(filial) {
                 imagem_url: ev.imagem_url || existente.imagem_url,
                 ingresso: ev.ingresso || existente.ingresso,
                 descricao: descricaoNova || existente.descricao,
+                // Bug real confirmado em produção (2026-09-10, Garavelo): o
+                // usuário tinha DESATIVADO (não apagado) eventos futuros
+                // antes de deixar o scraper recadastrar do zero — como o
+                // UPDATE nunca tocava em `ativo`, o evento voltava a
+                // existir com dados corretos, mas continuava invisível na
+                // Agenda (ativo=false), parecendo que o scraper só achou
+                // 1 de 2 eventos futuros. Se o Ulisses ainda lista o
+                // evento (chegou até aqui), ele deveria estar ATIVO na
+                // nossa Agenda também — reativa sempre.
+                ativo: true,
             };
             await supabaseAdmin.from('eventos').update(payload).eq('id', existente.id);
             atualizados++;

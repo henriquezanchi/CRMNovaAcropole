@@ -173,6 +173,20 @@ async function carregarLeads(filial, resetar = true) {
         inicioLote = 0;
         leadsAtuais = [];
         if (typeof iniciarNotificacoesParaFilial === 'function') iniciarNotificacoesParaFilial();
+        // Carrega a coluna de Matriculados por FORA da paginação normal —
+        // bug real relatado pelo usuário: a paginação principal (abaixo)
+        // ordena TODOS os leads da filial por pessoaIdentificador e só traz
+        // os primeiros `tamanhoLote` — em filiais com muitos leads "Frios"
+        // (a maioria da base), um lead recém-matriculado com
+        // pessoaIdentificador "tardio" na ordenação simplesmente não
+        // aparecia em NENHUMA coluna (nem em Matriculados) até alguém
+        // clicar "Carregar Mais" o suficiente pra alcançar aquele id —
+        // mesmo que a coluna Matriculados em si tenha poucos leads. Isso
+        // é sempre uma quantidade pequena (matrícula é o passo final,
+        // naturalmente bem menos leads que o funil inteiro), então buscar
+        // ela inteira de uma vez, direto, é seguro e resolve o sintoma —
+        // sem precisar redesenhar a paginação do resto do Kanban.
+        await carregarMatriculadosSemPaginacao(filial);
     }
 
     const btnAntigo = document.getElementById('btn-carregar-mais');
@@ -199,7 +213,12 @@ async function carregarLeads(filial, resetar = true) {
         return;
     }
 
-    leadsAtuais = [...leadsAtuais, ...data];
+    // Deduplica por pessoaIdentificador — necessário desde que
+    // carregarMatriculadosSemPaginacao() (acima) pode ter carregado
+    // adiantado um lead que essa página normal também traria.
+    const idsJaCarregados = new Set(leadsAtuais.map(l => l.pessoaIdentificador));
+    const novosSemDuplicar = (data || []).filter(l => !idsJaCarregados.has(l.pessoaIdentificador));
+    leadsAtuais = [...leadsAtuais, ...novosSemDuplicar];
 
     if (data.length === tamanhoLote) {
         podeCarregarMais = true;
@@ -209,6 +228,33 @@ async function carregarLeads(filial, resetar = true) {
     }
 
     renderizarCards();
+}
+
+// Busca TODOS os leads da coluna "Matriculados" da filial (paginado 1000
+// em 1000 — mesma lição de PostgREST de sempre), fora da paginação
+// principal de carregarLeads() — ver comentário ali. A coluna é achada
+// pela MESMA heurística por substring já usada em outros pontos do
+// projeto (js/eventos.js, js/matricula-importar.js) — nunca cria a
+// coluna sozinha, só não faz nada se não existir nenhuma com "matricul"
+// no nome/chave.
+async function carregarMatriculadosSemPaginacao(filial) {
+    const validKeys = typeof getColumnKeys === 'function' ? getColumnKeys() : columnsConfig.map(c => c.key);
+    const matriculadosKey = validKeys.find(k => k.toLowerCase().includes('matricul'));
+    if (!matriculadosKey) return;
+
+    const TAMANHO_PAGINA = 1000;
+    for (let de = 0; ; de += TAMANHO_PAGINA) {
+        const { data, error } = await window.supabaseClient
+            .from(NOME_TABELA)
+            .select('*')
+            .eq('filial', filial)
+            .eq('funil_agencia', matriculadosKey)
+            .order('pessoaIdentificador', { ascending: true })
+            .range(de, de + TAMANHO_PAGINA - 1);
+        if (error) { console.error('Erro ao pré-carregar Matriculados:', error); return; }
+        leadsAtuais = [...leadsAtuais, ...(data || [])];
+        if (!data || data.length < TAMANHO_PAGINA) break;
+    }
 }
 
 // ==========================================

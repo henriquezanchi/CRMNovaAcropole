@@ -449,6 +449,29 @@ mesma regra de confiança total usada pra tags/filiais/eventos.
   `.order('pessoaIdentificador', { ascending: true })` — chave estável e
   única, então a janela de cada página fica determinística independente
   de UPDATEs em outras colunas da mesma linha.
+- **Matriculados recém-criado podia ficar invisível em QUALQUER coluna —
+  bug real relatado pelo usuário (2026-09-10), raiz diferente do bug
+  acima**: como a paginação principal de `carregarLeads()` busca TODOS os
+  leads da filial ordenados só por `pessoaIdentificador` (sem filtrar por
+  coluna), um lead recém-matriculado cujo id "tardio" nessa ordenação (ex:
+  id sintético alto, ou um id do Ulisses maior que o de leads mais
+  antigos) simplesmente não estava dentro da janela já carregada em
+  `leadsAtuais` — e como o botão "Carregar Mais" só existe na PRIMEIRA
+  coluna (hoje "Frios"), o usuário precisava clicar "Carregar Mais" ali
+  (nada a ver com Matriculados) só pra essa página adicional trazer, de
+  quebra, o lead que faltava em Matriculados. Buscar por nome funcionava
+  (`processarBuscaGlobal()`/`processarBuscaColuna()` batem direto no
+  banco, sem depender do que já foi paginado) — mas exige já saber o nome,
+  não ajuda a DESCOBRIR quem matriculou recentemente. Corrigido com
+  `carregarMatriculadosSemPaginacao()`: sempre que a filial é
+  (re)carregada (`resetar=true`), busca a coluna "Matriculados" (mesma
+  heurística por substring `matricul` já usada em `js/eventos.js`/
+  `js/matricula-importar.js`) INTEIRA de uma vez, fora da paginação
+  principal — é sempre um volume pequeno (matrícula é o passo final do
+  funil), então buscar tudo de cara é seguro. A paginação principal
+  deduplica por `pessoaIdentificador` antes de concatenar, pra não
+  desenhar o mesmo lead 2x quando a janela normal alcança alguém que já
+  tinha sido pré-carregado assim.
 - **Sistema de tags:**
   - Três tags "de sistema", geradas pelo importador: `"Ativo"` (verde,
     `.tag-ativo` — aparece normalmente no Kanban, não é mais escondido:
@@ -1322,6 +1345,17 @@ sistemas fechados).
 - **Não integrado com relatórios ainda** — é a próxima etapa natural
   (funil por evento/tema no Dashboard ou Relatórios), mas não faz parte
   deste MVP.
+- **Ordenação com "Mostrar Passados" — pedido do usuário (2026-09-10)**:
+  antes, `renderizarListaEventos()` ordenava TUDO (futuro + passado, com
+  "Mostrar Passados" ligado) num único `.sort()` ascendente — abrir a
+  lista completa mostrava o evento mais ANTIGO da filial no topo, exigindo
+  rolar a lista toda pra achar algo recente. Corrigido separando em 2
+  blocos: futuros continuam ascendentes (o mais próximo primeiro — "o que
+  vem a seguir"), passados agora descendentes (o mais recente primeiro,
+  descendo pros mais antigos) — concatenados como `[...futuros,
+  ...passados]`, então a lista sempre abre com o que é mais relevante
+  AGORA (o próximo evento a acontecer) e, rolando, cai no passado mais
+  recente antes do mais antigo.
 - **Participantes do evento (`evento_leads`, `migracao_evento_leads.sql`
   — rodar manualmente, depois de `migracao_eventos.sql`)**: associação
   EXPLÍCITA entre lead e evento — diferente de "Confirmados"
@@ -2187,6 +2221,17 @@ uso principal do CRM é resgate de leads frios.
   verdade) em vez de caixa retangular. Fundo `#efeae2` (tom correto do
   papel de parede do WhatsApp) e cores de balão já estavam certas antes
   dessa mudança — só faltava o rabinho e o input.
+- **Chat cortado lateralmente em janelas mais estreitas que 800px — bug
+  real relatado pelo usuário (2026-09-10, print real)**: `.drawer`
+  (`css/style.css`) tinha `width: 800px` fixo, sem nenhum limite pro
+  tamanho da janela do navegador — numa janela mais estreita (ex: browser
+  não maximizado), a gaveta simplesmente extrapolava a viewport, cortando
+  o painel de chat (que divide o espaço com `.drawer-info`, 350px fixos)
+  sem dar pra ver a conversa toda de lado a lado. Corrigido com
+  `max-width: 100vw` — a gaveta encolhe pra caber na janela em vez de
+  vazar pra fora dela; os balões de mensagem já eram responsivos por
+  dentro (`.msg { max-width: 65%; word-wrap: break-word; }`), então só
+  precisavam de um container que não vazasse.
 - **Templates de mensagem** só existem depois de criados e aprovados no
   painel da Meta Business — a lista `TEMPLATES_WHATSAPP` no topo de
   `js/whatsapp.js` precisa ser preenchida (nome técnico exato + ordem das
@@ -2734,25 +2779,53 @@ bloqueado).
          NÃO testado contra o Ulisses real** (é um ajuste de timing puro,
          sem como reproduzir a demora real do Angular fora do site) — a
          próxima rodada do usuário confirma se resolveu.
-       - **Setor Oeste sem NENHUM evento futuro no catálogo (usuário
-         relatou "tem vários")** — investigado, mas SEM DIAGNÓSTICO
-         CONCLUSIVO ainda: o arquivo `catalogo-eventos-*.json` daquela
-         rodada veio vazio (`[]`), e como a etapa não lançou erro (só
-         "encontrou 0 eventos futuros que abriram painel", não "erro"),
-         não sobrou print de falha pra investigar (a função só salva
-         screenshot quando lança excepion — ver `salvarScreenshotErro()`
-         chamado só no `catch` de cada etapa em `processarFilialLocal()`).
-         Duas causas possíveis, não distinguidas ainda: (a) os cards
-         futuros de Setor Oeste, por algum motivo, não abrem o painel de
-         detalhes a tempo (tratados como "de outra filial", pulados
-         silenciosamente — só um `console.warn`, que não fica salvo em
-         lugar nenhum depois que o terminal fecha); (b) esses eventos não
-         estão marcados "Ativo" no Ulisses (filtro de aba, decisão do
-         lado de lá, não um bug daqui). Pedido ao usuário: rodar
-         `npm run ulisses-local -- "Setor Oeste"` direto no terminal (não
-         pelo `.bat`, pra não perder a saída) e mandar o texto impresso —
-         qualquer linha `[ulisses] Evento N não abriu painel...` confirma
-         a causa (a).
+       - **RESOLVIDO — "Setor Oeste sem eventos futuros" e "Garavelo só 1
+         de 2" eram o MESMO bug** (2026-09-10, achado consultando `eventos`
+         direto no banco depois do usuário relatar o sintoma de novo pro
+         caso Garavelo): 10 eventos futuros (Setor Oeste, Garavelo, Jardim
+         América) estavam com `ativo = false` no banco — provavelmente
+         resíduo de quando o usuário "excluiu todos os eventos futuros"
+         antes de deixar o scraper recadastrar do zero (clicou em
+         "Desativar" na Agenda, que só marca `ativo=false`, não apaga a
+         linha — ver bullet "Desativar = ativo=false" na seção da tabela
+         `filiais`, mesmo padrão de retenção usado em toda tabela do
+         projeto). O scraper (`sincronizarCatalogoEventosNoCrm()` e
+         `sincronizarComparecimentoNoCrm()`) SEMPRE capturou os eventos
+         certos e casou pelo `(filial, nome, data)` certo — mas como
+         nenhum dos dois `UPDATE` tocava na coluna `ativo`, o evento
+         recadastrado voltava com todos os dados corretos e continuava
+         INVISÍVEL na Agenda (que só lista `ativo=true` por padrão),
+         dando a falsa impressão de "o scraper não achou o evento".
+         Corrigido: os dois agora sempre gravam `ativo: true` ao
+         criar/atualizar um evento — se o Ulisses ainda lista, deveria
+         estar visível na nossa Agenda também. Reativados manualmente os
+         10 eventos futuros já afetados em produção (as 3 filiais).
+       - **Evento FUTURO não deve virar "confirmado"/"não compareceu"
+         sozinho — pedido explícito do usuário (2026-09-10)**: antes,
+         `sincronizarComparecimentoNoCrm()` criava todo vínculo novo já
+         com `resposta_convite='confirmado'` (só por ter se pré-inscrito
+         no Ulisses) e gravava `compareceu=false` sempre que o checkbox da
+         Recepção vinha desmarcado — pra evento que AINDA NÃO ACONTECEU,
+         isso é sempre verdade (ninguém compareceu a um evento que não
+         rolou ainda), então gerava um falso "2 confirmados, 2 confirmado(s)
+         sem comparecer" pra evento lá no futuro (confirmado pelo card real
+         de "Bushido, o código de honra dos samurais", 26/09/2026 — ver
+         screenshot do usuário). Corrigido: pra evento com `data >= hoje`,
+         `compareceu` só é gravado como `true` (sinal real, recepção já
+         fez check-in adiantado) — `false`/ausente vira `null` ("em
+         branco", correto: ainda não sabemos), e `resposta_convite` de um
+         vínculo NOVO vira `'pendente'` em vez de `'confirmado'` (inscrição
+         no Ulisses não é confirmação de presença — isso depende do time
+         entrar em contato e a pessoa confirmar de verdade). Evento
+         PASSADO mantém o comportamento de sempre (pré-inscrição é sinal
+         real de interesse, e o comparecimento já reflete o que aconteceu
+         de fato). **Limpeza retroativa em produção**: 19 vínculos em 5
+         eventos futuros (as 3 filiais) tinham exatamente esse padrão
+         (`compareceu=false` + `resposta_convite='confirmado'` num evento
+         `data >= hoje`) — resetados pra `compareceu=null`/`'pendente'`.
+         **Testado ao vivo** (filial descartável): evento futuro sem check
+         grava `pendente`/`null`; evento passado com check desmarcado
+         mantém `confirmado`/`false` (comportamento de sempre).
        - **Mensagem de status corrigida**: `processarFilial()`/
          `processarFilialLocal()` diziam "(marco 2 — ainda não alimenta
          o CRM automaticamente)" mesmo depois de `sincronizarCatalogoEventosNoCrm()`/

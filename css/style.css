@@ -310,7 +310,12 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 /* Gaveta Lateral e Overlay */
 .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 50; display: none; }
 .overlay.active { display: block; }
-.drawer { position: fixed; top: 0; right: -800px; width: 800px; height: 100vh; background: white; box-shadow: -5px 0 25px rgba(0,0,0,0.1); display: flex; transition: right 0.3s ease; z-index: 100; }
+/* max-width: 100vw evita que a gaveta (800px fixos) extrapole janelas
+   mais estreitas que isso — sem isso, o painel de chat (que divide o
+   espaço com .drawer-info, largura fixa de 350px) ficava cortado
+   lateralmente, sem dar pra ver a conversa toda (bug real relatado pelo
+   usuário, janela do navegador mais estreita que 800px). */
+.drawer { position: fixed; top: 0; right: -800px; width: 800px; max-width: 100vw; height: 100vh; background: white; box-shadow: -5px 0 25px rgba(0,0,0,0.1); display: flex; transition: right 0.3s ease; z-index: 100; }
 .drawer.open { right: 0; }
 .drawer-info { width: 350px; border-right: 1px solid var(--border-color); display: flex; flex-direction: column; background: #fdfdfd; padding: 20px;}
 

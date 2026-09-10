@@ -314,10 +314,18 @@ function renderizarListaEventos() {
     if (!container) return;
 
     const hojeISO = new Date().toISOString().slice(0, 10);
-    const lista = eventosAtuais
-        .filter(ev => mostrarEventosPassados || dataEfetivaLimite(ev) >= hojeISO)
-        .slice()
-        .sort((a, b) => (a.data + (a.hora || '')).localeCompare(b.data + (b.hora || '')));
+    // Futuros: cronológico normal (o mais próximo primeiro — é "o que vem
+    // a seguir"). Passados: ORDEM INVERTIDA (o mais recente primeiro,
+    // descendo pros mais antigos) — pedido explícito do usuário; do jeito
+    // que estava antes (tudo num sort só, ascendente), abrir "Mostrar
+    // passados" mostrava o evento mais ANTIGO da filial no topo, obrigando
+    // rolar a lista toda pra achar algo recente.
+    const chave = ev => ev.data + (ev.hora || '');
+    const futuros = eventosAtuais.filter(ev => dataEfetivaLimite(ev) >= hojeISO).sort((a, b) => chave(a).localeCompare(chave(b)));
+    const passados = mostrarEventosPassados
+        ? eventosAtuais.filter(ev => dataEfetivaLimite(ev) < hojeISO).sort((a, b) => chave(b).localeCompare(chave(a)))
+        : [];
+    const lista = [...futuros, ...passados];
 
     if (lista.length === 0) {
         container.innerHTML = `<div class="agenda-vazio">Nenhum evento ${mostrarEventosPassados ? 'cadastrado' : 'futuro'} pra esta filial ainda. Clique em "Novo Evento" pra cadastrar o primeiro.</div>`;
