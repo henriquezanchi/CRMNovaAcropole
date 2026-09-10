@@ -425,9 +425,14 @@ function fecharSincronizacaoScraper() {
     if (pollSincronizacaoTimer) { clearInterval(pollSincronizacaoTimer); pollSincronizacaoTimer = null; }
 }
 
-async function renderizarStatusSincronizacaoScraper(mensagemExtra) {
-    const container = document.getElementById('sincronizacaoScraperStatus');
-    if (!container) return;
+// Pedido do usuário (2026-09-10): o status de cada sistema deve ficar
+// JUNTO das informações daquele sistema (não os 2 empilhados no fim da
+// tela) — por isso 2 containers separados, um logo abaixo do botão do
+// Mercúrio e outro logo abaixo do botão do Ulisses, em vez de 1 só.
+async function renderizarStatusSincronizacaoScraper(mensagemExtraMercurio) {
+    const containerMercurio = document.getElementById('sincronizacaoScraperStatusMercurio');
+    const containerUlisses = document.getElementById('sincronizacaoScraperStatusUlisses');
+    if (!containerMercurio || !containerUlisses) return;
 
     const { data, error } = await window.supabaseClient
         .from('status_sincronizacao_automatica')
@@ -436,7 +441,9 @@ async function renderizarStatusSincronizacaoScraper(mensagemExtra) {
         .limit(10);
 
     if (error) {
-        container.innerHTML = `<p style="font-size:12px; color:#dc2626;">Erro ao ler status: ${escapeHTML(error.message)}. Rode migracao_credenciais_scraper.sql se ainda não rodou.</p>`;
+        const erroHtml = `<p style="font-size:12px; color:#dc2626;">Erro ao ler status: ${escapeHTML(error.message)}. Rode migracao_credenciais_scraper.sql se ainda não rodou.</p>`;
+        containerMercurio.innerHTML = erroHtml;
+        containerUlisses.innerHTML = '';
         return;
     }
 
@@ -460,12 +467,11 @@ async function renderizarStatusSincronizacaoScraper(mensagemExtra) {
         `;
     };
 
-    container.innerHTML = `
-        ${mensagemExtra ? `<p style="font-size:12px; color:var(--na-green-dark); margin-bottom:10px;"><i class="fa-solid fa-circle-notch fa-spin"></i> ${escapeHTML(mensagemExtra)}</p>` : ''}
+    containerMercurio.innerHTML = `
+        ${mensagemExtraMercurio ? `<p style="font-size:12px; color:var(--na-green-dark); margin-bottom:10px;"><i class="fa-solid fa-circle-notch fa-spin"></i> ${escapeHTML(mensagemExtraMercurio)}</p>` : ''}
         ${formatarLinha('Mercúrio (última rodada)', ultimoMercurio)}
-        <div style="height:8px;"></div>
-        ${formatarLinha('Ulisses (última rodada manual)', ultimoUlisses)}
     `;
+    containerUlisses.innerHTML = formatarLinha('Ulisses (última rodada manual)', ultimoUlisses);
 }
 
 // Bug real achado nesta sessão: existem AGORA 2 botões "Rodar Mercúrio

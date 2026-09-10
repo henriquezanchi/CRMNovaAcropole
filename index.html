@@ -1067,9 +1067,10 @@
                 O Mercúrio (Ativos/Inativos/Aniversariantes/Turmas/Matrículas recentes) já roda sozinho todo dia às 05:00
                 (Brasília). Use o botão abaixo pra rodar na hora, sem esperar.
             </p>
-            <button class="btn-primary btn-disparar-mercurio" onclick="dispararMercurioAgora()" style="width:100%; margin-bottom:16px;">
+            <button class="btn-primary btn-disparar-mercurio" onclick="dispararMercurioAgora()" style="width:100%; margin-bottom:10px;">
                 <i class="fa-solid fa-play"></i> Rodar Mercúrio Agora
             </button>
+            <div id="sincronizacaoScraperStatusMercurio" style="margin-bottom:18px;"></div>
             <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">
                 O Ulisses continua manual de propósito (login exige resolver um desafio de segurança —
                 Cloudflare). O botão abaixo abre o Chromium direto na SUA máquina de confiança pra você
@@ -1077,10 +1078,10 @@
                 não em qualquer PC que acessar o CRM. Se não abrir nada, rode <code>npm run ulisses-local</code>
                 direto pelo terminal como alternativa.
             </p>
-            <a href="abrirulisses://rodar" class="btn-primary" style="width:100%; margin-bottom:16px; display:block; text-align:center; text-decoration:none; box-sizing:border-box;">
+            <a href="abrirulisses://rodar" class="btn-primary" style="width:100%; margin-bottom:10px; display:block; text-align:center; text-decoration:none; box-sizing:border-box;">
                 <i class="fa-solid fa-desktop"></i> Importar Ulisses (abre no seu PC)
             </a>
-            <div id="sincronizacaoScraperStatus"></div>
+            <div id="sincronizacaoScraperStatusUlisses"></div>
         </div>
         <div class="modal-footer">
             <button class="btn-primary" onclick="fecharSincronizacaoScraper()"><i class="fa-solid fa-check"></i> Fechar</button>
