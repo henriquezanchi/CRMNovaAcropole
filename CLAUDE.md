@@ -3104,17 +3104,56 @@ automatizados). Backend/cofre não foram tocados — credencial de Ulisses
 já salva antes continua existindo e servindo de dica, só não dá mais
 pra SALVAR uma nova pela tela.
 
-## "Botão" de acionar o Ulisses — decisão final
+## "Botão" de acionar o Ulisses — de decisão final a botão de verdade (2026-09-10)
 
-Um botão de verdade no CRM publicado não consegue abrir uma janela de
-navegador no PC de quem clica (é um site na nuvem) — por isso, em vez
-disso, existe `scraper/Importar Ulisses.bat`: atalho de duplo-clique
-(roda `npm run ulisses-local`, todas as filiais) na máquina de confiança
-(`C:\Scrapper`), com uma pausa no final pra dar tempo de ler o resumo.
-Copiar esse `.bat` pra área de trabalho (atalho) é o mais perto que dá
-de um "botão" sem abrir mão do modelo de segurança já decidido (chave
-`service_role` nunca sai de máquina de confiança — ver seção do
-lembrete de importação acima).
+**Histórico**: um botão comum no CRM publicado não consegue abrir uma
+janela de navegador no PC de quem clica (é um site na nuvem, e nenhum
+navegador deixa uma página web executar programas locais — bloqueio de
+segurança deliberado, não falta de código). Por isso existe
+`scraper/Importar Ulisses.bat`: atalho de duplo-clique (roda `npm run
+ulisses-local`, todas as filiais) na máquina de confiança (`C:\Scrapper`),
+com uma pausa no final pra dar tempo de ler o resumo.
+
+**Solução final, pedida pelo usuário**: mesmo truque que apps como Zoom/
+Slack/VS Code usam pra ter um botão "Abrir no app" numa página web — um
+**protocolo de URL customizado** registrado no Windows
+(`abrirulisses://`), que o navegador sabe repassar pro sistema quando
+alguém clica num link desse esquema. Configurado (`HKEY_CURRENT_USER\Software\Classes\abrirulisses`,
+só nesta conta Windows/máquina — reversível, não afeta nada remoto):
+```
+HKCU\Software\Classes\abrirulisses
+    (Default) = "URL:Abrir Ulisses Local"
+    "URL Protocol" = ""
+    \shell\open\command
+        (Default) = "C:\Windows\System32\cmd.exe" /c ""C:\Scrapper\scraper\Importar Ulisses.bat""
+```
+2 botões novos no CRM apontam pra `abrirulisses://rodar` (o "rodar" não
+importa, é só o resto da URL depois do `://`; o .bat sempre roda todas as
+filiais ativas, sem parâmetro nenhum): um em "Agenda do Dia — Todas as
+Filiais" (Dashboard, ao lado de "Rodar Mercúrio Agora") e outro no modal
+"Sincronização Automática" (aba Importar). São `<a href="abrirulisses://rodar">`
+simples, sem JS — o próprio navegador intercepta a navegação pro esquema
+não-http e delega pro Windows.
+- **Limitação explícita, documentada na própria tela**: só funciona NESTE
+  computador (onde o protocolo foi registrado) — se o CRM for aberto de
+  outro PC, o clique não faz nada (o navegador vai perguntar "abrir com
+  qual programa?" ou simplesmente ignorar, dependendo do navegador). Isso
+  é aceitável — o Ulisses só pode mesmo rodar numa máquina de confiança já
+  configurada (`C:\Scrapper` + `.env` com as credenciais do cofre), nunca
+  em qualquer PC. Pra configurar em outra máquina de confiança (se um dia
+  precisar), repetir os mesmos comandos de registro acima, ajustando o
+  caminho do `.bat` se for diferente.
+- **1ª vez, o navegador deve pedir confirmação** ("Este site quer abrir X.
+  Permitir?") — comportamento padrão do Windows/navegador pra qualquer
+  protocolo customizado, não um bug; marcar "sempre permitir" deixa 1
+  clique dali em diante.
+- **Testado**: registro no Registro do Windows confirmado (`Get-ItemProperty`
+  mostrou o comando exato salvo) e os 2 botões renderizam certo com o
+  `href` correto (Playwright, sem clicar de verdade — clicar abriria os
+  Chromiums reais contra o Ulisses de produção, pedindo login manual em
+  cada filial, o que só faz sentido o próprio usuário disparar). **O
+  clique de ponta a ponta (abrir os Chromiums de verdade) não foi testado
+  por mim** — precisa ser validado pelo usuário na primeira vez que usar.
 
 ## WhatsApp Unificado — de qual filial é cada conversa?
 
