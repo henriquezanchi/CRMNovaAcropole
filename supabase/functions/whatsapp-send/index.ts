@@ -30,6 +30,7 @@ Deno.serve(async (req) => {
         tipo?: "texto" | "template" | "imagem";
         texto?: string;
         templateNome?: string;
+        templateIdioma?: string;
         templateParams?: string[];
         templatePreview?: string;
         imagemUrl?: string;
@@ -42,7 +43,7 @@ Deno.serve(async (req) => {
         return json({ ok: false, erro: "json_invalido" }, 400);
     }
 
-    const { pessoaIdentificador, tipo, texto, templateNome, templateParams, templatePreview, imagemUrl, caption, atendenteNome } = corpoReq;
+    const { pessoaIdentificador, tipo, texto, templateNome, templateIdioma, templateParams, templatePreview, imagemUrl, caption, atendenteNome } = corpoReq;
     if (!pessoaIdentificador || !tipo) return json({ ok: false, erro: "parametros_faltando" }, 400);
     if (tipo === "texto" && !texto?.trim()) return json({ ok: false, erro: "texto_vazio" }, 400);
     if (tipo === "template" && !templateNome) return json({ ok: false, erro: "template_nome_faltando" }, 400);
@@ -77,7 +78,13 @@ Deno.serve(async (req) => {
             type: "template",
             template: {
                 name: templateNome,
-                language: { code: "pt_BR" },
+                // Precisa bater EXATO com o idioma registrado na Meta pra
+                // esse template (campo "Selecione o idioma" na criação) —
+                // template com idioma errado falha o envio na hora. A
+                // maioria é pt_BR, mas alguns foram registrados como
+                // en_US por engano e ainda não foram reenviados — ver
+                // TEMPLATES_WHATSAPP em js/whatsapp.js.
+                language: { code: templateIdioma || "pt_BR" },
                 components: [{
                     type: "body",
                     parameters: (templateParams || []).map((p) => ({ type: "text", text: p })),

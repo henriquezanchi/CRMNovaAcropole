@@ -2176,17 +2176,40 @@ uso principal do CRM é resgate de leads frios.
 - **Templates de mensagem** só existem depois de criados e aprovados no
   painel da Meta Business — a lista `TEMPLATES_WHATSAPP` no topo de
   `js/whatsapp.js` precisa ser preenchida (nome técnico exato + ordem das
-  variáveis) conforme forem aprovados. Hoje tem 2: `contato_inicial`
-  (3 variáveis: nome/atendente/palestra — pós-palestra) e
-  `resgate_lead_evento` (1 variável: nome — resgate de lead frio
-  genérico). **Editar o texto de um template aprovado exige submeter de
-  novo pra Meta e esperar reaprovação** (não é instantâneo) — por isso,
-  antes de pedir aprovação de um template novo, vale considerar deixá-lo
-  bem genérico/com mais variáveis (parecido com o padrão de
-  `CONVITE_EVENTO_NAO_ALUNO`/`CONVITE_EVENTO_ATIVO` abaixo, que são só
-  texto livre preenchido no chat — sem aprovação nenhuma da Meta, mas só
-  funcionam DENTRO da janela de 24h) em vez de um texto fixo e específico
-  demais pra um cenário só.
+  variáveis) conforme forem aprovados. Hoje tem 5: `contato_inicial`
+  (3 variáveis: nome/atendente/palestra — pós-palestra), `resgate_lead_evento`
+  (1 variável: nome — resgate de lead frio genérico), `contato_ulisses`
+  (5 variáveis: nome/atendente/filial/tipo-do-evento/nome-do-evento —
+  quem participou de algo pelo Ulisses e nunca foi aluno),
+  `resgate_ex_aluno` (3 variáveis: nome/atendente/filial — ex-aluno
+  inativo) e `contato_aluno_ativo` (4 variáveis: nome/atendente/filial/
+  evento — convite geral pro aluno atual, atualizados/confirmados
+  2026-09-10 a partir do texto exato submetido na Meta).
+  - **`idioma` por template** (campo novo em cada entrada de
+    `TEMPLATES_WHATSAPP`, padrão `'pt_BR'` quando omitido) — precisa
+    bater EXATO com o "Selecione o idioma" registrado na criação do
+    template na Meta, senão o envio falha (template não encontrado nesse
+    idioma). `resgate_ex_aluno` e `contato_aluno_ativo` foram registrados
+    como **English** (confirmado pelo usuário, não é engano a corrigir) —
+    `idioma: 'en_US'` nesses dois; os outros 3 continuam `pt_BR`. O valor
+    vai no corpo da chamada (`templateIdioma`) até `whatsapp-send`, que
+    usa `templateIdioma || "pt_BR"` no `language.code` da Graph API (antes
+    disso a function sempre mandava `pt_BR` fixo, o que teria falhado
+    silenciosamente pros templates em inglês).
+  - **Editar o texto de um template aprovado exige submeter de novo pra
+    Meta e esperar reaprovação** (não é instantâneo) — por isso, antes de
+    pedir aprovação de um template novo, vale considerar deixá-lo bem
+    genérico/com mais variáveis (parecido com o padrão de
+    `CONVITE_EVENTO_NAO_ALUNO`/`CONVITE_EVENTO_ATIVO` abaixo, que são só
+    texto livre preenchido no chat — sem aprovação nenhuma da Meta, mas só
+    funcionam DENTRO da janela de 24h) em vez de um texto fixo e específico
+    demais pra um cenário só.
+  - **Testado ao vivo (UI, sem enviar de verdade)**: os 5 templates
+    aparecem no seletor da janela fechada, e as variáveis automáticas
+    (`nome`/`atendente`/`filial`) pré-enchem corretamente pro template de
+    5 variáveis (`contato_ulisses`) — envio real não testado de propósito
+    (status de aprovação na Meta incerto no momento + bloqueio de API já
+    documentado acima).
 - **Preenchimento automático das variáveis do template** —
   `tpl.variaveis` é uma lista de `{chave, label}`, não só texto: quando
   `chave` é `'nome'`/`'atendente'`/`'filial'`, `preencherValorAutomatico()`

@@ -24,6 +24,11 @@
 //                  como aproximação, se ninguém configurou ainda)
 //   null        -> sem fonte automática, fica em branco pro SDR digitar
 //                  (ex: nome da palestra, motivo do contato)
+//
+// `idioma` é o código de idioma REGISTRADO na Meta pra aquele template
+// (campo "Selecione o idioma" na tela de criação) — precisa bater exato
+// com o que foi aprovado, senão o envio falha (template não encontrado
+// nesse idioma). Omitido = 'pt_BR' (padrão da maioria).
 const TEMPLATES_WHATSAPP = [
     {
         nome: 'contato_inicial',
@@ -41,52 +46,49 @@ const TEMPLATES_WHATSAPP = [
         corpoAprovado: 'Olá {{1}}! Aqui é da Nova Acrópole 🦉. \n\nNotamos seu interesse em nossos eventos de filosofia e gostaríamos muito de retomar contato. \n\nJá conhece nosso curso de Filosofia?',
         variaveis: [{ chave: 'nome', label: 'nome do lead' }],
     },
-    // Os 3 abaixo ainda estão "Em análise" na Meta — DESCOMENTAR só depois
-    // de aprovados (usar um template não aprovado falha o envio na hora).
-    // ⚠️ contato_aluno_ativo e resgate_ex_aluno foram submetidos com
-    // idioma "English" por engano (conteúdo é português) — se a Meta
-    // rejeitar por causa disso, reenviar como "Portuguese (BR)" antes de
-    // descomentar; se aprovar mesmo assim, o `language` abaixo precisa
-    // virar 'en_US' nesses dois pra bater com o que foi registrado (ver
-    // whatsapp-send/index.ts — hoje assume pt_BR pra todo mundo).
-    //
-    // Os 3 usam o truque de embutir artigo/preposição DENTRO do valor da
-    // variável (ex: "o Henrique", "de Barra do Garças") pra ler natural
-    // no corpo aprovado — os campos 'atendente'/'filial' já vêm assim
-    // pré-preenchidos automaticamente (ver preencherValorAutomatico()).
-    // {
-    //     nome: 'contato_ulisses',
-    //     label: 'Contato via Ulisses (nunca foi aluno)',
-    //     corpoAprovado: 'Oi, {{1}}! Aqui é {{2}}, da Nova Acrópole {{3}}, tudo bem?\n\nVi que você participou {{4}} {{5}} recentemente.\n\nE aí, o que achou?',
-    //     variaveis: [
-    //         { chave: 'nome', label: 'nome do lead' },
-    //         { chave: 'atendente', label: 'atendente (com artigo)' },
-    //         { chave: 'filial', label: 'filial (com preposição)' },
-    //         { chave: null, label: 'tipo do evento (com artigo, ex: da Palestra)' },
-    //         { chave: null, label: 'nome/tema do evento (ex: "A Odisseia: ...")' },
-    //     ],
-    // },
-    // {
-    //     nome: 'resgate_ex_aluno',
-    //     label: 'Resgate (já foi aluno, inativo)',
-    //     corpoAprovado: 'Oi, {{1}}!\n\nAqui é {{2}}, da Nova Acrópole {{3}}, tudo bem? Faz um tempo que você deu uma pausa na sua jornada filosófica com a gente, e sentimos sua falta!\n\nQueria saber como estão as coisas atualmente com você, os novos desafios que tem enfrentado, enfim, sobre tudo que quiser😊.\n\nEstamos sempre de portas abertas!',
-    //     variaveis: [
-    //         { chave: 'nome', label: 'nome do lead' },
-    //         { chave: 'atendente', label: 'atendente (com artigo)' },
-    //         { chave: 'filial', label: 'filial (com preposição)' },
-    //     ],
-    // },
-    // {
-    //     nome: 'contato_aluno_ativo',
-    //     label: 'Contato com aluno atual',
-    //     corpoAprovado: 'Oii, {{1}}! Aqui é {{2}}, da Nova Acrópole {{3}}. Estamos com {{4}} chegando e queria muito contar com você — seja participando, indicando alguém que você acha que ia gostar, ou nos ajudando a divulgar. Topa conversar um pouquinho sobre isso?',
-    //     variaveis: [
-    //         { chave: 'nome', label: 'nome do lead' },
-    //         { chave: 'atendente', label: 'atendente (com artigo)' },
-    //         { chave: 'filial', label: 'filial (com preposição)' },
-    //         { chave: null, label: 'evento/motivo (com artigo, ex: uma Palestra)' },
-    //     ],
-    // },
+    // Os 3 abaixo usam o truque de embutir artigo/preposição DENTRO do
+    // valor da variável (ex: "o Henrique", "de Barra do Garças") pra ler
+    // natural no corpo aprovado — os campos 'atendente'/'filial' já vêm
+    // assim pré-preenchidos automaticamente (preencherValorAutomatico()).
+    {
+        nome: 'contato_ulisses',
+        label: 'Contato via Ulisses (nunca foi aluno)',
+        corpoAprovado: 'Oi, {{1}}! Aqui é {{2}}, da Nova Acrópole {{3}}, tudo bem?\n\nVi que você participou {{4}} {{5}} recentemente.\n\nE aí, o que achou?',
+        variaveis: [
+            { chave: 'nome', label: 'nome do lead' },
+            { chave: 'atendente', label: 'atendente (com artigo)' },
+            { chave: 'filial', label: 'filial (com preposição)' },
+            { chave: null, label: 'tipo do evento (com artigo, ex: da Palestra)' },
+            { chave: null, label: 'nome/tema do evento (ex: "A Odisseia: ...")' },
+        ],
+    },
+    // ⚠️ registrado na Meta com idioma English (confirmado pelo usuário,
+    // não é engano) — precisa mandar `language: en_US`, senão o envio
+    // falha (a Meta não encontra o template no idioma pt_BR).
+    {
+        nome: 'resgate_ex_aluno',
+        label: 'Resgate (já foi aluno, inativo)',
+        idioma: 'en_US',
+        corpoAprovado: 'Oi, {{1}}!\n\nAqui é {{2}}, da Nova Acrópole {{3}}, tudo bem? Faz um tempo que você deu uma pausa na sua jornada filosófica com a gente, e sentimos sua falta!\n\nQueria saber como estão as coisas atualmente com você, os novos desafios que tem enfrentado, enfim, sobre tudo que quiser😊.\n\nEstamos sempre de portas abertas!',
+        variaveis: [
+            { chave: 'nome', label: 'nome do lead' },
+            { chave: 'atendente', label: 'atendente (com artigo)' },
+            { chave: 'filial', label: 'filial (com preposição)' },
+        ],
+    },
+    // ⚠️ idem — registrado como English.
+    {
+        nome: 'contato_aluno_ativo',
+        label: 'Contato com aluno atual',
+        idioma: 'en_US',
+        corpoAprovado: 'Oii, {{1}}! Aqui é {{2}}, da Nova Acrópole {{3}} . Estamos com {{4}} chegando e queria muito contar com você — seja participando, indicando alguém que você acha que ia gostar de divulgar. Topa conversar um pouquinho sobre isso?',
+        variaveis: [
+            { chave: 'nome', label: 'nome do lead' },
+            { chave: 'atendente', label: 'atendente (com artigo)' },
+            { chave: 'filial', label: 'filial (com preposição)' },
+            { chave: null, label: 'evento/motivo (com artigo, ex: uma Palestra)' },
+        ],
+    },
 ];
 
 // Valor pré-preenchido pra uma variável de template, conforme sua chave —
@@ -258,7 +260,7 @@ function criarChatController({ messagesId, inputAreaId }) {
 
             botao.disabled = true;
             const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
-                body: { pessoaIdentificador: leadId, tipo: 'template', templateNome: tpl.nome, templateParams: params, templatePreview: preview, atendenteNome: obterNomeAtendente() }
+                body: { pessoaIdentificador: leadId, tipo: 'template', templateNome: tpl.nome, templateIdioma: tpl.idioma || 'pt_BR', templateParams: params, templatePreview: preview, atendenteNome: obterNomeAtendente() }
             });
             botao.disabled = false;
 
