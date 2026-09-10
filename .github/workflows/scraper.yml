@@ -8,8 +8,16 @@ name: Scraper Ulisses/Mercúrio
 # confiança) sempre que precisar reimportar de verdade.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 8 * * *'  # 08:00 UTC = 05:00 em Brasília (Brasil não observa horário de verão desde 2019)
+  # O `schedule:` do GitHub Actions foi REMOVIDO daqui de propósito
+  # (2026-09-10) — comprovadamente pouco confiável no plano gratuito: 2
+  # dias seguidos com ~4h40 de atraso, e um dia em que simplesmente não
+  # disparou (confirmado no histórico real de runs via API do GitHub, não
+  # suposição). O disparo diário às 05:00 Brasília agora é feito por um
+  # cron job DENTRO do Supabase (pg_cron + pg_net, ver
+  # migracao_agendamento_mercurio_pgcron.sql), que chama a Edge Function
+  # `scraper-disparar` — ela é quem aciona este workflow via
+  # `workflow_dispatch`. O agendador do Postgres é muito mais preciso que
+  # a fila compartilhada de `schedule:` de contas gratuitas do Actions.
 
 jobs:
   scraper:

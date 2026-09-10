@@ -343,8 +343,8 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .chat-header { background: #f0f2f5; padding: 12px 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border-color); }
 .chat-messages { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
 .chat-input-area { background: #f0f2f5; padding: 12px 20px; display: flex; gap: 10px; align-items: center; border-top: 1px solid var(--border-color); }
-.chat-input { flex: 1; padding: 12px; border: none; border-radius: 8px; font-size: 13px; outline: none; background: white; }
-.btn-send { background: var(--na-green); color: white; border: none; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.chat-input { flex: 1; padding: 10px 16px; border: none; border-radius: 21px; font-size: 13px; outline: none; background: white; box-shadow: 0 1px 1px rgba(0,0,0,0.06); }
+.btn-send { background: var(--na-green); color: white; border: none; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 
 /* Mensagens de WhatsApp — status de entrega e falha de envio */
 .msg-status { font-size: 9px; opacity: 0.7; margin-left: 2px; }
@@ -527,9 +527,21 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .wpp-contact-name { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wpp-contact-phone { font-size: 10px; color: var(--text-muted); }
 
-.msg { max-width: 65%; padding: 8px 12px; border-radius: 10px; font-size: 12px; line-height: 1.4; }
+.msg { max-width: 65%; padding: 8px 12px; border-radius: 10px; font-size: 12px; line-height: 1.4; position: relative; word-wrap: break-word; }
 .msg-in { background: white; align-self: flex-start; border-bottom-left-radius: 2px; box-shadow: 0 1px 1px rgba(0,0,0,0.06); }
-.msg-out { background: var(--wpp-green); align-self: flex-end; border-bottom-right-radius: 2px; }
+.msg-out { background: var(--wpp-green); align-self: flex-end; border-bottom-right-radius: 2px; box-shadow: 0 1px 1px rgba(0,0,0,0.06); }
+/* "Rabinho" do balão — a mesma pontinha triangular do WhatsApp real,
+   encaixada no canto que já fica "quadrado" (border-bottom-*-radius: 2px
+   acima) de cada balão. */
+.msg-in::before {
+    content: ''; position: absolute; left: -6px; bottom: 0; width: 0; height: 0;
+    border: 6px solid transparent; border-right-color: white; border-bottom-width: 0;
+}
+.msg-out::before {
+    content: ''; position: absolute; right: -6px; bottom: 0; width: 0; height: 0;
+    border: 6px solid transparent; border-left-color: var(--wpp-green); border-bottom-width: 0;
+}
+.msg-falhou::before { border-right-color: #fef2f2; border-left-color: #fef2f2; }
 .msg-time { font-size: 9px; color: #94a3b8; margin-top: 4px; text-align: right; }
 
 /* ==========================================

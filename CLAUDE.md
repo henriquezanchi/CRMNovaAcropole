@@ -2289,14 +2289,49 @@ bloqueado).
        Mercúrio + Ulisses + importar-no-crm em sequência, por filial, num
        comando só) é trabalho futuro, não um problema de arquitetura em
        aberto — só falta escrever o "orquestrador".
-  4. ✅ **Agendamento do Mercúrio** (`schedule:` no `.github/workflows/scraper.yml`,
-     cron `0 8 * * *` = 05:00 em Brasília todo dia) — só a parte do
-     Mercúrio, que já roda 100% headless sem bloqueio nenhum. O Ulisses
-     **nunca** vai ter agendamento automático (decisão consciente — ver
-     Cloudflare acima); continua exigindo `npm run ulisses-local` manual
-     numa máquina de confiança (usuário decidiu manter fixo, não abrir
-     mão de segurança só pra rodar de qualquer PC — ver justificativa na
-     seção "Lembrete de importação do Ulisses" logo abaixo).
+  4. ✅ **Agendamento do Mercúrio, via `pg_cron` do Supabase** (05:00 em
+     Brasília todo dia) — só a parte do Mercúrio, que já roda 100%
+     headless sem bloqueio nenhum. O Ulisses **nunca** vai ter
+     agendamento automático (decisão consciente — ver Cloudflare acima);
+     continua exigindo `npm run ulisses-local` manual numa máquina de
+     confiança (usuário decidiu manter fixo, não abrir mão de segurança
+     só pra rodar de qualquer PC — ver justificativa na seção "Lembrete
+     de importação do Ulisses" logo abaixo).
+     - **Não é mais o `schedule:` do GitHub Actions** (removido de
+       `.github/workflows/scraper.yml` em 2026-09-10) — comprovadamente
+       pouco confiável no plano gratuito: confirmado via API do GitHub
+       (`GET /repos/.../actions/workflows/scraper.yml/runs`, não
+       suposição) que o disparo `schedule` de 2 dias seguidos aconteceu
+       ~4h40 ATRASADO (08:00 UTC esperado, ~12:40-12:47 UTC de verdade), e
+       num 3º dia simplesmente NÃO disparou até o usuário acionar
+       manualmente. Não era bug de fuso — o cron `0 8 * * *` (08:00 UTC =
+       05:00 Brasília, fixo desde que o Brasil parou de observar horário
+       de verão em 2019) sempre esteve matematicamente certo; o problema é
+       o `schedule:` do Actions ser "melhor esforço", sem SLA de horário
+       nenhum, principalmente pra contas sem plano pago.
+     - **Solução**: `migracao_agendamento_mercurio_pgcron.sql` habilita as
+       extensions `pg_cron`/`pg_net` (já rodada nesta sessão via `supabase
+       db query --linked`) e cria o job `disparar-scraper-mercurio-diario`
+       (`cron.schedule(...)`, `0 8 * * *`) que chama `net.http_post()`
+       direto pra Edge Function **`scraper-disparar`** (a mesma que o
+       botão "Rodar Mercúrio agora" já usa) — o agendador do Postgres
+       roda DENTRO da infraestrutura do próprio Supabase, sem depender da
+       fila compartilhada de runners gratuitos do GitHub pra disparar no
+       horário certo (o trabalho pesado — abrir navegador, fazer scraping
+       — continua rodando no GitHub Actions via `workflow_dispatch`, só o
+       GATILHO de horário mudou de lugar). Usa a chave publishable (já
+       pública, embutida no `index.html`) no header `Authorization` — só
+       precisa ser um JWT válido pra passar da verificação padrão da
+       function, não precisa ser a service role.
+     - **Diagnóstico rápido pra checar se rodou** (não precisa entrar no
+       GitHub): `select * from cron.job;` (agendamento ativo?),
+       `select * from cron.job_run_details order by start_time desc
+       limit 10;` (últimas execuções do cron job em si, sucesso/erro da
+       CHAMADA HTTP), e a consulta de sempre em
+       `status_sincronizacao_automatica` (resultado REAL do scraper,
+       gravado por `mercurio.js` depois que o GitHub Actions terminou de
+       rodar) — as duas junto respondem "o cron disparou?" e "o scraper
+       terminou bem?" separadamente.
   5. ✅ **Disparo sob demanda do Mercúrio, direto do CRM** — botão
      "Sincronização Automática" na aba Importar (`abrirSincronizacaoScraper()`,
      `js/importador.js`; `#modalSincronizacaoScraper` em `index.html`), pra

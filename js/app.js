@@ -1789,6 +1789,7 @@ async function renderizarListaFiliaisModal() {
             <input type="text" value="${escapeHTML(f.nome_com_preposicao || '')}" placeholder="Como falar dela naturalmente (ex: do Jardim América, de Barra do Garças)" onchange="atualizarPreposicaoFilial(${f.id}, this.value)">
             <input type="text" value="${escapeHTML(f.whatsapp_chefe_numero || '')}" placeholder="WhatsApp do chefe de filial (E.164, ex: 5562991234567) — aviso de aniversário e resumo de lead" onchange="atualizarWhatsappChefeFilial(${f.id}, this.value)">
             <input type="number" step="0.01" min="0" value="${f.valor_mensalidade != null ? f.valor_mensalidade : ''}" placeholder="Valor da mensalidade (R$) — base do relatório de receita/comissão" onchange="atualizarValorMensalidadeFilial(${f.id}, this.value)">
+            <input type="text" value="${escapeHTML(f.endereco || '')}" placeholder="Endereço completo — aparece na gaveta de qualquer lead desta filial" onchange="atualizarEnderecoFilial(${f.id}, this.value)">
         </div>
     `).join('');
 }
@@ -1834,6 +1835,15 @@ async function atualizarWhatsappChefeFilial(id, novoValor) {
 async function atualizarValorMensalidadeFilial(id, novoValor) {
     const numero = novoValor.trim() === '' ? null : parseFloat(novoValor.replace(',', '.'));
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ valor_mensalidade: (numero === null || isNaN(numero)) ? null : numero }).eq('id', id);
+    if (error) alert('Erro ao salvar: ' + error.message);
+}
+
+// Endereço completo da filial — só pra exibição na gaveta do lead (bloco
+// "Filial"), responder "onde fica?"/"qual o valor?" sem trocar de aba.
+// Ver migracao_filial_endereco.sql.
+async function atualizarEnderecoFilial(id, novoValor) {
+    novoValor = novoValor.trim();
+    const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ endereco: novoValor || null }).eq('id', id);
     if (error) alert('Erro ao salvar: ' + error.message);
 }
 
@@ -2197,7 +2207,13 @@ async function atualizarAniversariantes() {
             return { ...l, mes, dia };
         })
         .filter(l => l.mes === mesAtual)
-        .sort((a, b) => a.dia - b.dia);
+        // Aniversariante de HOJE sempre no topo (é o que precisa de ação
+        // AGORA), o resto do mês segue em ordem cronológica normal.
+        .sort((a, b) => {
+            const aHoje = a.dia === diaAtual, bHoje = b.dia === diaAtual;
+            if (aHoje !== bHoje) return aHoje ? -1 : 1;
+            return a.dia - b.dia;
+        });
 
     if (doMes.length === 0) {
         container.innerHTML = '<div style="font-size:12px; color:var(--text-muted);">Nenhum aniversariante com data cadastrada este mês.</div>';
@@ -3177,6 +3193,24 @@ function abrirGaveta(id) {
             blocoPerda.style.display = 'block';
         } else {
             blocoPerda.style.display = 'none';
+        }
+    }
+
+    // FILIAL — endereço/mensalidade da filial DESTE lead (não a filial
+    // selecionada no topbar, embora na prática sejam sempre a mesma coisa
+    // hoje — usar lead.filial deixa certo mesmo se um dia a gaveta puder
+    // abrir um lead de outra filial via busca global).
+    const blocoFilialInfo = document.getElementById('drawer-filial-bloco');
+    if (blocoFilialInfo) {
+        const filialDoLead = (filiaisDisponiveis || []).find(f => f.nome === lead.filial);
+        const partesFilial = [];
+        if (filialDoLead && filialDoLead.endereco) partesFilial.push(`<i class="fa-solid fa-location-dot"></i> ${escapeHTML(filialDoLead.endereco)}`);
+        if (filialDoLead && filialDoLead.valor_mensalidade != null) partesFilial.push(`<i class="fa-solid fa-sack-dollar"></i> Contribuição mensal: R$ ${Number(filialDoLead.valor_mensalidade).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
+        if (partesFilial.length > 0) {
+            document.getElementById('drawer-filial-info').innerHTML = partesFilial.join('<br>');
+            blocoFilialInfo.style.display = 'block';
+        } else {
+            blocoFilialInfo.style.display = 'none';
         }
     }
 
