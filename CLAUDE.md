@@ -194,6 +194,13 @@ migracao_whatsapp_importado.sql   → coluna importado_manualmente em mensagens_
                                      mensagem trazida de conversa feita fora do CRM, ver seção
                                      "Importar Conversa de WhatsApp"); JÁ RODADA nesta sessão
                                      via `supabase db query --linked`
+migracao_agendamento_mercurio_pgcron.sql → habilita pg_cron/pg_net e cria o cron job que dispara
+                                     o Mercúrio às 05:00 Brasília (substitui o schedule: do
+                                     GitHub Actions, pouco confiável); JÁ RODADA nesta sessão
+                                     via `supabase db query --linked`
+migracao_filial_endereco.sql      → coluna endereco em filiais, mostrado na gaveta de qualquer
+                                     lead daquela filial junto com valor_mensalidade; JÁ RODADA
+                                     nesta sessão via `supabase db query --linked`
 ```
 
 ## Banco de dados (Supabase)
@@ -261,7 +268,10 @@ Colunas relevantes:
   (`atualizarAniversariantes()`) — busca direta no banco (não é proxy,
   já que aniversário importa pra filial inteira), aniversariante de HOJE
   ganha o mesmo destaque festivo do feed de Matriculado/Recuperado
-  (`.activity-item-festiva`).
+  (`.activity-item-festiva`) **e sempre aparece no TOPO da lista**
+  (ordenação de 2 níveis: hoje primeiro, resto por dia crescente — antes
+  era só cronológico, então o aniversariante de hoje podia ficar
+  escondido no meio/fim da lista dependendo do dia do mês).
 
 ### Tabela `filiais`
 `id`, `nome`, `ativo`, `ordem`. Hoje tem 3: Goiânia - Jardim América, Goiânia
@@ -278,6 +288,12 @@ navegador (grava na hora no Supabase, diferente de "Gerenciar Colunas" que
 natural de falar o nome da filial (ex: `"do Jardim América"`, `"de Barra
 do Garças"`), editável na mesma tela; alimenta o preenchimento automático
 da variável `filial` nos templates de WhatsApp (ver seção própria).
+`endereco` (nullable, `migracao_filial_endereco.sql`) — texto livre,
+editável na mesma tela; junto com `valor_mensalidade` (já existente),
+aparece na gaveta de QUALQUER lead daquela filial (bloco "Filial", dentro
+de "Contato" — `abrirGaveta()`, `js/app.js`), pra responder "onde
+fica?"/"qual o valor?" sem trocar de aba. Bloco some inteiro se a filial
+não tiver nem endereço nem mensalidade cadastrados.
 
 ### Tabela `mensagens_whatsapp`
 Histórico completo (enviado/recebido) da integração real de WhatsApp — ver
@@ -518,6 +534,21 @@ mesma regra de confiança total usada pra tags/filiais/eventos.
       disponível pelo card do Dashboard acima ou pelo filtro de coluna
       normal — é o alvo de NUTRIÇÃO (já mostrou interesse em filosofia,
       mas ainda não está "quente"), ação diferente de "ligar agora".
+  - **`"Inscrito: Abertura de Turma"`** (azul saturado, `.tag-inscrito-turma`,
+    negrito — mesmo peso visual de "Perdido"/"Ligar Hoje", é um AVISO
+    acionável, não uma classificação neutra): pedido direto do usuário
+    depois de um SDR ligar oferecendo matrícula pra alguém que JÁ tinha
+    se inscrito numa abertura de turma futura, sem saber
+    (`calcularTagInscricaoAberturaTurma()`, `js/importador.js`, chamada
+    dentro de `montarRegistroLead()`). Olha `historico_eventos` por
+    qualquer evento com `tipo === 'Abertura de Turma'` (catálogo de
+    `tipos_evento`, mesma classificação de sempre) cuja data ainda não
+    passou — recalculada do zero a cada reimportação (só depende de
+    `historico_eventos`, mesmo grupo de preservação de "Trilha" na
+    importação PARCIAL: precisa do ULISSES pra recalcular, é preservada
+    quando a rodada é só-Mercúrio). Aparece pra QUALQUER lead com essa
+    inscrição futura, independente de ser Ativo/Inativo/Lead Forte —
+    diferente de "Jornada", que exclui Ativo/Inativo de propósito.
   - **Tags de Cadastro** (`"Sem Telefone"`/`"Sem E-mail"`, laranja
     `.tag-warning`, família "Cadastro"): geradas automaticamente por
     `montarRegistroLead()` (`js/importador.js`) quando o lead não tem
@@ -936,6 +967,31 @@ Decisões já tomadas (não precisam ser reabertas, a menos que o usuário peça
     (mesma pessoa, sem Ativos/Inativos) → confirma que "Ativo" sobrevive
     sem virar "Lead Forte", e que telefone/e-mail/eventos SÃO atualizados
     (porque desta vez o Ulisses está presente).
+  - **Bug real #2, pego escrevendo o teste do dia a dia (2026-09-10)**:
+    "Ativos sem correspondência"/"Inativos sem correspondência" (passo 4/5
+    de `processarPlanilhas()`) só sabem dizer "não bateu em NENHUMA linha
+    de Inscrições NESTA RODADA" — numa importação só-Mercúrio (sem
+    Inscrições), isso vale pra TODO Ativo/Inativo, mesmo quem já existe no
+    CRM de uma importação anterior COM Inscrições. Sem correção, cada
+    rodada só-Mercúrio criava um lead DUPLICADO com ID sintético novo pra
+    essa pessoa, e o lead original nunca recebia a tag Ativo/Inativo/
+    Nível — **era exatamente o sintoma relatado pelo usuário** ("pessoas
+    ativas ou inativas não marcadas com tags adequadas"). Corrigido em
+    `confirmarEnviarImportacao()`: antes de montar `registrosFinais`, todo
+    lead com ID SINTÉTICO (`pessoaIdentificador` ≥
+    `BASE_ID_ATIVOS_SEM_INSCRICAO`) é comparado por nome normalizado
+    contra os leads JÁ EXISTENTES nesta filial — se houver exatamente 1
+    candidato sem dono ainda (nome duplicado/homônimo = ambíguo demais,
+    não redireciona), o `pessoaIdentificador` sintético é substituído pelo
+    ID real do lead existente ANTES do resto do merge rodar — assim o
+    upsert atualiza o lead certo em vez de criar um novo. Testado ao vivo:
+    reimportar só-Mercúrio pra alguém que já existia (criado numa rodada
+    anterior com Inscrições) agora atualiza `tags`/`funil_agencia` do
+    MESMO `pessoaIdentificador`, sem duplicar.
+  - **Consequência direta**: com o bug corrigido, ficou seguro ligar a
+    importação de Ativos/Inativos no job DIÁRIO automático do scraper —
+    ver `importarNoCrm()` dentro de `main()` em `scraper/mercurio.js`
+    (seção do scraper) e "Inscrito: Abertura de Turma" logo abaixo.
   - `"Sem Telefone"`/`"Sem E-mail"` são recalculadas por ÚLTIMO, sempre em
     cima do valor FINAL de telefone/e-mail (já com a preservação acima
     aplicada) — nunca em cima do dado transiente da planilha parcial,
@@ -1807,6 +1863,14 @@ uso principal do CRM é resgate de leads frios.
   na migração). A área de input troca sozinha entre "texto livre" e
   "seletor de template" dependendo se a última mensagem RECEBIDA do lead
   tem menos de 24h.
+- **Visual dos balões parecido com o WhatsApp real** (`css/style.css`,
+  2026-09-10, pedido explícito do usuário): "rabinho" triangular em cada
+  balão (`::before`, cor combinando com o fundo — branco pro recebido,
+  verde `--wpp-green` pro enviado), campo de texto em formato pill
+  (`border-radius: 21px`, mesmo estilo da barra de busca do WhatsApp de
+  verdade) em vez de caixa retangular. Fundo `#efeae2` (tom correto do
+  papel de parede do WhatsApp) e cores de balão já estavam certas antes
+  dessa mudança — só faltava o rabinho e o input.
 - **Templates de mensagem** só existem depois de criados e aprovados no
   painel da Meta Business — a lista `TEMPLATES_WHATSAPP` no topo de
   `js/whatsapp.js` precisa ser preenchida (nome técnico exato + ordem das
@@ -2282,13 +2346,27 @@ bloqueado).
        certinho, e o aviso de "lead sumiu da planilha" (feature já
        existente) disparou corretamente pra 2 pessoas. Confirmado no
        banco: 895 leads na filial depois (893 atualizados + 2 novos).
-     - **Ainda não integrado num pipeline único** — hoje é uma função
-       reutilizável, chamada manualmente (ou por um script de teste) DEPOIS
-       que os CSVs de Ativos/Inativos (Mercúrio) e Inscrições (Ulisses) já
-       existem em `scraper/exports/`. Encadear isso automaticamente (rodar
-       Mercúrio + Ulisses + importar-no-crm em sequência, por filial, num
-       comando só) é trabalho futuro, não um problema de arquitetura em
-       aberto — só falta escrever o "orquestrador".
+     - ✅ **Ativos/Inativos do Mercúrio agora são importados no CRM
+       AUTOMATICAMENTE todo dia** (2026-09-10, dentro de `main()` em
+       `scraper/mercurio.js`, logo depois de `resolverFilialCrm()` e
+       ANTES da varredura de turmas): chama `importarNoCrm(pageCrm,
+       filialCrm, {caminhoAtivos, caminhoInativos, caminhoInscricoes:
+       null})` — importação PARCIAL, só Mercúrio (ver seção do
+       Importador). Antes disso, o job diário só EXPORTAVA o CSV pro
+       disco (útil pra importação manual), mas nunca atualizava tag
+       Ativo/Inativo/Nível de ninguém no CRM sozinho — essa lacuna era a
+       causa raiz de leads ficarem com a classificação desatualizada até
+       alguém reimportar manualmente pela aba Importar (sintoma relatado
+       pelo usuário: "pessoas ativas ou inativas não marcadas com tags
+       adequadas"). Só ficou seguro ligar isso depois do bug #2 de
+       duplicidade ser corrigido (ver seção do Importador, "Bug real #2").
+       Falha nesta etapa é isolada (não impede aniversariantes/turmas de
+       rodar) e registra print de erro em `debug/mercurio-importar-crm-*.png`.
+       **Ainda não testado contra o Mercúrio de produção de verdade**
+       (só a função `importarNoCrm()` em si já foi testada, ver seção do
+       Importador) — a próxima execução real do job (agendada ou pelo
+       botão "Rodar Mercúrio agora") vai validar isso; Ulisses continua
+       de fora deste encadeamento (sempre manual).
   4. ✅ **Agendamento do Mercúrio, via `pg_cron` do Supabase** (05:00 em
      Brasília todo dia) — só a parte do Mercúrio, que já roda 100%
      headless sem bloqueio nenhum. O Ulisses **nunca** vai ter

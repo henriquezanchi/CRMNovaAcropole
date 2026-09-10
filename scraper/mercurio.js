@@ -22,6 +22,7 @@
 import { chromium } from 'playwright';
 import { supabaseAdmin, lerCredencial, registrarStatusSincronizacao } from './lib/supabaseAdmin.js';
 import { abrirCrmNaFilialParaMatricula, importarMatriculaViaTexto } from './importar-matricula-no-crm.js';
+import { importarNoCrm } from './importar-no-crm.js';
 import fs from 'node:fs';
 
 const URL_LOGIN = 'https://mercurio.oinabn.com.br/';
@@ -703,8 +704,9 @@ async function main() {
 
         let algumaFalha = false;
         for (const { label, indice } of cadastros) {
+            let caminhoAtivos = null, caminhoInativos = null;
             try {
-                const { caminhoAtivos, caminhoInativos } = await exportarAtivosEInativos(page, label, indice);
+                ({ caminhoAtivos, caminhoInativos } = await exportarAtivosEInativos(page, label, indice));
                 console.log(`[mercurio] Ativos/Inativos exportados — ${label}: ${caminhoAtivos}, ${caminhoInativos}`);
             } catch (e) {
                 algumaFalha = true;
@@ -731,6 +733,29 @@ async function main() {
                 await page.screenshot({ path: `debug/mercurio-aniversariantes-${label.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
             }
             await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
+
+            // Importa Ativos/Inativos DIRETO no CRM publicado (marco 3,
+            // pilotando a tela de Importar — ver scraper/importar-no-crm.js),
+            // agora que a importação aceita rodar só com Mercúrio (ver
+            // "Importação PARCIAL" no CLAUDE.md). Sem isso, o job diário só
+            // exportava o CSV pro disco (útil pra importação manual), mas
+            // NUNCA atualizava tag Ativo/Inativo/Nível de ninguém no CRM
+            // sozinho — a causa raiz de leads ficarem com a tag errada/
+            // desatualizada até alguém reimportar manualmente pela aba
+            // Importar. Roda ANTES da varredura de turmas (linha abaixo):
+            // ela precisa de leads já existentes/atualizados no CRM pra
+            // achar matrícula recente por telefone.
+            if (filialCrm && (caminhoAtivos || caminhoInativos)) {
+                try {
+                    const log = await importarNoCrm(pageCrm, filialCrm, { caminhoAtivos, caminhoInativos, caminhoInscricoes: null });
+                    console.log(`[mercurio] Ativos/Inativos importados no CRM — ${filialCrm}: ${log.slice(-500)}`);
+                } catch (e) {
+                    algumaFalha = true;
+                    console.error(`[mercurio] Falha ao importar Ativos/Inativos no CRM de "${filialCrm}":`, e.message);
+                    fs.mkdirSync('debug', { recursive: true });
+                    await pageCrm.screenshot({ path: `debug/mercurio-importar-crm-${label.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
+                }
+            }
 
             try {
                 if (filialCrm) {

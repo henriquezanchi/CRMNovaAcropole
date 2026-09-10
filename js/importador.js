@@ -605,13 +605,33 @@ async function popularFilialImportacao() {
     if (typeof atualizarContagemExclusao === 'function') atualizarContagemExclusao();
 }
 
+// "Inscrito: Abertura de Turma" — alerta visual pra nunca ligar oferecendo
+// matrícula pra quem JÁ se inscreveu numa abertura de turma futura (motivo
+// real que gerou esta tag: SDR ligou sem saber que a pessoa já tinha se
+// inscrito). Olha `historico_eventos` por qualquer evento classificado
+// como tipo "Abertura de Turma" (catálogo de tipos_evento, ver seção
+// "Sistema de follow-up") com data ainda não passada. Recalculada do zero
+// a cada reimportação (depende só de historico_eventos, igual Trilha) —
+// deixa de aparecer sozinha quando a data da turma passa.
+function calcularTagInscricaoAberturaTurma(eventos) {
+    const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+    const temInscricaoFutura = (eventos || []).some(e => {
+        if (e.tipo !== 'Abertura de Turma') return false;
+        const m = String(e.data || '').match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+        if (!m) return false;
+        const dataEvento = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+        return dataEvento >= hoje;
+    });
+    return temInscricaoFutura ? ['Inscrito: Abertura de Turma'] : [];
+}
+
 function montarRegistroLead(pessoa, tags, filial, extras = {}) {
     const eventosOrdenados = [...(pessoa.eventos || [])];
 
     // Tags de "Cadastro" — sinalizam dados de contato faltando (só o caso
     // negativo/acionável ganha badge, ter os dois normalmente não precisa
     // de destaque visual).
-    const tagsFinais = [...tags, ...calcularTagsTrilhaEJornada(eventosOrdenados, tags, mapaTipoTrilha)];
+    const tagsFinais = [...tags, ...calcularTagsTrilhaEJornada(eventosOrdenados, tags, mapaTipoTrilha), ...calcularTagInscricaoAberturaTurma(eventosOrdenados)];
     if (!pessoa.pessoaTelefoneNumero || String(pessoa.pessoaTelefoneNumero).trim() === '') tagsFinais.push('Sem Telefone');
     if (!pessoa.pessoaEmail || String(pessoa.pessoaEmail).trim() === '') tagsFinais.push('Sem E-mail');
 
@@ -1266,6 +1286,47 @@ async function confirmarEnviarImportacao() {
 
     const modo = resultadoImportacao.modoImportacao || { temMercurio: true, temUlisses: true };
 
+    // ---- Redireciona leads com ID SINTÉTICO ("Ativos/Inativos sem
+    // correspondência" em Inscrições — ver BASE_ID_ATIVOS_SEM_INSCRICAO/
+    // BASE_ID_INATIVOS_SEM_INSCRICAO — e também os resgatados pela
+    // auditoria, BASE_ID_AUDITORIA_RESGATADA) pra um lead JÁ EXISTENTE
+    // com o mesmo nome normalizado, quando existir exatamente 1
+    // candidato. Bug real pego escrevendo o teste da importação PARCIAL:
+    // "sem correspondência" só sabe dizer "não bateu em NENHUMA linha de
+    // Inscrições NESTA rodada" — numa importação só-Mercúrio (sem
+    // Inscrições), isso vale pra TODO Ativo/Inativo, mesmo quem já
+    // existe no CRM de uma importação anterior (com Inscrições). Sem
+    // este redirecionamento, cada rodada só-Mercúrio criava um lead
+    // DUPLICADO com ID sintético novo, e o lead original nunca recebia
+    // a tag Ativo/Inativo/Nível — exatamente o sintoma relatado
+    // ("pessoas ativas/inativas sem a tag adequada").
+    const existentesPorNome = new Map(); // nome normalizado -> [registros existentes]
+    existentes.forEach(e => {
+        const chave = normalizarNomeImport(e.pessoaNome || '');
+        if (!chave) return;
+        if (!existentesPorNome.has(chave)) existentesPorNome.set(chave, []);
+        existentesPorNome.get(chave).push(e);
+    });
+    const idsExistentesJaRedirecionados = new Set();
+    let contRedirecionados = 0;
+    resultadoImportacao.leads.forEach(lead => {
+        if (Number(lead.pessoaIdentificador) < BASE_ID_ATIVOS_SEM_INSCRICAO) return; // não é sintético — já tem pessoaIdentificador real do Ulisses
+        const candidatos = (existentesPorNome.get(normalizarNomeImport(lead.pessoaNome || '')) || [])
+            .filter(c => !idsExistentesJaRedirecionados.has(String(c.pessoaIdentificador)));
+        // Só redireciona com confiança total: exatamente 1 candidato sem
+        // dono ainda (nome duplicado/homônimo entre existentes = ambíguo
+        // demais, melhor deixar criar um lead novo do que arriscar
+        // misturar duas pessoas diferentes).
+        if (candidatos.length === 1) {
+            idsExistentesJaRedirecionados.add(String(candidatos[0].pessoaIdentificador));
+            lead.pessoaIdentificador = String(candidatos[0].pessoaIdentificador);
+            contRedirecionados++;
+        }
+    });
+    if (contRedirecionados > 0) {
+        logImport(`${contRedirecionados} lead(s) "sem correspondência" nesta rodada foram casados com um lead JÁ EXISTENTE pelo nome, em vez de criar duplicado (comum em importação parcial — só Mercúrio, sem Inscrições desta vez).`, 'ok');
+    }
+
     // ---- Alerta: leads que já existiam nesta filial mas NÃO apareceram em
     //      nenhuma planilha desta vez. Pode ser gente que trancou/saiu sem
     //      que o time tivesse percebido por aqui, ou só caiu da planilha por
@@ -1313,7 +1374,8 @@ async function confirmarEnviarImportacao() {
             || /^Lead Forte( [1-3])?$/.test(tag)
             || /^(TA|JN|PP|N[1-7]|Membro)$/.test(tag)
             || /^Sem (Telefone|E-mail)$/.test(tag)
-            || /^(Trilha|Jornada): /.test(tag);
+            || /^(Trilha|Jornada): /.test(tag)
+            || tag === 'Inscrito: Abertura de Turma';
     }
     // Subconjuntos de `ehTagDeSistema()` usados só na importação PARCIAL,
     // pra saber qual "metade" da classificação esta rodada tem autoridade
@@ -1327,8 +1389,9 @@ async function confirmarEnviarImportacao() {
     //   importação só-Ulisses recalculava "Lead Forte" por cima de um lead
     //   que já era "Ativo", já que sem Ativos/Inativos nesta rodada
     //   mapaAtivos/mapaInativos ficam vazios e todo mundo cai no fallback).
-    // - "Trilha" só depende de historico_eventos (tipo de evento) — não do
-    //   status Ativo/Inativo/Lead Forte — então só precisa do ULISSES.
+    // - "Trilha" (e "Inscrito: Abertura de Turma", mesmo princípio) só
+    //   depende de historico_eventos (tipo/data de evento) — não do status
+    //   Ativo/Inativo/Lead Forte — então só precisa do ULISSES.
     function ehTagStatusMercurio(tag) {
         return TAGS_SISTEMA_EXATAS.includes(tag)
             || /^(TA|JN|PP|N[1-7]|Membro)$/.test(tag)
@@ -1336,7 +1399,7 @@ async function confirmarEnviarImportacao() {
             || /^Jornada: /.test(tag);
     }
     function ehTagTrilha(tag) {
-        return /^Trilha: /.test(tag);
+        return /^Trilha: /.test(tag) || tag === 'Inscrito: Abertura de Turma';
     }
     const primeiraColuna = (typeof columnsConfig !== 'undefined' && columnsConfig.length > 0) ? columnsConfig[0].key : 'Frios';
 

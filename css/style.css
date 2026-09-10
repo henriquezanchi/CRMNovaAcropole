@@ -265,6 +265,11 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 /* "Recuperado" — estava Inativo, voltou a ser Ativo (aplicada pelo importador) */
 .tag-recuperado { background: #ecfdf5; color: #047857; border: 1px solid #6ee7b7; font-weight: 700; }
 .tag-perdido { background: #fef2f2; color: #991b1b; border: 1px solid #fca5a5; font-weight: 700; }
+/* "Inscrito: Abertura de Turma" — já se inscreveu numa turma futura; NUNCA
+   ligar oferecendo matrícula sem checar essa tag primeiro (ver
+   calcularTagInscricaoAberturaTurma(), js/importador.js). Azul saturado,
+   destacado igual as outras tags "de ação" (Perdido/Ligar Hoje). */
+.tag-inscrito-turma { background: #eff6ff; color: #1d4ed8; border: 1px solid #93c5fd; font-weight: 700; }
 /* Follow-up vencido hoje/atrasado (soneca) — card já sobe pro topo da coluna */
 .tag-ligar-hoje { background: #fef9c3; color: #854d0e; border: 1px solid #fde047; font-weight: 700; }
 /* Chip "N em soneca" no cabeçalho da coluna — leads com lembrete futuro,

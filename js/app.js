@@ -3010,6 +3010,11 @@ const FAMILIAS_TAG = [
             return nivel ? `tag-strong tag-strong-${nivel[1]}` : 'tag-strong';
         },
     },
+    // "Inscrito: Abertura de Turma" — alerta pra NUNCA ligar oferecendo
+    // matrícula pra quem já se inscreveu (ver calcularTagInscricaoAberturaTurma(),
+    // js/importador.js). Cor própria e destacada, prioridade alta (antes de
+    // "Nível") — é um aviso acionável, não só uma classificação.
+    { label: 'Inscrição em Turma', testar: t => t === 'Inscrito: Abertura de Turma', classe: () => 'tag-inscrito-turma' },
     // TA (Merlin/Távola, infantil), JN (Janos, adolescentes), PP (1º mês),
     // N1 (nível de entrada, mantido separado) e "Membro" (N2-N7 unificados).
     // N[2-7] direto no regex é só pra CLASSIFICAR tags antigas (de antes do
