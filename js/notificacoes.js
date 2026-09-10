@@ -281,7 +281,30 @@ function iniciarNotificacoesWhatsAppGlobais() {
 // falhe, ou cuja última tentativa bem-sucedida esteja velha demais
 // (folga de HORAS_LIMITE_SEM_SYNC sobre um job diário), dispara aviso.
 const HORAS_LIMITE_SEM_SYNC = 26;
-let sincronizacoesJaNotificadas = new Set(); // chave "sistema:filial:executado_em", zera a cada reload
+
+// Bug real relatado pelo usuário (2026-09-10): "sempre que atualizo a
+// página, aparecem NOVAS notificações de Ulisses travado" — mesmo sem
+// nenhuma tentativa nova de verdade. Causa: esse Set (chave
+// "sistema:filial:executado_em") só existia em memória, então zerava a
+// cada F5 — a MESMA linha de falha antiga (executado_em sem mudar) virava
+// "nova" de novo em todo reload. Persistido em localStorage agora, então
+// uma falha já notificada continua não-notificada depois de recarregar a
+// página; só uma tentativa GENUINAMENTE nova (executado_em diferente,
+// escrito pelo scraper de verdade) gera uma notificação nova.
+const CHAVE_LS_SINCRONIZACOES_NOTIFICADAS = 'crm_na_sincronizacoes_notificadas';
+function carregarSincronizacoesJaNotificadas() {
+    try {
+        const arr = JSON.parse(localStorage.getItem(CHAVE_LS_SINCRONIZACOES_NOTIFICADAS) || '[]');
+        return new Set(Array.isArray(arr) ? arr : []);
+    } catch { return new Set(); }
+}
+function salvarSincronizacoesJaNotificadas(set) {
+    try {
+        // Cap pra nunca crescer sem limite numa base antiga com muita falha acumulada.
+        localStorage.setItem(CHAVE_LS_SINCRONIZACOES_NOTIFICADAS, JSON.stringify([...set].slice(-200)));
+    } catch { /* ignora */ }
+}
+let sincronizacoesJaNotificadas = carregarSincronizacoesJaNotificadas(); // chave "sistema:filial:executado_em"
 
 async function verificarNotificacoesSincronizacao() {
     if (!filialAtual || typeof window.supabaseClient === 'undefined') return;
@@ -309,6 +332,7 @@ async function verificarNotificacoesSincronizacao() {
         if (row.sucesso && !travada) return; // tudo certo, nada a avisar
 
         sincronizacoesJaNotificadas.add(chave);
+        salvarSincronizacoesJaNotificadas(sincronizacoesJaNotificadas);
         const nomeSistema = sistema === 'ulisses' ? 'Ulisses' : 'Mercúrio';
         adicionarNotificacao({
             icone: 'fa-solid fa-triangle-exclamation',

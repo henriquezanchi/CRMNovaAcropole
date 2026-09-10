@@ -2016,6 +2016,17 @@ um histórico de auditoria.
      (26h). Sem nenhuma linha na tabela ainda (scraper não implementado/
      nunca rodou), fica em silêncio — não inventa alerta de uma automação
      que não existe. Poll a cada 30 minutos.
+     - **Bug real relatado pelo usuário (2026-09-10): "toda vez que
+       atualizo a página aparece uma notificação NOVA de Ulisses travado",
+       mesmo sem rodar o Ulisses há tempos**: `sincronizacoesJaNotificadas`
+       (dedup por `sistema:filial:executado_em`) só existia em memória —
+       reiniciava a cada F5, então a MESMA linha de falha antiga (com o
+       MESMO `executado_em`, nada novo) virava "nova" de novo em todo
+       reload. Corrigido persistindo esse Set em `localStorage`
+       (`crm_na_sincronizacoes_notificadas`, cap de 200 chaves) — uma
+       falha já notificada continua silenciosa depois de recarregar;
+       só uma tentativa GENUINAMENTE nova (escrita pelo scraper de
+       verdade, com `executado_em` diferente) volta a notificar.
 - **Reset por troca de filial**: `iniciarNotificacoesParaFilial()` —
   chamada de dentro de `carregarLeads()` (`js/app.js`) sempre que
   `resetar=true` (troca de filial ou carga inicial, nunca em "Carregar
