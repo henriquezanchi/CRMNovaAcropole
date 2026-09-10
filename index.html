@@ -99,7 +99,7 @@
                     <div class="agenda-geral-header">
                         <div><i class="fa-solid fa-calendar-day"></i> Agenda do Dia — Todas as Filiais</div>
                         <div class="agenda-geral-actions">
-                            <button class="btn-toggle" onclick="dispararMercurioAgora()" title="Roda o scraper do Mercúrio agora, sem esperar até às 5h"><i class="fa-solid fa-robot"></i> Rodar Mercúrio Agora</button>
+                            <button class="btn-toggle btn-disparar-mercurio" onclick="dispararMercurioAgora()" title="Roda o scraper do Mercúrio agora, sem esperar até às 5h"><i class="fa-solid fa-robot"></i> Rodar Mercúrio Agora</button>
                             <button class="btn-toggle" onclick="atualizarAgendaGeral()" title="Atualizar esta agenda"><i class="fa-solid fa-rotate"></i></button>
                         </div>
                     </div>
@@ -1055,8 +1055,8 @@
                 (login exige resolver um desafio de segurança — Cloudflare) — rode <code>npm run ulisses-local</code> na
                 sua máquina de confiança quando precisar.
             </p>
-            <button class="btn-primary" id="btnDispararMercurio" onclick="dispararMercurioAgora()" style="width:100%; margin-bottom:16px;">
-                <i class="fa-solid fa-play"></i> Rodar Mercúrio agora
+            <button class="btn-primary btn-disparar-mercurio" onclick="dispararMercurioAgora()" style="width:100%; margin-bottom:16px;">
+                <i class="fa-solid fa-play"></i> Rodar Mercúrio Agora
             </button>
             <div id="sincronizacaoScraperStatus"></div>
         </div>

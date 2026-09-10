@@ -468,9 +468,37 @@ async function renderizarStatusSincronizacaoScraper(mensagemExtra) {
     `;
 }
 
+// Bug real achado nesta sessão: existem AGORA 2 botões "Rodar Mercúrio
+// Agora" (o original, dentro do modal "Sincronização Automática" na aba
+// Importar, e o novo na Agenda do Dia do Dashboard) — o segundo não tinha
+// `id="btnDispararMercurio"`, então clicar nele disparava o scraper de
+// verdade mas SEM NENHUM feedback visual (o spinner/texto só mudava no
+// botão certo por ID, e a mensagem "Disparado!" só aparecia dentro do
+// modal, que nem estava aberto) — parecia que "não fez nada", e um clique
+// duplicado (no botão certo, na aba Importar, tentando de novo) chegou a
+// disparar o workflow 2 VEZES em paralelo. Corrigido: qualquer botão com
+// a classe `.btn-disparar-mercurio` funciona igual (usa `event.currentTarget`,
+// não mais um ID fixo), a tela "Sincronização Automática" abre sozinha
+// pra mostrar o progresso (não importa de onde foi clicado), e uma trava
+// global (`disparoMercurioEmAndamento`) impede clique duplicado enquanto
+// uma rodada já está em andamento.
+let disparoMercurioEmAndamento = false;
+
+function botoesDispararMercurio() {
+    return [...document.querySelectorAll('.btn-disparar-mercurio')];
+}
+function atualizarBotoesDispararMercurio(disabled, html) {
+    botoesDispararMercurio().forEach(b => { b.disabled = disabled; if (html) b.innerHTML = html; });
+}
+
 async function dispararMercurioAgora() {
-    const btn = document.getElementById('btnDispararMercurio');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Disparando...'; }
+    if (disparoMercurioEmAndamento) {
+        alert('Já tem uma rodada do Mercúrio em andamento — acompanhe na tela "Sincronização Automática" (aba Importar) em vez de disparar de novo.');
+        if (typeof abrirSincronizacaoScraper === 'function') abrirSincronizacaoScraper();
+        return;
+    }
+    disparoMercurioEmAndamento = true;
+    atualizarBotoesDispararMercurio(true, '<i class="fa-solid fa-circle-notch fa-spin"></i> Disparando...');
 
     // Guarda o timestamp do último "mercurio" ANTES de disparar, pra saber
     // reconhecer quando uma rodada NOVA (não essa que já estava aí)
@@ -491,11 +519,15 @@ async function dispararMercurioAgora() {
     if (error || (data && data.ok === false)) {
         const motivo = (data && data.detalhe) || (error && error.message) || 'erro desconhecido';
         alert('Não consegui disparar: ' + motivo);
-        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-play"></i> Rodar Mercúrio agora'; }
+        disparoMercurioEmAndamento = false;
+        atualizarBotoesDispararMercurio(false, '<i class="fa-solid fa-play"></i> Rodar Mercúrio Agora');
         return;
     }
 
-    if (btn) btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Rodando (leva alguns minutos)...';
+    // Abre (ou já deixa aberta) a tela de status — sempre que disparado,
+    // de qualquer botão, pra nunca mais parecer que "não fez nada".
+    if (typeof abrirSincronizacaoScraper === 'function') await abrirSincronizacaoScraper();
+    atualizarBotoesDispararMercurio(true, '<i class="fa-solid fa-circle-notch fa-spin"></i> Rodando (leva alguns minutos)...');
     await renderizarStatusSincronizacaoScraper('Disparado! Acompanhando — isso costuma levar alguns minutos (o job passa por todas as filiais).');
 
     if (pollSincronizacaoTimer) clearInterval(pollSincronizacaoTimer);
@@ -505,7 +537,8 @@ async function dispararMercurioAgora() {
         if (Date.now() - inicioPoll > TIMEOUT_POLL_MS) {
             clearInterval(pollSincronizacaoTimer);
             pollSincronizacaoTimer = null;
-            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-play"></i> Rodar Mercúrio agora'; }
+            disparoMercurioEmAndamento = false;
+            atualizarBotoesDispararMercurio(false, '<i class="fa-solid fa-play"></i> Rodar Mercúrio Agora');
             await renderizarStatusSincronizacaoScraper('Ainda não vi terminar depois de 20min — confira direto no GitHub Actions, ou só espere e reabra esta tela depois.');
             return;
         }
@@ -522,7 +555,8 @@ async function dispararMercurioAgora() {
         if (terminou) {
             clearInterval(pollSincronizacaoTimer);
             pollSincronizacaoTimer = null;
-            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-play"></i> Rodar Mercúrio agora'; }
+            disparoMercurioEmAndamento = false;
+            atualizarBotoesDispararMercurio(false, '<i class="fa-solid fa-play"></i> Rodar Mercúrio Agora');
             await renderizarStatusSincronizacaoScraper();
         }
     }, 15000);
