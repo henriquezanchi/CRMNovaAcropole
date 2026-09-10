@@ -381,7 +381,12 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .agenda-geral-actions { display: flex; gap: 8px; }
 .agenda-geral-actions .btn-toggle { background: rgba(255,255,255,0.12); color: white; border: 1px solid rgba(255,255,255,0.25); }
 .agenda-geral-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
-.agenda-geral-grid .activity-card { min-height: 0; }
+/* Sem isto, o texto sem cor própria (ex: o <strong> do nome do lead em
+   cada linha) herdava o `color:white` do fundo verde-escuro do card PAI
+   (.agenda-geral-card) mesmo dentro do card BRANCO — ficava branco sobre
+   branco, invisível (só o que já tinha cor própria, como .activity-time
+   e badges com estilo inline, aparecia). */
+.agenda-geral-grid .activity-card { min-height: 0; color: var(--text-dark); }
 
 .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
 .kpi-card {
