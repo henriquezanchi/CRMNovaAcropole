@@ -488,23 +488,24 @@ export async function sincronizarComparecimentoNoCrm(filial) {
     // Carrega TODOS os leads da filial pra casar por telefone/e-mail —
     // paginado porque o PostgREST limita a 1000 linhas por página mesmo
     // pedindo mais (mesma lição documentada em detectarLeadsATratar(),
-    // js/leads-a-tratar.js).
+    // js/leads-a-tratar.js). Guarda o NOME junto (não só o id) — precisa
+    // pra checagem de sanidade abaixo (nomesParecidosUlisses).
     const porTelefone = new Map();
     const porEmail = new Map();
     const TAMANHO_PAGINA = 1000;
     for (let de = 0; ; de += TAMANHO_PAGINA) {
         const { data: pagina, error } = await supabaseAdmin
             .from('leads_inscricoes')
-            .select('pessoaIdentificador, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail')
+            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail')
             .eq('filial', filial)
             .order('pessoaIdentificador', { ascending: true })
             .range(de, de + TAMANHO_PAGINA - 1);
         if (error) throw new Error('Erro ao buscar leads da filial: ' + error.message);
         for (const lead of pagina || []) {
             const chaveTel = normalizarTelefone(lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero);
-            if (chaveTel && !porTelefone.has(chaveTel)) porTelefone.set(chaveTel, lead.pessoaIdentificador);
+            if (chaveTel && !porTelefone.has(chaveTel)) porTelefone.set(chaveTel, { id: lead.pessoaIdentificador, nome: lead.pessoaNome });
             const email = (lead.pessoaEmail || '').trim().toLowerCase();
-            if (email && !porEmail.has(email)) porEmail.set(email, lead.pessoaIdentificador);
+            if (email && !porEmail.has(email)) porEmail.set(email, { id: lead.pessoaIdentificador, nome: lead.pessoaNome });
         }
         if (!pagina || pagina.length < TAMANHO_PAGINA) break;
     }
@@ -533,10 +534,40 @@ export async function sincronizarComparecimentoNoCrm(filial) {
     const tiposEvento = await carregarTiposEventoUlisses();
     const idPorEvento = new Map();
     for (const { nome, data } of eventosUnicos.values()) {
-        const { data: existente } = await supabaseAdmin
-            .from('eventos').select('id, tipo')
+        let { data: existente } = await supabaseAdmin
+            .from('eventos').select('id, tipo, nome')
             .eq('filial', filial).eq('nome', nome).eq('data', data)
             .maybeSingle();
+
+        // Fallback por NOME PARECIDO na mesma data — bug real confirmado em
+        // produção (2026-09-10): o catálogo completo (exportarCatalogoEventos,
+        // que roda ANTES desta função) já tinha criado o evento "Bushido, o
+        // código de HONRA dos samurais" pra Garavelo, mas por causa de um bug
+        // já corrigido (leitura do Título ainda com o valor do card anterior),
+        // uma rodada antiga tinha criado ANTES uma linha com o nome errado
+        // ("...código de HORA..."). Match exato por nome nunca bate entre os
+        // dois, então cada rodada nova cria outra linha duplicada, com os
+        // vínculos indo pra qualquer uma que "ganhar" o match — o usuário via
+        // o evento (bonito, com imagem) SEM a lista de inscritos, porque os
+        // inscritos foram pro duplicado feio. Gatilho pode se repetir com
+        // qualquer typo/diferença de formatação entre a tela "Links" e a tela
+        // "Recepção" do Ulisses — por isso o fallback fica permanente, não é
+        // só uma correção pontual deste caso.
+        if (!existente) {
+            const { data: candidatosMesmaData } = await supabaseAdmin
+                .from('eventos').select('id, tipo, nome')
+                .eq('filial', filial).eq('data', data);
+            const normNome = normalizarNomeUlisses(nome);
+            const parecido = (candidatosMesmaData || []).find(c => {
+                const d = distanciaLevenshteinUlisses(normalizarNomeUlisses(c.nome), normNome);
+                return d <= Math.max(4, Math.round(normNome.length * 0.15));
+            });
+            if (parecido) {
+                console.warn(`[ulisses] Evento "${nome}" (${data}, ${filial}) não bateu nome EXATO com "${parecido.nome}" (mesma data) — reaproveitando esse em vez de criar duplicado. Se os nomes forem de eventos DIFERENTES de verdade, corrigir manualmente.`);
+                existente = parecido;
+            }
+        }
+
         if (existente) {
             idPorEvento.set(`${nome}|||${data}`, existente.id);
             // Só classifica se ainda não tinha `tipo` — não pisa numa
@@ -559,32 +590,53 @@ export async function sincronizarComparecimentoNoCrm(filial) {
 
     // Casa cada registro com um lead (telefone > e-mail) e monta a lista
     // de vínculos candidatos.
+    //
+    // Checagem de sanidade por NOME — bug real confirmado em produção
+    // (2026-09-10, Barra do Garças/MT): telefone/e-mail bater não garante
+    // que é a MESMA pessoa — 2 pessoas diferentes (tipicamente parentes)
+    // podem compartilhar o mesmo telefone. Diagnóstico contra dado real
+    // achou 6 de 774 vínculos com telefone/e-mail batendo mas nome do
+    // Ulisses bem diferente do nome do lead casado; 4 eram claramente
+    // pessoas diferentes (ex: "Jefferson Teixeira Oliveira" batendo no
+    // telefone da lead "Lara Costa Dorneles Teixeira" — provavelmente
+    // marido/mulher). Sem essa checagem, o comparecimento da pessoa ERRADA
+    // era gravado no card de alguém que nem esteve no evento. Só compara o
+    // PRIMEIRO NOME (normalizado, tolerando pequena diferença de grafia via
+    // Levenshtein — "Samara"/"Samar" continuam batendo) — não bloqueia
+    // quando falta nome de um dos lados (não temos como avaliar; melhor
+    // manter o comportamento antigo do que rejeitar à toa).
     const vinculos = [];
-    let semEvento = 0, semLead = 0;
+    let semEvento = 0, semLead = 0, nomeDivergente = 0;
     for (const r of registros) {
         const dataISO = paraISO(r.eventoData);
         const eventoId = dataISO ? idPorEvento.get(`${r.eventoNome}|||${dataISO}`) : null;
         if (!eventoId) { semEvento++; continue; }
 
-        let pessoaIdentificador = null;
+        let leadCandidato = null;
         if (r.telefone) {
             const [ddd, ...resto] = r.telefone.split(' ');
-            pessoaIdentificador = porTelefone.get(normalizarTelefone(ddd, resto.join(''))) || null;
+            leadCandidato = porTelefone.get(normalizarTelefone(ddd, resto.join(''))) || null;
         }
-        if (!pessoaIdentificador && r.email) {
-            pessoaIdentificador = porEmail.get(r.email.trim().toLowerCase()) || null;
+        if (!leadCandidato && r.email) {
+            leadCandidato = porEmail.get(r.email.trim().toLowerCase()) || null;
         }
-        if (!pessoaIdentificador) { semLead++; continue; }
+        if (!leadCandidato) { semLead++; continue; }
+
+        if (!primeiroNomeParecidoUlisses(r.nome, leadCandidato.nome)) {
+            nomeDivergente++;
+            console.warn(`[ulisses] Vínculo IGNORADO (${filial}) — telefone/e-mail bateu, mas o nome não: Ulisses disse "${r.nome}", o lead casado é "${leadCandidato.nome}" (id=${leadCandidato.id}). Provável telefone compartilhado entre pessoas diferentes — evento "${r.eventoNome}" (${r.eventoData}). Revisar manualmente se for o caso.`);
+            continue;
+        }
 
         vinculos.push({
             evento_id: eventoId,
-            pessoaIdentificador,
+            pessoaIdentificador: leadCandidato.id,
             compareceu: typeof r.compareceu === 'boolean' ? r.compareceu : null,
         });
     }
 
     if (vinculos.length === 0) {
-        return `0 de ${registros.length} registro(s) casado(s) com um lead (${semEvento} sem evento correspondente, ${semLead} sem lead achado por telefone/e-mail) — nada a gravar.`;
+        return `0 de ${registros.length} registro(s) casado(s) com um lead (${semEvento} sem evento correspondente, ${semLead} sem lead achado por telefone/e-mail${nomeDivergente ? `, ${nomeDivergente} descartado(s) por nome muito diferente do telefone/e-mail batido` : ''}) — nada a gravar.`;
     }
 
     // Não sobrescreve `resposta_convite`/`nota` de um vínculo que já
@@ -640,7 +692,42 @@ export async function sincronizarComparecimentoNoCrm(filial) {
     ));
     const atualizadosGravados = resultadosAtualizacao.filter(r => !r.error).length;
 
-    return `${novosGravados} vínculo(s) novo(s), ${atualizadosGravados} atualizado(s) (compareceu), de ${registros.length} registro(s) (${semEvento} sem evento correspondente, ${semLead} sem lead achado por telefone/e-mail).`;
+    return `${novosGravados} vínculo(s) novo(s), ${atualizadosGravados} atualizado(s) (compareceu), de ${registros.length} registro(s) (${semEvento} sem evento correspondente, ${semLead} sem lead achado por telefone/e-mail${nomeDivergente ? `, ${nomeDivergente} descartado(s) por nome muito diferente do telefone/e-mail batido` : ''}).`;
+}
+
+// Helpers de comparação de nome — usados tanto pro fallback de evento por
+// nome-parecido-na-mesma-data (sincronizarComparecimentoNoCrm, criação da
+// linha "base") quanto pra checagem de sanidade telefone/e-mail-bateu-mas-
+// nome-não (mesma função, casamento de participante). Levenshtein é a MESMA
+// técnica já usada em js/app.js (distanciaLevenshtein(), correção de
+// provedor de e-mail) — reimplementada aqui pro lado do Node, mesmo padrão
+// de pequena duplicação deliberada de classificarTipoEventoUlisses().
+function normalizarNomeUlisses(s) {
+    return (s || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+}
+function distanciaLevenshteinUlisses(a, b) {
+    const m = a.length, n = b.length;
+    const d = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+    for (let i = 0; i <= m; i++) d[i][0] = i;
+    for (let j = 0; j <= n; j++) d[0][j] = j;
+    for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+            d[i][j] = a[i - 1] === b[j - 1] ? d[i - 1][j - 1] : 1 + Math.min(d[i - 1][j], d[i][j - 1], d[i - 1][j - 1]);
+        }
+    }
+    return d[m][n];
+}
+// Compara só o PRIMEIRO NOME (normalizado) — tolera pequena diferença de
+// grafia (distância <= 2, ex: "Samara"/"Samar", "Mariluza"/"Marilusa") mas
+// rejeita nomes claramente diferentes. Sem nome de um dos lados pra
+// comparar, não bloqueia (retorna true — não temos como avaliar, melhor
+// preservar o comportamento antigo do que rejeitar à toa).
+function primeiroNomeParecidoUlisses(nomeA, nomeB) {
+    const tokenA = normalizarNomeUlisses(nomeA).split(' ')[0] || '';
+    const tokenB = normalizarNomeUlisses(nomeB).split(' ')[0] || '';
+    if (!tokenA || !tokenB) return true;
+    if (tokenA === tokenB) return true;
+    return distanciaLevenshteinUlisses(tokenA, tokenB) <= 2;
 }
 
 // Classificação de tipo por palavra-chave — MESMA tabela `tipos_evento`/

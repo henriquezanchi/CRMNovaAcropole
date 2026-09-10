@@ -2671,6 +2671,52 @@ bloqueado).
          descartável): evento pré-existente com `imagem_url`/`capacidade`
          reais manteve os dois depois de sincronizar um catálogo com
          esses campos vazios; `tipo` recalculado certo ("Palestra").
+       - **2 bugs reais confirmados em produção (2026-09-10, achados
+         diagnosticando um relato do usuário) e corrigidos em
+         `sincronizarComparecimentoNoCrm()`**:
+         1. **"Lead inventado" — telefone/e-mail bater não garante ser a
+            MESMA pessoa.** Diagnóstico rodado contra dado real de Barra
+            do Garças/MT (script descartável, não faz parte do projeto)
+            achou 6 de 774 vínculos onde o nome que o Ulisses registrou
+            pro participante não tem nada a ver com o nome do lead casado
+            por telefone — a causa mais provável é telefone COMPARTILHADO
+            entre parentes (ex: "Jefferson Teixeira Oliveira" bateu no
+            telefone da lead "Lara Costa Dorneles Teixeira", provável
+            marido/mulher). 4 desses 6 eram claramente pessoas diferentes
+            (removidos manualmente da produção); os outros 2 eram só
+            variação de grafia da MESMA pessoa ("Samara"/"Samar",
+            "Mariluza"/"Marilusa" — mantidos). Corrigido comparando o
+            PRIMEIRO NOME (normalizado, tolerando distância Levenshtein
+            <= 2 — mesma técnica de `distanciaLevenshtein()` em
+            `js/app.js`, reimplementada aqui pro lado do Node,
+            `primeiroNomeParecidoUlisses()`) antes de criar o vínculo —
+            nome muito diferente descarta o vínculo (log de aviso pra
+            revisão manual) em vez de atribuir o comparecimento à pessoa
+            errada. Sem nome de um dos lados pra comparar, não bloqueia
+            (preserva o comportamento antigo).
+         2. **Evento duplicado quando o nome do catálogo (tela Links) e o
+            nome da Recepção divergem** — reproduziu exatamente o bug já
+            documentado (card "Bushido"/typo "hora" vs "honra", ver bullet
+            de `exportarCatalogoEventos()` acima): como
+            `sincronizarComparecimentoNoCrm()` casa evento por
+            `(filial, nome EXATO, data)`, uma linha órfã com o nome antigo
+            errado nunca batia com o nome novo/correto vindo do catálogo,
+            então toda rodada nova criava OUTRO evento duplicado — o
+            usuário via o card bonito (imagem, do catálogo) SEM lista de
+            inscritos, porque os inscritos foram pro duplicado feio (sem
+            imagem, só a linha "base"). Corrigido com um fallback: sem
+            match exato, procura por NOME PARECIDO (mesma técnica
+            Levenshtein acima, tolerância maior — até 15% do tamanho do
+            nome ou 4 caracteres) entre eventos da MESMA data — se achar,
+            reaproveita em vez de criar duplicado. Duplicata real já
+            existente em produção (Garavelo, evento "Bushido") foi
+            mesclada manualmente (`evento_leads` movido pro id certo, id
+            errado apagado). **Testado ao vivo** (filial descartável,
+            reproduzindo os 2 cenários exatos): nome divergente
+            corretamente IGNORADO (não vinculou à pessoa errada); nome
+            parecido (variação de grafia) aceito normalmente; evento com
+            nome levemente diferente na mesma data reaproveitou o id
+            existente em vez de duplicar.
        - **Mensagem de status corrigida**: `processarFilial()`/
          `processarFilialLocal()` diziam "(marco 2 — ainda não alimenta
          o CRM automaticamente)" mesmo depois de `sincronizarCatalogoEventosNoCrm()`/
