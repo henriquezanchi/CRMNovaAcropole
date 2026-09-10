@@ -1231,6 +1231,26 @@ sistemas fechados).
   Participantes (`resumo` vazio) continuam com o proxy antigo, pra não
   perder a informação de importações antigas. Barra de vagas fica vermelha
   quando `confirmados >= capacidade`.
+- **Vínculo automático a partir do histórico (Ulisses)**
+  (`vincularEventoLeadsAutomaticamente()`, `js/importador.js`, chamada no
+  fim de `confirmarEnviarImportacao()`, depois do upsert de leads): pedido
+  do usuário depois de um caso real (SDR ligou oferecendo matrícula pra
+  quem já tinha se inscrito numa Abertura de Turma, sem que a Agenda
+  mostrasse isso em lugar nenhum). Cruza `historico_eventos` de cada lead
+  importado contra `eventos` da MESMA filial por `nome normalizado + data
+  exata (AAAA-MM-DD)` — os dois precisam bater (evita casar com o evento
+  errado, tipo o mesmo nome de palestra repetido em anos diferentes).
+  Quando bate, cria a linha em `evento_leads` com `resposta_convite =
+  'confirmado'` (inscrever-se no Ulisses já é intenção real, mais forte
+  que "convite pendente"). **Nunca sobrescreve uma linha que já existe**
+  — usa `upsert(..., {onConflict: 'evento_id,pessoaIdentificador',
+  ignoreDuplicates: true})`, que só CRIA linha nova, então uma resposta
+  editada na mão (ex: o time ligou e a pessoa disse que não vai mais,
+  marcou "recusado") nunca é revertida por uma reimportação futura.
+  Best-effort (erro aqui não trava a importação). Testado ao vivo:
+  lead novo inscrito ganha vínculo automático "confirmado"; um vínculo
+  "recusado" já existente pro mesmo evento continua "recusado" depois de
+  reimportar a mesma pessoa.
 - **Sem fetch a cada re-render**: `renderizarListaEventos()` só redesenha
   com o que já está em `eventosAtuais` (cache local) — é chamada de dentro
   de `sincronizarAbaAtiva()` toda vez que `renderizarCards()` roda (que é

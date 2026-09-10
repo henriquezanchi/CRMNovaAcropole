@@ -1247,6 +1247,70 @@ function renderizarPreviaImportacao(resultado) {
 }
 
 // ==========================================
+// VÍNCULO AUTOMÁTICO evento_leads (Agenda) A PARTIR DO HISTÓRICO
+// ==========================================
+// Cruza historico_eventos de cada lead importado contra a tabela `eventos`
+// da mesma filial (nome normalizado + mesma data) e cria a linha em
+// `evento_leads` sozinho, com resposta_convite='confirmado' — registrar-se
+// no Ulisses é um sinal de intenção real, mais forte que um convite
+// "pendente" que ainda não foi respondido. `ignoreDuplicates: true` no
+// upsert garante que isso NUNCA sobrescreve uma linha que o time já
+// editou na mão (ex: marcou "recusado" depois de ligar) — só CRIA a
+// linha quando ela ainda não existe. Best-effort: erro aqui nunca deve
+// travar o resto da importação (mesma filosofia de classificar-temas).
+async function vincularEventoLeadsAutomaticamente(filial, leads) {
+    try {
+        const { data: eventosFilial, error: erroEventos } = await window.supabaseClient
+            .from('eventos')
+            .select('id, nome, data')
+            .eq('filial', filial);
+        if (erroEventos || !eventosFilial || eventosFilial.length === 0) return;
+
+        // Chave: nome normalizado + data (AAAA-MM-DD) — os dois precisam
+        // bater pra evitar casar com o evento errado (ex: "Palestra X"
+        // repetida em anos diferentes).
+        const mapaEventos = new Map();
+        eventosFilial.forEach(e => {
+            mapaEventos.set(`${normalizarNomeImport(e.nome)}|${e.data}`, e.id);
+        });
+
+        const vinculos = [];
+        const jaAdicionado = new Set(); // evita duplicar dentro do mesmo lote (unique de evento_id+pessoa)
+        leads.forEach(lead => {
+            (Array.isArray(lead.historico_eventos) ? lead.historico_eventos : []).forEach(ev => {
+                const m = String(ev.data || '').match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+                if (!m) return;
+                const dataISO = `${m[3]}-${m[2]}-${m[1]}`;
+                const eventoId = mapaEventos.get(`${normalizarNomeImport(ev.evento || '')}|${dataISO}`);
+                if (!eventoId) return;
+                const chaveUnica = `${eventoId}:${lead.pessoaIdentificador}`;
+                if (jaAdicionado.has(chaveUnica)) return;
+                jaAdicionado.add(chaveUnica);
+                vinculos.push({ evento_id: eventoId, pessoaIdentificador: lead.pessoaIdentificador, resposta_convite: 'confirmado' });
+            });
+        });
+        if (vinculos.length === 0) return;
+
+        const TAMANHO_LOTE = 500;
+        let criados = 0;
+        for (let i = 0; i < vinculos.length; i += TAMANHO_LOTE) {
+            const lote = vinculos.slice(i, i + TAMANHO_LOTE);
+            const { data, error } = await window.supabaseClient
+                .from('evento_leads')
+                .upsert(lote, { onConflict: 'evento_id,pessoaIdentificador', ignoreDuplicates: true })
+                .select('id');
+            if (error) { logImport('Aviso: não foi possível vincular automaticamente inscritos aos eventos da Agenda — ' + error.message, 'warn'); return; }
+            criados += (data || []).length;
+        }
+        if (criados > 0) {
+            logImport(`${criados} lead(s) vinculado(s) automaticamente a evento(s) da Agenda a partir do histórico (Ulisses) — visível no modal de Participantes.`, 'ok');
+        }
+    } catch (e) {
+        logImport('Aviso: falha inesperada ao vincular eventos da Agenda automaticamente — ' + (e.message || e), 'warn');
+    }
+}
+
+// ==========================================
 // ENVIO AO SUPABASE (upsert em massa, preservando trabalho manual)
 // ==========================================
 async function confirmarEnviarImportacao() {
@@ -1533,6 +1597,14 @@ async function confirmarEnviarImportacao() {
             detalhes: { enviados, modo: resultadoImportacao.modoImportacao, resumo: resultadoImportacao.resumo }
         });
     }
+
+    // Vincula automaticamente cada lead importado aos eventos da Agenda
+    // em que ele já apareceu no histórico (Ulisses) — sem isso, a Agenda
+    // só sabia "quem se inscreveu" se alguém marcasse na mão no modal de
+    // Participantes; pedido do usuário depois de um caso real (SDR ligou
+    // oferecendo matrícula pra quem já tinha se inscrito numa Abertura de
+    // Turma, sem que a Agenda mostrasse isso).
+    await vincularEventoLeadsAutomaticamente(resultadoImportacao.filial, registrosFinais);
 
     // Varredura de "Leads a Tratar" (duplicados por telefone/nome + sem
     // telefone) — roda sempre ao final de toda importação, sobre a filial
