@@ -3829,6 +3829,15 @@ clicar num número deve levar direto pra onde aquele número "vive":
   aba CRM e aplica `quickFilterTag('Recuperado')` em todas as colunas —
   é o critério PRINCIPAL do próprio KPI (ver bullet `"Recuperado"` na
   seção de Tags).
+  - **Bug real relatado pelo usuário (2026-09-11): o filtro aplicava,
+    mas leads numa coluna guardada na gaveta (`colunasRecolhidas`)
+    continuavam invisíveis** — como um "Recuperado" pode ter caído em
+    QUALQUER coluna do funil (não só Matriculados), não tem como saber
+    de antemão qual coluna guardada precisaria ser restaurada. Corrigido
+    dentro do próprio `quickFilterTag()` (usado tanto por este KPI quanto
+    por `filtrarPorLeadForte()`): restaura TODAS as colunas guardadas na
+    gaveta antes de aplicar o filtro — não faz sentido filtrar uma coluna
+    que nem está visível.
 - **Clicar num lead em "Aniversariantes de Hoje" (Agenda do Dia —
   Todas as Filiais) abre a gaveta já com o template `aniversario` do
   WhatsApp selecionado**, pronto pra revisar as variáveis e mandar —

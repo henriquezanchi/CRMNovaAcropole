@@ -912,8 +912,18 @@ function atualizarBadgeFiltroColuna(key) {
     }
 }
 
-// "Filtro Rápido: Ex-Alunos" — aplica a tag em TODAS as colunas de uma vez
+// "Filtro Rápido: Ex-Alunos" — aplica a tag em TODAS as colunas de uma vez.
+// Restaura qualquer coluna guardada na gaveta ANTES de filtrar — sem isso,
+// um lead que bate no filtro mas está numa coluna recolhida (sem elemento
+// no DOM) simplesmente não aparece em lugar nenhum, dando a falsa
+// impressão de que "não achou nada" (bug real relatado pelo usuário,
+// clicando nos KPIs "Resgates Efetivados"/"Lead Forte" do Dashboard).
 function quickFilterTag(tag) {
+    if (colunasRecolhidas.size > 0) {
+        colunasRecolhidas.clear();
+        salvarColunasRecolhidasLocal();
+        renderizarColunas();
+    }
     columnsConfig.forEach(col => {
         const filtro = getFiltroColuna(col.key);
         if (!filtro.tags.includes(tag)) filtro.tags.push(tag);
