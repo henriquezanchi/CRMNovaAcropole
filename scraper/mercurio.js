@@ -300,14 +300,40 @@ async function exportarAtivosEInativos(page, label) {
 const SITUACOES_ANIVERSARIANTES = ['N1', 'CIR', 'MEM', 'COR', 'JAN', 'INA'];
 const MESES_ANIVERSARIANTES = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
 
+// Célula "Endereço" da tela Aniversariantes — confirmada por print real
+// (2026-09-11): 4 linhas dentro da mesma célula (quebra por <br>, vira
+// "\n" no innerText()) — Logradouro / Bairro / "CIDADE-UF-CEP" (CEP
+// aparece como "0" quando não preenchido) / E-mail. Ex.: "RUA FIDALGO
+// S/N\nJARDIM NOVA BARRA\nBARRA DO GARÇAS-MT-78606629\ncelso@gmail.com".
+// Extrai só e-mail/cidade/UF — **NÃO telefone** (a coluna "Fone" desta
+// tela vem sem DDD, confirmado pelo usuário, então não dá pra usar com
+// confiança; telefone continua vindo só da lista de Turma/Inativos).
+// Procura pela linha-formato (não por posição fixa), tolerando ordem
+// diferente ou linha faltando.
+function extrairEnderecoAniversariante(textoEndereco) {
+    const linhas = String(textoEndereco || '').split('\n').map(l => l.trim()).filter(Boolean);
+    let email = null, cidade = null, uf = null;
+    for (const linha of linhas) {
+        if (!email && /@/.test(linha)) { email = linha; continue; }
+        const m = !cidade && linha.match(/^(.+?)-([A-Z]{2})-\d+$/);
+        if (m) { cidade = m[1].trim(); uf = m[2]; }
+    }
+    return { email, cidade, uf };
+}
+
 // Aniversariantes (menu "Relatórios" → "Aniversariantes", uni_cadani.php)
 // — a tela só mostra 1 situação + 1 mês por vez (2 <select>, cada um
 // resubmete o formulário sozinho no onchange), sem opção "todos" em
 // nenhum dos dois — por isso a varredura completa (pedida pelo usuário,
 // "todo mundo, inclusive inativos") precisa passar pelas 6 situações x
 // 12 meses = 72 combinações, por filial. Colunas da tabela: Nome, Sit.,
-// Nasc. (DD/MM/AAAA — data completa, com ano), Fone, Endereço (o e-mail
-// vem embutido no fim desse texto livre, não usado aqui), Dia de Aula.
+// Nasc. (DD/MM/AAAA — data completa, com ano), Fone (sem DDD, não usado),
+// Endereço (e-mail/cidade/UF embutidos — ver extrairEnderecoAniversariante()),
+// Dia de Aula. **Cobre Ativos E Inativos** (INA está em
+// SITUACOES_ANIVERSARIANTES) — é o único caminho automático hoje que
+// alcança os dois grupos sem depender do Ulisses, pedido explícito do
+// usuário (2026-09-11): "ativo e inativos completos... não depender do
+// Ulisses pra nada".
 async function exportarAniversariantes(page, label) {
     const indice = await indiceAtualParaLabel(page, label);
     if (indice === null) throw new Error(`Link "CADASTRO" de "${label}" não encontrado nesta tela (a ordem pode ter mudado, ou a filial não está mais listada) — pulando pra não arriscar ler dados de outra filial.`);
@@ -343,7 +369,9 @@ async function exportarAniversariantes(page, label) {
                 const chave = matricula || `${nome}|||${nascimento}`;
                 if (vistos.has(chave)) continue;
                 vistos.add(chave);
-                registros.push({ matricula, nome, nascimento, situacao: sit });
+                const textoEndereco = await celulas.nth(4).innerText().catch(() => '');
+                const { email, cidade, uf } = extrairEnderecoAniversariante(textoEndereco);
+                registros.push({ matricula, nome, nascimento, situacao: sit, email, cidade, uf });
             }
         }
     }
@@ -454,12 +482,12 @@ export async function sincronizarAniversariantesNoCrm(labelMercurio) {
     const registros = JSON.parse(fs.readFileSync(caminhoJson, 'utf-8'));
     if (registros.length === 0) return '0 aniversariantes exportados — nada a sincronizar.';
 
-    const porNome = new Map(); // nome normalizado -> { pessoaIdentificador, temData, ambiguo }
+    const porNome = new Map(); // nome normalizado -> { pessoaIdentificador, temData, temEmail, temCidade, temUf, ambiguo }
     const TAMANHO_PAGINA = 1000;
     for (let de = 0; ; de += TAMANHO_PAGINA) {
         const { data: pagina, error } = await supabaseAdmin
             .from('leads_inscricoes')
-            .select('pessoaIdentificador, pessoaNome, data_nascimento')
+            .select('pessoaIdentificador, pessoaNome, data_nascimento, "pessoaEmail", cidade, uf')
             .eq('filial', filial)
             .order('pessoaIdentificador', { ascending: true })
             .range(de, de + TAMANHO_PAGINA - 1);
@@ -469,31 +497,51 @@ export async function sincronizarAniversariantesNoCrm(labelMercurio) {
             if (!chave) continue;
             const existente = porNome.get(chave);
             if (existente) existente.ambiguo = true;
-            else porNome.set(chave, { pessoaIdentificador: lead.pessoaIdentificador, temData: !!lead.data_nascimento, ambiguo: false });
+            else porNome.set(chave, {
+                pessoaIdentificador: lead.pessoaIdentificador,
+                temData: !!lead.data_nascimento,
+                temEmail: !!(lead.pessoaEmail && lead.pessoaEmail.trim()),
+                temCidade: !!lead.cidade,
+                temUf: !!lead.uf,
+                ambiguo: false,
+            });
         }
         if (!pagina || pagina.length < TAMANHO_PAGINA) break;
     }
 
     let atualizados = 0, semLead = 0, ambiguos = 0, jaTinhaData = 0;
+    let comEmail = 0, comCidade = 0;
     for (const r of registros) {
-        const dataISO = dataBRParaISO(r.nascimento);
-        if (!dataISO) continue;
         const alvo = porNome.get(normalizarNomeMercurio(r.nome));
         if (!alvo) { semLead++; continue; }
         if (alvo.ambiguo) { ambiguos++; continue; }
-        if (alvo.temData) { jaTinhaData++; continue; }
+
+        // Monta o patch só com o que falta E veio preenchido nesta
+        // rodada — nunca sobrescreve um valor já existente (pode ter
+        // sido corrigido à mão, ou vindo de uma importação do Ulisses).
+        const patch = {};
+        const dataISO = dataBRParaISO(r.nascimento);
+        if (dataISO && !alvo.temData) patch.data_nascimento = dataISO;
+        else if (alvo.temData) jaTinhaData++;
+        if (r.email && !alvo.temEmail) patch.pessoaEmail = r.email;
+        if (r.cidade && !alvo.temCidade) patch.cidade = r.cidade;
+        if (r.uf && !alvo.temUf) patch.uf = r.uf;
+        if (Object.keys(patch).length === 0) continue;
 
         const { error } = await supabaseAdmin
             .from('leads_inscricoes')
-            .update({ data_nascimento: dataISO })
+            .update(patch)
             .eq('pessoaIdentificador', alvo.pessoaIdentificador);
         if (!error) {
             atualizados++;
-            alvo.temData = true; // evita reprocessar se o mesmo nome aparecer 2x na exportação
+            if (patch.data_nascimento) alvo.temData = true;
+            if (patch.pessoaEmail) { alvo.temEmail = true; comEmail++; }
+            if (patch.cidade) { alvo.temCidade = true; comCidade++; }
+            if (patch.uf) alvo.temUf = true;
         }
     }
 
-    return `${atualizados} lead(s) com data de nascimento preenchida, de ${registros.length} aniversariante(s) do Mercúrio (${semLead} sem lead correspondente por nome, ${ambiguos} nome ambíguo/homônimo, ${jaTinhaData} já tinham data preenchida).`;
+    return `${atualizados} lead(s) atualizado(s) (${comEmail} e-mail, ${comCidade} cidade/UF), de ${registros.length} aniversariante(s) do Mercúrio (${semLead} sem lead correspondente por nome, ${ambiguos} nome ambíguo/homônimo, ${jaTinhaData} já tinham data de nascimento).`;
 }
 
 // Data de hoje no fuso de Brasília (America/Sao_Paulo) — importante rodar
