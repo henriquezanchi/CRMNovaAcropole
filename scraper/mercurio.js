@@ -747,12 +747,21 @@ async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = f
         return esperarFrame(page, 'indice', /uni_indice\.php/, 15000);
     };
 
-    // Reentra na turma DO ZERO (CADASTRO -> Turmas -> clica na turma) —
-    // usado pra visitar a ficha de 1 aluno específico sem depender de
-    // "voltar" no meio de um <frameset> (comportamento incerto sem teste
-    // real), reaproveitando o mesmo padrão já usado no resto do arquivo
-    // pra resetar a navegação pra um estado conhecido.
+    // Reentra na turma DO ZERO (volta pra ger_funcao.php -> CADASTRO ->
+    // Turmas -> clica na turma) — usado pra visitar a ficha de 1 aluno
+    // específico sem depender de "voltar" no meio de um <frameset>
+    // (comportamento incerto sem teste real), reaproveitando o mesmo
+    // padrão já usado no resto do arquivo pra resetar a navegação pra um
+    // estado conhecido. BUG REAL corrigido (2026-09-10, achado no 1º teste
+    // de verdade — MODO COMPLETO): faltava o `page.goto(URL_FUNCOES, ...)`
+    // antes de `entrarNoIndiceDaFilial()` — sem ele, a função tentava
+    // clicar em "CADASTRO" onde quer que a página estivesse no momento
+    // (ficha de um aluno anterior, ou a própria tela da turma), nunca
+    // achava o frame "principal" em ger_funcao.php, e todo aluno de todo
+    // MODO COMPLETO falhava com timeout — 100% das visitas de ficha
+    // fracassaram na 1ª rodada real por causa disso.
     const entrarNaTurma = async (nomeTurma) => {
+        await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' });
         const fi = await entrarNoIndiceDaFilial();
         await fi.getByText('Turmas', { exact: true }).first().click();
         const ft = await esperarFrame(page, 'principal', /uni_esctur\.php/, 15000);
