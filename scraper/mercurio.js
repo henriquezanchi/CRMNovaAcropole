@@ -1067,7 +1067,17 @@ async function main() {
         // antes de soltar uma rodada completa de horas (ver
         // processarTurmas()) — combina com `--completo` pra também testar
         // ENDEREÇOS, não só o telefone/reingresso do modo incremental.
-        const argv = process.argv.slice(2);
+        // BUG REAL corrigido (2026-09-11, achado testando `--completo` +
+        // filial + `--turma` juntos pela 1ª vez): quando o Node roda um
+        // ARQUIVO .js (não `-e`) com um `--` solto na linha de comando (ex:
+        // `node mercurio.js -- --completo "Garavelo"`, exatamente o padrão
+        // usado pelo script `mercurio-completo` do package.json), esse `--`
+        // fica LITERALMENTE dentro de `process.argv` — Node não remove
+        // sozinho. Sem filtrar isso fora, `argv.find(...)` podia pegar o
+        // próprio `'--'` como se fosse o filtro de filial (index 0 batendo
+        // antes de "Garavelo"), fazendo a rodada processar TODAS as
+        // filiais mesmo pedindo uma só.
+        const argv = process.argv.slice(2).filter(a => a !== '--');
         const modoCompleto = argv.includes('--completo') || process.env.MODO_COMPLETO === 'true';
         const idxTurma = argv.indexOf('--turma');
         const filtroTurma = idxTurma !== -1 ? argv[idxTurma + 1] : (process.env.FILTRO_TURMA || null);
