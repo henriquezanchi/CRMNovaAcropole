@@ -109,21 +109,23 @@ function classificarTipoEvento(nomeEvento) {
 }
 
 // Classifica o nível de aluno/ex-aluno a partir da coluna "Nivel" (Ativos)
-// ou "Ni" (Inativos): TA (Távola/Merlin, filosofia infantil), PP (só o
-// primeiro mês, aluno muito novo ou que saiu antes do 2º mês), N1 a N7
-// (níveis 1 a 7 do curso regular). Heurística por palavra-chave sobre o
-// texto já normalizado (maiúsculo, sem acento) — como não sabemos de
-// antemão todo o vocabulário real da planilha, quem não bater com nenhuma
-// regra fica sem tag de nível (não inventa um valor errado); confira a
-// coluna Tags na prévia da importação antes de confirmar o envio.
-// TA (Merlin/Távola, filosofia infantil), JN (Janos, adolescentes), PP (só
-// o 1º mês), N1 (mantido separado — aluno ainda no nível de entrada) e
-// "Membro" (N2 a N7 unificados — já é um membro estabelecido da escola,
-// o nível exato de 2 a 7 não muda como o time aborda a pessoa).
+// ou "Ni" (Inativos): "Merlin" (Távola/Correntinha, filosofia infantil —
+// as 2 turmas do "programa complementar" convergem pro mesmo programa de
+// filosofia pra crianças), "CA" (Círculo de Amigos, também complementar,
+// mas categoria própria — não é "Merlin"), JN (Janos, adolescentes), PP
+// (só o primeiro mês, aluno muito novo ou que saiu antes do 2º mês), N1 a
+// N7 (níveis 1 a 7 do curso regular, N2-N7 unificados em "Membro" — já é
+// um membro estabelecido da escola, o nível exato de 2 a 7 não muda como o
+// time aborda a pessoa). Heurística por palavra-chave sobre o texto já
+// normalizado (maiúsculo, sem acento) — como não sabemos de antemão todo o
+// vocabulário real da planilha, quem não bater com nenhuma regra fica sem
+// tag de nível (não inventa um valor errado); confira a coluna Tags na
+// prévia da importação antes de confirmar o envio.
 function classificarNivel(nivelBruto) {
     const n = normalizarNomeImport(nivelBruto);
     if (!n) return null;
-    if (/MERLIN|TAVOLA/.test(n) || n === 'TA') return 'TA';
+    if (/MERLIN|TAVOLA|CORRENTINHA/.test(n) || n === 'TA' || n === 'CO') return 'Merlin';
+    if (/CIRCULO/.test(n) || n === 'CA') return 'CA';
     if (/JANOS/.test(n) || n === 'JN') return 'JN';
     if (/\bPP\b/.test(n) || /INTRODUT/.test(n)) return 'PP';
     const m = n.match(/NIVEL\s*([1-7])\b/) || n.match(/\bN\s*([1-7])\b/) || n.match(/^([1-7])\b/);
@@ -1570,7 +1572,12 @@ async function confirmarEnviarImportacao() {
     function ehTagDeSistema(tag) {
         return TAGS_SISTEMA_EXATAS.includes(tag)
             || /^Lead Forte( [1-3])?$/.test(tag)
-            || /^(TA|JN|PP|N[1-7]|Membro)$/.test(tag)
+            // TA fica no regex por compatibilidade com tags antigas (o
+            // importador só GERA "Merlin"/"CA" a partir de 2026-09-10, ver
+            // classificarNivel()) — sem isso, um lead cujo nível mudasse
+            // entre 2 importações acumularia a tag de nível ANTIGA (tratada
+            // como "custom", preservada pra sempre) junto da nova.
+            || /^(TA|Merlin|CA|JN|PP|N[1-7]|Membro)$/.test(tag)
             || /^Sem (Telefone|E-mail)$/.test(tag)
             || /^(Trilha|Jornada): /.test(tag)
             || tag === 'Inscrito: Abertura de Turma';

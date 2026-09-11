@@ -265,6 +265,7 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 /* "Recuperado" — estava Inativo, voltou a ser Ativo (aplicada pelo importador) */
 .tag-recuperado { background: #ecfdf5; color: #047857; border: 1px solid #6ee7b7; font-weight: 700; }
 .tag-perdido { background: #fef2f2; color: #991b1b; border: 1px solid #fca5a5; font-weight: 700; }
+.tag-crm { background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; font-weight: 700; }
 /* "Inscrito: Abertura de Turma" — já se inscreveu numa turma futura; NUNCA
    ligar oferecendo matrícula sem checar essa tag primeiro (ver
    calcularTagInscricaoAberturaTurma(), js/importador.js). Azul saturado,

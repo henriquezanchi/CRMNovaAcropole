@@ -69,6 +69,12 @@ const ROTULOS_ACAO_LOG = {
     motivo_perda: 'Registrou motivo de perda',
     limpeza_total_reimportacao: 'Limpeza total pra reimportação',
     importar_conversa_whatsapp: 'Importou conversa de WhatsApp',
+    criar_lead_manual: 'Criou lead manualmente (tag CRM)',
+    mover_lixeira: 'Moveu lead(s) pra lixeira',
+    restaurar_lixeira: 'Restaurou lead da lixeira',
+    excluir_lixeira_definitivo: 'Excluiu lead definitivamente (lixeira)',
+    lixeira_expirada_apagada: 'Lixeira: apagou lead(s) vencido(s) (30 dias, automático)',
+    recuperacao_detectada_scraper: 'Detectou reingresso/recuperação (scraper Mercúrio)',
 };
 
 // Mostra até esse nº de nomes por entrada antes de resumir em "e mais N" —
@@ -147,6 +153,18 @@ function formatarDetalhesLog(l, mapaNomes) {
             return `importou planilha em "${escapeHTML(l.filial || '?')}" (modo: ${escapeHTML(d.modo ? JSON.stringify(d.modo) : '?')}) — ${escapeHTML(String(d.enviados ?? '?'))} lead(s) enviado(s)`;
         case 'importar_conversa_whatsapp':
             return `importou ${escapeHTML(String(d.quantidade ?? '?'))} mensagem(ns) de WhatsApp em ${nomes || '(sem lead identificado)'}`;
+        case 'criar_lead_manual':
+            return `criou o lead <strong>${escapeHTML(d.nome || '?')}</strong> manualmente (tag CRM)`;
+        case 'mover_lixeira':
+            return `moveu ${nomes || '(sem lead identificado)'} pra lixeira`;
+        case 'restaurar_lixeira':
+            return `restaurou ${nomes || '(sem lead identificado)'} da lixeira`;
+        case 'excluir_lixeira_definitivo':
+            return `excluiu <strong>${escapeHTML(d.nome || nomes || '?')}</strong> definitivamente (lixeira)`;
+        case 'lixeira_expirada_apagada':
+            return `apagou <strong>${escapeHTML(String(d.quantidade ?? '?'))} lead(s)</strong> vencido(s) da lixeira (30 dias, automático)`;
+        case 'recuperacao_detectada_scraper':
+            return `detectou reingresso de <strong>${escapeHTML(d.nome || '?')}</strong> (Recuperado)${d.dataReingresso ? ` — reingresso em ${escapeHTML(d.dataReingresso)}` : ''}`;
         default:
             return Object.entries(d).map(([k, v]) => `${escapeHTML(k)}: ${escapeHTML(typeof v === 'object' ? JSON.stringify(v) : String(v))}`).join(' · ');
     }

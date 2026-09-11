@@ -368,6 +368,14 @@ function dataBRParaISO(dataBR) {
     return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
 }
 
+// Data (Date) a partir de "DD/MM/AAAA" — só pra COMPARAR (ingresso do
+// aluno vs. início da turma, ver processarTurmas()), nunca pra gravar/
+// exibir em lugar nenhum.
+function dataBRParaDate(dataBR) {
+    const m = (dataBR || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    return m ? new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1])) : null;
+}
+
 // O Mercúrio e o CRM usam vocabulários DIFERENTES pra filial — o Mercúrio
 // (visto no menu pós-login, ver listarLinksCadastro()) usa algo como
 // "GOIÂNIA UNIVERSITARIO: BARRA DO GARÇAS", enquanto o CRM usa
@@ -551,30 +559,185 @@ function mesAnoDoIngresso(dataBR) {
     return m ? `${m[3]}-${m[2]}` : null;
 }
 
-// Varre TODAS as turmas da filial (menu "Turmas", uni_esctur.php) — entra
-// em cada uma e faz 2 coisas:
-// (1) grava dia/horário de TODA turma em `turmas` (migracao_turmas.sql),
-//     base do "Mapa de Turmas" no CRM (js/mapa-turmas.js);
-// (2) lê a tabela de alunos (Matr./Nome/Origem/Ingresso/Fone) e separa
-//     quem ingressou no MÊS CORRENTE (não o padrão de 90 dias usado no
-//     paste manual, ehMatriculaRecente() em js/matricula-importar.js —
-//     aqui é "matriculados NESTE MÊS" de propósito, pedido explícito do
-//     usuário, e o pré-filtro acontece AQUI, antes de qualquer coisa
-//     chegar na tela do CRM, então esse limite não afeta em nada o
-//     fluxo manual). Quem bate é colado na tela "Importar Matrícula" do
-//     CRM publicado (marco 3 — scraper/importar-matricula-no-crm.js),
-//     reaproveitando 100% da lógica de casamento/tags/dedup que já
-//     existe — não reimplementa nada disso aqui.
+// Carrega TODOS os leads da filial num Map por nome normalizado — mesma
+// técnica/limitação já usada em sincronizarAniversariantesNoCrm() acima:
+// homônimo (2+ leads com o mesmo nome normalizado) fica marcado como
+// `ambiguo` e nunca é escolhido automaticamente (arriscar o lead errado é
+// pior que pular um aluno). Carregado 1x por filial por rodada (não 1x
+// por aluno) — reaproveitado por toda a varredura de turmas.
+async function carregarMapaLeadsPorNome(filialCrm) {
+    const mapa = new Map();
+    const TAMANHO_PAGINA = 1000;
+    for (let de = 0; ; de += TAMANHO_PAGINA) {
+        const { data, error } = await supabaseAdmin
+            .from('leads_inscricoes')
+            .select('pessoaIdentificador, pessoaNome, tags, cidade, uf, telefone_alternativo, pessoaEmail')
+            .eq('filial', filialCrm)
+            .order('pessoaIdentificador', { ascending: true })
+            .range(de, de + TAMANHO_PAGINA - 1);
+        if (error) throw new Error('Erro ao buscar leads da filial: ' + error.message);
+        for (const lead of data || []) {
+            const chave = normalizarNomeMercurio(lead.pessoaNome);
+            if (!chave) continue;
+            if (mapa.has(chave)) { mapa.get(chave).ambiguo = true; continue; }
+            mapa.set(chave, {
+                pessoaIdentificador: lead.pessoaIdentificador,
+                tags: parseTagsMercurio(lead.tags).map(t => String(t).trim()),
+                cidade: lead.cidade || '',
+                uf: lead.uf || '',
+                telefoneAlternativo: lead.telefone_alternativo || '',
+                pessoaEmail: lead.pessoaEmail || '',
+                ambiguo: false,
+            });
+        }
+        if (!data || data.length < TAMANHO_PAGINA) break;
+    }
+    return mapa;
+}
+
+// Grava a tag "Recuperado" (permanente, nunca removida em reimportação —
+// ver ehTagDeSistema() em js/importador.js) quando o campo "Reingresso
+// (Recuperação)" da tela HISTÓRICO do Mercúrio confirma que o aluno já
+// saiu antes e voltou. Como a base foi zerada nesta sessão (não tem mais
+// histórico de Inativo->Ativo pra comparar sozinho entre importações —
+// ver CLAUDE.md), esta é a forma de detectar rematrícula de verdade daqui
+// pra frente: direto do Mercúrio, não por comparação entre 2 importações.
+// Idempotente (não duplica se já tinha a tag) e registra em
+// `log_atividade` (acao='recuperacao_detectada_scraper') pra deixar uma
+// trilha DATADA de quando foi detectado — base pra um relatório futuro de
+// "Recuperações por Mês", se fizer sentido (ainda não construído).
+async function aplicarTagRecuperado(filialCrm, leadInfo, nomeAluno, dataReingresso) {
+    if (leadInfo.tags.includes('Recuperado')) return false;
+    const novasTags = [...leadInfo.tags, 'Recuperado'];
+    const { error } = await supabaseAdmin.from('leads_inscricoes')
+        .update({ tags: JSON.stringify(novasTags) })
+        .eq('pessoaIdentificador', leadInfo.pessoaIdentificador);
+    if (error) { console.warn(`[recuperado] Falha ao gravar tag de "${nomeAluno}":`, error.message); return false; }
+    leadInfo.tags = novasTags;
+    await supabaseAdmin.from('log_atividade').insert({
+        filial: filialCrm, acao: 'recuperacao_detectada_scraper', autor: 'Scraper Mercúrio',
+        pessoa_ids: [String(leadInfo.pessoaIdentificador)], detalhes: { nome: nomeAluno, dataReingresso: dataReingresso || null },
+    }).then(({ error: erroLog }) => { if (erroLog) console.warn('[log-atividade] Falha ao registrar recuperação:', erroLog.message); });
+    return true;
+}
+
+// Grava e-mail/cidade/UF/telefone alternativo lidos da tela ENDEREÇOS
+// (Modo Completo, ver processarTurmas()) — NUNCA sobrescreve um valor já
+// preenchido (pode ter sido corrigido à mão no CRM), mesmo princípio já
+// usado em sincronizarCatalogoEventosNoCrm() pro Ulisses.
+async function aplicarDadosEndereco(leadInfo, nomeAluno, dados) {
+    const patch = {};
+    if (dados.email && !leadInfo.pessoaEmail) patch.pessoaEmail = dados.email;
+    if (dados.cidade && !leadInfo.cidade) patch.cidade = dados.cidade;
+    if (dados.uf && !leadInfo.uf) patch.uf = dados.uf;
+    if (dados.telefoneAlternativo && !leadInfo.telefoneAlternativo) patch.telefone_alternativo = dados.telefoneAlternativo;
+    if (Object.keys(patch).length === 0) return false;
+
+    const { error } = await supabaseAdmin.from('leads_inscricoes').update(patch).eq('pessoaIdentificador', leadInfo.pessoaIdentificador);
+    if (error) { console.warn(`[enderecos] Falha ao gravar dados de "${nomeAluno}":`, error.message); return false; }
+    if (patch.pessoaEmail) leadInfo.pessoaEmail = patch.pessoaEmail;
+    if (patch.cidade) leadInfo.cidade = patch.cidade;
+    if (patch.uf) leadInfo.uf = patch.uf;
+    if (patch.telefone_alternativo) leadInfo.telefoneAlternativo = patch.telefone_alternativo;
+    return true;
+}
+
+// Abre a ficha do aluno (clique no nome — mesmo link uni_cadfun.php?matr=
+// já usado pra extrair a matrícula real) e lê HISTÓRICO (campo "Aluno/
+// Membro Recuperado") e/ou ENDEREÇOS (e-mail/cidade/UF/telefone
+// alternativo), conforme pedido em `opcoes`.
 //
-// A "Matr." VISÍVEL nessa tabela é só um índice de linha (1, 2, 3...),
-// NÃO a matrícula real — confirmado no HTML ao vivo (a matrícula de
-// verdade só existe no href do link do nome, uni_cadfun.php?matr=XXXXX).
+// ⚠️ NÃO confirmado contra o HTML real do Mercúrio — mapeado só com
+// descrição/print de tela (ver CLAUDE.md, mesmo estágio inicial de outras
+// funções deste arquivo antes do 1º teste real). Escrito com seletor por
+// RÓTULO (getByLabel) — mais tolerante a mudança de estrutura HTML que um
+// seletor de posição, mas os rótulos exatos podem não bater de primeira;
+// se vier tudo vazio/errado, mandar o HTML real da tela HISTÓRICO/
+// ENDEREÇOS resolve rápido, mesmo padrão de sempre. Best-effort total:
+// qualquer falha aqui só gera aviso no log, nunca trava a turma nem a
+// filial inteira.
+async function processarFichaAluno(page, linkNome, { verificarHistorico, verificarEnderecos }) {
+    const resultado = {};
+    try {
+        await linkNome.click();
+        await esperarFrame(page, 'principal', /uni_cadfun\.php/, 15000);
+    } catch (e) {
+        console.warn('[ficha-aluno] Falha ao abrir a ficha do aluno:', e.message);
+        return resultado;
+    }
+
+    if (verificarHistorico) {
+        try {
+            const framePerfil = page.frame({ name: 'principal' });
+            await framePerfil.getByText(/^HIST[ÓO]RICO$/i).first().click();
+            await page.waitForTimeout(600); // sem indicador de carregamento claro — espera curta e fixa, mesmo padrão do resto do arquivo
+            const ctx = page.frame({ name: 'principal' }) || framePerfil;
+            const checkbox = ctx.getByLabel(/Aluno\/?\s*Membro Recuperado/i).first();
+            const marcado = await checkbox.isChecked().catch(() => null);
+            resultado.recuperado = !!marcado;
+            if (marcado) {
+                resultado.dataReingresso = (await ctx.getByLabel(/reingressou/i).first().inputValue().catch(() => '')) || null;
+            }
+        } catch (e) {
+            console.warn('[ficha-aluno] Falha ao ler HISTÓRICO:', e.message);
+        }
+    }
+
+    if (verificarEnderecos) {
+        try {
+            const framePerfil = page.frame({ name: 'principal' });
+            await framePerfil.getByText(/^ENDERE[ÇC]OS$/i).first().click();
+            await page.waitForTimeout(600);
+            const ctx = page.frame({ name: 'principal' }) || framePerfil;
+            resultado.email = (await ctx.getByLabel(/e-?mail/i).first().inputValue().catch(() => '')).trim();
+            resultado.cidade = (await ctx.getByLabel(/^cidade$/i).first().inputValue().catch(() => '')).trim();
+            resultado.uf = (await ctx.getByLabel(/^uf$/i).first().inputValue().catch(() => '')).trim();
+            resultado.telefoneAlternativo = (await ctx.getByLabel(/alternativo/i).first().inputValue().catch(() => '')).trim();
+        } catch (e) {
+            console.warn('[ficha-aluno] Falha ao ler ENDEREÇOS:', e.message);
+        }
+    }
+    return resultado;
+}
+
+// Varre TODAS as turmas da filial (menu "Turmas", uni_esctur.php) — entra
+// em cada uma e faz 3 coisas:
+// (1) grava dia/horário/início de TODA turma em `turmas`
+//     (migracao_turmas.sql), base do "Mapa de Turmas" no CRM
+//     (js/mapa-turmas.js) — só dia/horário são gravados lá, "início" é
+//     usado só aqui dentro pra decidir quem investigar (item 2);
+// (2) lê a tabela de alunos (Matr./Nome/Origem/Ingresso/Fone): quem
+//     ingressou no MÊS CORRENTE é colado na tela "Importar Matrícula" do
+//     CRM publicado (marco 3 — scraper/importar-matricula-no-crm.js,
+//     reaproveitando 100% da lógica de casamento/tags/dedup que já
+//     existe); quem ingressou ANTES da própria turma existir — logicamente
+//     impossível ter entrado "fresco" nela — é candidato a REINGRESSO/
+//     TRANSFERÊNCIA e tem a ficha (HISTÓRICO) verificada, pra aplicar a
+//     tag "Recuperado" quando confirmado (pedido do usuário, 2026-09-10,
+//     com exemplo real da turma "AMIGOS": início 27/08/2026, aluno com
+//     ingresso 20/06/2019 só pode ser reingresso). Só quem AINDA não tem
+//     a tag "Recuperado" é revisitado (dedup — a tag é permanente, ver
+//     aplicarTagRecuperado());
+// (3) em MODO COMPLETO (`modoCompleto=true`, pensado pra importação
+//     inicial/pontual, não pro job diário), a ficha de TODO ALUNO da
+//     turma (não só os candidatos a reingresso) também é visitada pra
+//     capturar e-mail/cidade/UF/telefone alternativo (tela ENDEREÇOS) —
+//     bem mais lento, por isso não roda por padrão.
+//
+// A "Matr." VISÍVEL na tabela de alunos é só um índice de linha (1, 2,
+// 3...), NÃO a matrícula real — confirmado no HTML ao vivo (a matrícula
+// de verdade só existe no href do link do nome, uni_cadfun.php?matr=XXXXX).
 // Por isso não dá pra só imitar um "copiar e colar" ingênuo — o texto
-// colado é montado aqui já com o número certo extraído do link.
-async function processarMatriculasRecentesTurmas(page, pageCrm, filialCrm, label) {
+// colado é montado aqui já com o número certo extraído do link, e o mesmo
+// link é reaproveitado pra abrir a ficha do aluno (item 2/3 acima).
+async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = false) {
     const mesAtual = hojeBrasil().slice(0, 7); // "AAAA-MM"
     let crmAberto = false;
     let totalProcessadas = 0;
+    let totalRecuperados = 0;
+    let totalEnderecosAtualizados = 0;
+
+    const mapaLeads = await carregarMapaLeadsPorNome(filialCrm);
 
     const entrarNoIndiceDaFilial = async () => {
         const indice = await indiceAtualParaLabel(page, label);
@@ -584,12 +747,25 @@ async function processarMatriculasRecentesTurmas(page, pageCrm, filialCrm, label
         return esperarFrame(page, 'indice', /uni_indice\.php/, 15000);
     };
 
+    // Reentra na turma DO ZERO (CADASTRO -> Turmas -> clica na turma) —
+    // usado pra visitar a ficha de 1 aluno específico sem depender de
+    // "voltar" no meio de um <frameset> (comportamento incerto sem teste
+    // real), reaproveitando o mesmo padrão já usado no resto do arquivo
+    // pra resetar a navegação pra um estado conhecido.
+    const entrarNaTurma = async (nomeTurma) => {
+        const fi = await entrarNoIndiceDaFilial();
+        await fi.getByText('Turmas', { exact: true }).first().click();
+        const ft = await esperarFrame(page, 'principal', /uni_esctur\.php/, 15000);
+        await ft.getByRole('link', { name: nomeTurma, exact: true }).click();
+        return esperarFrame(page, 'principal', /uni_esctal\.php/, 15000);
+    };
+
     let frameIndice = await entrarNoIndiceDaFilial();
     await frameIndice.getByText('Turmas', { exact: true }).first().click();
     let frameTurmas = await esperarFrame(page, 'principal', /uni_esctur\.php/, 15000);
 
     const nomesTurmas = [...new Set((await frameTurmas.locator('a[href^="uni_esctal.php?turma="]').allTextContents()).map(t => t.trim()).filter(Boolean))];
-    console.log(`[matricula-turma] ${nomesTurmas.length} turma(s) encontrada(s) em ${filialCrm} — procurando ingressos de ${mesAtual}.`);
+    console.log(`[turmas] ${nomesTurmas.length} turma(s) encontrada(s) em ${filialCrm}${modoCompleto ? ' (MODO COMPLETO — visita a ficha de todo aluno)' : ` — procurando ingressos de ${mesAtual} e candidatos a reingresso`}.`);
     let totalAlunosLidos = 0;
 
     for (const nomeTurma of nomesTurmas) {
@@ -600,8 +776,11 @@ async function processarMatriculasRecentesTurmas(page, pageCrm, filialCrm, label
 
             const diaTexto = await frameDetalhe.locator('td:has-text("Dia:")').first().innerText().catch(() => '');
             const horarioTexto = await frameDetalhe.locator('td:has-text("Horário:")').first().innerText().catch(() => '');
+            const inicioTexto = await frameDetalhe.locator('td:has-text("Início:")').first().innerText().catch(() => '');
             const dia = diaTexto.replace(/^Dia:\s*/i, '').trim();
             const horario = horarioTexto.replace(/^Horário:\s*/i, '').trim();
+            const inicioTurma = inicioTexto.replace(/^Início:\s*/i, '').trim(); // "DD/MM/AAAA"
+            const inicioTurmaData = dataBRParaDate(inicioTurma);
 
             // Grava dia/horário de TODA turma visitada (tenha matrícula
             // recente ou não) — base do "Mapa de Turmas" no CRM
@@ -623,6 +802,7 @@ async function processarMatriculasRecentesTurmas(page, pageCrm, filialCrm, label
             const linhas = tabelaAlunos.locator('tr');
             const totalLinhas = await linhas.count();
             const recentes = [];
+            const alunosLidos = []; // TODOS os alunos da turma (matr/nome/ingresso/fone) — base pra reingresso + modo completo
             for (let j = 1; j < totalLinhas; j++) {
                 const linkNome = linhas.nth(j).locator('a[href*="uni_cadfun.php?matr="]');
                 if (await linkNome.count() === 0) continue;
@@ -634,6 +814,7 @@ async function processarMatriculasRecentesTurmas(page, pageCrm, filialCrm, label
                 const ingresso = (celulas[3] || '').trim();
                 const fone = (celulas[5] || '').trim();
                 totalAlunosLidos++;
+                if (matr && nome) alunosLidos.push({ matr, nome, origem, ingresso, fone });
                 if (!matr || !nome || mesAnoDoIngresso(ingresso) !== mesAtual) continue;
                 recentes.push({ matr, nome, origem, ingresso, fone });
             }
@@ -653,6 +834,41 @@ async function processarMatriculasRecentesTurmas(page, pageCrm, filialCrm, label
                 totalProcessadas += recentes.length;
                 console.log(`[matricula-turma] ${recentes.length} matrícula(s) de ${mesAtual} na turma "${nomeTurma}" (${filialCrm}) processada(s).`);
             }
+
+            // ---- Reingresso + Modo Completo: decide quem precisa ter a
+            // ficha aberta. Só entra aqui quem casou com EXATAMENTE 1 lead
+            // (nome ambíguo/sem lead correspondente fica de fora — arriscar
+            // o lead errado é pior que pular).
+            const alvos = alunosLidos
+                .map(a => ({ aluno: a, lead: mapaLeads.get(normalizarNomeMercurio(a.nome)) }))
+                .filter(({ lead }) => lead && !lead.ambiguo)
+                .map(({ aluno, lead }) => {
+                    const ingressoData = dataBRParaDate(aluno.ingresso);
+                    const precisaHistorico = !!(inicioTurmaData && ingressoData && ingressoData < inicioTurmaData && !lead.tags.includes('Recuperado'));
+                    return { aluno, lead, precisaHistorico };
+                })
+                .filter(({ precisaHistorico }) => precisaHistorico || modoCompleto);
+
+            for (const { aluno, lead, precisaHistorico } of alvos) {
+                try {
+                    const frameDetalheAtual = await entrarNaTurma(nomeTurma);
+                    const linkNomeAtual = frameDetalheAtual.locator(`a[href*="uni_cadfun.php?matr=${aluno.matr}"]`).first();
+                    if (await linkNomeAtual.count() === 0) { console.warn(`[ficha-aluno] Link de "${aluno.nome}" (matr ${aluno.matr}) não encontrado de novo na turma "${nomeTurma}".`); continue; }
+
+                    const dados = await processarFichaAluno(page, linkNomeAtual, { verificarHistorico: precisaHistorico, verificarEnderecos: modoCompleto });
+
+                    if (precisaHistorico && dados.recuperado) {
+                        const gravou = await aplicarTagRecuperado(filialCrm, lead, aluno.nome, dados.dataReingresso);
+                        if (gravou) { totalRecuperados++; console.log(`[recuperado] "${aluno.nome}" (${filialCrm}) marcado como Recuperado (reingresso em ${dados.dataReingresso || '?'}).`); }
+                    }
+                    if (modoCompleto && (dados.email || dados.cidade || dados.uf || dados.telefoneAlternativo)) {
+                        const gravou = await aplicarDadosEndereco(lead, aluno.nome, dados);
+                        if (gravou) totalEnderecosAtualizados++;
+                    }
+                } catch (e) {
+                    console.warn(`[ficha-aluno] Falha processando "${aluno.nome}" (turma "${nomeTurma}", ${filialCrm}):`, e.message);
+                }
+            }
         } catch (e) {
             console.warn(`[matricula-turma] Falha na turma "${nomeTurma}" (${filialCrm}):`, e.message);
         }
@@ -666,8 +882,8 @@ async function processarMatriculasRecentesTurmas(page, pageCrm, filialCrm, label
         } catch { /* se falhar aqui, a próxima iteração do for vai falhar rápido e seguir também */ }
     }
 
-    console.log(`[matricula-turma] ${totalAlunosLidos} aluno(s) lidos no total em ${filialCrm}; ${totalProcessadas} matrícula(s) de ${mesAtual} encontrada(s).`);
-    return totalProcessadas;
+    console.log(`[turmas] ${totalAlunosLidos} aluno(s) lidos no total em ${filialCrm}; ${totalProcessadas} matrícula(s) de ${mesAtual}; ${totalRecuperados} recuperação(ões) detectada(s); ${totalEnderecosAtualizados} ficha(s) de endereço atualizada(s).`);
+    return { totalProcessadas, totalRecuperados, totalEnderecosAtualizados };
 }
 
 // O Ulisses NUNCA vai rodar sozinho (Cloudflare exige login manual — ver
@@ -758,7 +974,20 @@ async function main() {
         // um `.includes()` bruto — funciona tanto pra uma palavra simples
         // digitada à mão ("Garavelo") quanto pro `filiais.nome` inteiro
         // vindo do CRM ("Goiânia - Garavelo", "Barra do Garças/MT").
-        const filtro = process.argv[2] || process.env.FILTRO_FILIAL || null;
+        //
+        // MODO COMPLETO (`--completo` ou env MODO_COMPLETO=true) — pensado
+        // pra importação INICIAL (alimentar o CRM todo com e-mail/cidade/
+        // UF de cada aluno, via tela ENDEREÇOS) ou uma reconferência pontual
+        // — bem mais lento (visita a ficha de TODO aluno de TODA turma), de
+        // propósito NÃO exposto como input do workflow_dispatch (ver
+        // .github/workflows/scraper.yml): só roda via CLI/`.env` local
+        // (`npm run mercurio-completo -- "Garavelo"`), nunca pelo botão
+        // "Rodar Mercúrio Agora" do CRM nem pelo cron diário. Sem a flag,
+        // roda no MODO INCREMENTAL de sempre (só ingressos do mês corrente
+        // + candidatos a reingresso, ver processarTurmas()).
+        const argv = process.argv.slice(2);
+        const modoCompleto = argv.includes('--completo') || process.env.MODO_COMPLETO === 'true';
+        const filtro = argv.find(a => a !== '--completo') || process.env.FILTRO_FILIAL || null;
         const filtroNucleo = filtro ? nucleoDistintivoFilial(filtro) : null;
         const cadastros = filtroNucleo
             ? cadastrosTodos.filter(c => normalizarTextoFilial(c.label).includes(filtroNucleo))
@@ -767,6 +996,8 @@ async function main() {
         console.log(`[mercurio] ${cadastros.length} filial(is) encontrada(s): ${cadastros.map(c => c.label).join(', ')}`);
 
         let algumaFalha = false;
+        let totalRecuperadosGeral = 0;
+        let totalEnderecosGeral = 0;
         for (const { label } of cadastros) {
             let caminhoAtivos = null, caminhoInativos = null;
             try {
@@ -823,8 +1054,10 @@ async function main() {
 
             try {
                 if (filialCrm) {
-                    const total = await processarMatriculasRecentesTurmas(page, pageCrm, filialCrm, label);
-                    console.log(`[matricula-turma] ${label}: ${total} matrícula(s) do mês corrente processada(s) via varredura de turmas.`);
+                    const resultadoTurmas = await processarTurmas(page, pageCrm, filialCrm, label, modoCompleto);
+                    totalRecuperadosGeral += resultadoTurmas.totalRecuperados;
+                    totalEnderecosGeral += resultadoTurmas.totalEnderecosAtualizados;
+                    console.log(`[turmas] ${label}: ${resultadoTurmas.totalProcessadas} matrícula(s) do mês corrente, ${resultadoTurmas.totalRecuperados} recuperação(ões), ${resultadoTurmas.totalEnderecosAtualizados} endereço(s) atualizado(s).`);
                 }
             } catch (e) {
                 algumaFalha = true;
@@ -838,9 +1071,10 @@ async function main() {
         }
 
         const sufixoFiltro = filtro ? ` (filtro: "${filtro}")` : '';
+        const sufixoModo = modoCompleto ? ' [MODO COMPLETO]' : '';
         await registrarStatusSincronizacao('mercurio', null, !algumaFalha, algumaFalha
-            ? `Login OK, mas 1+ exportação (Ativos/Inativos ou Aniversariantes) falhou — ver logs e prints do workflow.${sufixoFiltro}`
-            : `Login + exportação de Ativos/Inativos + Aniversariantes (já sincronizados no CRM) OK para ${cadastros.length} filial(is)${sufixoFiltro}.`);
+            ? `Login OK, mas 1+ exportação (Ativos/Inativos ou Aniversariantes) falhou — ver logs e prints do workflow.${sufixoFiltro}${sufixoModo}`
+            : `Login + exportação de Ativos/Inativos + Aniversariantes (já sincronizados no CRM) OK para ${cadastros.length} filial(is)${sufixoFiltro}${sufixoModo} — ${totalRecuperadosGeral} recuperação(ões) detectada(s), ${totalEnderecosGeral} endereço(s) atualizado(s).`);
 
         // Roda sempre, mesmo se alguma filial falhou acima — o lembrete de
         // rodar o Ulisses importa MAIS ainda quando algo deu errado.

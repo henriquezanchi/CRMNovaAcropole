@@ -242,6 +242,12 @@
                     <button class="btn-toggle" onclick="abrirGerenciarColunas()">
                         <i class="fa-solid fa-table-columns"></i> Gerenciar Colunas
                     </button>
+                    <button class="btn-toggle" onclick="abrirNovoLeadManual()" title="Cadastrar um lead direto no CRM, sem vir de planilha/scraper">
+                        <i class="fa-solid fa-user-plus"></i> Novo Lead
+                    </button>
+                    <button class="btn-toggle" onclick="abrirLixeira()" title="Leads jogados fora ficam aqui por 30 dias antes de sumir de vez">
+                        <i class="fa-solid fa-trash"></i> Lixeira<span id="lixeiraContagemBadge"></span>
+                    </button>
                     <button class="btn-add-tag" onclick="limparFiltros()"><i class="fa-solid fa-xmark"></i> Limpar Tudo</button>
                 </div>
             </div>
@@ -269,6 +275,7 @@
                 <button class="btn-secondary" onclick="aplicarTagEmMassa('remove')" title="Remover esta tag de todos os selecionados"><i class="fa-solid fa-tag"></i> − Tag</button>
                 <span style="width:1px; height:20px; background:rgba(255,255,255,0.25);"></span>
                 <button class="btn-secondary" onclick="iniciarMesclagemManual()" title="Mesclar os leads selecionados (2 ou mais) — mesmo sem o sistema ter sugerido"><i class="fa-solid fa-code-merge"></i> Mesclar</button>
+                <button class="btn-secondary" onclick="moverSelecionadosParaLixeira()" title="Move pra lixeira — fica lá 30 dias antes de apagar de vez"><i class="fa-solid fa-trash"></i> Lixeira</button>
                 <button class="btn-secondary" onclick="limparSelecao()">Cancelar seleção</button>
             </div>
 
@@ -498,7 +505,10 @@
                     <h3 id="drawer-name" style="font-size: 16px; color: var(--na-green-dark);">Nome</h3>
                     <p id="drawer-subtitle" style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Subtítulo</p>
                 </div>
-                <button style="background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted);" onclick="fecharGaveta()"><i class="fa-solid fa-xmark"></i></button>
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <button style="background: none; border: none; font-size: 15px; cursor: pointer; color: var(--text-muted);" onclick="moverLeadAtualParaLixeira()" title="Mover pra lixeira (fica 30 dias antes de apagar de vez)"><i class="fa-solid fa-trash"></i></button>
+                    <button style="background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted);" onclick="fecharGaveta()"><i class="fa-solid fa-xmark"></i></button>
+                </div>
             </div>
 
             <div class="drawer-body">
@@ -725,6 +735,52 @@
         </div>
         <div class="modal-footer">
             <button class="btn-primary" onclick="fecharGerenciarFiliais()"><i class="fa-solid fa-check"></i> Concluir</button>
+        </div>
+    </div>
+
+    <!-- Modal: Novo Lead Manual (cadastro direto no CRM, sem vir do Mercúrio/Ulisses) -->
+    <div class="overlay" id="overlayModalNovoLeadManual" onclick="fecharNovoLeadManual()"></div>
+    <div class="modal" id="modalNovoLeadManual">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-user-plus"></i> Novo Lead</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharNovoLeadManual()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">Cadastra um lead direto no CRM, sem vir de planilha nenhuma (Mercúrio/Ulisses). Ganha a tag <strong>CRM</strong>, permanente — só some se o lead inteiro for apagado.</p>
+            <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Nome *</label>
+            <input type="text" id="novoLeadManualNome" style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; margin-bottom:12px;" placeholder="Nome completo">
+            <div style="display:flex; gap:8px; margin-bottom:12px;">
+                <div style="width:70px;">
+                    <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">DDD</label>
+                    <input type="text" id="novoLeadManualDDD" maxlength="2" style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px;" placeholder="62">
+                </div>
+                <div style="flex:1;">
+                    <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Telefone</label>
+                    <input type="text" id="novoLeadManualTelefone" style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px;" placeholder="999999999">
+                </div>
+            </div>
+            <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">E-mail</label>
+            <input type="email" id="novoLeadManualEmail" style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px;" placeholder="email@exemplo.com">
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="fecharNovoLeadManual()">Cancelar</button>
+            <button class="btn-primary" onclick="confirmarNovoLeadManual()"><i class="fa-solid fa-check"></i> Criar Lead</button>
+        </div>
+    </div>
+
+    <!-- Modal: Lixeira de Leads -->
+    <div class="overlay" id="overlayModalLixeira" onclick="fecharLixeira()"></div>
+    <div class="modal" id="modalLixeira">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-trash"></i> Lixeira</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharLixeira()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">Leads jogados fora ficam aqui por 30 dias — dá pra restaurar até lá. Depois disso, somem definitivamente sozinhos (sem precisar abrir esta tela).</p>
+            <div id="lixeiraLista"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-primary" onclick="fecharLixeira()"><i class="fa-solid fa-check"></i> Concluir</button>
         </div>
     </div>
 

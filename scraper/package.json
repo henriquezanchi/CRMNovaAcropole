@@ -8,6 +8,7 @@
     "ulisses": "node --env-file-if-exists=.env ulisses.js",
     "ulisses-local": "node ulisses-local.js",
     "mercurio": "node --env-file-if-exists=.env mercurio.js",
+    "mercurio-completo": "node --env-file-if-exists=.env mercurio.js -- --completo",
     "run": "node run.js"
   },
   "dependencies": {

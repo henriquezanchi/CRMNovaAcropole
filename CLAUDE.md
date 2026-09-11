@@ -234,6 +234,15 @@ migracao_rpc_aniversariantes.sql  → função aniversariantes_por_mes() — fil
                                      direto no banco, corrige truncamento silencioso do limite
                                      de 1000 linhas do PostgREST (ver seção "Agenda do Dia");
                                      JÁ RODADA nesta sessão via `supabase db query --linked`
+migracao_lead_cidade_uf.sql       → colunas cidade/uf/telefone_alternativo em leads_inscricoes —
+                                     capturadas pelo scraper do Mercúrio na tela ENDEREÇOS da
+                                     ficha do aluno, só no Modo Completo (ver seção "Scraper
+                                     Ulisses/Mercúrio — reformulação do Mercúrio"); JÁ RODADA
+                                     nesta sessão via `supabase db query --linked`
+migracao_lixeira_lead.sql         → coluna lixeira_em em leads_inscricoes + função
+                                     limpar_lixeira_leads_vencidos() + cron job diário (apaga
+                                     quem está na lixeira há 30+ dias; ver "Lixeira de Leads");
+                                     JÁ RODADA nesta sessão via `supabase db query --linked`
 ```
 
 ## Banco de dados (Supabase)
@@ -529,15 +538,23 @@ mesma regra de confiança total usada pra tags/filiais/eventos.
     pontos, não barra nível nenhum) — os dois são editáveis
     independentemente na mesma tela.
   - **Nível de aluno/ex-aluno**, também gerado pelo importador a partir da
-    coluna "Nivel" (Ativos) / "Ni" (Inativos): `TA` (Távola/Merlin,
-    filosofia infantil), `JN` (Janos, adolescentes), `PP` (só o 1º mês,
-    aluno novo ou saiu antes do 2º mês), `N1` (nível de entrada, mantido
-    separado) e `Membro` (N2 a N7 unificados — já é membro estabelecido,
-    o nível exato de 2 a 7 não muda a abordagem) — `classificarNivel()` em
-    `js/importador.js`, badge roxo (`.tag-nivel`). Heurística por
-    palavra-chave sobre texto normalizado; quem não bate com nenhuma regra
-    fica sem essa tag (não inventa valor errado) — conferir a coluna Tags
-    na prévia da importação antes de confirmar o envio.
+    coluna "Nivel" (Ativos) / "Ni" (Inativos): `Merlin` (Távola/Correntinha
+    — as 2 turmas do "programa complementar" convergem pro mesmo programa
+    de filosofia infantil), `CA` (Círculo de Amigos — complementar também,
+    mas categoria própria, não vira "Merlin"), `JN` (Janos, adolescentes),
+    `PP` (só o 1º mês, aluno novo ou saiu antes do 2º mês), `N1` (nível de
+    entrada, mantido separado) e `Membro` (N2 a N7 unificados — já é
+    membro estabelecido, o nível exato de 2 a 7 não muda a abordagem) —
+    `classificarNivel()` em `js/importador.js`, badge roxo (`.tag-nivel`).
+    Heurística por palavra-chave sobre texto normalizado; quem não bate
+    com nenhuma regra fica sem essa tag (não inventa valor errado) —
+    conferir a coluna Tags na prévia da importação antes de confirmar o
+    envio. **`TA` foi renomeado pra `Merlin`** (2026-09-10, pedido do
+    usuário — "Merlin" é o nome real do programa de filosofia infantil,
+    mais claro que a sigla interna do Mercúrio) e `CO` (Correntinha) foi
+    dobrado na mesma categoria — tag antiga `"TA"` continua reconhecida
+    pelo badge/filtro por compatibilidade (`FAMILIAS_TAG` em `js/app.js`),
+    mas o importador só GERA `"Merlin"`/`"CA"` daqui pra frente.
   - **Sistema de follow-up — Trilhas de Interesse e Estágio da Jornada**
     (`calcularTagsTrilhaEJornada()`, `js/importador.js`, chamada dentro de
     `montarRegistroLead()`): a escola oferece atividades de 3 grandes
@@ -783,6 +800,38 @@ mesma regra de confiança total usada pra tags/filiais/eventos.
   antes de `.normal` — independe de qual seja o modo de ordenação
   escolhido) e ganha a tag visível `"Ligar Hoje"` (`.tag-ligar-hoje`),
   além do sino que já existia no nome do card.
+- **Novo Lead Manual** (`abrirNovoLeadManual()`, botão "Novo Lead" no
+  topo da aba CRM, 2026-09-10): cadastra um lead direto no CRM, sem vir de
+  planilha/scraper nenhum (ex: alguém que ligou direto pra escola). Form
+  simples (Nome, DDD+Telefone, E-mail) — ID sintético em faixa própria
+  (`BASE_ID_LEAD_MANUAL = 985000000`, distinta de todas as outras já em
+  uso: 900M/950M do importador, 980M da auditoria resgatada, 990M da
+  matrícula via print). Ganha a tag de sistema **`"CRM"`**
+  (`TAG_LEAD_MANUAL`, badge próprio `.tag-crm`) — **permanente**: bloqueada
+  tanto pra adicionar à mão em outro lead (`confirmarNovaTag()`) quanto pra
+  remover (`removerTag()`) — só some se o lead inteiro for apagado (Lixeira
+  ou Zona de Perigo). Cai na primeira coluna do funil (`columnsConfig[0]`),
+  mesmo destino de um lead novo vindo da importação.
+- **Lixeira de Leads** (`abrirLixeira()`, botão "Lixeira" no topo da aba
+  CRM + botão na barra de seleção em massa + ícone na gaveta do lead,
+  2026-09-10): soft-delete com expiração automática — mover um lead pra lá
+  (`moverParaLixeira()`) grava `lixeira_em = now()`
+  (`migracao_lixeira_lead.sql`) sem apagar nada; o lead some do Kanban e
+  das buscas (global/por coluna) na hora, mas fica visível/restaurável na
+  tela "Lixeira" por **30 dias**. Depois disso, um **cron job dentro do
+  próprio Postgres** (`limpar_lixeira_leads_vencidos()`, `pg_cron`, todo
+  dia 09:00 Brasília — mesmo padrão já usado pro disparo diário do
+  Mercúrio) apaga de vez sozinho, sem depender de ninguém abrir o CRM;
+  registra 1 linha em `log_atividade` (`filial='GLOBAL'`,
+  `acao='lixeira_expirada_apagada'`) só quando apaga alguém. Tela de
+  Lixeira lista nome + "some em N dias" de cada lead trashed, com
+  "Restaurar" (zera `lixeira_em`) e "Excluir Agora" (delete definitivo
+  imediato, com confirmação). **Limitação conhecida, de propósito**: só a
+  listagem principal do Kanban e as buscas excluem lead na lixeira —
+  relatórios que consultam o banco DIRETO (RPCs da Agenda do Dia,
+  Matrículas por Mês, Leads a Tratar) ainda podem contar um lead recém-
+  jogado na lixeira até ele ser apagado de vez; aceitável por ora, mesmo
+  nível de precisão "proxy" já documentado no resto do app.
 - **Radar de Acompanhantes** (vínculo familiar): grupo de N leads que se
   conhecem (cônjuge, amigos, quem veio junto) — implementado com UMA
   coluna (`grupo_familiar_id`, uuid, `migracao_vinculo_familiar.sql`) em
@@ -1488,7 +1537,9 @@ existindo e funcionais, só que hoje só são acionados pelo scraper.
 **Botão removido do Kanban**: agora que existe o disparo do Mercúrio sob
 demanda ("Sincronização Automática" na aba Importar, ver seção do
 scraper) e a varredura diária às 5h já detecta matrícula nova sozinha
-(`processarMatriculasRecentesTurmas()`, `scraper/mercurio.js`), colar o
+(`processarTurmas()`, `scraper/mercurio.js` — renomeada de
+`processarMatriculasRecentesTurmas()` em 2026-09-10, ver seção "Scraper
+Ulisses/Mercúrio — reformulação do Mercúrio"), colar o
 texto manualmente na coluna de Matriculados deixou de ser o caminho
 principal. O botão `.col-import-matricula-btn` que ficava no cabeçalho
 da coluna (mostrado quando o nome/chave continha "matricul",
@@ -3450,6 +3501,94 @@ bloqueado).
        `mercurio.js` foram resincronizados nesta sessão (ver histórico
        acima) — já sem esse parâmetro.
 
+### Scraper Ulisses/Mercúrio — reformulação do Mercúrio (2026-09-10)
+
+Pedido do usuário, avaliado em várias rodadas de perguntas/screenshots
+reais ANTES de qualquer código ("antes de rodar qualquer código, avalie o
+seguinte") — mapeou telas novas do Mercúrio (grade de seções da ficha do
+aluno, HISTÓRICO, ENDEREÇOS, lista de Turmas, detalhe de turma) e definiu
+2 mudanças: (1) o mapeamento de nível de aluno (Merlin/CA, ver bullet
+"Nível de aluno/ex-aluno" na seção de Tags) e (2) o fluxo do scraper do
+Mercúrio abaixo, em `scraper/mercurio.js` (`processarTurmas()`, renomeada
+de `processarMatriculasRecentesTurmas()`).
+
+- **2 modos**: **Incremental** (padrão, roda todo dia sozinho) só processa
+  ingressos do MÊS CORRENTE (como já era) + candidatos a REINGRESSO (novo,
+  ver abaixo); **Completo** (`node mercurio.js -- --completo` /
+  `npm run mercurio-completo`, ou env `MODO_COMPLETO=true`) visita a ficha
+  de **todo aluno de toda turma**, bem mais lento — pensado pra importação
+  inicial (alimentar e-mail/cidade/UF de toda a base) ou uma reconferência
+  pontual, nunca pro dia a dia. **De propósito NÃO exposto como input do
+  `workflow_dispatch`** (`.github/workflows/scraper.yml`) — só roda via
+  CLI/`.env` local (`C:\Scrapper`), nunca pelo botão "Rodar Mercúrio Agora"
+  do CRM nem pelo cron diário, pra ninguém disparar sem querer uma rodada
+  tão mais pesada.
+- **Reingresso simplificado — comparar Ingresso do aluno vs. Início da
+  PRÓPRIA TURMA, não mais "ingresso é este mês"** (ideia do usuário,
+  confirmada com exemplo real: turma "AMIGOS", Início 27/08/2026, 2 alunos
+  com ingresso em/depois dessa data — novos de verdade — e 1 com ingresso
+  20/06/2019 — só pode ser reingresso/transferência, é logicamente
+  impossível ter entrado "fresco" numa turma que ainda não existia).
+  `processarTurmas()` agora lê **"Início:"** do cabeçalho de cada turma
+  (mesmo padrão de `td:has-text(...)` já usado pra "Dia:"/"Horário:") e
+  compara com o "Ingresso" de cada aluno da lista — quem tem ingresso
+  ANTES do início da turma é candidato; quem tem ingresso NO ou DEPOIS do
+  início nunca precisa da checagem (funciona nos 2 modos, reduz quantas
+  fichas o Modo Completo também precisa abrir). **Dedup usa a própria tag
+  `"Recuperado"`, não uma coluna nova**: como essa tag é permanente (nunca
+  removida em reimportação, ver `ehTagDeSistema()`), um candidato que JÁ
+  tem a tag nunca é revisitado — resolve o problema levantado pelo usuário
+  ("como o CRM vai saber que a pessoa já foi Inativa antes, se zeramos a
+  base?") sem precisar reconstruir histórico nenhum: a verificação agora é
+  direta na tela HISTÓRICO do Mercúrio (campo "Aluno/Membro Recuperado"),
+  não mais por comparação entre 2 importações.
+  - `aplicarTagRecuperado()`: acrescenta `"Recuperado"` ao array de tags
+    (upsert idempotente) e grava 1 linha em `log_atividade`
+    (`acao='recuperacao_detectada_scraper'`, com nome + data de reingresso
+    nos `detalhes`) — dá uma trilha DATADA de quando cada recuperação foi
+    detectada, base pra um relatório futuro de "Recuperações por Mês" se
+    fizer sentido (ainda não construído — pergunta em aberto: vale criar
+    uma coluna `data_recuperacao` própria em `leads_inscricoes`, ou o log
+    já basta? Não decidido ainda).
+- **ENDEREÇOS (Modo Completo apenas)**: mesma navegação de HISTÓRICO
+  (clicar no nome do aluno na lista da turma → grade de seções da ficha →
+  "ENDEREÇOS") — captura e-mail, cidade, UF e um telefone alternativo.
+  Gravados em `cidade`/`uf`/`telefone_alternativo`
+  (`migracao_lead_cidade_uf.sql`, aplicada nesta sessão) e `pessoaEmail`
+  — `aplicarDadosEndereco()` NUNCA sobrescreve um valor já preenchido
+  (mesmo princípio de preservação já usado em
+  `sincronizarCatalogoEventosNoCrm()` pro Ulisses).
+- **`carregarMapaLeadsPorNome(filialCrm)`**: carrega todos os leads da
+  filial num Map por nome normalizado 1x por filial por rodada (mesma
+  técnica/limitação de `sincronizarAniversariantesNoCrm()` — homônimo vira
+  `ambiguo`, nunca escolhido automaticamente), reaproveitado por toda a
+  varredura de turmas em vez de 1 query por aluno.
+- **`processarFichaAluno(page, linkNome, {verificarHistorico,
+  verificarEnderecos})`**: função combinada que abre a ficha do aluno 1
+  vez só e lê HISTÓRICO e/ou ENDEREÇOS, conforme o que for pedido — evita
+  abrir a ficha 2x pro mesmo aluno quando os 2 sinais se aplicam (Modo
+  Completo + candidato a reingresso ao mesmo tempo).
+- **⚠️ NÃO testado contra o Mercúrio real** — `processarFichaAluno()`
+  (leitura de HISTÓRICO/ENDEREÇOS) foi mapeada só com descrição/print de
+  tela do usuário (grade de seções, formulário de Histórico, formulário de
+  Endereços), não HTML real — mesmo estágio inicial de outras funções
+  deste arquivo antes do 1º teste real (ex: `exportarAtivosEInativos()`
+  também precisou de 2 rodadas de correção depois do mapeamento inicial só
+  por print). Escrita com seletor por RÓTULO (`getByLabel`), mais
+  tolerante a variação de estrutura que um seletor de posição — mas os
+  rótulos exatos («Aluno/Membro Recuperado», «Cidade», «UF», etc.) podem
+  não bater de primeira contra o formulário real. Best-effort total em
+  todas as camadas (por aluno, por turma, por filial) — qualquer falha
+  aqui só gera aviso no log (`[ficha-aluno]`), nunca trava o resto da
+  rodada. **Reentrar na turma do zero por aluno** (`entrarNaTurma()`,
+  CADASTRO → Turmas → clica na turma de novo) em vez de tentar "voltar" no
+  meio de um `<frameset>` — mais lento, mas evita depender de um
+  comportamento de navegação incerto sem teste real. Primeira rodada real
+  (incremental, com poucos candidatos a reingresso) e depois uma rodada
+  `--completo` numa filial pequena devem validar os seletores — se vier
+  vazio/errado, mandar o HTML real das telas HISTÓRICO/ENDEREÇOS resolve
+  rápido, mesmo padrão de sempre.
+
 ### Lembrete de importação do Ulisses (WhatsApp pro admin)
 
 Como o Ulisses nunca roda sozinho, o risco real é ESQUECER de rodar —
@@ -3542,10 +3681,12 @@ fallback pro padrão), igual `whatsapp-send`.
 Grade semanal (dia x horário) de turmas por filial, só leitura — sem
 cadastro manual de propósito, é um espelho do Mercúrio. Fonte: tabela
 `turmas` (`migracao_turmas.sql`, `filial`+`nome` único), sincronizada
-automaticamente por `processarMatriculasRecentesTurmas()`
-(`scraper/mercurio.js`) — a mesma varredura que já visita cada turma
-procurando matrícula recente agora TAMBÉM grava dia/horário de TODA
-turma visitada ali (upsert), tenha matrícula nova ou não.
+automaticamente por `processarTurmas()` (`scraper/mercurio.js` —
+renomeada de `processarMatriculasRecentesTurmas()`, ver seção "Scraper
+Ulisses/Mercúrio — reformulação do Mercúrio") — a mesma varredura que já
+visita cada turma procurando matrícula recente agora TAMBÉM grava
+dia/horário de TODA turma visitada ali (upsert), tenha matrícula nova ou
+não.
 
 - Colunas = dias da semana que têm pelo menos 1 turma, na ordem
   Segunda→Domingo; linhas = todo horário distinto observado (ordena

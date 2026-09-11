@@ -9,6 +9,15 @@ let podeCarregarMais = false;
 
 const NOME_TABELA = 'leads_inscricoes'; // ajuste aqui se o nome da tabela no Supabase for outro
 const NOME_TABELA_FILIAIS = 'filiais';
+
+// Lead cadastrado manualmente (abrirNovoLeadManual()) — nunca veio de
+// planilha/scraper. ID sintético numa faixa própria (985000000-989999999),
+// distinta de todas as outras já em uso no projeto: 900000000+ (Ativos sem
+// correspondência), 950000000+ (Inativos sem correspondência), 980000000+
+// (auditoria resgatada, js/importador.js) e 990000000+ (matrícula via
+// print, js/matricula-importar.js).
+const BASE_ID_LEAD_MANUAL = 985000000;
+const TAG_LEAD_MANUAL = 'CRM';
 const CHAVE_STORAGE_COLUNAS = 'crm_na_colunas_config';
 const CHAVE_STORAGE_COLUNAS_RECOLHIDAS = 'crm_na_colunas_recolhidas';
 const CHAVE_STORAGE_FILIAL = 'crm_na_filial_atual';
@@ -187,6 +196,7 @@ async function carregarLeads(filial, resetar = true) {
         // ela inteira de uma vez, direto, é seguro e resolve o sintoma —
         // sem precisar redesenhar a paginação do resto do Kanban.
         await carregarMatriculadosSemPaginacao(filial);
+        atualizarContagemLixeira();
     }
 
     const btnAntigo = document.getElementById('btn-carregar-mais');
@@ -203,6 +213,7 @@ async function carregarLeads(filial, resetar = true) {
         .from(NOME_TABELA)
         .select('*')
         .eq('filial', filial)
+        .is('lixeira_em', null) // lead na lixeira não aparece no Kanban normal — ver seção "Lixeira de Leads"
         .order('pessoaIdentificador', { ascending: true })
         .range(inicioLote, fimLote);
 
@@ -249,6 +260,7 @@ async function carregarMatriculadosSemPaginacao(filial) {
             .select('*')
             .eq('filial', filial)
             .eq('funil_agencia', matriculadosKey)
+            .is('lixeira_em', null)
             .order('pessoaIdentificador', { ascending: true })
             .range(de, de + TAMANHO_PAGINA - 1);
         if (error) { console.error('Erro ao pré-carregar Matriculados:', error); return; }
@@ -399,7 +411,7 @@ function montarGavetaColunas(contagemPorColuna) {
 // ==========================================
 // 3. MOTOR DE DESENHO E ORDENAÇÃO
 // ==========================================
-const ORDEM_NIVEL_ALUNO = ['TA', 'JN', 'PP', 'N1', 'Membro'];
+const ORDEM_NIVEL_ALUNO = ['CA', 'Merlin', 'JN', 'PP', 'N1', 'Membro'];
 
 function contarTags(lead) {
     return parseTags(lead.tags).filter(t => t.trim() !== '').length;
@@ -1030,6 +1042,7 @@ async function processarBuscaColuna(key) {
         .select('*')
         .eq('filial', filialAtual)
         .eq('funil_agencia', key)
+        .is('lixeira_em', null)
         .or(`pessoaNome.ilike.%${termoSeguro}%,pessoaTelefoneNumero.ilike.%${termoSeguro}%,pessoaEmail.ilike.%${termoSeguro}%`)
         .limit(LIMITE_BUSCA_BANCO);
 
@@ -1120,6 +1133,7 @@ async function processarBuscaGlobal() {
         .from(NOME_TABELA)
         .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, funil_agencia')
         .eq('filial', filialAtual)
+        .is('lixeira_em', null)
         .or(`pessoaNome.ilike.%${termoSeguro}%,pessoaTelefoneNumero.ilike.%${termoSeguro}%,pessoaEmail.ilike.%${termoSeguro}%`)
         .limit(30);
 
@@ -1386,6 +1400,182 @@ function moverSelecionadosParaColuna() {
     const ids = Array.from(cardsSelecionados);
     limparSelecao();
     moverLeadsParaColuna(ids, novaColuna);
+}
+
+// ==========================================
+// NOVO LEAD MANUAL (cadastro direto no CRM, sem vir do Mercúrio/Ulisses)
+// ==========================================
+// Pedido do usuário (2026-09-10): dar um jeito de cadastrar alguém que não
+// veio de planilha/scraper nenhum (ex: quem ligou direto pra escola).
+// Ganha a tag de sistema PERMANENTE "CRM" (TAG_LEAD_MANUAL, ver topo do
+// arquivo) — diferente das outras tags, esta é bloqueada explicitamente em
+// removerTag() (só some se o lead inteiro for apagado). ID sintético numa
+// faixa própria (BASE_ID_LEAD_MANUAL), sorteado e checado contra os ids já
+// carregados (mesmo padrão de dedup usado em js/matricula-importar.js).
+function abrirNovoLeadManual() {
+    document.getElementById('novoLeadManualNome').value = '';
+    document.getElementById('novoLeadManualDDD').value = '';
+    document.getElementById('novoLeadManualTelefone').value = '';
+    document.getElementById('novoLeadManualEmail').value = '';
+    document.getElementById('modalNovoLeadManual').classList.add('open');
+    document.getElementById('overlayModalNovoLeadManual').classList.add('active');
+}
+function fecharNovoLeadManual() {
+    document.getElementById('modalNovoLeadManual').classList.remove('open');
+    document.getElementById('overlayModalNovoLeadManual').classList.remove('active');
+}
+
+async function confirmarNovoLeadManual() {
+    const nome = document.getElementById('novoLeadManualNome').value.trim();
+    if (!nome) { alert('Informe o nome do lead.'); return; }
+    const ddd = document.getElementById('novoLeadManualDDD').value.trim();
+    const telefone = document.getElementById('novoLeadManualTelefone').value.trim();
+    const email = document.getElementById('novoLeadManualEmail').value.trim();
+
+    const idsExistentes = new Set(leadsAtuais.map(l => String(l.pessoaIdentificador)));
+    let novoId;
+    do { novoId = String(BASE_ID_LEAD_MANUAL + Math.floor(Math.random() * 4900000)); } while (idsExistentes.has(novoId));
+
+    const tags = [TAG_LEAD_MANUAL];
+    if (!telefone) tags.push('Sem Telefone');
+    if (!email) tags.push('Sem E-mail');
+
+    const registro = {
+        pessoaIdentificador: novoId,
+        pessoaNome: nome,
+        pessoaTelefoneDDD: ddd,
+        pessoaTelefoneNumero: telefone,
+        pessoaEmail: email,
+        pessoaStatus: '',
+        telemarketingStatus: '',
+        eventoNome: '',
+        eventoData: '',
+        historico_eventos: [],
+        tags: JSON.stringify(tags),
+        funil_agencia: columnsConfig[0] ? columnsConfig[0].key : '',
+        filial: filialAtual,
+    };
+
+    const { error } = await window.supabaseClient.from(NOME_TABELA).insert(registro);
+    if (error) { alert('Erro ao criar o lead: ' + error.message); return; }
+
+    fecharNovoLeadManual();
+    registrarLogAtividade('criar_lead_manual', { pessoaIds: [novoId], detalhes: { nome } });
+    await carregarLeads(filialAtual, true);
+}
+
+// ==========================================
+// LIXEIRA DE LEADS (soft-delete com expiração automática em 30 dias)
+// ==========================================
+// Pedido do usuário (2026-09-10): jogar um lead fora sem apagar na hora —
+// fica "na lixeira" (coluna `lixeira_em` preenchida,
+// migracao_lixeira_lead.sql) por 30 dias, sumindo do Kanban/buscas normais,
+// mas restaurável até lá. Depois de 30 dias, um cron job DENTRO do
+// Postgres apaga de vez (limpar_lixeira_leads_vencidos(), mesmo padrão de
+// pg_cron já usado pro disparo diário do Mercúrio) — não depende de
+// ninguém abrir o CRM pra isso acontecer.
+//
+// Limitação conhecida: só a listagem principal do Kanban
+// (carregarLeads()/carregarMatriculadosSemPaginacao()) e as buscas
+// (global/por coluna) excluem lead na lixeira — alguns relatórios que
+// consultam o banco DIRETO (RPCs da Agenda do Dia, Matrículas por Mês,
+// Leads a Tratar) ainda podem contar um lead recém-jogado na lixeira até
+// ele ser apagado de vez; aceitável por ora, mesmo nível de precisão
+// "proxy" já documentado no resto do app.
+async function moverParaLixeira(ids) {
+    if (!ids || ids.length === 0) return;
+    const n = ids.length;
+    if (!confirm(`Mover ${n} lead${n > 1 ? 's' : ''} pra lixeira? Fica lá por 30 dias (dá pra restaurar até lá) e depois é apagado definitivamente.`)) return;
+
+    const { error } = await window.supabaseClient
+        .from(NOME_TABELA)
+        .update({ lixeira_em: new Date().toISOString() })
+        .in('pessoaIdentificador', ids);
+    if (error) { alert('Erro ao mover pra lixeira: ' + error.message); return; }
+
+    leadsAtuais = leadsAtuais.filter(l => !ids.includes(String(l.pessoaIdentificador)));
+    limparSelecao();
+    fecharGaveta();
+    renderizarCards();
+    atualizarContagemLixeira();
+    registrarLogAtividade('mover_lixeira', { pessoaIds: ids.map(String) });
+}
+
+function moverSelecionadosParaLixeira() {
+    if (cardsSelecionados.size === 0) return;
+    moverParaLixeira(Array.from(cardsSelecionados));
+}
+
+function moverLeadAtualParaLixeira() {
+    if (!currentLeadId) return;
+    moverParaLixeira([String(currentLeadId)]);
+}
+
+async function atualizarContagemLixeira() {
+    const badge = document.getElementById('lixeiraContagemBadge');
+    if (!badge || !filialAtual) return;
+    const { count, error } = await window.supabaseClient
+        .from(NOME_TABELA)
+        .select('pessoaIdentificador', { count: 'exact', head: true })
+        .eq('filial', filialAtual)
+        .not('lixeira_em', 'is', null);
+    if (error) return;
+    badge.textContent = count > 0 ? ` (${count})` : '';
+}
+
+async function abrirLixeira() {
+    const lista = document.getElementById('lixeiraLista');
+    lista.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Carregando...</p>';
+    document.getElementById('modalLixeira').classList.add('open');
+    document.getElementById('overlayModalLixeira').classList.add('active');
+
+    const { data, error } = await window.supabaseClient
+        .from(NOME_TABELA)
+        .select('pessoaIdentificador, pessoaNome, lixeira_em')
+        .eq('filial', filialAtual)
+        .not('lixeira_em', 'is', null)
+        .order('lixeira_em', { ascending: false });
+    if (error) { lista.innerHTML = `<p style="font-size:12px; color:var(--na-red, #b91c1c);">Erro ao carregar a lixeira: ${escapeHTML(error.message)}</p>`; return; }
+
+    if (!data || data.length === 0) {
+        lista.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Lixeira vazia nesta filial.</p>';
+        return;
+    }
+
+    lista.innerHTML = data.map(l => {
+        const diasRestantes = Math.max(0, 30 - Math.floor((Date.now() - new Date(l.lixeira_em).getTime()) / 86400000));
+        return `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid #e2e8f0;">
+                <div>
+                    <strong style="font-size:13px;">${escapeHTML(l.pessoaNome || 'Sem nome')}</strong>
+                    <div style="font-size:11px; color:var(--text-muted);">Some definitivamente em ${diasRestantes} dia${diasRestantes !== 1 ? 's' : ''}</div>
+                </div>
+                <div style="display:flex; gap:6px; flex-shrink:0;">
+                    <button class="btn-secondary" onclick="restaurarDaLixeira('${l.pessoaIdentificador}')"><i class="fa-solid fa-rotate-left"></i> Restaurar</button>
+                    <button class="btn-add-tag" onclick="excluirDefinitivoDaLixeira('${l.pessoaIdentificador}', '${escapeHTML(l.pessoaNome || 'Sem nome').replace(/'/g, "\\'")}')"><i class="fa-solid fa-trash"></i> Excluir Agora</button>
+                </div>
+            </div>`;
+    }).join('');
+}
+function fecharLixeira() {
+    document.getElementById('modalLixeira').classList.remove('open');
+    document.getElementById('overlayModalLixeira').classList.remove('active');
+}
+async function restaurarDaLixeira(id) {
+    const { error } = await window.supabaseClient.from(NOME_TABELA).update({ lixeira_em: null }).eq('pessoaIdentificador', id);
+    if (error) { alert('Erro ao restaurar: ' + error.message); return; }
+    registrarLogAtividade('restaurar_lixeira', { pessoaIds: [String(id)] });
+    await abrirLixeira();
+    await atualizarContagemLixeira();
+    await carregarLeads(filialAtual, true);
+}
+async function excluirDefinitivoDaLixeira(id, nome) {
+    if (!confirm(`Excluir "${nome}" DEFINITIVAMENTE? Não tem volta.`)) return;
+    const { error } = await window.supabaseClient.from(NOME_TABELA).delete().eq('pessoaIdentificador', id);
+    if (error) { alert('Erro ao excluir: ' + error.message); return; }
+    registrarLogAtividade('excluir_lixeira_definitivo', { pessoaIds: [String(id)], detalhes: { nome } });
+    await abrirLixeira();
+    await atualizarContagemLixeira();
 }
 
 // ==========================================
@@ -3046,13 +3236,17 @@ const FAMILIAS_TAG = [
         // passaram por uma reimportação desde a troca. "Recuperado" é
         // aplicada pelo importador quando detecta a virada Inativo→Ativo
         // (ver confirmarEnviarImportacao(), js/importador.js) — cor própria
-        // pra destacar como uma conquista, não só "está ativo".
-        testar: t => t === 'Ativo' || t === 'Aluno Ativo' || t === 'Inativo' || t === 'Ex-Aluno (Inativo)' || t === 'Recuperado' || t === 'Perdido' || /^Lead Forte( [1-3])?$/.test(t),
+        // pra destacar como uma conquista, não só "está ativo". "CRM" marca
+        // um lead cadastrado manualmente (abrirNovoLeadManual()) — nunca
+        // veio de Mercúrio/Ulisses, e a tag é PERMANENTE (só some se o lead
+        // inteiro for apagado, ver bloqueio em removerTag()).
+        testar: t => t === 'Ativo' || t === 'Aluno Ativo' || t === 'Inativo' || t === 'Ex-Aluno (Inativo)' || t === 'Recuperado' || t === 'Perdido' || t === TAG_LEAD_MANUAL || /^Lead Forte( [1-3])?$/.test(t),
         classe: t => {
             if (t === 'Ativo' || t === 'Aluno Ativo') return 'tag-ativo';
             if (t === 'Inativo' || t === 'Ex-Aluno (Inativo)') return 'tag-exaluno';
             if (t === 'Recuperado') return 'tag-recuperado';
             if (t === 'Perdido') return 'tag-perdido';
+            if (t === TAG_LEAD_MANUAL) return 'tag-crm';
             // Cada grau de Lead Forte tem uma cor/intensidade própria
             // (tag-strong-1 = mais quente/saturado, tag-strong-3 = mais
             // apagado) — .tag-strong sozinha é só o fallback pro formato
@@ -3070,8 +3264,11 @@ const FAMILIAS_TAG = [
     // N1 (nível de entrada, mantido separado) e "Membro" (N2-N7 unificados).
     // N[2-7] direto no regex é só pra CLASSIFICAR tags antigas (de antes do
     // esquema TA/JN/PP/N1/Membro) corretamente até a próxima reimportação —
-    // o importador nunca mais GERA esse formato, só N1/Membro.
-    { label: 'Nível', testar: t => /^(TA|JN|PP|N[1-7]|Membro)$/i.test(t), classe: () => 'tag-nivel' },
+    // o importador nunca mais GERA esse formato, só N1/Membro. "TA" também
+    // fica no regex por compatibilidade com tags antigas (o importador
+    // gera "Merlin" a partir de 2026-09-10, ver classificarNivel() em
+    // js/importador.js).
+    { label: 'Nível', testar: t => /^(TA|Merlin|CA|JN|PP|N[1-7]|Membro)$/i.test(t), classe: () => 'tag-nivel' },
     // "Trilha: X" / "Jornada: X" — geradas pelo importador a partir do
     // histórico de eventos + config de trilhas_tipo_evento (sistema de
     // follow-up). Cor própria pra distinguir de tag customizada comum.
@@ -3818,6 +4015,15 @@ async function confirmarNovaTag() {
         return;
     }
 
+    // "CRM" só é aplicada pelo fluxo de Novo Lead (abrirNovoLeadManual()) —
+    // é como o CRM sabe que aquele lead nunca veio de Mercúrio/Ulisses;
+    // deixar adicionar à mão em qualquer lead esvaziaria esse sinal.
+    if (novaTagText === TAG_LEAD_MANUAL) {
+        alert('A tag "CRM" só é aplicada automaticamente ao criar um lead pelo botão "Novo Lead" — não dá pra adicionar à mão.');
+        fecharFormNovaTag();
+        return;
+    }
+
     // "Ativo" e "Inativo" são mutuamente exclusivos — um lead não pode ser
     // aluno ativo e ex-aluno ao mesmo tempo. Adicionar um manualmente
     // (corrigindo um caso que a importação não pegou) remove o outro,
@@ -3854,6 +4060,14 @@ async function removerTag(index) {
     const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(currentLeadId));
     let tagsArray = parseTags(leadsAtuais[leadIndex].tags);
     const tagRemovida = tagsArray[index];
+
+    // "CRM" (lead cadastrado manualmente, ver abrirNovoLeadManual()) é
+    // PERMANENTE de propósito — só some se o lead inteiro for apagado
+    // (Lixeira ou Zona de Perigo), nunca por um "x" avulso na tag.
+    if (tagRemovida === TAG_LEAD_MANUAL) {
+        alert('A tag "CRM" é permanente — marca que este lead foi cadastrado direto no CRM. Só some se o lead inteiro for apagado.');
+        return;
+    }
 
     tagsArray.splice(index, 1);
     leadsAtuais[leadIndex].tags = JSON.stringify(tagsArray);
