@@ -77,6 +77,36 @@ function atualizarChipSonecaColuna(key, count) {
 // filtrado por coluna (ver abrirGaveta()).
 let filtrosColuna = {}; // { chaveDaColuna: { tags, evento, dataDe, dataAte, temTelefone, temEmail } }
 
+// "Organizar Quadro" deixou de ser global (2026-09-11, pedido do usuário) —
+// cada coluna ordena os próprios cards de forma independente. Só em
+// memória (mesmo padrão de filtrosColuna) — não persiste entre sessões,
+// volta pro "padrão" (data de chegada) a cada reload.
+let ordenacaoColuna = {}; // { chaveDaColuna: 'padrao'|'az'|'za'|'tags_desc'|'lead_forte'|'nivel_aluno'|'prioridade' }
+function getOrdenacaoColuna(key) {
+    return ordenacaoColuna[key] || 'padrao';
+}
+function definirOrdenacaoColuna(key, valor) {
+    ordenacaoColuna[key] = valor;
+    renderizarCards();
+}
+// Comparador reaproveitado tanto pela ordenação por coluna (abaixo) quanto
+// por qualquer outro código que precise da mesma lógica de sempre.
+function compararLeadsPorOrdenacao(a, b, opcao) {
+    if (opcao === 'az') return (a.pessoaNome || "").localeCompare(b.pessoaNome || "");
+    if (opcao === 'za') return (b.pessoaNome || "").localeCompare(a.pessoaNome || "");
+    if (opcao === 'tags_desc') return contarTags(b) - contarTags(a);
+    if (opcao === 'lead_forte') return rankLeadForte(a) - rankLeadForte(b);
+    if (opcao === 'nivel_aluno') return rankNivelAluno(a) - rankNivelAluno(b);
+    if (opcao === 'prioridade') {
+        const diffLeadForte = rankLeadForte(a) - rankLeadForte(b);
+        if (diffLeadForte !== 0) return diffLeadForte;
+        const diffTags = contarTags(b) - contarTags(a);
+        if (diffTags !== 0) return diffTags;
+        return (a.pessoaNome || "").localeCompare(b.pessoaNome || "");
+    }
+    return 0; // 'padrao' — mantém a ordem de chegada (não reordena)
+}
+
 function filtroColunaVazio() {
     // tagsExcluidas: "filter out" — esconde o lead se ele tiver QUALQUER
     // uma dessas tags, independente do que estiver marcado em `tags`
@@ -298,6 +328,15 @@ function renderizarColunas() {
                 <button type="button" class="col-select-all-btn" onclick="toggleSelecionarTodosColuna('${col.key}')">
                     <i class="fa-regular fa-square-check"></i> Selecionar visíveis
                 </button>
+                <select class="col-ordenar-select" title="Organizar esta coluna" onchange="definirOrdenacaoColuna('${col.key}', this.value)">
+                    <option value="padrao" ${getOrdenacaoColuna(col.key) === 'padrao' ? 'selected' : ''}>Data de Chegada (Padrão)</option>
+                    <option value="az" ${getOrdenacaoColuna(col.key) === 'az' ? 'selected' : ''}>Nome (A - Z)</option>
+                    <option value="za" ${getOrdenacaoColuna(col.key) === 'za' ? 'selected' : ''}>Nome (Z - A)</option>
+                    <option value="prioridade" ${getOrdenacaoColuna(col.key) === 'prioridade' ? 'selected' : ''}>Prioridade de Contato</option>
+                    <option value="lead_forte" ${getOrdenacaoColuna(col.key) === 'lead_forte' ? 'selected' : ''}>Lead Forte (Nível 1 primeiro)</option>
+                    <option value="nivel_aluno" ${getOrdenacaoColuna(col.key) === 'nivel_aluno' ? 'selected' : ''}>Nível de Aluno</option>
+                    <option value="tags_desc" ${getOrdenacaoColuna(col.key) === 'tags_desc' ? 'selected' : ''}>Mais Tags Primeiro</option>
+                </select>
                 ${col.key.toLowerCase().includes('matricul') || col.label.toLowerCase().includes('matricul') ? `
                     <span class="col-matricula-info" title="Matrículas novas do Mercúrio já entram sozinhas (todo dia às 5h, ou na hora pelo botão 'Sincronização Automática')" onclick="switchModule('tab-importar', 'Importar Planilhas', 'Ativos, Inativos e Inscrições → CRM')">
                         <i class="fa-solid fa-circle-info"></i> Atualize na aba Importação
@@ -462,31 +501,11 @@ function renderizarCards() {
     //    normalmente no Kanban, com um badge próprio.
     let leadsBase = leadsAtuais;
 
-    // 2. Ordenação
-    const sortEl = document.getElementById('sortSelect');
-    const sortOption = sortEl ? sortEl.value : 'padrao';
-    if (sortOption === 'az') {
-        leadsBase = [...leadsBase].sort((a, b) => (a.pessoaNome || "").localeCompare(b.pessoaNome || ""));
-    } else if (sortOption === 'za') {
-        leadsBase = [...leadsBase].sort((a, b) => (b.pessoaNome || "").localeCompare(a.pessoaNome || ""));
-    } else if (sortOption === 'tags_desc') {
-        leadsBase = [...leadsBase].sort((a, b) => contarTags(b) - contarTags(a));
-    } else if (sortOption === 'lead_forte') {
-        leadsBase = [...leadsBase].sort((a, b) => rankLeadForte(a) - rankLeadForte(b));
-    } else if (sortOption === 'nivel_aluno') {
-        leadsBase = [...leadsBase].sort((a, b) => rankNivelAluno(a) - rankNivelAluno(b));
-    } else if (sortOption === 'prioridade') {
-        // Combina os critérios: Lead Forte primeiro (1 antes de 2 antes de
-        // 3), empatado por quantidade de tags (mais engajado primeiro),
-        // empatado por nome — pensado como "quem eu ligo primeiro hoje".
-        leadsBase = [...leadsBase].sort((a, b) => {
-            const diffLeadForte = rankLeadForte(a) - rankLeadForte(b);
-            if (diffLeadForte !== 0) return diffLeadForte;
-            const diffTags = contarTags(b) - contarTags(a);
-            if (diffTags !== 0) return diffTags;
-            return (a.pessoaNome || "").localeCompare(b.pessoaNome || "");
-        });
-    }
+    // 2. Ordenação — agora é POR COLUNA (2026-09-11, pedido do usuário),
+    //    não mais um critério global aplicado antes de distribuir. Cada
+    //    lead ainda entra na coluna certa nesta ordem "padrão" (chegada);
+    //    o critério de cada coluna só é aplicado no passo 4, depois que os
+    //    cards já foram separados por coluna (ver compararLeadsPorOrdenacao()).
 
     // 3. Prepara as colunas (o "limpar" acontece junto da escrita, mais abaixo)
     const validKeys = getColumnKeys();
@@ -644,15 +663,21 @@ function renderizarCards() {
         `;
 
         if (htmlPorColuna[colunaAlvo]) {
-            (lembreteVencido ? htmlPorColuna[colunaAlvo].urgente : htmlPorColuna[colunaAlvo].normal).push(cardHTML);
+            (lembreteVencido ? htmlPorColuna[colunaAlvo].urgente : htmlPorColuna[colunaAlvo].normal).push({ lead, html: cardHTML });
         }
     });
 
     // Escreve o HTML de cada coluna de uma vez só (1 innerHTML por coluna)
-    // — "Ligar Hoje" (urgente) sempre antes do resto (normal).
+    // — "Ligar Hoje" (urgente) sempre antes do resto (normal), cada grupo
+    // ordenado pelo critério ESCOLHIDO NAQUELA COLUNA (getOrdenacaoColuna).
     validKeys.forEach(key => {
         const el = document.getElementById(`col-${key}`);
-        if (el) el.innerHTML = htmlPorColuna[key].urgente.join('') + htmlPorColuna[key].normal.join('');
+        if (el) {
+            const opcao = getOrdenacaoColuna(key);
+            const urgente = [...htmlPorColuna[key].urgente].sort((a, b) => compararLeadsPorOrdenacao(a.lead, b.lead, opcao));
+            const normal = [...htmlPorColuna[key].normal].sort((a, b) => compararLeadsPorOrdenacao(a.lead, b.lead, opcao));
+            el.innerHTML = urgente.map(x => x.html).join('') + normal.map(x => x.html).join('');
+        }
         atualizarChipSonecaColuna(key, sonecaPorColuna[key]);
     });
 

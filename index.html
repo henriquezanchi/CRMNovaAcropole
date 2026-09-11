@@ -214,18 +214,9 @@
         <div id="tab-crm" class="tab-pane active">
             <!-- Barra de Ordenação / Ações -->
             <div class="filter-bar">
-                <div style="display: flex; gap: 8px; align-items: center;">
-                    <span style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Organizar Quadro:</span>
-                    <select id="sortSelect" onchange="renderizarCards()" style="font-size: 11px; padding: 6px; border-radius: 6px; border: 1px solid #cbd5e1; outline: none; background: white; cursor: pointer;">
-                        <option value="padrao">Data de Chegada (Padrão)</option>
-                        <option value="az">Nome (A - Z)</option>
-                        <option value="za">Nome (Z - A)</option>
-                        <option value="prioridade">Prioridade de Contato (Lead Forte + Tags)</option>
-                        <option value="lead_forte">Lead Forte (Nível 1 primeiro)</option>
-                        <option value="nivel_aluno">Nível de Aluno (TA → JN → PP → N1 → Membro)</option>
-                        <option value="tags_desc">Mais Tags Primeiro</option>
-                    </select>
-                </div>
+                <!-- "Organizar Quadro" deixou de ser global (2026-09-11, pedido do
+                     usuário) — agora cada coluna tem seu próprio seletor de ordenação,
+                     montado em renderizarColunas() (js/app.js), dentro do cabeçalho. -->
 
                 <!-- Busca global: pesquisa em TODAS as colunas da filial atual (banco inteiro, não só o que já foi carregado) -->
                 <div class="global-search-wrapper" id="globalSearchWrapper">

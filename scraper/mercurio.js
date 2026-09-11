@@ -496,9 +496,35 @@ const BASE_ID_COMPLEMENTAR = 970000000;
 // usado por toda criação de lead sintético deste arquivo). Nome ambíguo
 // (2+ leads com o mesmo nome normalizado) nunca é escolhido automático —
 // mesma cautela de sempre.
-async function processarComplementar(page, filialCrm, label) {
+// `modoCompleto` (2026-09-11, pedido do usuário): além de criar/enriquecer
+// pelo que já vem na própria lista Complementar (tags/nível/nascimento),
+// visita a FICHA de cada participante (ENDEREÇOS/PESSOAIS) — mesma
+// navegação já usada em processarTurmas()/processarFichaAluno(). Sem
+// isso, quem existe SÓ nesses 4 programas (nunca aparece em Ativos, nem
+// numa Turma real, nem em Aniversariantes) nunca tinha e-mail/telefone/
+// cidade/UF/profissão preenchidos por nenhum caminho automático — caso
+// real: ADANAIELLY KATIUCY VITORINO SI (só Círculo de Amigos), vs.
+// DANILO CRUVINEL RIBEIRO/DANIEL SILVA SUELO (Círculo de Amigos E TAMBÉM
+// matriculados numa turma real, "AMIGOS" — por isso já tinham dado).
+async function processarComplementar(page, filialCrm, label, modoCompleto = false) {
     const mapaLeads = await carregarMapaLeadsPorNome(filialCrm);
-    let totalNovos = 0, totalEnriquecidos = 0;
+    let totalNovos = 0, totalEnriquecidos = 0, totalEnderecosAtualizados = 0;
+
+    // Reentra DO ZERO na lista de um programa específico (CADASTRO ->
+    // nomeMenu) — mesmo princípio de entrarNaTurma() em processarTurmas():
+    // depois de abrir a ficha de 1 pessoa, não dá pra confiar em "voltar"
+    // no meio de um <frameset>, então cada pessoa reabre a navegação.
+    const entrarNoComplementar = async (nomeMenu) => {
+        await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' });
+        const indice = await indiceAtualParaLabel(page, label);
+        if (indice === null) throw new Error(`Link "CADASTRO" de "${label}" não encontrado nesta tela — pulando "${nomeMenu}".`);
+        const fp = await esperarFrame(page, 'principal', /ger_funcao\.php/, 15000);
+        await fp.getByRole('link', { name: 'CADASTRO', exact: true }).nth(indice).click();
+        const frameIndice = await esperarFrame(page, 'indice', /uni_indice\.php/, 15000);
+        await frameIndice.getByText(nomeMenu, { exact: true }).click();
+        await page.waitForTimeout(800);
+        return page.frame({ name: 'principal' });
+    };
 
     for (const { menu, nivelTag } of PROGRAMAS_COMPLEMENTARES) {
       // BUG REAL corrigido (2026-09-11): os `continue` abaixo (registros
@@ -561,9 +587,32 @@ async function processarComplementar(page, filialCrm, label) {
                     if (error) { console.warn(`[complementar] Falha ao criar lead "${r.nome}" (${filialCrm}):`, error.message); continue; }
                     mapaLeads.set(chave, {
                         pessoaIdentificador: novoId, tags, ambiguo: false,
-                        temData: !!registro.data_nascimento, cidade: '', uf: '', telefoneAlternativo: '', pessoaEmail: '', pessoaTelefoneNumero: '',
+                        temData: !!registro.data_nascimento, cidade: '', uf: '', telefoneAlternativo: '', pessoaEmail: '', pessoaTelefoneNumero: '', profissao: '',
                     });
                     totalNovos++;
+                }
+
+                // MODO COMPLETO: visita a ficha desta pessoa (ENDEREÇOS/
+                // PESSOAIS) — ver comentário grande no início da função.
+                if (modoCompleto) {
+                    const leadInfo = mapaLeads.get(chave);
+                    if (leadInfo && !leadInfo.ambiguo) {
+                        try {
+                            const framePrograma = await entrarNoComplementar(menu);
+                            const linkNome = framePrograma.locator(`a[href*="uni_cadfun.php?matr=${r.matr}"]`).first();
+                            if (await linkNome.count() > 0) {
+                                const dados = await processarFichaAluno(page, linkNome, { verificarHistorico: false, verificarEnderecos: true });
+                                if (dados.email || dados.cidade || dados.uf || dados.telefoneAlternativo || dados.profissao) {
+                                    const gravou = await aplicarDadosEndereco(leadInfo, r.nome, dados);
+                                    if (gravou) totalEnderecosAtualizados++;
+                                }
+                            } else {
+                                console.warn(`[complementar] Link de "${r.nome}" (matr ${r.matr}) não encontrado de novo em "${menu}" (${filialCrm}).`);
+                            }
+                        } catch (e) {
+                            console.warn(`[complementar] Falha ao visitar ficha de "${r.nome}" (${menu}, ${filialCrm}):`, e.message);
+                        }
+                    }
                 }
             } catch (e) {
                 console.warn(`[complementar] Falha processando "${r.nome}" (${menu}, ${filialCrm}):`, e.message);
@@ -578,7 +627,7 @@ async function processarComplementar(page, filialCrm, label) {
       }
     }
 
-    return { totalNovos, totalEnriquecidos };
+    return { totalNovos, totalEnriquecidos, totalEnderecosAtualizados };
 }
 
 function normalizarNomeMercurio(nome) {
@@ -1496,8 +1545,9 @@ async function main() {
             await atualizarProgresso({ filial: label, etapa: 'Programas Complementares' });
             if (filialCrm) {
                 try {
-                    const { totalNovos, totalEnriquecidos } = await processarComplementar(page, filialCrm, label);
-                    console.log(`[complementar] ${filialCrm}: ${totalNovos} lead(s) novo(s), ${totalEnriquecidos} enriquecido(s) (Ativo/CA/Merlin/JN).`);
+                    const { totalNovos, totalEnriquecidos, totalEnderecosAtualizados } = await processarComplementar(page, filialCrm, label, modoCompleto);
+                    totalEnderecosGeral += totalEnderecosAtualizados;
+                    console.log(`[complementar] ${filialCrm}: ${totalNovos} lead(s) novo(s), ${totalEnriquecidos} enriquecido(s) (Ativo/CA/Merlin/JN)${modoCompleto ? `, ${totalEnderecosAtualizados} endereço(s)/profissão atualizado(s) via ficha` : ''}.`);
                 } catch (e) {
                     algumaFalha = true;
                     console.error(`[mercurio] Falha ao processar programas Complementares de "${filialCrm}":`, e.message);
