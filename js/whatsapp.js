@@ -32,12 +32,27 @@
 const TEMPLATES_WHATSAPP = [
     {
         nome: 'contato_inicial',
-        label: 'Contato inicial (pós-palestra)',
-        corpoAprovado: 'Olá, {{1}}! Aqui quem fala é {{2}}, da Nova Acrópole. Tudo bem? Vi que você já esteve na Palestra {{3}} e gostaria de saber se ainda tem interesse em participar dos nossos próximos eventos de filosofia! Estamos abrindo uma nova turma em breve, quer saber mais detalhes de como funciona nosso curso?',
+        label: 'Contato inicial',
+        // Reaprovado pela Meta (2026-09-11) com um texto mais genérico —
+        // a variável 3 deixou de ser "palestra" (algo digitado à mão) e
+        // passou a ser "filial" (já vem pré-preenchida automaticamente
+        // por preencherValorAutomatico(), mesmo padrão de contato_ulisses/
+        // resgate_ex_aluno abaixo).
+        corpoAprovado: 'Olá, {{1}}! Aqui quem fala é {{2}}, da Nova Acrópole {{3}}. Tudo bem?\n\nEstou entrando em contato pois você sempre demonstrou interesse na Filosofia, nas ideias que a Nova Acrópole tenta trazer através do curso de filosofia, das palestras, dos nossos vídeos no YouTube.',
         variaveis: [
             { chave: 'nome', label: 'nome do lead' },
             { chave: 'atendente', label: 'atendente' },
-            { chave: null, label: 'palestra' },
+            { chave: 'filial', label: 'filial (com preposição)' },
+        ],
+    },
+    {
+        nome: 'aniversario',
+        label: 'Feliz Aniversário',
+        corpoAprovado: 'Olá {{1}}!\nAqui é {{2}} da Nova Acrópole {{3}}, e estou entrando em contato para lhe desejar um feliz aniversário!\n\nDesejo, em nome da nossa escola, que você tenha um dia maravilhoso, repleto de reflexões, em que seja possível recolher os melhores frutos das experiências do ano que passou, e convertê-las em sementes para semear o ano que se inicia, com muita vontade, amor e inteligência.\n\num grande abraço!',
+        variaveis: [
+            { chave: 'nome', label: 'nome do lead' },
+            { chave: 'atendente', label: 'atendente' },
+            { chave: 'filial', label: 'filial (com preposição)' },
         ],
     },
     {
@@ -333,7 +348,23 @@ function criarChatController({ messagesId, inputAreaId }) {
         renderizarAreaInput();
     }
 
-    async function abrir(pessoaIdentificador) {
+    // Força a área de envio a mostrar o seletor de template (mesmo DENTRO
+    // da janela de 24h, onde o padrão seria texto livre) já com um modelo
+    // específico pré-selecionado — usado pelo clique em "Aniversariantes
+    // de Hoje" (Agenda do Dia), que deve abrir a gaveta pronta pra mandar
+    // o template "aniversario" sem o SDR precisar procurar na lista.
+    function selecionarTemplatePorNome(nomeTemplate) {
+        const idx = TEMPLATES_WHATSAPP.findIndex(t => t.nome === nomeTemplate);
+        if (idx < 0) return;
+        renderizarAreaInputTemplate();
+        const container = el(inputAreaId);
+        const select = container ? container.querySelector('.wpp-template-select') : null;
+        if (!select) return;
+        select.value = String(idx);
+        select.dispatchEvent(new Event('change'));
+    }
+
+    async function abrir(pessoaIdentificador, templateNomeForcado) {
         if (canal) { window.supabaseClient.removeChannel(canal); canal = null; }
         leadId = pessoaIdentificador;
         mensagens = [];
@@ -344,6 +375,7 @@ function criarChatController({ messagesId, inputAreaId }) {
         mensagens = await carregarHistoricoMensagens(leadId);
         renderizarMensagens();
         renderizarAreaInput();
+        if (templateNomeForcado) selecionarTemplatePorNome(templateNomeForcado);
 
         canal = window.supabaseClient
             .channel(`wpp-chat-${messagesId}-${leadId}`)
@@ -380,7 +412,7 @@ function criarChatController({ messagesId, inputAreaId }) {
         return true;
     }
 
-    return { abrir, fechar, preencherTexto };
+    return { abrir, fechar, preencherTexto, selecionarTemplatePorNome };
 }
 
 const chatWpp = criarChatController({ messagesId: 'wppMessages', inputAreaId: 'wppChatInputArea' });

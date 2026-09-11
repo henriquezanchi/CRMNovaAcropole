@@ -2342,8 +2342,13 @@ uso principal do CRM é resgate de leads frios.
 - **Templates de mensagem** só existem depois de criados e aprovados no
   painel da Meta Business — a lista `TEMPLATES_WHATSAPP` no topo de
   `js/whatsapp.js` precisa ser preenchida (nome técnico exato + ordem das
-  variáveis) conforme forem aprovados. Hoje tem 5: `contato_inicial`
-  (3 variáveis: nome/atendente/palestra — pós-palestra), `resgate_lead_evento`
+  variáveis) conforme forem aprovados. Hoje tem 6: `contato_inicial`
+  (3 variáveis: nome/atendente/filial — contato geral com quem já
+  demonstrou interesse em Filosofia; reaprovado pela Meta em 2026-09-11
+  com texto mais genérico, a 3ª variável deixou de ser "palestra"
+  digitada à mão e passou a ser `filial`, preenchida automaticamente),
+  `aniversario` (3 variáveis: nome/atendente/filial — NOVO, aprovado
+  2026-09-11, mensagem de feliz aniversário), `resgate_lead_evento`
   (1 variável: nome — resgate de lead frio genérico), `contato_ulisses`
   (5 variáveis: nome/atendente/filial/tipo-do-evento/nome-do-evento —
   quem participou de algo pelo Ulisses e nunca foi aluno),
@@ -3568,26 +3573,51 @@ de `processarMatriculasRecentesTurmas()`).
   vez só e lê HISTÓRICO e/ou ENDEREÇOS, conforme o que for pedido — evita
   abrir a ficha 2x pro mesmo aluno quando os 2 sinais se aplicam (Modo
   Completo + candidato a reingresso ao mesmo tempo).
-- **⚠️ NÃO testado contra o Mercúrio real** — `processarFichaAluno()`
-  (leitura de HISTÓRICO/ENDEREÇOS) foi mapeada só com descrição/print de
-  tela do usuário (grade de seções, formulário de Histórico, formulário de
-  Endereços), não HTML real — mesmo estágio inicial de outras funções
-  deste arquivo antes do 1º teste real (ex: `exportarAtivosEInativos()`
-  também precisou de 2 rodadas de correção depois do mapeamento inicial só
-  por print). Escrita com seletor por RÓTULO (`getByLabel`), mais
-  tolerante a variação de estrutura que um seletor de posição — mas os
-  rótulos exatos («Aluno/Membro Recuperado», «Cidade», «UF», etc.) podem
-  não bater de primeira contra o formulário real. Best-effort total em
-  todas as camadas (por aluno, por turma, por filial) — qualquer falha
-  aqui só gera aviso no log (`[ficha-aluno]`), nunca trava o resto da
-  rodada. **Reentrar na turma do zero por aluno** (`entrarNaTurma()`,
-  CADASTRO → Turmas → clica na turma de novo) em vez de tentar "voltar" no
-  meio de um `<frameset>` — mais lento, mas evita depender de um
-  comportamento de navegação incerto sem teste real. Primeira rodada real
-  (incremental, com poucos candidatos a reingresso) e depois uma rodada
-  `--completo` numa filial pequena devem validar os seletores — se vier
-  vazio/errado, mandar o HTML real das telas HISTÓRICO/ENDEREÇOS resolve
-  rápido, mesmo padrão de sempre.
+- **HISTÓRICO — seletores reais confirmados e corrigidos (2026-09-11)**:
+  a 1ª versão usava `ctx.getByLabel(/Aluno\/?\s*Membro Recuperado/i)` e
+  `getByLabel(/reingressou/i)`, que NUNCA funcionavam — confirmado via
+  HTML real (DevTools) que o usuário mandou: a seção "Reingresso
+  (Recuperação)" não tem NENHUM `<label>` de verdade, é um
+  `<input name="chkrec" type="CHECKBOX">` com texto solto ao lado ("Aluno/
+  Membro Recuperado"), e a data de reingresso é 3 `<input>` de TEXTO
+  separados (`txtdiar`/`txtmesr`/`txtanor` — dia/mês/ano, não 1 campo de
+  data só). Reescrito com os seletores reais
+  (`ctx.locator('input[name="chkrec"]').isChecked()`, valor de cada
+  `txtdiar`/`txtmesr`/`txtanor` concatenado em `DD/MM/AAAA`). **Testado ao
+  vivo em produção (Barra do Garças/MT, modo incremental)**: os 3 nomes
+  que o usuário apontou como recuperados de verdade (Laura, Simone,
+  Tibério) receberam a tag `"Recuperado"` corretamente, mais 3 outros
+  candidatos reais na mesma rodada (Danilo, Rosemary, Marcos) — confirmado
+  direto no banco depois da rodada.
+- **`processarComplementar()` — bug de navegação perdida entre programas
+  (2026-09-11)**: cada um dos 4 programas (C. de Amigos/Correntinha/
+  Távolas/Janos) tinha um `continue` (registros vazios, ou erro de
+  leitura) posicionado ANTES do `page.goto(URL_FUNCOES, ...)` de
+  recuperação no fim do bloco — um `continue` disparado num programa
+  (ex: "Correntinha" vazio) pulava a navegação de volta, e o PRÓXIMO
+  programa do loop (ex: "Távolas") dava timeout tentando achar
+  `ger_funcao.php` a partir de uma tela errada. Corrigido envolvendo o
+  corpo inteiro do loop em `try { ... } finally { await
+  page.goto(URL_FUNCOES, ...) }` — confirmado que `continue` dentro de um
+  `try` ainda executa o `finally` antes de pular pra próxima iteração.
+- **ENDEREÇOS/Aniversariantes — tag "Sem E-mail" nunca era removida ao
+  preencher o e-mail (2026-09-11)**: tanto `aplicarDadosEndereco()`
+  (Modo Completo) quanto `sincronizarAniversariantesNoCrm()` gravavam
+  `pessoaEmail` mas nunca tiravam a tag `"Sem E-mail"` que já estava no
+  lead — confirmado por 2 screenshots reais do usuário (Danilo/Daniel com
+  e-mail visível no bloco Contato, mas o badge "Sem E-mail" continuava
+  aparecendo). Corrigido nos dois lugares: ao gravar um `pessoaEmail`
+  novo, remove `"Sem E-mail"` do array de tags se estiver presente.
+  **Corrigido retroativamente em produção** com um script descartável —
+  1210 leads em TODAS as filiais tinham esse resíduo (confirma que o bug
+  existia desde que a sincronização de e-mail foi adicionada, não só
+  nesta rodada).
+- Reentrar na turma do zero por aluno (`entrarNaTurma()`, CADASTRO →
+  Turmas → clica na turma de novo) em vez de tentar "voltar" no meio de
+  um `<frameset>` — mais lento, mas evita depender de navegação incerta.
+  Best-effort em todas as camadas (por aluno, por turma, por filial) —
+  qualquer falha só gera aviso no log (`[ficha-aluno]`), nunca trava o
+  resto da rodada.
 
 #### Ativos/Inativos 100% completos sem depender do Ulisses (2026-09-11)
 
@@ -3768,6 +3798,62 @@ usada pra calcular a comissão. Sem `valor_mensalidade` configurado, os
 2 últimos KPIs mostram "—" com um aviso, mas a contagem de matrículas
 continua funcionando normalmente. O gráfico de barras com todos os
 meses (já existente) continua embaixo, inalterado.
+
+## Navegação a partir de KPIs/atalhos (2026-09-11)
+
+Pedidos do usuário pra deixar o Dashboard/Agenda do Dia mais acionáveis —
+clicar num número deve levar direto pra onde aquele número "vive":
+
+- **Coluna de Matriculados mostra o mês corrente no nome** (ex:
+  "Matriculados em Setembro") — `labelExibicaoColuna(col)` (`js/app.js`),
+  usada no cabeçalho da coluna no Kanban e no chip da gaveta de colunas
+  recolhidas. Calculado na hora (`nomeMesAtualCapitalizado()`, via
+  `Date.toLocaleDateString('pt-BR', {month:'long'})`) — **não muda o que
+  cai na coluna** (continua sendo TODO mundo com `funil_agencia` =
+  Matriculados, sem filtro por mês nenhum) nem o `col.label` gravado em
+  `localStorage`, é só o texto exibido; não precisa renomear na mão todo
+  mês, o nome do mês vira sozinho quando o mês virar. Detectada pela
+  MESMA heurística por substring "matricul" já usada em todo o resto do
+  app — se o usuário renomear a coluna pra algo sem essa palavra, o mês
+  para de aparecer (comportamento esperado, mesma heurística de sempre).
+- **KPI "Novas Matrículas" (Dashboard) é clicável** —
+  `irParaColunaMatriculados()` (`js/app.js`): troca pra aba CRM e rola o
+  quadro até a coluna de Matriculados (id `kanban-col-wrap-${key}`,
+  adicionado no `<div class="kanban-col">` de `renderizarColunas()`),
+  restaurando a coluna primeiro (`restaurarColuna()`) se ela estiver
+  guardada na gaveta. Só navegação/scroll, sem aplicar filtro nenhum — a
+  métrica já soma todo mundo que está ali.
+- **KPI "Resgates Efetivados" (Dashboard) é clicável** —
+  `filtrarPorRecuperados()` (`js/app.js`), mesmo padrão de
+  `filtrarPorLeadForte()` já existente (Lead Forte por Nível): troca pra
+  aba CRM e aplica `quickFilterTag('Recuperado')` em todas as colunas —
+  é o critério PRINCIPAL do próprio KPI (ver bullet `"Recuperado"` na
+  seção de Tags).
+- **Clicar num lead em "Aniversariantes de Hoje" (Agenda do Dia —
+  Todas as Filiais) abre a gaveta já com o template `aniversario` do
+  WhatsApp selecionado**, pronto pra revisar as variáveis e mandar —
+  pedido direto do usuário depois do template `aniversario` ser
+  aprovado pela Meta (ver seção WhatsApp). Encadeamento:
+  `carregarAgendaGeralAniversariantes()` (`js/visao-geral.js`) chama
+  `abrirResultadoBuscaGlobal(id, 'aniversario')` (2º parâmetro NOVO,
+  opcional, `js/app.js`) → `abrirGaveta(id, {templateWhatsapp:
+  'aniversario'})` (2º parâmetro NOVO, opcional) →
+  `chatDrawer.abrir(id, 'aniversario')` (2º parâmetro NOVO, opcional,
+  `js/whatsapp.js`) → `selecionarTemplatePorNome('aniversario')`, chamada
+  DEPOIS do `await` de `carregarHistoricoMensagens()`/`renderizarAreaInput()`
+  dentro do mesmo `abrir()` (não como uma chamada separada depois —
+  evitando a corrida entre 2 chamadas concorrentes de `chatDrawer.abrir()`
+  que existiria se a seleção do template fosse feita de fora, depois de
+  `abrirGaveta()` já ter disparado seu próprio `chatDrawer.abrir()` sem
+  esperar). `selecionarTemplatePorNome()` força a área de envio a mostrar
+  o seletor de template (`renderizarAreaInputTemplate()`) mesmo QUANDO a
+  conversa está dentro da janela de 24h (onde o padrão seria texto
+  livre) — a intenção aqui é sempre o template aprovado, não texto livre,
+  já que é especificamente o modelo de aniversário que se quer mandar.
+  Todos os 3 parâmetros novos são opcionais (`|| null`/padrão), então
+  nenhum dos outros ~15 lugares que já chamavam
+  `abrirResultadoBuscaGlobal()`/`abrirGaveta()`/`chatDrawer.abrir()` com 1
+  argumento precisou mudar.
 
 ## Login Automático — Ulisses removido do cofre
 

@@ -121,7 +121,7 @@ async function carregarAgendaGeralAniversariantes() {
     }
 
     container.innerHTML = doDia.map(l => `
-        <div class="activity-item activity-item-festiva" style="cursor:pointer;" onclick="abrirResultadoBuscaGlobal('${l.pessoaIdentificador}')">
+        <div class="activity-item activity-item-festiva" style="cursor:pointer;" onclick="abrirResultadoBuscaGlobal('${l.pessoaIdentificador}', 'aniversario')" title="Abre a ficha já com o modelo de Feliz Aniversário selecionado">
             <div class="activity-dot activity-dot-festiva"></div>
             <div>
                 <div><strong>${escapeHTML(l.pessoaNome || 'Lead sem nome')}</strong> 🎂 <strong>hoje!</strong></div>

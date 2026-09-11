@@ -283,11 +283,12 @@ function renderizarColunas() {
     columnsConfig.filter(col => !colunasRecolhidas.has(col.key)).forEach(col => {
         const colEl = document.createElement('div');
         colEl.className = 'kanban-col';
+        colEl.id = `kanban-col-wrap-${col.key}`;
         colEl.style.setProperty('--col-accent', col.color || '#005a4b');
         colEl.innerHTML = `
             <div class="col-header">
                 <div class="col-header-top">
-                    <span style="color:${col.color || 'inherit'};">${escapeHTML(col.label)}</span>
+                    <span style="color:${col.color || 'inherit'};">${escapeHTML(labelExibicaoColuna(col))}</span>
                     <div style="display:flex; align-items:center; gap:6px;">
                         <span class="col-count" id="count-${col.key}">0</span>
                         <button type="button" class="col-collapse-btn" onclick="recolherColuna('${col.key}')" title="Guardar coluna na gaveta"><i class="fa-solid fa-angles-up"></i></button>
@@ -361,6 +362,26 @@ function getColumnKeys() {
     return columnsConfig.map(c => c.key);
 }
 
+// Mês corrente (pt-BR, com inicial maiúscula) — usado só pra exibição, não
+// muda em nada o que cai em cada coluna (a coluna de Matriculados continua
+// acumulando TODO mundo que já foi matriculado, sem filtro por mês nenhum;
+// isso é só o rótulo visual, calculado na hora, pra nunca precisar renomear
+// a coluna manualmente todo mês).
+function nomeMesAtualCapitalizado() {
+    const mes = new Date().toLocaleDateString('pt-BR', { month: 'long' });
+    return mes.charAt(0).toUpperCase() + mes.slice(1);
+}
+
+// Mesma heurística por substring "matricul" já usada em vários lugares do
+// app (Dashboard/Relatórios/matricula-importar.js) pra achar a coluna de
+// Matriculados sem depender de uma chave fixa.
+function labelExibicaoColuna(col) {
+    if (col.key.toLowerCase().includes('matricul') || col.label.toLowerCase().includes('matricul')) {
+        return `${col.label} em ${nomeMesAtualCapitalizado()}`;
+    }
+    return col.label;
+}
+
 // ==========================================
 // GAVETA DE COLUNAS (recolher/restaurar)
 // ==========================================
@@ -402,7 +423,7 @@ function montarGavetaColunas(contagemPorColuna) {
         const n = contagemPorColuna[key] || 0;
         return `
             <button type="button" class="coluna-recolhida-chip" style="border-left-color:${col.color || '#94a3b8'};" onclick="restaurarColuna('${key}')" title="Restaurar coluna">
-                <i class="fa-solid fa-arrow-turn-down"></i> ${escapeHTML(col.label)} <span class="coluna-recolhida-count ${n > 0 ? 'tem-leads' : ''}">${n}</span>
+                <i class="fa-solid fa-arrow-turn-down"></i> ${escapeHTML(labelExibicaoColuna(col))} <span class="coluna-recolhida-count ${n > 0 ? 'tem-leads' : ''}">${n}</span>
             </button>
         `;
     }).join('');
@@ -1166,7 +1187,7 @@ async function processarBuscaGlobal() {
     }).join('');
 }
 
-async function abrirResultadoBuscaGlobal(id) {
+async function abrirResultadoBuscaGlobal(id, templateWhatsapp) {
     fecharResultadosBuscaGlobal();
     const jaCarregado = leadsAtuais.some(l => String(l.pessoaIdentificador) === String(id));
     if (!jaCarregado) {
@@ -1186,7 +1207,7 @@ async function abrirResultadoBuscaGlobal(id) {
     if (abaCrm && !abaCrm.classList.contains('active')) {
         switchModule('tab-crm', 'Prospecção Ativa', 'CRM Modularizado VS Code');
     }
-    abrirGaveta(id);
+    abrirGaveta(id, { templateWhatsapp });
     destacarCardNoQuadro(id);
 }
 
@@ -2345,6 +2366,31 @@ function filtrarPorLeadForte(nivel) {
     quickFilterTag(`Lead Forte ${nivel}`);
 }
 
+// Clicar no KPI "Novas Matrículas" leva direto pra coluna de Matriculados
+// no Kanban (só navegação/scroll, sem filtro — a métrica já soma quem está
+// nessa coluna hoje). Se a coluna estiver guardada na gaveta, restaura antes.
+function irParaColunaMatriculados() {
+    const validKeys = getColumnKeys();
+    const matriculadosKey = validKeys.find(k => k.toLowerCase().includes('matricul'));
+    if (!matriculadosKey) return;
+
+    switchModule('tab-crm', 'Prospecção Ativa', 'CRM Modularizado VS Code');
+    if (colunasRecolhidas.has(matriculadosKey)) restaurarColuna(matriculadosKey);
+
+    requestAnimationFrame(() => {
+        const el = document.getElementById(`kanban-col-wrap-${matriculadosKey}`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    });
+}
+
+// Clicar no KPI "Resgates Efetivados" leva pro CRM já filtrado pela tag
+// "Recuperado" (mesmo mecanismo de quickFilterTag usado por
+// filtrarPorLeadForte acima) — é o critério principal do próprio KPI.
+function filtrarPorRecuperados() {
+    switchModule('tab-crm', 'Prospecção Ativa', 'CRM Modularizado VS Code');
+    quickFilterTag('Recuperado');
+}
+
 // "Verdadeiros" Leads Fortes: quem já frequentou a trilha Filosófica é um
 // sinal mais específico de propensão a matricular do que o Lead Forte
 // puro (que conta qualquer evento, inclusive só Artes/Dev. Pessoal) —
@@ -3384,7 +3430,7 @@ function toggleGavetaLead(secao) {
     aplicarEstadoGavetasLead();
 }
 
-function abrirGaveta(id) {
+function abrirGaveta(id, opcoes = {}) {
     currentLeadId = id;
     const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(id));
     if (!lead) return;
@@ -3493,7 +3539,7 @@ function abrirGaveta(id) {
     aplicarEstadoGavetasLead();
     carregarVinculoFamiliar(id);
     if (typeof carregarEventosDoLead === 'function') carregarEventosDoLead(id);
-    if (typeof chatDrawer !== 'undefined') chatDrawer.abrir(id);
+    if (typeof chatDrawer !== 'undefined') chatDrawer.abrir(id, opcoes.templateWhatsapp || null);
     document.getElementById('leadDrawer').classList.add('open');
     document.getElementById('overlay').classList.add('active');
 }
