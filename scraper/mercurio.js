@@ -481,6 +481,17 @@ async function processarComplementar(page, filialCrm, label) {
     let totalNovos = 0, totalEnriquecidos = 0;
 
     for (const { menu, nivelTag } of PROGRAMAS_COMPLEMENTARES) {
+      // BUG REAL corrigido (2026-09-11): os `continue` abaixo (registros
+      // vazios, ou erro de leitura) pulavam DIRETO pra próxima iteração
+      // do for-of, sem nunca chegar no `page.goto(URL_FUNCOES, ...)` que
+      // ficava no FIM do bloco — a navegação de volta simplesmente não
+      // acontecia toda vez que um programa dava 0 resultado (ex:
+      // "Correntinha" vazia), deixando a página "perdida" pra próxima
+      // iteração (ex: "Távolas" falhava com timeout esperando
+      // ger_funcao.php, porque a página nunca voltou pra lá). Envolver em
+      // try/finally garante que a navegação SEMPRE roda, mesmo com
+      // `continue`/erro no meio.
+      try {
         let registros;
         try {
             registros = await exportarComplementar(page, label, menu);
@@ -538,9 +549,13 @@ async function processarComplementar(page, filialCrm, label) {
                 console.warn(`[complementar] Falha processando "${r.nome}" (${menu}, ${filialCrm}):`, e.message);
             }
         }
+      } finally {
         // Volta pra tela de funções antes do próximo programa — cada
-        // exportarComplementar() reabre a navegação do zero.
+        // exportarComplementar() reabre a navegação do zero. Em `finally`
+        // pra rodar SEMPRE (registros vazios, erro de leitura, ou sucesso
+        // normal — ver comentário no início do `try`).
         await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
+      }
     }
 
     return { totalNovos, totalEnriquecidos };
