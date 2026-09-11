@@ -1350,7 +1350,22 @@ async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = f
                 })
                 .filter(({ precisaHistorico }) => precisaHistorico || modoCompleto);
 
+            let indiceAluno = 0;
             for (const { aluno, lead, precisaHistorico } of alvos) {
+                indiceAluno++;
+                // Atualiza o "carimbo de vida" a cada ALUNO, não só a cada
+                // turma — bug real corrigido (2026-09-11): turma grande
+                // (23+ alunos, cada 1 com visita de ficha) demora bem mais
+                // que LIMITE_PROGRESSO_TRAVADO_MS (5min, js/scraper-progresso.js)
+                // sem nenhuma atualização, então o indicador do topbar
+                // achava (errado) que o processo tinha travado e escondia o
+                // ícone no meio de uma rodada perfeitamente saudável.
+                await atualizarProgresso({
+                    filial: filialCrm,
+                    etapa: `Turmas: "${nomeTurma}" (${indiceTurma} de ${nomesTurmas.length}) — aluno ${indiceAluno} de ${alvos.length}`,
+                    atual: indiceTurma,
+                    total: nomesTurmas.length,
+                });
                 try {
                     const frameDetalheAtual = await entrarNaTurma(nomeTurma);
                     const linkNomeAtual = frameDetalheAtual.locator(`a[href*="uni_cadfun.php?matr=${aluno.matr}"]`).first();
