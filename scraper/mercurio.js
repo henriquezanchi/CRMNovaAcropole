@@ -347,11 +347,31 @@ async function exportarAniversariantes(page, label) {
     const registros = [];
     const vistos = new Set(); // matr (ou nome, se não achou matr) — evita duplicar quem aparece 2x (ex: mudou de situação no meio do ano)
     for (const sit of SITUACOES_ANIVERSARIANTES) {
-        await frame.locator('select[name="sit"]').selectOption({ value: sit });
-        await page.waitForTimeout(700); // sem indicador de carregamento claro — espera curta e fixa, mesmo padrão do resto do arquivo
+        // BUG REAL GRAVE, achado em produção (2026-09-11) — datas de
+        // nascimento erradas em pessoas reais: `onchange="this.form.
+        // submit()"` neste <select> dispara uma RECARGA DE PÁGINA
+        // completa (não uma troca de conteúdo via AJAX) — a versão
+        // anterior só esperava 700ms fixos antes de ler a tabela, sem
+        // confirmar que o reload de fato tinha terminado. Numa resposta
+        // mais lenta do servidor (comum, dado que essa tela pode ter
+        // milhares de linhas de histórico), a leitura acontecia no meio
+        // do carregamento — linhas com dado misto/desatualizado.
+        // Confirmado: os valores errados gravados no banco não batem com
+        // NENHUMA linha de um re-scrape limpo (nem sequer aparecem no
+        // JSON exportado). Corrigido esperando a NAVEGAÇÃO de verdade
+        // (`waitForNavigation`) em vez de um tempo fixo — mesmo espírito
+        // da "espera ativa" já usada em exportarComparecimento() (Ulisses).
+        await Promise.all([
+            frame.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
+            frame.locator('select[name="sit"]').selectOption({ value: sit }),
+        ]);
+        await page.waitForTimeout(300); // pequena folga extra depois do reload confirmado
         for (const mes of MESES_ANIVERSARIANTES) {
-            await frame.locator('select[name="mes"]').selectOption({ value: mes });
-            await page.waitForTimeout(700);
+            await Promise.all([
+                frame.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
+                frame.locator('select[name="mes"]').selectOption({ value: mes }),
+            ]);
+            await page.waitForTimeout(300);
 
             const linhas = frame.locator('table tr');
             const total = await linhas.count();
@@ -999,6 +1019,38 @@ async function processarFichaAluno(page, linkNome, { verificarHistorico, verific
 // Por isso não dá pra só imitar um "copiar e colar" ingênuo — o texto
 // colado é montado aqui já com o número certo extraído do link, e o mesmo
 // link é reaproveitado pra abrir a ficha do aluno (item 2/3 acima).
+//
+// BUG REAL, ainda sem causa raiz confirmada (achado em produção,
+// 2026-09-11): `importarMatriculaViaTexto()` (que pilota a UI do CRM
+// publicado pra aplicar a matrícula) grava `matricula_mercurio`/
+// `data_matricula`/tags de turma corretamente, mas `funil_agencia`
+// continua "Frios" em vez de ir pra "Matriculados" — confirmado contra
+// produção (4 leads reais em Barra do Garças/MT). Testado isoladamente
+// que `ehMatriculaRecente()`/`columnsConfig` (tem "Matriculados" por
+// padrão) funcionam certinho fora desse fluxo — a causa exata dentro do
+// fluxo de UI não foi encontrada a tempo. Corrigido com uma rede de
+// segurança DIRETA no banco (`corrigirFunilMatriculados()`, abaixo) em
+// vez de continuar sem mover ninguém — roda depois de
+// `importarMatriculaViaTexto()`, usando `matricula_mercurio` (já gravado
+// certo) pra achar quem precisa ser corrigido.
+async function corrigirFunilMatriculados(filialCrm, recentes) {
+    for (const r of recentes) {
+        try {
+            const { data, error } = await supabaseAdmin
+                .from('leads_inscricoes')
+                .select('pessoaIdentificador, funil_agencia')
+                .eq('filial', filialCrm)
+                .eq('matricula_mercurio', Number(r.matr))
+                .maybeSingle();
+            if (error || !data) continue;
+            if (String(data.funil_agencia || '').toLowerCase().includes('matricul')) continue; // já está lá — nada a fazer
+            const { error: erroUpdate } = await supabaseAdmin.from('leads_inscricoes').update({ funil_agencia: 'Matriculados' }).eq('pessoaIdentificador', data.pessoaIdentificador);
+            if (!erroUpdate) console.log(`[matricula-turma] "${r.nome}" movido pra "Matriculados" (correção direta — ver bug real acima).`);
+        } catch (e) {
+            console.warn(`[matricula-turma] Falha ao corrigir funil de "${r.nome}" (${filialCrm}):`, e.message);
+        }
+    }
+}
 async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = false, filtroTurma = null) {
     const mesAtual = hojeBrasil().slice(0, 7); // "AAAA-MM"
     let crmAberto = false;
@@ -1133,6 +1185,7 @@ async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = f
                     crmAberto = true;
                 }
                 await importarMatriculaViaTexto(pageCrm, textoColado);
+                await corrigirFunilMatriculados(filialCrm, recentes);
                 totalProcessadas += recentes.length;
                 console.log(`[matricula-turma] ${recentes.length} matrícula(s) de ${mesAtual} na turma "${nomeTurma}" (${filialCrm}) processada(s).`);
             }
