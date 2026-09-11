@@ -69,6 +69,10 @@
                     <i class="fa-solid fa-circle-user"></i> <span id="usuarioLogadoNome"></span>
                     <i class="fa-solid fa-right-from-bracket" style="cursor:pointer; opacity:0.6;" title="Sair" onclick="sairDoCrm()"></i>
                 </div>
+                <div class="scraper-progresso-indicador" id="scraperProgressoIndicador" style="display:none;" title="">
+                    <i class="fa-solid fa-clock-rotate-left scraper-progresso-icone"></i>
+                    <span id="scraperProgressoTexto"></span>
+                </div>
                 <div class="notificacoes-wrapper">
                     <button class="btn-toggle notificacoes-sino" onclick="togglePainelNotificacoes()" title="Notificações">
                         <i class="fa-solid fa-bell"></i>
@@ -622,6 +626,12 @@
                         <div id="drawer-cidade-bloco" style="display:none; margin-top:10px;">
                             <div class="info-label"><i class="fa-solid fa-location-dot"></i> Cidade/UF</div>
                             <div id="drawer-cidade-uf" class="info-box"></div>
+                        </div>
+                        <!-- PROFISSÃO — capturado pelo scraper do Mercúrio (aba PESSOAIS da
+                             ficha, só Modo Completo), só leitura; some se não tiver dado -->
+                        <div id="drawer-profissao-bloco" style="display:none; margin-top:10px;">
+                            <div class="info-label"><i class="fa-solid fa-briefcase"></i> Profissão</div>
+                            <div id="drawer-profissao" class="info-box"></div>
                         </div>
                         <!-- STATUS (Ulisses) — pra saber se vale a pena entrar em contato -->
                         <div id="drawer-status-bloco" style="display:none; margin-top:10px;">
@@ -1309,6 +1319,8 @@
     <script src="js/visao-geral.js"></script>
     <!-- 3f3. Contas de usuário (login nominal + permissão por módulo) -->
     <script src="js/usuarios.js"></script>
+    <!-- 3f4. Indicador de progresso do scraper do Mercúrio (topbar) -->
+    <script src="js/scraper-progresso.js"></script>
     <!-- 3g. Portão de acesso (senha única do time) — carregado por último só
          por convenção de organização; a checagem roda em DOMContentLoaded,
          então a ordem dos scripts não afeta quando o overlay aparece -->

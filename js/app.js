@@ -3490,6 +3490,18 @@ function abrirGaveta(id, opcoes = {}) {
         }
     }
 
+    // PROFISSÃO — capturado pelo scraper do Mercúrio (aba PESSOAIS), só leitura.
+    const blocoProfissao = document.getElementById('drawer-profissao-bloco');
+    if (blocoProfissao) {
+        const temProfissao = lead.profissao && String(lead.profissao).trim() !== '';
+        if (temProfissao) {
+            document.getElementById('drawer-profissao').innerText = lead.profissao;
+            blocoProfissao.style.display = 'block';
+        } else {
+            blocoProfissao.style.display = 'none';
+        }
+    }
+
     document.getElementById('drawer-lembrete-data').value = lead.lembrete_em || '';
     document.getElementById('drawer-lembrete-nota').value = lead.lembrete_nota || '';
     document.getElementById('drawer-lembrete-limpar').style.display = lead.lembrete_em ? 'inline-flex' : 'none';

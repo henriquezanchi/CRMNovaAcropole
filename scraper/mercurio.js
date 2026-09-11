@@ -20,7 +20,7 @@
 // clássico (comum em sites desse período) — por isso as buscas abaixo
 // tentam a página principal E qualquer frame filho antes de desistir.
 import { chromium } from 'playwright';
-import { supabaseAdmin, lerCredencial, registrarStatusSincronizacao } from './lib/supabaseAdmin.js';
+import { supabaseAdmin, lerCredencial, registrarStatusSincronizacao, atualizarProgresso } from './lib/supabaseAdmin.js';
 import { abrirCrmNaFilialParaMatricula, importarMatriculaViaTexto } from './importar-matricula-no-crm.js';
 import { importarNoCrm } from './importar-no-crm.js';
 import fs from 'node:fs';
@@ -826,7 +826,7 @@ async function carregarMapaLeadsPorNome(filialCrm) {
     for (let de = 0; ; de += TAMANHO_PAGINA) {
         const { data, error } = await supabaseAdmin
             .from('leads_inscricoes')
-            .select('pessoaIdentificador, pessoaNome, tags, cidade, uf, telefone_alternativo, pessoaEmail, pessoaTelefoneDDD, pessoaTelefoneNumero')
+            .select('pessoaIdentificador, pessoaNome, tags, cidade, uf, telefone_alternativo, pessoaEmail, pessoaTelefoneDDD, pessoaTelefoneNumero, profissao')
             .eq('filial', filialCrm)
             .order('pessoaIdentificador', { ascending: true })
             .range(de, de + TAMANHO_PAGINA - 1);
@@ -843,6 +843,7 @@ async function carregarMapaLeadsPorNome(filialCrm) {
                 telefoneAlternativo: lead.telefone_alternativo || '',
                 pessoaEmail: lead.pessoaEmail || '',
                 pessoaTelefoneNumero: lead.pessoaTelefoneNumero || '',
+                profissao: lead.profissao || '',
                 ambiguo: false,
             });
         }
@@ -929,6 +930,7 @@ async function aplicarDadosEndereco(leadInfo, nomeAluno, dados) {
     if (dados.cidade && !leadInfo.cidade) patch.cidade = dados.cidade;
     if (dados.uf && !leadInfo.uf) patch.uf = dados.uf;
     if (dados.telefoneAlternativo && !leadInfo.telefoneAlternativo) patch.telefone_alternativo = dados.telefoneAlternativo;
+    if (dados.profissao && !leadInfo.profissao) patch.profissao = dados.profissao;
     // Mesmo bug real corrigido em sincronizarAniversariantesNoCrm(): só
     // preencher o campo não remove a tag "Sem E-mail" sozinha.
     if (patch.pessoaEmail && leadInfo.tags.includes('Sem E-mail')) {
@@ -942,6 +944,7 @@ async function aplicarDadosEndereco(leadInfo, nomeAluno, dados) {
     if (patch.cidade) leadInfo.cidade = patch.cidade;
     if (patch.uf) leadInfo.uf = patch.uf;
     if (patch.telefone_alternativo) leadInfo.telefoneAlternativo = patch.telefone_alternativo;
+    if (patch.profissao) leadInfo.profissao = patch.profissao;
     if (patch.tags) leadInfo.tags = JSON.parse(patch.tags);
     return true;
 }
@@ -1010,6 +1013,22 @@ async function processarFichaAluno(page, linkNome, { verificarHistorico, verific
             resultado.telefoneAlternativo = (await ctx.getByLabel(/alternativo/i).first().inputValue().catch(() => '')).trim();
         } catch (e) {
             console.warn('[ficha-aluno] Falha ao ler ENDEREÇOS:', e.message);
+        }
+
+        // PESSOAIS — Profissão (pedido do usuário, 2026-09-11). Confirmado
+        // por PRINT real (ficha da Adelany: aba própria da grade de
+        // seções, com Profissão/Estado Civil/etc.), mas ainda NÃO
+        // confirmado contra o HTML real — mesmo estágio inicial de
+        // ENDEREÇOS/HISTÓRICO antes do 1º teste; se vier vazio/errado,
+        // mandar o HTML real da aba PESSOAIS resolve rápido.
+        try {
+            const framePessoais = page.frame({ name: 'principal' });
+            await framePessoais.getByText(/^PESSOAIS$/i).first().click();
+            await page.waitForTimeout(600);
+            const ctxPessoais = page.frame({ name: 'principal' }) || framePessoais;
+            resultado.profissao = (await ctxPessoais.getByLabel(/profiss[ãa]o/i).first().inputValue().catch(() => '')).trim();
+        } catch (e) {
+            console.warn('[ficha-aluno] Falha ao ler PESSOAIS (profissão):', e.message);
         }
     }
     return resultado;
@@ -1133,8 +1152,16 @@ async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = f
     }
     console.log(`[turmas] ${nomesTurmas.length} turma(s) encontrada(s) em ${filialCrm}${filtroTurma ? ` (filtro: "${filtroTurma}")` : ''}${modoCompleto ? ' (MODO COMPLETO — visita a ficha de todo aluno)' : ` — procurando ingressos de ${mesAtual} e candidatos a reingresso`}.`);
     let totalAlunosLidos = 0;
+    let indiceTurma = 0;
 
     for (const nomeTurma of nomesTurmas) {
+        indiceTurma++;
+        await atualizarProgresso({
+            filial: filialCrm,
+            etapa: `Turmas: "${nomeTurma}" (${indiceTurma} de ${nomesTurmas.length})`,
+            atual: indiceTurma,
+            total: nomesTurmas.length,
+        });
         try {
             frameTurmas = await esperarFrame(page, 'principal', /uni_esctur\.php/, 15000);
             await frameTurmas.getByRole('link', { name: nomeTurma, exact: true }).click();
@@ -1242,7 +1269,7 @@ async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = f
                         const gravou = await aplicarTagRecuperado(filialCrm, lead, aluno.nome, dados.dataReingresso);
                         if (gravou) { totalRecuperados++; console.log(`[recuperado] "${aluno.nome}" (${filialCrm}) marcado como Recuperado (reingresso em ${dados.dataReingresso || '?'}).`); }
                     }
-                    if (modoCompleto && (dados.email || dados.cidade || dados.uf || dados.telefoneAlternativo)) {
+                    if (modoCompleto && (dados.email || dados.cidade || dados.uf || dados.telefoneAlternativo || dados.profissao)) {
                         const gravou = await aplicarDadosEndereco(lead, aluno.nome, dados);
                         if (gravou) totalEnderecosAtualizados++;
                     }
@@ -1335,6 +1362,9 @@ async function main() {
         page = await context.newPage();
         pageCrm = await (await browser.newContext()).newPage();
 
+        const inicioRodada = new Date().toISOString();
+        await atualizarProgresso({ filial: null, etapa: 'Login', atual: null, total: null, iniciado: inicioRodada, concluido: false });
+
         await loginMercurio(page, matricula, senha);
         console.log('[mercurio] Login OK');
 
@@ -1407,8 +1437,11 @@ async function main() {
         let algumaFalha = false;
         let totalRecuperadosGeral = 0;
         let totalEnderecosGeral = 0;
+        let indiceFilial = 0;
         for (const { label } of cadastros) {
+            indiceFilial++;
             let caminhoAtivos = null, caminhoInativos = null;
+            await atualizarProgresso({ filial: label, etapa: 'Ativos/Inativos', atual: indiceFilial, total: cadastros.length });
             try {
                 ({ caminhoAtivos, caminhoInativos } = await exportarAtivosEInativos(page, label));
                 console.log(`[mercurio] Ativos/Inativos exportados — ${label}: ${caminhoAtivos}, ${caminhoInativos}`);
@@ -1460,6 +1493,7 @@ async function main() {
             // agora também já poder ser enriquecido com e-mail/cidade/UF
             // na etapa seguinte, se aparecer lá.
             await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
+            await atualizarProgresso({ filial: label, etapa: 'Programas Complementares' });
             if (filialCrm) {
                 try {
                     const { totalNovos, totalEnriquecidos } = await processarComplementar(page, filialCrm, label);
@@ -1477,6 +1511,7 @@ async function main() {
             // padrão de isolamento de falha já usado no Ulisses (uma
             // etapa falhar não devia impedir as outras).
             await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
+            await atualizarProgresso({ filial: label, etapa: 'Aniversariantes (e-mail/cidade/UF/nascimento)' });
             try {
                 const caminhoAniversariantes = await exportarAniversariantes(page, label);
                 const resultadoSync = await sincronizarAniversariantesNoCrm(label);
@@ -1489,6 +1524,7 @@ async function main() {
                 await page.screenshot({ path: `debug/mercurio-aniversariantes-${label.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
             }
             await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
+            await atualizarProgresso({ filial: label, etapa: modoCompleto ? 'Turmas (modo completo — visita ficha de todo aluno)' : 'Turmas' });
 
             try {
                 if (filialCrm) {
@@ -1526,6 +1562,7 @@ async function main() {
         await registrarStatusSincronizacao('mercurio', null, false, e.message);
         process.exitCode = 1;
     } finally {
+        await atualizarProgresso({ etapa: 'Concluído', concluido: true });
         if (browser) await browser.close();
     }
 }
@@ -1545,7 +1582,10 @@ async function tratarCancelamento(sinal) {
     console.error(`[mercurio] Recebido ${sinal} — gravando status de cancelamento antes de sair...`);
     try {
         await Promise.race([
-            registrarStatusSincronizacao('mercurio', null, false, `Cancelado (${sinal}) — provavelmente cancelamento manual direto no GitHub Actions. Nenhum dado foi processado por esta rodada.`),
+            Promise.all([
+                registrarStatusSincronizacao('mercurio', null, false, `Cancelado (${sinal}) — provavelmente cancelamento manual direto no GitHub Actions. Nenhum dado foi processado por esta rodada.`),
+                atualizarProgresso({ etapa: `Cancelado (${sinal})`, concluido: true }),
+            ]),
             new Promise(resolve => setTimeout(resolve, 5000)),
         ]);
     } catch { /* melhor esforço — sair é mais importante que garantir o registro */ }

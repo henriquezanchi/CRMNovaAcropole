@@ -47,3 +47,21 @@ export async function registrarStatusSincronizacao(sistema, filial, sucesso, men
     });
     if (error) console.error('Erro ao registrar status de sincronização (não interrompe o job):', error.message);
 }
+
+// Progresso em tempo real (1 linha só, sempre sobrescrita — migracao_scraper_progresso.sql)
+// — base do indicador no topo do CRM (%/ETA). Best-effort: erro aqui nunca
+// derruba o scraper, é só um "termômetro" pro usuário acompanhar.
+export async function atualizarProgresso({ filial, etapa, atual, total, iniciado, concluido }) {
+    try {
+        const payload = { id: 'mercurio', atualizado_em: new Date().toISOString() };
+        if (filial !== undefined) payload.filial = filial;
+        if (etapa !== undefined) payload.etapa = etapa;
+        if (atual !== undefined) payload.passo_atual = atual;
+        if (total !== undefined) payload.passo_total = total;
+        if (iniciado !== undefined) payload.iniciado_em = iniciado;
+        if (concluido !== undefined) payload.concluido = concluido;
+        await supabaseAdmin.from('scraper_progresso').upsert(payload);
+    } catch (e) {
+        console.warn('Erro ao atualizar progresso (não interrompe o job):', e.message);
+    }
+}
