@@ -2767,11 +2767,24 @@ bloqueado).
        espera por "Título" do próximo card nunca bateria — ela só existe
        na aba "Link"). Alimenta as colunas `hora`/`capacidade` de
        `eventos`, que antes ficavam sempre em branco na sincronização
-       automática. **Ainda NÃO testado de verdade** (escrito só com print
-       de tela) — mesmo estágio inicial que as outras funções deste
-       arquivo já passaram; se a leitura vier vazia/errada, mandar o HTML
-       real da aba "Eventos" (Inspecionar no checkbox marcado + a linha
-       `<tr>` toda) resolve rápido.
+       automática. **Confirmado com HTML real (2026-09-11, print do
+       usuário)**: a aba "Eventos" repete 1 `<tr ng-repeat="fa in
+       filiaisAtivas">` por filial de TODO o sistema (dezenas de linhas),
+       com a Descrição em `<textarea>` (por isso o filtro
+       `input:not([type="checkbox"])` já ignorava ela sozinho, por sorte)
+       e Data/Qtd. Vagas em `<input>`, nessa ordem — bate exatamente com o
+       que já estava codificado, nenhuma mudança de seletor precisou.
+     - **Revisão geral do catálogo de eventos (2026-09-11)**, depois do
+       usuário mandar HTML real da aba "Link": confirmado que **não existe
+       campo "Ingresso"/"Valor"/"Preço"** no formulário do Ulisses — o
+       texto "Entrada Gratuita" do preview não vem de um campo editável
+       (removida a tentativa de leitura, que sempre voltava `null` e
+       gastava até 3×4s por evento à toa). Descobertos e passados a
+       capturar 2 campos que não existiam no código antes: **"Rodapé"** e
+       **"Link alternativo"** (Sympla/Hotmart/etc.) — sem coluna própria
+       no banco pra eles, entram concatenados dentro de `descricao` (igual
+       Subtítulo/Informação), com "Link alternativo" rotulado como
+       `"Link: ..."` no texto final.
      - `exportarComparecimento()`: "Pré-inscrições" → "Recepção" (navega
        direto pra `#/recepcao` — o clique no menu nunca chegava lá de
        verdade, o hover é que abre o submenu, não o clique). **1º teste
@@ -2935,10 +2948,23 @@ bloqueado).
          registrado antes neste arquivo ("usuário relatou ter se
          confundido sobre qual filial estava logando"). **2 defesas
          novas**: (1) `verificarFilialLogada()` em `ulisses-local.js` —
-         depois do login, clica no link "Filial" do menu do Ulisses e lê
-         o texto da página; se bater com uma filial DIFERENTE da
-         esperada, ABORTA sem exportar/gravar nada nessa filial (escrito
-         sem HTML real confirmado — próxima rodada valida o seletor). (2)
+         depois do login, confere o nome da filial logada; se bater com
+         uma filial DIFERENTE da esperada, ABORTA sem exportar/gravar
+         nada nessa filial. **Reescrita com HTML real (2026-09-11, print
+         do usuário)**: em vez de clicar no link "Filial" do menu e ler a
+         PÁGINA INTEIRA por substring (nunca confirmado), agora só lê o
+         nome que já fica sempre visível no canto superior direito do
+         Ulisses (`<a class="ng-binding">` dentro de `<ul class="nav
+         navbar-nav navbar-right">`, ao lado de "[SAIR]") — bem mais
+         simples e sem precisar de clique nenhum. Confirmado pelo usuário
+         que cada filial mostra um texto diferente ali; o de Jardim
+         América é o caso "base" sem sufixo ("Nova Acrópole - Goiás -
+         Goiânia"), tratado como caso especial no código — os sufixos
+         exatos de Setor Oeste/Garavelo/Barra do Garças ainda NÃO foram
+         confirmados individualmente (a função nunca bloqueia por uma
+         leitura inconclusiva, só quando o texto bate claramente com
+         OUTRA filial conhecida — se aparecer um aviso `ok: null` numa
+         rodada real, mandar o texto exato exibido fecha o mapeamento). (2)
          `scraper/verificar-eventos-publicos.js`, NOVO — ao final de
          `npm run ulisses-local`, confere cada evento futuro que ficou em
          `eventos` contra o site público da MESMA filial

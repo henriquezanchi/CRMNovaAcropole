@@ -7,14 +7,15 @@
 // sincronizarComparecimentoNoCrm(), chamadas dentro de processarFilial()/
 // processarFilialLocal()) — ver seção "Ulisses" no CLAUDE.md.
 //
-// (a) e (b) foram escritos só com PRINTS de tela, sem o HTML real — login
-// é a única parte confirmada de verdade contra o site real; (a) já
-// precisou de 1 rodada de correção depois do 1º teste (o clique em
-// "Exportar CSV" não baixa nada direto, só navega pra uma tela com um
-// 2º botão — ver exportarCsvInscricoes()), e (b) ainda usa heurísticas de
-// leitura "cegas" (regex em cima do texto visível) pros campos do
-// catálogo de eventos, com boa chance de precisar de mais ajuste. (c) já
-// foi reescrita com o HTML real da tela de Recepção (mandado pelo
+// (a), (b) e (c) já foram confirmadas contra HTML real (não mais só
+// print): (a) precisou de 1 rodada de correção depois do 1º teste (o
+// clique em "Exportar CSV" não baixa nada direto, só navega pra uma tela
+// com um 2º botão — ver exportarCsvInscricoes()); (b) teve os campos da
+// aba "Link" e a estrutura da aba "Eventos" confirmados com HTML real
+// (2026-09-11) — os rótulos batem exatamente com o que já estava
+// codificado, e ficou confirmado que NÃO existe campo de
+// Ingresso/Valor/Preço no formulário (removida a tentativa de leitura);
+// (c) foi reescrita com o HTML real da tela de Recepção (mandado pelo
 // usuário depois de um bug real em produção — ver comentário dentro de
 // exportarComparecimento()), usando seletores por atributo Angular
 // (`ng-repeat`/`ng-show`), bem mais confiáveis que heurística de texto.
@@ -163,18 +164,19 @@ export async function exportarCatalogoEventos(page, filial) {
 
     // O painel de detalhes tem 2 abas: "Link" (Título/Imagem/Descrição
     // etc., já lidos acima por getByLabel) e "Eventos" — uma tabela com 1
-    // linha por filial do Ulisses, cada uma com Data/Hora e Qtd. Vagas
-    // PRÓPRIAS (esse formulário é literalmente o equivalente, do lado do
-    // Ulisses, do nosso conceito de evento multi-filial — grupo_evento_id
-    // em `eventos`). Sem isso, `hora`/`capacidade` nunca eram preenchidos
-    // na sincronização. Só a(s) linha(s) da(s) filial(is) que essa conta
-    // efetivamente usa vem(êm) com o checkbox marcado — as demais linhas
-    // (outros municípios) ficam sem preencher. Escrito só com PRINT de
-    // tela (ver topo do arquivo) — sem o HTML real não dá pra ter certeza
-    // do nome/role exato das abas nem da ordem exata das colunas, por
-    // isso os vários fallbacks e o comentário de "layout observado"
-    // abaixo; se quebrar, mandar o HTML real da aba "Eventos" resolve
-    // rápido.
+    // linha POR FILIAL DE TODO O SISTEMA (`ng-repeat="fa in
+    // filiaisAtivas"`, dezenas de linhas — Alto Paraíso, Anápolis,
+    // Catalão... cada município do Ulisses), cada uma com Descrição/Data/
+    // Qtd. Vagas/Local PRÓPRIAS (esse formulário é literalmente o
+    // equivalente, do lado do Ulisses, do nosso conceito de evento
+    // multi-filial — grupo_evento_id em `eventos`). Confirmado com HTML
+    // real (2026-09-11): só a linha da filial que essa conta efetivamente
+    // usa vem com o checkbox de seleção marcado (e também um 2º checkbox,
+    // "Local", na mesma linha) — as demais ficam com os campos
+    // escondidos via `ng-show="fa.participante"`. A Descrição desta aba é
+    // um `<textarea>`, não um `<input>` — por isso o filtro
+    // `input:not([type="checkbox"])` mais abaixo já ignora ela sozinho e
+    // sobra só Data + Qtd. Vagas, na ordem certa.
     const clicarAba = async (nomeExato) => {
         const candidatos = [
             page.getByRole('tab', { name: nomeExato, exact: true }),
@@ -303,13 +305,27 @@ export async function exportarCatalogoEventos(page, filial) {
                 subtitulo: await ler('subt[íi]tulo'),
                 informacao: await ler('informa[çc][ãa]o'),
                 descricao: await ler('descri[çc][ãa]o'),
-                // "todos os dados possíveis" (pedido do usuário) — tentativa
-                // best-effort, NUNCA confirmada contra o HTML real (não sei
-                // se o painel do Ulisses tem um campo de rótulo
-                // "Ingresso"/"Valor"/"Preço" — ler() já devolve null sem
-                // quebrar nada se o rótulo não existir). Se vier sempre
-                // null, mandar o HTML real do painel resolve rápido.
-                ingresso: await ler('ingresso') || await ler('valor') || await ler('pre[çc]o'),
+                // 2 campos a mais, confirmados no mesmo HTML real
+                // (2026-09-11) — não existia coluna própria pra eles no
+                // CRM ainda, então entram junto na `descricao` final (ver
+                // sincronizarCatalogoEventosNoCrm() logo abaixo), com
+                // rótulo próprio, em vez de criar migração nova pra 2
+                // campos que podem nem vir preenchidos na maioria dos
+                // eventos.
+                rodape: await ler('rodap[ée]'),
+                link_alternativo: await ler('link alternativo'),
+                // Confirmado com HTML real (2026-09-11, print do usuário):
+                // NÃO EXISTE campo "Ingresso"/"Valor"/"Preço" no formulário
+                // do Ulisses (aba "Link" tem só Título/Tipo link/Imagem/
+                // Subtítulo/Informação/Descrição/Rodapé/Link alternativo).
+                // O texto "Entrada Gratuita" que aparece no preview do
+                // evento não vem de um campo editável — é derivado de
+                // outra coisa do lado do Ulisses (provavelmente o "Tipo
+                // link"), não dá pra capturar por aqui. Removida a
+                // tentativa de leitura (eram até 3 buscas de 4s cada, por
+                // evento, sempre voltando null) — `ingresso` continua só
+                // editável na Agenda do CRM.
+                ingresso: null,
             };
             const { hora, capacidade } = await lerDataHoraEVagas();
 
@@ -875,7 +891,10 @@ export async function sincronizarCatalogoEventosNoCrm(filial) {
             .eq('filial', filial).eq('nome', ev.titulo).eq('data', ev.data)
             .maybeSingle();
 
-        const descricaoNova = [ev.subtitulo, ev.informacao, ev.descricao].filter(Boolean).join('\n\n') || null;
+        const descricaoNova = [
+            ev.subtitulo, ev.informacao, ev.descricao, ev.rodape,
+            ev.link_alternativo ? `Link: ${ev.link_alternativo}` : null,
+        ].filter(Boolean).join('\n\n') || null;
 
         if (existente) {
             // NUNCA sobrescreve com `null` um campo que já tinha valor —

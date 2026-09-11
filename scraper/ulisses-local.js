@@ -139,30 +139,47 @@ function tokenDistintivoFilial(nomeFilial) {
 // a senha (ou aceitar uma senha salva no gerenciador do navegador) de UMA
 // filial na janela que o script abriu pensando ser de OUTRA — o script
 // então roda achando que está exportando/gravando dados de "Setor Oeste",
-// mas na verdade está autenticado como Garavelo. Clica no link "Filial"
-// do menu do Ulisses (mesmo padrão já visto no topo de toda tela:
-// "Links | Emails | Pré-inscrições | Relatórios | Exportar CSV | Filial")
-// e lê o texto da página resultante — se bater com uma filial DIFERENTE
-// da esperada, ABORTA sem exportar nem gravar nada (evita repetir o
-// mesmo mistura-de-filial). Escrito sem HTML real confirmado — se o
-// seletor "Filial" não achar nada ou o texto não bater com nenhuma
-// filial conhecida, best-effort: avisa e SEGUE mesmo assim (nunca
-// bloqueia por uma leitura inconclusiva).
+// mas na verdade está autenticado como Garavelo.
+//
+// Reescrito com HTML real (2026-09-11, print do usuário) — bem mais
+// simples do que a versão anterior (que clicava no link "Filial" do menu
+// e lia a PÁGINA INTEIRA por substring, nunca confirmado contra HTML
+// real): o nome da filial logada já fica sempre visível, sem precisar
+// clicar em nada — <a class="ng-binding"> dentro de <ul class="nav
+// navbar-nav navbar-right">, bem ao lado de "[SAIR]". Confirmado pelo
+// usuário que cada filial mostra um texto DIFERENTE ali — só que o de
+// Jardim América é o caso "base", sem sufixo nenhum ("Nova Acrópole -
+// Goiás - Goiânia"); as outras 3 (Setor Oeste/Garavelo/Barra do Garças)
+// presumivelmente têm um sufixo próprio, ainda NÃO confirmado
+// individualmente (se aparecer um falso-alarme/`ok: null` para alguma
+// delas, mandar o texto exato que aparece ali resolve de vez). Nunca
+// bloqueia por uma leitura inconclusiva — só aborta quando o texto bate
+// claramente com OUTRA filial conhecida.
+const TEXTO_BASE_GOIANIA = 'NOVA ACROPOLE - GOIAS - GOIANIA';
 async function verificarFilialLogada(page, filialEsperada, todasFiliaisNomes) {
+    let textoBruto;
     try {
-        await page.getByRole('link', { name: 'Filial', exact: true }).first().click({ timeout: 5000 });
-        await page.waitForTimeout(600);
-        const texto = normalizarTextoFilial(await page.locator('body').innerText());
-        const tokenEsperado = tokenDistintivoFilial(filialEsperada);
-        if (tokenEsperado && texto.includes(tokenEsperado)) return { ok: true };
-        const outraBatendo = todasFiliaisNomes.find(f => f !== filialEsperada && texto.includes(tokenDistintivoFilial(f)));
-        if (outraBatendo) {
-            return { ok: false, motivo: `A tela "Filial" do Ulisses mostra "${outraBatendo}", não "${filialEsperada}" — a sessão logada nesta janela parece ser de outra filial (senha da conta errada?).` };
-        }
-        return { ok: null, motivo: 'Não consegui confirmar automaticamente a filial logada (o texto da tela "Filial" não bateu com nenhuma filial conhecida) — seguindo mesmo assim, confira manualmente se os dados exportados fazem sentido.' };
+        textoBruto = await page.locator('ul.navbar-right a.ng-binding').first().innerText({ timeout: 5000 });
     } catch (e) {
-        return { ok: null, motivo: `Não consegui abrir/ler a tela "Filial" pra confirmar (${e.message}) — seguindo mesmo assim.` };
+        return { ok: null, motivo: `Não consegui ler o nome da filial logada pra confirmar (${e.message}) — seguindo mesmo assim.` };
     }
+
+    const texto = normalizarTextoFilial(textoBruto);
+    const sufixo = texto.startsWith(TEXTO_BASE_GOIANIA) ? texto.slice(TEXTO_BASE_GOIANIA.length).trim() : texto;
+    const ehJardimAmerica = tokenDistintivoFilial(filialEsperada) === 'JARDIM AMERICA';
+
+    if (ehJardimAmerica && !sufixo) return { ok: true }; // caso "base" confirmado
+    const tokenEsperado = tokenDistintivoFilial(filialEsperada);
+    if (!ehJardimAmerica && tokenEsperado && sufixo.includes(tokenEsperado)) return { ok: true };
+
+    const pareceJardimAmerica = !sufixo;
+    const outraBatendo = pareceJardimAmerica
+        ? todasFiliaisNomes.find(f => tokenDistintivoFilial(f) === 'JARDIM AMERICA' && f !== filialEsperada)
+        : todasFiliaisNomes.find(f => f !== filialEsperada && sufixo.includes(tokenDistintivoFilial(f)));
+    if (outraBatendo) {
+        return { ok: false, motivo: `A tela mostra "${textoBruto}" (parece ser de "${outraBatendo}"), não "${filialEsperada}" — a sessão logada nesta janela parece ser de outra filial (senha da conta errada?).` };
+    }
+    return { ok: null, motivo: `Não consegui confirmar automaticamente a filial logada (texto mostrado: "${textoBruto}") — seguindo mesmo assim, confira manualmente se os dados exportados fazem sentido. Se este texto for realmente de "${filialEsperada}", me avise pra eu gravar esse mapeamento e não depender mais de "ok: null" aqui.` };
 }
 
 async function processarFilialLocal(browser, filial, todasFiliaisNomes) {
