@@ -551,29 +551,46 @@ async function processarComplementar(page, filialCrm, label, modoCompleto = fals
         return page.frame({ name: 'principal' });
     };
 
+    // Lê os 4 programas primeiro, sem ficha nenhuma — mesmo princípio já
+    // usado em processarTurmas() (pré-varredura): sem isso, o único
+    // "carimbo de vida" do progresso era 1 chamada genérica ANTES de todo
+    // o passo Complementar (ver main()), que ficava velha demais durante
+    // uma filial grande (Jardim América: Correntinha 4 + Távolas 11 +
+    // outros, cada 1 com ficha visitada no Modo Completo) — o indicador
+    // do topbar achava (errado) que tinha travado, mesmo sinal de bug já
+    // corrigido pra Turmas. BUG REAL corrigido (2026-09-11): a versão
+    // anterior tinha os `continue` (registros vazios, erro de leitura)
+    // DENTRO do mesmo loop que também abria ficha — um `try/finally`
+    // cuidava só da navegação de volta; agora a leitura das 4 listas fica
+    // separada do processamento pessoa a pessoa, então nem precisa mais
+    // desse cuidado ali.
+    const listasPorPrograma = [];
     for (const { menu, nivelTag } of PROGRAMAS_COMPLEMENTARES) {
-      // BUG REAL corrigido (2026-09-11): os `continue` abaixo (registros
-      // vazios, ou erro de leitura) pulavam DIRETO pra próxima iteração
-      // do for-of, sem nunca chegar no `page.goto(URL_FUNCOES, ...)` que
-      // ficava no FIM do bloco — a navegação de volta simplesmente não
-      // acontecia toda vez que um programa dava 0 resultado (ex:
-      // "Correntinha" vazia), deixando a página "perdida" pra próxima
-      // iteração (ex: "Távolas" falhava com timeout esperando
-      // ger_funcao.php, porque a página nunca voltou pra lá). Envolver em
-      // try/finally garante que a navegação SEMPRE roda, mesmo com
-      // `continue`/erro no meio.
-      try {
-        let registros;
         try {
-            registros = await exportarComplementar(page, label, menu);
+            const registros = await exportarComplementar(page, label, menu);
+            if (registros.length > 0) console.log(`[complementar] "${menu}" (${filialCrm}): ${registros.length} pessoa(s) encontrada(s).`);
+            listasPorPrograma.push({ menu, nivelTag, registros });
         } catch (e) {
             console.warn(`[complementar] Falha ao ler "${menu}" (${filialCrm}):`, e.message);
-            continue;
+            listasPorPrograma.push({ menu, nivelTag, registros: [] });
+        } finally {
+            await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
         }
+    }
+    const totalPessoasGeral = listasPorPrograma.reduce((soma, p) => soma + p.registros.length, 0);
+    let pessoasProcessadasGeral = 0;
+
+    for (const { menu, nivelTag, registros } of listasPorPrograma) {
         if (registros.length === 0) continue;
-        console.log(`[complementar] "${menu}" (${filialCrm}): ${registros.length} pessoa(s) encontrada(s).`);
 
         for (const r of registros) {
+            pessoasProcessadasGeral++;
+            await atualizarProgresso({
+                filial: label,
+                etapa: `Programas Complementares: "${menu}" — pessoa ${pessoasProcessadasGeral} de ${totalPessoasGeral}`,
+                atual: pessoasProcessadasGeral,
+                total: totalPessoasGeral,
+            });
             try {
                 const { chave, lead: existente } = buscarLeadPorNomeTolerante(mapaLeads, r.nome);
 
@@ -642,13 +659,6 @@ async function processarComplementar(page, filialCrm, label, modoCompleto = fals
                 console.warn(`[complementar] Falha processando "${r.nome}" (${menu}, ${filialCrm}):`, e.message);
             }
         }
-      } finally {
-        // Volta pra tela de funções antes do próximo programa — cada
-        // exportarComplementar() reabre a navegação do zero. Em `finally`
-        // pra rodar SEMPRE (registros vazios, erro de leitura, ou sucesso
-        // normal — ver comentário no início do `try`).
-        await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
-      }
     }
 
     return { totalNovos, totalEnriquecidos, totalEnderecosAtualizados };
