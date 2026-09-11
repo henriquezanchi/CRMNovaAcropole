@@ -571,7 +571,7 @@ async function carregarMapaLeadsPorNome(filialCrm) {
     for (let de = 0; ; de += TAMANHO_PAGINA) {
         const { data, error } = await supabaseAdmin
             .from('leads_inscricoes')
-            .select('pessoaIdentificador, pessoaNome, tags, cidade, uf, telefone_alternativo, pessoaEmail')
+            .select('pessoaIdentificador, pessoaNome, tags, cidade, uf, telefone_alternativo, pessoaEmail, pessoaTelefoneDDD, pessoaTelefoneNumero')
             .eq('filial', filialCrm)
             .order('pessoaIdentificador', { ascending: true })
             .range(de, de + TAMANHO_PAGINA - 1);
@@ -587,12 +587,55 @@ async function carregarMapaLeadsPorNome(filialCrm) {
                 uf: lead.uf || '',
                 telefoneAlternativo: lead.telefone_alternativo || '',
                 pessoaEmail: lead.pessoaEmail || '',
+                pessoaTelefoneNumero: lead.pessoaTelefoneNumero || '',
                 ambiguo: false,
             });
         }
         if (!data || data.length < TAMANHO_PAGINA) break;
     }
     return mapa;
+}
+
+// Extrai DDD + número de um telefone lido na coluna "Fone" da lista de
+// alunos de uma turma (celulas[5], já capturada há tempos pra
+// `processarTurmas()` — parte comprovadamente funcional, sem relação com
+// os seletores NÃO testados de HISTÓRICO/ENDEREÇOS). Só dígitos; DDD = 2
+// primeiros, resto = número — só aceita se sobrar 8 ou 9 dígitos depois
+// do DDD (mesma validação de `salvarTelefoneLead()`, js/app.js). Formato
+// exato do campo no Mercúrio ainda não confirmado com 100% de certeza —
+// se vier sempre `null` daqui, o formato real é outro; mandar 1 exemplo
+// de texto bruto resolve rápido.
+function extrairDddNumero(foneMercurio) {
+    const digitos = String(foneMercurio || '').replace(/\D/g, '');
+    if (digitos.length < 10 || digitos.length > 11) return null;
+    const ddd = digitos.slice(0, 2);
+    const numero = digitos.slice(2);
+    if (numero.length !== 8 && numero.length !== 9) return null;
+    return { ddd, numero };
+}
+
+// Preenche o telefone de QUALQUER aluno sem telefone usando o dado que já
+// vem de graça na lista de alunos da turma (não depende do Mercúrio ter
+// "Ativos sem correspondência" cadastrados com telefone — a lista de
+// Ativos do Mercúrio NUNCA teve coluna de telefone, só a Turma tem; ver
+// CLAUDE.md). Roda pra TODO aluno de TODA turma, nos 2 modos (Incremental
+// e Completo) — é dado já lido de qualquer forma, custo zero de
+// navegação extra. NUNCA sobrescreve um telefone já preenchido (pode ter
+// vindo de uma importação anterior do Ulisses, mais confiável). Também
+// remove a tag "Sem Telefone" quando aplicável, senão o badge ficaria
+// errado até a próxima reimportação completa.
+async function aplicarTelefoneDaTurma(leadInfo, nomeAluno, foneMercurio) {
+    if (leadInfo.pessoaTelefoneNumero) return false;
+    const tel = extrairDddNumero(foneMercurio);
+    if (!tel) return false;
+    const novasTags = leadInfo.tags.includes('Sem Telefone') ? leadInfo.tags.filter(t => t !== 'Sem Telefone') : leadInfo.tags;
+    const { error } = await supabaseAdmin.from('leads_inscricoes')
+        .update({ pessoaTelefoneDDD: tel.ddd, pessoaTelefoneNumero: tel.numero, tags: JSON.stringify(novasTags) })
+        .eq('pessoaIdentificador', leadInfo.pessoaIdentificador);
+    if (error) { console.warn(`[telefone-turma] Falha ao gravar telefone de "${nomeAluno}":`, error.message); return false; }
+    leadInfo.pessoaTelefoneNumero = tel.numero;
+    leadInfo.tags = novasTags;
+    return true;
 }
 
 // Grava a tag "Recuperado" (permanente, nunca removida em reimportação —
@@ -730,12 +773,13 @@ async function processarFichaAluno(page, linkNome, { verificarHistorico, verific
 // Por isso não dá pra só imitar um "copiar e colar" ingênuo — o texto
 // colado é montado aqui já com o número certo extraído do link, e o mesmo
 // link é reaproveitado pra abrir a ficha do aluno (item 2/3 acima).
-async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = false) {
+async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = false, filtroTurma = null) {
     const mesAtual = hojeBrasil().slice(0, 7); // "AAAA-MM"
     let crmAberto = false;
     let totalProcessadas = 0;
     let totalRecuperados = 0;
     let totalEnderecosAtualizados = 0;
+    let totalTelefonesPreenchidos = 0;
 
     const mapaLeads = await carregarMapaLeadsPorNome(filialCrm);
 
@@ -773,8 +817,17 @@ async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = f
     await frameIndice.getByText('Turmas', { exact: true }).first().click();
     let frameTurmas = await esperarFrame(page, 'principal', /uni_esctur\.php/, 15000);
 
-    const nomesTurmas = [...new Set((await frameTurmas.locator('a[href^="uni_esctal.php?turma="]').allTextContents()).map(t => t.trim()).filter(Boolean))];
-    console.log(`[turmas] ${nomesTurmas.length} turma(s) encontrada(s) em ${filialCrm}${modoCompleto ? ' (MODO COMPLETO — visita a ficha de todo aluno)' : ` — procurando ingressos de ${mesAtual} e candidatos a reingresso`}.`);
+    const nomesTurmasTodas = [...new Set((await frameTurmas.locator('a[href^="uni_esctal.php?turma="]').allTextContents()).map(t => t.trim()).filter(Boolean))];
+    // Filtro opcional por nome de turma (substring, case-insensitive) —
+    // pensado pra um teste RÁPIDO e pequeno (1 turma só) antes de soltar
+    // uma rodada completa de horas — ver `--turma`/env `FILTRO_TURMA` em main().
+    const nomesTurmas = filtroTurma
+        ? nomesTurmasTodas.filter(n => n.toLowerCase().includes(filtroTurma.toLowerCase()))
+        : nomesTurmasTodas;
+    if (filtroTurma && nomesTurmas.length === 0) {
+        console.warn(`[turmas] Nenhuma turma de "${filialCrm}" bate com o filtro "${filtroTurma}" (turmas encontradas: ${nomesTurmasTodas.join(', ')}).`);
+    }
+    console.log(`[turmas] ${nomesTurmas.length} turma(s) encontrada(s) em ${filialCrm}${filtroTurma ? ` (filtro: "${filtroTurma}")` : ''}${modoCompleto ? ' (MODO COMPLETO — visita a ficha de todo aluno)' : ` — procurando ingressos de ${mesAtual} e candidatos a reingresso`}.`);
     let totalAlunosLidos = 0;
 
     for (const nomeTurma of nomesTurmas) {
@@ -828,6 +881,20 @@ async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = f
                 recentes.push({ matr, nome, origem, ingresso, fone });
             }
 
+            // ---- Backfill de telefone pra QUALQUER aluno sem telefone,
+            // usando o que já veio de graça nesta mesma leitura da turma
+            // (celulas[5] acima) — roda nos 2 modos, não depende de
+            // HISTÓRICO/ENDEREÇOS (seletores ainda não confirmados). A
+            // lista "Ativos" do Mercúrio nunca teve telefone — só a Turma
+            // tem — então isso é a única fonte automática hoje pra quem
+            // não veio (ou não vem mais) do Ulisses.
+            for (const aluno of alunosLidos) {
+                const lead = mapaLeads.get(normalizarNomeMercurio(aluno.nome));
+                if (!lead || lead.ambiguo) continue;
+                const preencheu = await aplicarTelefoneDaTurma(lead, aluno.nome, aluno.fone);
+                if (preencheu) totalTelefonesPreenchidos++;
+            }
+
             if (recentes.length > 0) {
                 const textoColado = [
                     'Matr.\tNome\tOrigem\tIngresso\tFormatura\tFone\tFunções\t\t\t\tObservações',
@@ -878,6 +945,7 @@ async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = f
                     console.warn(`[ficha-aluno] Falha processando "${aluno.nome}" (turma "${nomeTurma}", ${filialCrm}):`, e.message);
                 }
             }
+            console.log(`[turma] "${nomeTurma}" (${filialCrm}): ${alunosLidos.length} aluno(s) na lista, ${alvos.length} ficha(s) visitada(s) neste modo.`);
         } catch (e) {
             console.warn(`[matricula-turma] Falha na turma "${nomeTurma}" (${filialCrm}):`, e.message);
         }
@@ -891,8 +959,8 @@ async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = f
         } catch { /* se falhar aqui, a próxima iteração do for vai falhar rápido e seguir também */ }
     }
 
-    console.log(`[turmas] ${totalAlunosLidos} aluno(s) lidos no total em ${filialCrm}; ${totalProcessadas} matrícula(s) de ${mesAtual}; ${totalRecuperados} recuperação(ões) detectada(s); ${totalEnderecosAtualizados} ficha(s) de endereço atualizada(s).`);
-    return { totalProcessadas, totalRecuperados, totalEnderecosAtualizados };
+    console.log(`[turmas] ${totalAlunosLidos} aluno(s) lidos no total em ${filialCrm}; ${totalProcessadas} matrícula(s) de ${mesAtual}; ${totalRecuperados} recuperação(ões) detectada(s); ${totalEnderecosAtualizados} ficha(s) de endereço atualizada(s); ${totalTelefonesPreenchidos} telefone(s) preenchido(s) via lista de turma.`);
+    return { totalProcessadas, totalRecuperados, totalEnderecosAtualizados, totalTelefonesPreenchidos };
 }
 
 // O Ulisses NUNCA vai rodar sozinho (Cloudflare exige login manual — ver
@@ -994,9 +1062,16 @@ async function main() {
         // "Rodar Mercúrio Agora" do CRM nem pelo cron diário. Sem a flag,
         // roda no MODO INCREMENTAL de sempre (só ingressos do mês corrente
         // + candidatos a reingresso, ver processarTurmas()).
+        // `--turma "NOME"` (ou env FILTRO_TURMA) — filtro extra, pensado
+        // pra um teste RÁPIDO (1 turma só) validando HISTÓRICO/ENDEREÇOS
+        // antes de soltar uma rodada completa de horas (ver
+        // processarTurmas()) — combina com `--completo` pra também testar
+        // ENDEREÇOS, não só o telefone/reingresso do modo incremental.
         const argv = process.argv.slice(2);
         const modoCompleto = argv.includes('--completo') || process.env.MODO_COMPLETO === 'true';
-        const filtro = argv.find(a => a !== '--completo') || process.env.FILTRO_FILIAL || null;
+        const idxTurma = argv.indexOf('--turma');
+        const filtroTurma = idxTurma !== -1 ? argv[idxTurma + 1] : (process.env.FILTRO_TURMA || null);
+        const filtro = argv.find((a, i) => a !== '--completo' && a !== '--turma' && i !== idxTurma + 1) || process.env.FILTRO_FILIAL || null;
         const filtroNucleo = filtro ? nucleoDistintivoFilial(filtro) : null;
         const cadastros = filtroNucleo
             ? cadastrosTodos.filter(c => normalizarTextoFilial(c.label).includes(filtroNucleo))
@@ -1063,10 +1138,10 @@ async function main() {
 
             try {
                 if (filialCrm) {
-                    const resultadoTurmas = await processarTurmas(page, pageCrm, filialCrm, label, modoCompleto);
+                    const resultadoTurmas = await processarTurmas(page, pageCrm, filialCrm, label, modoCompleto, filtroTurma);
                     totalRecuperadosGeral += resultadoTurmas.totalRecuperados;
                     totalEnderecosGeral += resultadoTurmas.totalEnderecosAtualizados;
-                    console.log(`[turmas] ${label}: ${resultadoTurmas.totalProcessadas} matrícula(s) do mês corrente, ${resultadoTurmas.totalRecuperados} recuperação(ões), ${resultadoTurmas.totalEnderecosAtualizados} endereço(s) atualizado(s).`);
+                    console.log(`[turmas] ${label}: ${resultadoTurmas.totalProcessadas} matrícula(s) do mês corrente, ${resultadoTurmas.totalRecuperados} recuperação(ões), ${resultadoTurmas.totalEnderecosAtualizados} endereço(s) atualizado(s), ${resultadoTurmas.totalTelefonesPreenchidos} telefone(s) preenchido(s).`);
                 }
             } catch (e) {
                 algumaFalha = true;
