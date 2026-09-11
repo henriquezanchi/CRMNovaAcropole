@@ -1156,6 +1156,51 @@ Decisões já tomadas (não precisam ser reabertas, a menos que o usuário peça
     Não foi possível testar contra o Mercúrio real (não temos acesso;
     o bug só se manifesta entre múltiplas filiais/reloads reais) — a
     próxima rodada do job diário valida.
+  - **Bug real #5, GRAVÍSSIMO (2026-09-11) — raiz DIFERENTE do Bug #4
+    acima, mesma classe de sintoma (dados de uma filial contaminando
+    outra)**: `BASE_ID_ATIVOS_SEM_INSCRICAO + idxAtivo`/
+    `BASE_ID_INATIVOS_SEM_INSCRICAO + idxInativo` (`js/importador.js`) —
+    o índice sequencial (`idxAtivo`/`idxInativo`, 1, 2, 3...) usado pra
+    montar o `pessoaIdentificador` sintético de quem está em Ativos/
+    Inativos mas não bate com Inscrições — **não tinha NENHUMA referência
+    à filial**. A 1ª pessoa "sem correspondência" de QUALQUER filial
+    sempre virava `900000001`, a 2ª `900000002`, etc. — o MESMO número,
+    em filiais diferentes. Como o envio faz `upsert` por
+    `pessoaIdentificador` (chave única GLOBAL da tabela, não por filial —
+    ver topo deste arquivo), a filial que importa DEPOIS sobrescreve
+    silenciosamente os leads da filial que importou ANTES, sem erro
+    nenhum. **Confirmado em produção**: a 1ª importação completa do
+    Garavelo (92 pessoas, ids `900000001-32`/`950000001-60`) sobrescreveu
+    92 leads de Barra do Garças/MT que já ocupavam exatamente esses
+    mesmos ids — usuário reportou "sumiram os leads de Barra do Garças" e
+    identificou sozinho que a contagem batia exatamente com o total
+    importado do Garavelo. Diferente do Bug #4 (que criava DUPLICATAS
+    fantasmas, preservando o registro original intacto na filial certa),
+    este aqui **sobrescreve e perde** o conteúdo original — a linha
+    continua existindo (mesmo `pessoaIdentificador`), só passa a
+    representar outra pessoa, de outra filial. **Corrigido** com
+    `offsetSinteticoFilial(filialDestino)`: reserva 1.000.000 de ids por
+    filial dentro de cada faixa (900M/950M), baseado em `filiais.id`
+    (inteiro pequeno e ESTÁVEL — nunca reciclado pelo Postgres mesmo se a
+    filial for desativada; bem mais seguro que a posição na lista
+    carregada, que o usuário pode reordenar em "Gerenciar Filiais" a
+    qualquer momento). Mesmo fix aplicado em `resgatarLinhaAuditoria()`
+    (`BASE_ID_AUDITORIA_RESGATADA + indice`, mesmo risco). **Recuperação**:
+    como o Mercúrio continua com os dados corretos (nada foi perdido do
+    lado de LÁ), bastou reimportar a filial afetada depois do fix —
+    qualquer edição MANUAL feita no CRM especificamente nos 92 leads
+    atingidos (tag customizada, resumo_ia, funil_agencia movido à mão)
+    antes da colisão não é recuperável por reimportação (Mercúrio não
+    carrega isso), mas o risco real disso ali era baixo (filial ainda em
+    fase de teste). **Lição pra qualquer id sintético futuro**: nunca
+    basear em um contador que reseta a cada importação sem misturar
+    alguma referência estável à filial — `js/matricula-importar.js`
+    (faixa `990000000+`) usa um sorteio aleatório num range de 9 milhões
+    em vez de um contador sequencial, o que reduz (mas não elimina) o
+    mesmo risco — ver comentário próprio nesse arquivo, ainda não
+    corrigido, risco considerado baixo pela raridade do caminho ("novo
+    lead" dentro da importação de matrícula via print) e por já usar
+    randomização em vez de um contador previsível.
   - `"Sem Telefone"`/`"Sem E-mail"` são recalculadas por ÚLTIMO, sempre em
     cima do valor FINAL de telefone/e-mail (já com a preservação acima
     aplicada) — nunca em cima do dado transiente da planilha parcial,
