@@ -1417,6 +1417,12 @@ function abrirNovoLeadManual() {
     document.getElementById('novoLeadManualDDD').value = '';
     document.getElementById('novoLeadManualTelefone').value = '';
     document.getElementById('novoLeadManualEmail').value = '';
+    // Pedido do usuário (2026-09-11): escolher a coluna inicial em vez de
+    // sempre cair na primeira — populado a partir de columnsConfig, com a
+    // primeira coluna pré-selecionada (comportamento de antes, agora só
+    // editável).
+    const selectColuna = document.getElementById('novoLeadManualColuna');
+    selectColuna.innerHTML = columnsConfig.map(c => `<option value="${escapeHTML(c.key)}">${escapeHTML(c.label)}</option>`).join('');
     document.getElementById('modalNovoLeadManual').classList.add('open');
     document.getElementById('overlayModalNovoLeadManual').classList.add('active');
 }
@@ -1431,6 +1437,7 @@ async function confirmarNovoLeadManual() {
     const ddd = document.getElementById('novoLeadManualDDD').value.trim();
     const telefone = document.getElementById('novoLeadManualTelefone').value.trim();
     const email = document.getElementById('novoLeadManualEmail').value.trim();
+    const colunaEscolhida = document.getElementById('novoLeadManualColuna').value;
 
     const idsExistentes = new Set(leadsAtuais.map(l => String(l.pessoaIdentificador)));
     let novoId;
@@ -1452,7 +1459,7 @@ async function confirmarNovoLeadManual() {
         eventoData: '',
         historico_eventos: [],
         tags: JSON.stringify(tags),
-        funil_agencia: columnsConfig[0] ? columnsConfig[0].key : '',
+        funil_agencia: colunaEscolhida || (columnsConfig[0] ? columnsConfig[0].key : ''),
         filial: filialAtual,
     };
 
@@ -3317,6 +3324,19 @@ function escapeHTML(str) {
 // comuns em minúsculo (menos na primeira palavra). Usado no Status da
 // gaveta — puramente de exibição, não muda o valor guardado.
 const PALAVRAS_MINUSCULAS_TITULO = ['de', 'da', 'do', 'das', 'dos', 'e', 'em', 'no', 'na', 'a', 'o', 'com', 'pra', 'para'];
+// Subtítulo da gaveta do lead — pedido do usuário (2026-09-11): mostrar a
+// filial junto (nem sempre é óbvio de qual filial é o lead, sobretudo
+// numa busca global) e, quando o lead tem `matricula_mercurio` gravado
+// (aluno Ativo real, ou já matriculado via a tela de Turma), usar a
+// MATRÍCULA REAL do Mercúrio em vez do ID sintético do CRM (900000000+
+// etc.) — mais reconhecível pra quem trabalha direto com o Mercúrio.
+function formatarIdentificadorLead(lead) {
+    return lead.matricula_mercurio ? `Matrícula: ${lead.matricula_mercurio}` : `ID: ${lead.pessoaIdentificador}`;
+}
+function montarSubtituloDrawer(lead) {
+    return `${formatarIdentificadorLead(lead)} | ${lead.filial || filialAtual} | ${lead.pessoaEmail || 'Sem e-mail'}`;
+}
+
 function formatarTextoPadrao(texto) {
     const t = String(texto || '').trim();
     if (!t) return '';
@@ -3376,14 +3396,14 @@ function abrirGaveta(id) {
         abordagem: false,
         resumo: false,
         lembrete: false,
-        tags: false,
+        tags: true, // aberta por padrão (pedido do usuário) — ver as características/tags do lead de cara, sem precisar clicar
         contato: !temTelefone || !temEmail,
         vinculo: false,
         historico: false,
     };
 
     document.getElementById('drawer-name').innerText = lead.pessoaNome;
-    document.getElementById('drawer-subtitle').innerText = `Matrícula/ID: ${lead.pessoaIdentificador} | ${lead.pessoaEmail || 'Sem e-mail'}`;
+    document.getElementById('drawer-subtitle').innerText = montarSubtituloDrawer(lead);
     document.getElementById('drawer-chat-header').innerText = `${lead.pessoaNome} (${lead.pessoaTelefoneDDD || ''} ${lead.pessoaTelefoneNumero || ''})`;
 
     document.getElementById('drawer-tel-ddd').value = lead.pessoaTelefoneDDD || '';
@@ -3888,7 +3908,7 @@ async function salvarEmailLead() {
     leadsAtuais[leadIndex].tags = JSON.stringify(tagsArray);
     renderDrawerTags();
 
-    document.getElementById('drawer-subtitle').innerText = `Matrícula/ID: ${currentLeadId} | ${email || 'Sem e-mail'}`;
+    document.getElementById('drawer-subtitle').innerText = montarSubtituloDrawer(leadsAtuais[leadIndex]);
     renderizarCards();
 
     const { error } = await window.supabaseClient

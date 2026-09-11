@@ -785,6 +785,13 @@ function montarRegistroLead(pessoa, tags, filial, extras = {}) {
         tags: JSON.stringify(tagsFinais),
         motivo_saida: extras.motivoSaida || null,
         data_saida: extras.dataSaida || null,
+        // Matrícula REAL do Mercúrio (coluna "Matr" da lista de Ativos) —
+        // pedido do usuário (2026-09-11): mostrar essa matrícula de
+        // verdade na gaveta do lead em vez de só o ID sintético do CRM,
+        // pra quem já é Ativo. Null pra Inativos (a planilha deles não
+        // tem essa coluna) e pra quem já tinha outro valor gravado antes
+        // (preservação de dedup por filial acontece em processarPlanilhas()).
+        matricula_mercurio: extras.matriculaMercurio || null,
         filial: filial
     };
 }
@@ -1104,6 +1111,7 @@ async function processarPlanilhas() {
         const tags = [];
         let motivoSaida = null;
         let dataSaida = null;
+        let matriculaMercurio = null;
 
         // Fallback por telefone: pega gente com erro de digitação no nome
         // entre as planilhas, mas cujo telefone bate — só serve pra
@@ -1118,6 +1126,7 @@ async function processarPlanilhas() {
             tags.push('Ativo');
             const nivelTag = classificarNivel(info.nivel);
             if (nivelTag) tags.push(nivelTag);
+            if (info.matricula && /^\d+$/.test(info.matricula)) matriculaMercurio = Number(info.matricula);
             contAlunoAtivo++;
         } else if (matchInativoPorNome || matchInativoPorTelefone) {
             const info = matchInativoPorNome ? mapaInativos.get(chave) : mapaInativosPorTelefone.get(chaveTelPessoa);
@@ -1140,7 +1149,7 @@ async function processarPlanilhas() {
             contLeadForte++;
         }
 
-        leadsFinais.push(montarRegistroLead(pessoa, tags, filialDestino, { motivoSaida, dataSaida }));
+        leadsFinais.push(montarRegistroLead(pessoa, tags, filialDestino, { motivoSaida, dataSaida, matriculaMercurio }));
     });
 
     // ---- 4) Ativos sem correspondência nas Inscrições (sem telefone/e-mail, mesmo assim cadastrados) ----
@@ -1153,12 +1162,13 @@ async function processarPlanilhas() {
         const tagsAtivo = ['Ativo'];
         const nivelTag = classificarNivel(info.nivel);
         if (nivelTag) tagsAtivo.push(nivelTag);
+        const matriculaAtivoSem = (info.matricula && /^\d+$/.test(info.matricula)) ? Number(info.matricula) : null;
         leadsFinais.push(montarRegistroLead({
             pessoaIdentificador: BASE_ID_ATIVOS_SEM_INSCRICAO + idxAtivo,
             pessoaNome: info.nomeOriginal,
             pessoaTelefoneDDD: '', pessoaTelefoneNumero: '', pessoaEmail: '',
             pessoaStatus: '', telemarketingStatus: '', eventos: []
-        }, tagsAtivo, filialDestino));
+        }, tagsAtivo, filialDestino, { matriculaMercurio: matriculaAtivoSem }));
     });
 
     // ---- 5) Inativos sem correspondência nas Inscrições (COM telefone — viram leads de resgate) ----
@@ -1469,7 +1479,7 @@ async function confirmarEnviarImportacao() {
     while (true) {
         const { data, error } = await window.supabaseClient
             .from(NOME_TABELA)
-            .select('pessoaIdentificador, pessoaNome, tags, funil_agencia, resumo_ia, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, pessoaStatus, telemarketingStatus, eventoNome, eventoData, historico_eventos, motivo_saida, data_saida')
+            .select('pessoaIdentificador, pessoaNome, tags, funil_agencia, resumo_ia, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, pessoaStatus, telemarketingStatus, eventoNome, eventoData, historico_eventos, motivo_saida, data_saida, matricula_mercurio')
             .eq('filial', resultadoImportacao.filial)
             .order('pessoaIdentificador', { ascending: true })
             .range(inicio, inicio + passo - 1);
@@ -1695,7 +1705,12 @@ async function confirmarEnviarImportacao() {
                 ...leadFinal,
                 tags: JSON.stringify(tagsFinais),
                 funil_agencia: existente.funil_agencia || primeiraColuna, // preserva posição no Kanban
-                resumo_ia: existente.resumo_ia || null                    // preserva resumo de IA
+                resumo_ia: existente.resumo_ia || null,                   // preserva resumo de IA
+                // Preserva a matrícula real já gravada (ex: pelo fluxo de
+                // colar-texto, js/matricula-importar.js) se esta rodada
+                // não tiver uma nova pra contribuir — nunca reseta pra
+                // null só porque a planilha desta vez não tinha a coluna.
+                matricula_mercurio: leadFinal.matricula_mercurio || existente.matricula_mercurio || null,
             };
         }
 
@@ -1725,6 +1740,23 @@ async function confirmarEnviarImportacao() {
         logImport(`Aviso: ${registrosFinais.length - porId.size} registro(s) com pessoaIdentificador repetido no mesmo lote — mantido só 1 por id, pra não travar a importação inteira (revise possíveis duplicados nesta filial depois).`, 'warn');
     }
     const registrosDedupe = [...porId.values()];
+
+    // Mesma rede de segurança, agora pra `matricula_mercurio` — tem
+    // índice ÚNICO por filial (migracao_matricula_mercurio.sql), então 2
+    // pessoaIdentificador DIFERENTES com a mesma matrícula (ex: erro de
+    // leitura do Mercúrio, ou homônimo desfeito incorretamente) travariam
+    // o lote INTEIRO do mesmo jeito que o duplicado de pessoaIdentificador
+    // acima. Mantém só na PRIMEIRA ocorrência, zera nas seguintes.
+    const matriculasVistas = new Set();
+    let matriculasZeradas = 0;
+    registrosDedupe.forEach(r => {
+        if (!r.matricula_mercurio) return;
+        if (matriculasVistas.has(r.matricula_mercurio)) { r.matricula_mercurio = null; matriculasZeradas++; }
+        else matriculasVistas.add(r.matricula_mercurio);
+    });
+    if (matriculasZeradas > 0) {
+        logImport(`Aviso: ${matriculasZeradas} matrícula(s) do Mercúrio repetida(s) entre pessoas DIFERENTES no mesmo lote — mantida só na primeira ocorrência, zerada nas demais (revise depois).`, 'warn');
+    }
 
     logImport(`Enviando ${registrosDedupe.length} leads ao Supabase, em lotes de 500...`);
 
