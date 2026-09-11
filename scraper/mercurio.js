@@ -480,6 +480,31 @@ async function exportarComplementar(page, label, nomeMenu) {
     return registros;
 }
 
+// Nome pode vir TRUNCADO de uma tela do Mercúrio — confirmado pelo usuário
+// (2026-09-11): a lista "C. de Amigos" leu "ADANAIELLY KATIUCY VITORINO
+// SI" no lugar de "...VITORINO SILVA" — exatamente 30 caracteres, sinal de
+// um limite de coluna/campo NAQUELA tela específica (outras telas do
+// Mercúrio, como Ativos/Turmas, podem não ter esse limite). Comparação por
+// igualdade exata (normalizarNomeMercurio()) NUNCA bate nesse caso — a
+// pessoa cai como "nova" (duplicando um lead que já existe com nome
+// completo) ou fica sem ser enriquecida por quem tenta achá-la pelo nome
+// completo depois. Corrigido tentando PREFIXO nos 2 sentidos (o nome
+// truncado é prefixo do completo, ou vice-versa, caso outra tela trunque
+// diferente) — só aceita quando exatamente 1 candidato bate (mesma cautela
+// de sempre contra homônimo/ambiguidade); nomes muito curtos (<15
+// caracteres normalizados) não entram nessa busca, pra não virar prefixo
+// de gente demais à toa.
+const TAMANHO_MINIMO_NOME_PARA_PREFIXO = 15;
+function buscarLeadPorNomeTolerante(mapaLeads, nomeOriginal) {
+    const chave = normalizarNomeMercurio(nomeOriginal);
+    const direto = mapaLeads.get(chave);
+    if (direto) return { chave, lead: direto };
+    if (chave.length < TAMANHO_MINIMO_NOME_PARA_PREFIXO) return { chave, lead: null };
+    const candidatos = [...mapaLeads.entries()].filter(([k]) => k.length >= TAMANHO_MINIMO_NOME_PARA_PREFIXO && (k.startsWith(chave) || chave.startsWith(k)));
+    if (candidatos.length === 1) return { chave: candidatos[0][0], lead: candidatos[0][1] };
+    return { chave, lead: null };
+}
+
 // ID sintético pra quem só existe nas listas COMPLEMENTAR — baseado na
 // MATRÍCULA REAL (não um índice), então a mesma pessoa nunca duplica
 // entre rodadas. Faixa própria (970000000+), distinta de todas as outras
@@ -550,8 +575,7 @@ async function processarComplementar(page, filialCrm, label, modoCompleto = fals
 
         for (const r of registros) {
             try {
-                const chave = normalizarNomeMercurio(r.nome);
-                const existente = mapaLeads.get(chave);
+                const { chave, lead: existente } = buscarLeadPorNomeTolerante(mapaLeads, r.nome);
 
                 if (existente) {
                     if (existente.ambiguo) continue; // homônimo — nunca escolhe automático
@@ -602,7 +626,7 @@ async function processarComplementar(page, filialCrm, label, modoCompleto = fals
                             const linkNome = framePrograma.locator(`a[href*="uni_cadfun.php?matr=${r.matr}"]`).first();
                             if (await linkNome.count() > 0) {
                                 const dados = await processarFichaAluno(page, linkNome, { verificarHistorico: false, verificarEnderecos: true });
-                                if (dados.email || dados.cidade || dados.uf || dados.telefoneAlternativo || dados.profissao) {
+                                if (dados.email || dados.cidade || dados.uf || dados.telefoneAlternativo || dados.profissao || dados.nomeCompleto) {
                                     const gravou = await aplicarDadosEndereco(leadInfo, r.nome, dados);
                                     if (gravou) totalEnderecosAtualizados++;
                                 }
@@ -975,6 +999,14 @@ async function aplicarTagRecuperado(filialCrm, leadInfo, nomeAluno, dataReingres
 // usado em sincronizarCatalogoEventosNoCrm() pro Ulisses.
 async function aplicarDadosEndereco(leadInfo, nomeAluno, dados) {
     const patch = {};
+    // Corrige nome truncado numa tela de lista (ver comentário em
+    // processarFichaAluno()) — só aplica se o nome da FICHA for mais
+    // longo E começar com o mesmo prefixo do que já temos (sanity check
+    // básico contra ler o campo errado por engano).
+    if (dados.nomeCompleto && dados.nomeCompleto.length > (nomeAluno || '').length
+        && normalizarNomeMercurio(dados.nomeCompleto).startsWith(normalizarNomeMercurio(nomeAluno))) {
+        patch.pessoaNome = dados.nomeCompleto;
+    }
     if (dados.email && !leadInfo.pessoaEmail) patch.pessoaEmail = dados.email;
     if (dados.cidade && !leadInfo.cidade) patch.cidade = dados.cidade;
     if (dados.uf && !leadInfo.uf) patch.uf = dados.uf;
@@ -1021,6 +1053,18 @@ async function processarFichaAluno(page, linkNome, { verificarHistorico, verific
         console.warn('[ficha-aluno] Falha ao abrir a ficha do aluno:', e.message);
         return resultado;
     }
+
+    // Nome completo — a ficha em si (não uma tela de LISTA) é a fonte mais
+    // confiável do nome; algumas telas de lista truncam (confirmado pelo
+    // usuário, 2026-09-11: "C. de Amigos" cortou "...VITORINO SILVA" pra
+    // "...VITORINO SI", exatamente 30 caracteres — provável limite de
+    // coluna só naquela tela). ⚠️ Seletor NÃO confirmado contra HTML real
+    // — tentativa best-effort; se vier vazio, não corrige nada (fica com o
+    // nome já lido da lista, sem piorar).
+    try {
+        const framePerfilNome = page.frame({ name: 'principal' });
+        resultado.nomeCompleto = (await framePerfilNome.getByLabel(/^nome$/i).first().inputValue().catch(() => '')).trim();
+    } catch { /* best-effort — nunca trava a ficha por isso */ }
 
     if (verificarHistorico) {
         try {
@@ -1318,7 +1362,7 @@ async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = f
                         const gravou = await aplicarTagRecuperado(filialCrm, lead, aluno.nome, dados.dataReingresso);
                         if (gravou) { totalRecuperados++; console.log(`[recuperado] "${aluno.nome}" (${filialCrm}) marcado como Recuperado (reingresso em ${dados.dataReingresso || '?'}).`); }
                     }
-                    if (modoCompleto && (dados.email || dados.cidade || dados.uf || dados.telefoneAlternativo || dados.profissao)) {
+                    if (modoCompleto && (dados.email || dados.cidade || dados.uf || dados.telefoneAlternativo || dados.profissao || dados.nomeCompleto)) {
                         const gravou = await aplicarDadosEndereco(lead, aluno.nome, dados);
                         if (gravou) totalEnderecosAtualizados++;
                     }
