@@ -167,6 +167,17 @@ function statusIconHTML(m) {
     return ` <i class="fa-solid fa-check msg-status" title="Enviado"></i>`;
 }
 
+// escapeHTML() preserva o caractere de quebra de linha (\n), mas o balão
+// (.msg, css/style.css) não tem white-space:pre-line — sem isso, o texto
+// simplesmente ignora \n/\n\n e mostra tudo numa linha só. Convertendo pra
+// <br> depois de escapar, os parágrafos dos templates (ex: "aniversario",
+// que tem linha em branco entre parágrafos) aparecem espaçados igual ao
+// modelo aprovado na Meta (bug real relatado pelo usuário, comparando
+// print da Meta com o balão renderizado no CRM).
+function textoComQuebrasDeLinha(texto) {
+    return escapeHTML(texto || '').replace(/\n/g, '<br>');
+}
+
 function htmlMensagemWpp(m) {
     const classeDirecao = m.direcao === 'saida' ? 'msg-out' : 'msg-in';
     const classeExtra = m.wa_status === 'falhou' ? 'msg-falhou' : '';
@@ -181,8 +192,8 @@ function htmlMensagemWpp(m) {
     // payload_bruto.imagem_url na hora do envio (ver whatsapp-send).
     const imagemUrl = m.tipo === 'imagem' ? (m.payload_bruto && m.payload_bruto.imagem_url) : null;
     const corpoHTML = imagemUrl
-        ? `<img src="${escapeHTML(imagemUrl)}" alt="Imagem" style="max-width:100%; border-radius:6px; display:block; margin-bottom:${m.corpo_texto ? '4px' : '0'};">${m.corpo_texto ? escapeHTML(m.corpo_texto) : ''}`
-        : escapeHTML(m.corpo_texto || '');
+        ? `<img src="${escapeHTML(imagemUrl)}" alt="Imagem" style="max-width:100%; border-radius:6px; display:block; margin-bottom:${m.corpo_texto ? '4px' : '0'};">${m.corpo_texto ? textoComQuebrasDeLinha(m.corpo_texto) : ''}`
+        : textoComQuebrasDeLinha(m.corpo_texto);
     // Nome do usuário logado (js/usuarios.js) que enviou esta mensagem —
     // pedido do usuário ("no whatsapp precisa aparecer o nome do usuário
     // que está logado"). Só existe em mensagens de SAÍDA a partir da

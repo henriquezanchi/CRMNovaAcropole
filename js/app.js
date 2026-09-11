@@ -2371,8 +2371,15 @@ function renderizarResumoLeadForte() {
 // CRM já filtrado por aquele nível — reaproveita quickFilterTag() (o mesmo
 // mecanismo do Filtro Rápido), que aplica a tag em TODAS as colunas de
 // uma vez e conta como uso pra fins de aparecer nos filtros rápidos depois.
+// limparFiltros() primeiro: cada navegação vinda do Dashboard/Agenda do Dia
+// (Lead Forte, Novas Matrículas, Resgates Efetivados) é uma troca de
+// contexto, não uma combinação — sem isso, clicar em "Novas Matrículas"
+// depois de "Resgates Efetivados" continuava com o filtro de "Recuperado"
+// ativo, escondendo quem não tinha essa tag (bug real relatado pelo
+// usuário).
 function filtrarPorLeadForte(nivel) {
     switchModule('tab-crm', 'Prospecção Ativa', 'CRM Modularizado VS Code');
+    limparFiltros();
     quickFilterTag(`Lead Forte ${nivel}`);
 }
 
@@ -2385,6 +2392,7 @@ function irParaColunaMatriculados() {
     if (!matriculadosKey) return;
 
     switchModule('tab-crm', 'Prospecção Ativa', 'CRM Modularizado VS Code');
+    limparFiltros();
     if (colunasRecolhidas.has(matriculadosKey)) restaurarColuna(matriculadosKey);
 
     requestAnimationFrame(() => {
@@ -2398,6 +2406,7 @@ function irParaColunaMatriculados() {
 // filtrarPorLeadForte acima) — é o critério principal do próprio KPI.
 function filtrarPorRecuperados() {
     switchModule('tab-crm', 'Prospecção Ativa', 'CRM Modularizado VS Code');
+    limparFiltros();
     quickFilterTag('Recuperado');
 }
 

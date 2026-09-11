@@ -3838,6 +3838,33 @@ clicar num número deve levar direto pra onde aquele número "vive":
     por `filtrarPorLeadForte()`): restaura TODAS as colunas guardadas na
     gaveta antes de aplicar o filtro — não faz sentido filtrar uma coluna
     que nem está visível.
+  - **2º bug real relatado pelo usuário, mesmo dia**: clicar em "Novas
+    Matrículas" DEPOIS de "Resgates Efetivados" continuava com o filtro
+    de tag `"Recuperado"` ativo (os filtros de coluna são cumulativos por
+    design — ver "Filtros avançados são POR COLUNA" na seção de tags —,
+    então nada limpava o filtro anterior antes do próximo clique). Cada
+    um desses 3 pontos de entrada (`filtrarPorLeadForte()`,
+    `filtrarPorRecuperados()`, `irParaColunaMatriculados()`) é uma TROCA
+    de contexto ("me leve pra ver X agora"), não uma composição — por
+    isso os 3 agora chamam `limparFiltros()` (já existente, botão "Limpar
+    Tudo") antes de aplicar seu próprio filtro/navegação. Os chips do
+    Filtro Rápido dentro da própria aba CRM (`renderizarFiltrosRapidos()`)
+    continuam chamando `quickFilterTag()` direto, sem `limparFiltros()` —
+    ali sim faz sentido combinar mais de uma tag clicando em vários chips
+    em sequência, não é o mesmo caso de uso.
+- **Balão de mensagem no chat não respeitava quebra de linha/parágrafo
+  dos templates** (`textoComQuebrasDeLinha()`, `js/whatsapp.js`, bug real
+  relatado pelo usuário comparando print do template aprovado na Meta —
+  com linha em branco entre parágrafos — contra o balão renderizado no
+  CRM, tudo espremido numa linha só): `.msg` (`css/style.css`) não tem
+  `white-space:pre-line`, então o `\n`/`\n\n` que já vinha certo dentro de
+  `corpo_texto` (idêntico ao `corpoAprovado` de `TEMPLATES_WHATSAPP`,
+  confirmado — o texto SALVO no banco sempre esteve correto, só a
+  RENDERIÇÃO no balão que ignorava) nunca virava quebra visual. Corrigido
+  convertendo `\n` → `<br>` DEPOIS de escapar (`escapeHTML()` preserva o
+  caractere, só precisava de `<br>` pra virar quebra visível) — usado nos
+  2 lugares que desenham o corpo da mensagem em `htmlMensagemWpp()`
+  (texto normal e legenda de imagem).
 - **Clicar num lead em "Aniversariantes de Hoje" (Agenda do Dia —
   Todas as Filiais) abre a gaveta já com o template `aniversario` do
   WhatsApp selecionado**, pronto pra revisar as variáveis e mandar —
