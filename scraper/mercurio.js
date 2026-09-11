@@ -1129,7 +1129,17 @@ async function main() {
         const modoCompleto = argv.includes('--completo') || process.env.MODO_COMPLETO === 'true';
         const idxTurma = argv.indexOf('--turma');
         const filtroTurma = idxTurma !== -1 ? argv[idxTurma + 1] : (process.env.FILTRO_TURMA || null);
-        const filtro = argv.find((a, i) => a !== '--completo' && a !== '--turma' && i !== idxTurma + 1) || process.env.FILTRO_FILIAL || null;
+        // BUG REAL corrigido (2026-09-11): quando `--turma` está AUSENTE
+        // (idxTurma = -1), `idxTurma + 1` vale 0 — e a exclusão abaixo
+        // acabava descartando SEMPRE o elemento no índice 0, mesmo sem
+        // nenhum --turma pra justificar isso. Como o nome da filial quase
+        // sempre é o ÚNICO argumento (índice 0) quando não se usa
+        // --completo/--turma, isso fazia o filtro de filial ser
+        // silenciosamente ignorado (rodava nas 4 filiais mesmo pedindo 1)
+        // — achado testando `node mercurio.js "Barra do Garças"` sem mais
+        // nada. Só exclui o índice do valor de --turma quando --turma de
+        // fato existir.
+        const filtro = argv.find((a, i) => a !== '--completo' && a !== '--turma' && (idxTurma === -1 || i !== idxTurma + 1)) || process.env.FILTRO_FILIAL || null;
         const filtroNucleo = filtro ? nucleoDistintivoFilial(filtro) : null;
         const cadastros = filtroNucleo
             ? cadastrosTodos.filter(c => normalizarTextoFilial(c.label).includes(filtroNucleo))
