@@ -3476,6 +3476,20 @@ function abrirGaveta(id, opcoes = {}) {
     document.getElementById('drawer-email').value = lead.pessoaEmail || '';
     document.getElementById('drawer-data-nascimento').value = lead.data_nascimento || '';
 
+    // CIDADE/UF — capturado pelo scraper do Mercúrio (ENDEREÇOS/
+    // Aniversariantes), só leitura; bloco só aparece se tiver algum dado.
+    const blocoCidade = document.getElementById('drawer-cidade-bloco');
+    if (blocoCidade) {
+        const temCidade = lead.cidade && String(lead.cidade).trim() !== '';
+        const temUf = lead.uf && String(lead.uf).trim() !== '';
+        if (temCidade || temUf) {
+            document.getElementById('drawer-cidade-uf').innerText = [lead.cidade, lead.uf].filter(Boolean).join(' - ');
+            blocoCidade.style.display = 'block';
+        } else {
+            blocoCidade.style.display = 'none';
+        }
+    }
+
     document.getElementById('drawer-lembrete-data').value = lead.lembrete_em || '';
     document.getElementById('drawer-lembrete-nota').value = lead.lembrete_nota || '';
     document.getElementById('drawer-lembrete-limpar').style.display = lead.lembrete_em ? 'inline-flex' : 'none';
