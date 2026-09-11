@@ -1247,9 +1247,53 @@ async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = f
     let totalAlunosLidos = 0;
     let indiceTurma = 0;
 
+    // Pré-varredura (só no Modo Completo): conta quantos alunos cada turma
+    // tem, SEM abrir ficha de ninguém, só pra estimar % / ETA de forma
+    // realista — pedido do usuário ("saber quando vai terminar"). Turmas
+    // variam MUITO de tamanho (1 a 23+ alunos), então "3 de 8 turmas" não
+    // dizia quase nada sobre quanto tempo realmente falta (a maior parte
+    // do tempo é gasta abrindo ficha de aluno, não trocando de turma).
+    // Aproximação, não exato: conta toda linha da tabela, mesmo a que no
+    // 2º passo (main loop) não vira "alvo" de verdade (nome ambíguo/sem
+    // lead casado) — só uns poucos casos, então o % pode não fechar em
+    // 100% bem no finalzinho, aceitável pelo ganho de ter uma ETA útil o
+    // resto do tempo. No modo Incremental não vale o custo (job já é
+    // rápido, ficha é rara), continua com o progresso por turma de sempre.
+    let totalAlunosGeral = 0;
+    if (modoCompleto) {
+        for (const nomeTurma of nomesTurmas) {
+            try {
+                frameTurmas = await esperarFrame(page, 'principal', /uni_esctur\.php/, 15000);
+                await frameTurmas.getByRole('link', { name: nomeTurma, exact: true }).click();
+                const frameDetalhe = await esperarFrame(page, 'principal', /uni_esctal\.php/, 15000);
+                const tabelas = frameDetalhe.locator('table');
+                const totalTabelas = await tabelas.count();
+                for (let i = 0; i < totalTabelas; i++) {
+                    const cab = (await tabelas.nth(i).locator('tr').first().innerText().catch(() => '')).toLowerCase();
+                    if (cab.includes('nome') && cab.includes('ingresso')) {
+                        totalAlunosGeral += Math.max(0, (await tabelas.nth(i).locator('tr').count()) - 1);
+                        break;
+                    }
+                }
+            } catch { /* turma que falhar aqui só não entra na conta do ETA — não impede o processamento de verdade depois */ }
+            await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
+            try {
+                frameIndice = await entrarNoIndiceDaFilial();
+                await frameIndice.getByText('Turmas', { exact: true }).first().click();
+            } catch { /* segue, a próxima turma da pré-varredura ainda tenta normalmente */ }
+        }
+        console.log(`[turmas] Pré-varredura: ${totalAlunosGeral} aluno(s) no total em ${nomesTurmas.length} turma(s) (estimativa pra % / ETA).`);
+    }
+    let alunosProcessadosGeral = 0;
+
     for (const nomeTurma of nomesTurmas) {
         indiceTurma++;
-        await atualizarProgresso({
+        await atualizarProgresso(modoCompleto ? {
+            filial: filialCrm,
+            etapa: `Turmas: "${nomeTurma}" (${indiceTurma} de ${nomesTurmas.length})`,
+            atual: alunosProcessadosGeral,
+            total: totalAlunosGeral || nomesTurmas.length,
+        } : {
             filial: filialCrm,
             etapa: `Turmas: "${nomeTurma}" (${indiceTurma} de ${nomesTurmas.length})`,
             atual: indiceTurma,
@@ -1353,14 +1397,23 @@ async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = f
             let indiceAluno = 0;
             for (const { aluno, lead, precisaHistorico } of alvos) {
                 indiceAluno++;
+                alunosProcessadosGeral++;
                 // Atualiza o "carimbo de vida" a cada ALUNO, não só a cada
                 // turma — bug real corrigido (2026-09-11): turma grande
                 // (23+ alunos, cada 1 com visita de ficha) demora bem mais
                 // que LIMITE_PROGRESSO_TRAVADO_MS (5min, js/scraper-progresso.js)
                 // sem nenhuma atualização, então o indicador do topbar
                 // achava (errado) que o processo tinha travado e escondia o
-                // ícone no meio de uma rodada perfeitamente saudável.
-                await atualizarProgresso({
+                // ícone no meio de uma rodada perfeitamente saudável. E o
+                // %/ETA passa a ser por ALUNO no total da filial (não por
+                // turma) — turma de 1 aluno e turma de 23 pesavam igual
+                // antes, dando uma previsão sem sentido.
+                await atualizarProgresso(modoCompleto ? {
+                    filial: filialCrm,
+                    etapa: `Turmas: "${nomeTurma}" (${indiceTurma} de ${nomesTurmas.length}) — aluno ${indiceAluno} de ${alvos.length}`,
+                    atual: alunosProcessadosGeral,
+                    total: totalAlunosGeral || nomesTurmas.length,
+                } : {
                     filial: filialCrm,
                     etapa: `Turmas: "${nomeTurma}" (${indiceTurma} de ${nomesTurmas.length}) — aluno ${indiceAluno} de ${alvos.length}`,
                     atual: indiceTurma,
