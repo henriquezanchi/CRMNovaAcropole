@@ -680,12 +680,12 @@ export async function sincronizarAniversariantesNoCrm(labelMercurio) {
     const registros = JSON.parse(fs.readFileSync(caminhoJson, 'utf-8'));
     if (registros.length === 0) return '0 aniversariantes exportados — nada a sincronizar.';
 
-    const porNome = new Map(); // nome normalizado -> { pessoaIdentificador, temData, temEmail, temCidade, temUf, ambiguo }
+    const porNome = new Map(); // nome normalizado -> { pessoaIdentificador, temData, temEmail, temCidade, temUf, tags, ambiguo }
     const TAMANHO_PAGINA = 1000;
     for (let de = 0; ; de += TAMANHO_PAGINA) {
         const { data: pagina, error } = await supabaseAdmin
             .from('leads_inscricoes')
-            .select('pessoaIdentificador, pessoaNome, data_nascimento, "pessoaEmail", cidade, uf')
+            .select('pessoaIdentificador, pessoaNome, data_nascimento, "pessoaEmail", cidade, uf, tags')
             .eq('filial', filial)
             .order('pessoaIdentificador', { ascending: true })
             .range(de, de + TAMANHO_PAGINA - 1);
@@ -701,6 +701,7 @@ export async function sincronizarAniversariantesNoCrm(labelMercurio) {
                 temEmail: !!(lead.pessoaEmail && lead.pessoaEmail.trim()),
                 temCidade: !!lead.cidade,
                 temUf: !!lead.uf,
+                tags: parseTagsMercurio(lead.tags).map(t => String(t).trim()),
                 ambiguo: false,
             });
         }
@@ -724,6 +725,13 @@ export async function sincronizarAniversariantesNoCrm(labelMercurio) {
         if (r.email && !alvo.temEmail) patch.pessoaEmail = r.email;
         if (r.cidade && !alvo.temCidade) patch.cidade = r.cidade;
         if (r.uf && !alvo.temUf) patch.uf = r.uf;
+        // BUG REAL corrigido (2026-09-11, achado em produção — print real
+        // do usuário: DANILO/DANIEL ganharam e-mail certo, mas a tag "Sem
+        // E-mail" nunca saiu): preencher o campo não removia a tag
+        // sozinha — precisa tirar "Sem E-mail" do array de tags também.
+        if (patch.pessoaEmail && alvo.tags.includes('Sem E-mail')) {
+            patch.tags = JSON.stringify(alvo.tags.filter(t => t !== 'Sem E-mail'));
+        }
         if (Object.keys(patch).length === 0) continue;
 
         const { error } = await supabaseAdmin
@@ -736,6 +744,7 @@ export async function sincronizarAniversariantesNoCrm(labelMercurio) {
             if (patch.pessoaEmail) { alvo.temEmail = true; comEmail++; }
             if (patch.cidade) { alvo.temCidade = true; comCidade++; }
             if (patch.uf) alvo.temUf = true;
+            if (patch.tags) alvo.tags = JSON.parse(patch.tags);
         }
     }
 
@@ -920,6 +929,11 @@ async function aplicarDadosEndereco(leadInfo, nomeAluno, dados) {
     if (dados.cidade && !leadInfo.cidade) patch.cidade = dados.cidade;
     if (dados.uf && !leadInfo.uf) patch.uf = dados.uf;
     if (dados.telefoneAlternativo && !leadInfo.telefoneAlternativo) patch.telefone_alternativo = dados.telefoneAlternativo;
+    // Mesmo bug real corrigido em sincronizarAniversariantesNoCrm(): só
+    // preencher o campo não remove a tag "Sem E-mail" sozinha.
+    if (patch.pessoaEmail && leadInfo.tags.includes('Sem E-mail')) {
+        patch.tags = JSON.stringify(leadInfo.tags.filter(t => t !== 'Sem E-mail'));
+    }
     if (Object.keys(patch).length === 0) return false;
 
     const { error } = await supabaseAdmin.from('leads_inscricoes').update(patch).eq('pessoaIdentificador', leadInfo.pessoaIdentificador);
@@ -928,6 +942,7 @@ async function aplicarDadosEndereco(leadInfo, nomeAluno, dados) {
     if (patch.cidade) leadInfo.cidade = patch.cidade;
     if (patch.uf) leadInfo.uf = patch.uf;
     if (patch.telefone_alternativo) leadInfo.telefoneAlternativo = patch.telefone_alternativo;
+    if (patch.tags) leadInfo.tags = JSON.parse(patch.tags);
     return true;
 }
 
@@ -961,11 +976,22 @@ async function processarFichaAluno(page, linkNome, { verificarHistorico, verific
             await framePerfil.getByText(/^HIST[ÓO]RICO$/i).first().click();
             await page.waitForTimeout(600); // sem indicador de carregamento claro — espera curta e fixa, mesmo padrão do resto do arquivo
             const ctx = page.frame({ name: 'principal' }) || framePerfil;
-            const checkbox = ctx.getByLabel(/Aluno\/?\s*Membro Recuperado/i).first();
+            // Seletores CONFIRMADOS via HTML real (2026-09-11, inspecionado
+            // pelo usuário na ficha da Laura Beatriz) — "Aluno/Membro
+            // Recuperado" NÃO é um <label> de verdade associado ao
+            // checkbox (é só texto solto na mesma célula da tabela), por
+            // isso `getByLabel()` nunca funcionou; o campo de data também
+            // não é 1 input só, são 3 campos separados (dia/mês/ano).
+            // Nomes reais: chkrec (checkbox), txtdiar/txtmesr/txtanor
+            // (dia/mês/ano do reingresso).
+            const checkbox = ctx.locator('input[name="chkrec"]');
             const marcado = await checkbox.isChecked().catch(() => null);
             resultado.recuperado = !!marcado;
             if (marcado) {
-                resultado.dataReingresso = (await ctx.getByLabel(/reingressou/i).first().inputValue().catch(() => '')) || null;
+                const dia = (await ctx.locator('input[name="txtdiar"]').inputValue().catch(() => '')).trim().padStart(2, '0');
+                const mes = (await ctx.locator('input[name="txtmesr"]').inputValue().catch(() => '')).trim().padStart(2, '0');
+                const ano = (await ctx.locator('input[name="txtanor"]').inputValue().catch(() => '')).trim();
+                resultado.dataReingresso = (dia && mes && ano) ? `${dia}/${mes}/${ano}` : null;
             }
         } catch (e) {
             console.warn('[ficha-aluno] Falha ao ler HISTÓRICO:', e.message);
