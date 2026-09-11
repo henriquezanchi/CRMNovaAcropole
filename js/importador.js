@@ -22,6 +22,31 @@ let resultadoImportacao = null;
 const BASE_ID_ATIVOS_SEM_INSCRICAO = 900000000;
 const BASE_ID_INATIVOS_SEM_INSCRICAO = 950000000;
 
+// Cada filial precisa de uma FAIXA PRÓPRIA dentro de
+// BASE_ID_ATIVOS_SEM_INSCRICAO/BASE_ID_INATIVOS_SEM_INSCRICAO — sem isso,
+// o índice sequencial (1, 2, 3...) usado pra montar o id sintético é o
+// MESMO em qualquer filial, então 2 filiais diferentes acabam usando o
+// MESMO pessoaIdentificador pra pessoas DIFERENTES. Como o envio faz
+// upsert por pessoaIdentificador (chave única GLOBAL da tabela, não por
+// filial), a filial que importa DEPOIS sobrescreve silenciosamente os
+// leads da filial que importou ANTES — sem erro nenhum, sem aviso.
+// **Bug real GRAVÍSSIMO, achado em produção (2026-09-11)**: importar
+// Garavelo (filial nova, contador começando do 1) apagou o conteúdo de 92
+// leads de Barra do Garças/MT que já ocupavam exatamente os mesmos ids
+// (900000001-900000032 e 950000001-950000060) — confirmado comparando a
+// faixa de pessoaIdentificador das duas filiais após o incidente. Corrigido
+// reservando 1.000.000 de ids por filial, com base em `filiais.id` (inteiro
+// pequeno e ESTÁVEL — nunca reciclado pelo Postgres mesmo se a filial for
+// desativada depois — bem mais seguro que a posição na lista carregada,
+// que o usuário pode reordenar em "Gerenciar Filiais" a qualquer momento).
+// Sem a tabela `filiais` migrada (fallback de 1 filial só), não tem risco
+// de colisão mesmo com offset 0 — só existe 1 filial pra usar a faixa.
+function offsetSinteticoFilial(filialDestino) {
+    const lista = (typeof filiaisDisponiveis !== 'undefined' && Array.isArray(filiaisDisponiveis)) ? filiaisDisponiveis : [];
+    const f = lista.find(x => x.nome === filialDestino);
+    return (f && f.id != null) ? Number(f.id) * 1000000 : 0;
+}
+
 // ==========================================
 // UTILITÁRIOS
 // ==========================================
@@ -1155,6 +1180,7 @@ async function processarPlanilhas() {
     // ---- 4) Ativos sem correspondência nas Inscrições (sem telefone/e-mail, mesmo assim cadastrados) ----
     let contAtivosSemInscricao = 0;
     let idxAtivo = 0;
+    const offsetFilial = offsetSinteticoFilial(filialDestino);
     mapaAtivos.forEach(info => {
         if (info.usado) return;
         contAtivosSemInscricao++;
@@ -1164,7 +1190,7 @@ async function processarPlanilhas() {
         if (nivelTag) tagsAtivo.push(nivelTag);
         const matriculaAtivoSem = (info.matricula && /^\d+$/.test(info.matricula)) ? Number(info.matricula) : null;
         leadsFinais.push(montarRegistroLead({
-            pessoaIdentificador: BASE_ID_ATIVOS_SEM_INSCRICAO + idxAtivo,
+            pessoaIdentificador: BASE_ID_ATIVOS_SEM_INSCRICAO + offsetFilial + idxAtivo,
             pessoaNome: info.nomeOriginal,
             pessoaTelefoneDDD: '', pessoaTelefoneNumero: '', pessoaEmail: '',
             pessoaStatus: '', telemarketingStatus: '', eventos: []
@@ -1182,7 +1208,7 @@ async function processarPlanilhas() {
         const nivelTag = classificarNivel(info.nivel);
         if (nivelTag) tagsInativo.push(nivelTag);
         leadsFinais.push(montarRegistroLead({
-            pessoaIdentificador: BASE_ID_INATIVOS_SEM_INSCRICAO + idxInativo,
+            pessoaIdentificador: BASE_ID_INATIVOS_SEM_INSCRICAO + offsetFilial + idxInativo,
             pessoaNome: info.nomeOriginal,
             pessoaTelefoneDDD: info.telefoneDDD, pessoaTelefoneNumero: info.telefoneNumero, pessoaEmail: '',
             pessoaStatus: '', telemarketingStatus: '', eventos: []
@@ -1325,7 +1351,11 @@ function resgatarLinhaAuditoria(indice) {
         tags.push('Lead Forte ' + nivel);
     }
 
-    const idSintetico = BASE_ID_AUDITORIA_RESGATADA + indice;
+    // Mesmo risco de colisão cross-filial já corrigido em
+    // offsetSinteticoFilial() pra Ativos/Inativos sem correspondência —
+    // "indice" aqui é só a posição da linha DENTRO desta auditoria, igual
+    // em qualquer filial, então precisa do mesmo offset por filial.
+    const idSintetico = BASE_ID_AUDITORIA_RESGATADA + offsetSinteticoFilial(filial) + indice;
     const novoLead = montarRegistroLead({
         pessoaIdentificador: idSintetico,
         pessoaNome: linha.pessoaNome,
