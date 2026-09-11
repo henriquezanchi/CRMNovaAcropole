@@ -383,6 +383,169 @@ async function exportarAniversariantes(page, label) {
     return caminho;
 }
 
+// As 4 listas "COMPLEMENTAR" do Mercúrio — confirmadas por print real
+// (2026-09-11): Círculo de Amigos/Correntinha/Távolas/Janos NUNCA
+// aparecem na lista "Ativos" (Programa Branco) — são listas PRÓPRIAS,
+// paralelas. Sem isso, essas pessoas nunca ganhavam lead nem tag nenhuma
+// no CRM (pedido do usuário: "ativos e inativos completos... sem
+// depender do Ulisses"). `nivelTag` casa com classificarNivel()
+// (js/importador.js): CA fica com tag própria, Correntinha/Távolas
+// dobram em "Merlin" (mesmo programa de filosofia infantil), Janos fica
+// "JN".
+const PROGRAMAS_COMPLEMENTARES = [
+    { menu: 'C. de Amigos', nivelTag: 'CA' },
+    { menu: 'Correntinha', nivelTag: 'Merlin' },
+    { menu: 'Távolas', nivelTag: 'Merlin' },
+    { menu: 'Janos', nivelTag: 'JN' },
+];
+
+// Lê 1 das 4 telas acima — 2 formatos de cabeçalho confirmados por print:
+// "C. de Amigos" (Matr./Nome/Turma/Dia+Horário JUNTO ex. "QUI/20:00"/
+// Ingresso/Mídia — SEM nascimento) e as outras 3 (Matr./Nome/Nasc./
+// Turma/Dia/Horário SEPARADOS/Ingresso). Nenhuma tem telefone/e-mail. Lê
+// por NOME de coluna (não posição fixa), tolerando as 2 formas — mais
+// robusto que hardcoded índices já que só vi 1 das 4 telas com dado real
+// (as outras 3 estavam vazias no print). **"Matr." aqui já é a
+// matrícula REAL** (confirmado no print: 52948/52664/25268 — não é um
+// índice sequencial 1/2/3 como na tabela de Turma), então não precisa
+// extrair do href de um link.
+// ⚠️ URL exata de cada tela NÃO confirmada (só o texto do menu e as
+// colunas foram vistos) — usa o frame "principal" direto em vez de
+// esperar por uma URL específica; se a navegação não completar a tempo,
+// best-effort (log de aviso, pula esse programa, nunca trava a filial).
+async function exportarComplementar(page, label, nomeMenu) {
+    const indice = await indiceAtualParaLabel(page, label);
+    if (indice === null) throw new Error(`Link "CADASTRO" de "${label}" não encontrado nesta tela — pulando "${nomeMenu}" pra não arriscar ler dados de outra filial.`);
+    const framePrincipal1 = await esperarFrame(page, 'principal', /ger_funcao\.php/, 15000);
+    await framePrincipal1.getByRole('link', { name: 'CADASTRO', exact: true }).nth(indice).click();
+    const frameIndice = await esperarFrame(page, 'indice', /uni_indice\.php/, 15000);
+
+    await frameIndice.getByText(nomeMenu, { exact: true }).click();
+    await page.waitForTimeout(800); // sem URL/indicador de carregamento confirmado — espera curta e fixa, mesmo padrão do resto do arquivo
+    const frame = page.frame({ name: 'principal' });
+    if (!frame) return [];
+
+    const tabelas = frame.locator('table');
+    const totalTabelas = await tabelas.count();
+    let tabela = null;
+    for (let i = 0; i < totalTabelas; i++) {
+        const cab = (await tabelas.nth(i).locator('tr').first().innerText().catch(() => '')).toLowerCase();
+        if (cab.includes('nome') && cab.includes('ingresso')) { tabela = tabelas.nth(i); break; }
+    }
+    if (!tabela) return [];
+
+    const cabecalho = (await tabela.locator('tr').first().locator('td, th').allInnerTexts()).map(c => c.trim().toLowerCase());
+    const idxDe = (nomeColuna) => cabecalho.findIndex(c => c.includes(nomeColuna));
+    const idxMatr = idxDe('matr');
+    const idxNome = idxDe('nome');
+    const idxNasc = idxDe('nasc');
+    const idxIngresso = idxDe('ingresso');
+
+    const linhas = tabela.locator('tr');
+    const totalLinhas = await linhas.count();
+    const registros = [];
+    for (let j = 1; j < totalLinhas; j++) {
+        const celulas = await linhas.nth(j).locator('td').allInnerTexts();
+        if (celulas.length === 0) continue;
+        const matr = idxMatr !== -1 ? (celulas[idxMatr] || '').trim() : '';
+        const nome = idxNome !== -1 ? (celulas[idxNome] || '').trim() : '';
+        if (!matr || !/^\d+$/.test(matr) || !nome) continue;
+        registros.push({
+            matr,
+            nome,
+            nascimento: idxNasc !== -1 ? (celulas[idxNasc] || '').trim() : '',
+            ingresso: idxIngresso !== -1 ? (celulas[idxIngresso] || '').trim() : '',
+        });
+    }
+    return registros;
+}
+
+// ID sintético pra quem só existe nas listas COMPLEMENTAR — baseado na
+// MATRÍCULA REAL (não um índice), então a mesma pessoa nunca duplica
+// entre rodadas. Faixa própria (970000000+), distinta de todas as outras
+// já em uso no projeto (ver BASE_ID_LEAD_MANUAL, js/app.js, pro mapa
+// completo de faixas).
+const BASE_ID_COMPLEMENTAR = 970000000;
+
+// Cria/enriquece leads a partir das 4 listas COMPLEMENTAR — pra quem já
+// existe no CRM (casado por nome, mesma técnica de
+// carregarMapaLeadsPorNome() usada em processarTurmas()), só adiciona
+// "Ativo" + o nível (CA/Merlin/JN) e a data de nascimento se vier e o
+// lead ainda não tiver nenhuma; pra quem não existe, cria um lead novo
+// (coluna "Frios" — mesmo padrão default de columnsPadrao(), js/app.js,
+// usado por toda criação de lead sintético deste arquivo). Nome ambíguo
+// (2+ leads com o mesmo nome normalizado) nunca é escolhido automático —
+// mesma cautela de sempre.
+async function processarComplementar(page, filialCrm, label) {
+    const mapaLeads = await carregarMapaLeadsPorNome(filialCrm);
+    let totalNovos = 0, totalEnriquecidos = 0;
+
+    for (const { menu, nivelTag } of PROGRAMAS_COMPLEMENTARES) {
+        let registros;
+        try {
+            registros = await exportarComplementar(page, label, menu);
+        } catch (e) {
+            console.warn(`[complementar] Falha ao ler "${menu}" (${filialCrm}):`, e.message);
+            continue;
+        }
+        if (registros.length === 0) continue;
+        console.log(`[complementar] "${menu}" (${filialCrm}): ${registros.length} pessoa(s) encontrada(s).`);
+
+        for (const r of registros) {
+            try {
+                const chave = normalizarNomeMercurio(r.nome);
+                const existente = mapaLeads.get(chave);
+
+                if (existente) {
+                    if (existente.ambiguo) continue; // homônimo — nunca escolhe automático
+                    const novasTags = [...existente.tags];
+                    if (!novasTags.includes('Ativo')) novasTags.push('Ativo');
+                    if (!novasTags.includes(nivelTag)) novasTags.push(nivelTag);
+                    const patch = {};
+                    if (novasTags.length !== existente.tags.length) patch.tags = JSON.stringify(novasTags);
+                    const dataISO = dataBRParaISO(r.nascimento);
+                    if (dataISO && !existente.temData) patch.data_nascimento = dataISO;
+                    if (Object.keys(patch).length === 0) continue;
+
+                    const { error } = await supabaseAdmin.from('leads_inscricoes').update(patch).eq('pessoaIdentificador', existente.pessoaIdentificador);
+                    if (error) { console.warn(`[complementar] Falha ao atualizar "${r.nome}" (${filialCrm}):`, error.message); continue; }
+                    if (patch.tags) existente.tags = novasTags;
+                    if (patch.data_nascimento) existente.temData = true;
+                    totalEnriquecidos++;
+                } else {
+                    const novoId = String(BASE_ID_COMPLEMENTAR + Number(r.matr));
+                    const tags = ['Ativo', nivelTag, 'Sem Telefone', 'Sem E-mail'];
+                    const registro = {
+                        pessoaIdentificador: novoId,
+                        pessoaNome: r.nome,
+                        pessoaTelefoneDDD: '', pessoaTelefoneNumero: '', pessoaEmail: '',
+                        pessoaStatus: '', telemarketingStatus: '',
+                        eventoNome: '', eventoData: '', historico_eventos: [],
+                        tags: JSON.stringify(tags),
+                        data_nascimento: dataBRParaISO(r.nascimento),
+                        funil_agencia: 'Frios',
+                        filial: filialCrm,
+                    };
+                    const { error } = await supabaseAdmin.from('leads_inscricoes').upsert(registro, { onConflict: 'pessoaIdentificador' });
+                    if (error) { console.warn(`[complementar] Falha ao criar lead "${r.nome}" (${filialCrm}):`, error.message); continue; }
+                    mapaLeads.set(chave, {
+                        pessoaIdentificador: novoId, tags, ambiguo: false,
+                        temData: !!registro.data_nascimento, cidade: '', uf: '', telefoneAlternativo: '', pessoaEmail: '', pessoaTelefoneNumero: '',
+                    });
+                    totalNovos++;
+                }
+            } catch (e) {
+                console.warn(`[complementar] Falha processando "${r.nome}" (${menu}, ${filialCrm}):`, e.message);
+            }
+        }
+        // Volta pra tela de funções antes do próximo programa — cada
+        // exportarComplementar() reabre a navegação do zero.
+        await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    }
+
+    return { totalNovos, totalEnriquecidos };
+}
+
 function normalizarNomeMercurio(nome) {
     return String(nome || '')
         .normalize('NFD').replace(/[̀-ͯ]/g, '')
@@ -1161,25 +1324,10 @@ async function main() {
                 fs.mkdirSync('debug', { recursive: true });
                 await page.screenshot({ path: `debug/mercurio-ativos-${label.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
             }
-            // Volta pra tela de funções antes de Aniversariantes — cada
-            // etapa reabre a navegação (CADASTRO -> ...) do zero, mesmo
-            // padrão de isolamento de falha já usado no Ulisses (uma
-            // etapa falhar não devia impedir as outras).
-            await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
-            let filialCrm = null;
-            try {
-                const caminhoAniversariantes = await exportarAniversariantes(page, label);
-                const resultadoSync = await sincronizarAniversariantesNoCrm(label);
-                console.log(`[mercurio] Aniversariantes exportados — ${label}: ${caminhoAniversariantes} — ${resultadoSync}`);
-                filialCrm = await resolverFilialCrm(label);
-                if (filialCrm) await verificarAniversariosAtivosHoje(filialCrm);
-            } catch (e) {
-                algumaFalha = true;
-                console.error(`[mercurio] Falha ao exportar/sincronizar Aniversariantes de "${label}":`, e.message);
-                fs.mkdirSync('debug', { recursive: true });
-                await page.screenshot({ path: `debug/mercurio-aniversariantes-${label.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
-            }
-            await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
+            // filialCrm não depende de navegação nenhuma (é só uma busca
+            // na tabela `filiais` do Supabase) — resolvido logo aqui,
+            // antes de tudo que precisa dele.
+            const filialCrm = await resolverFilialCrm(label);
 
             // Importa Ativos/Inativos DIRETO no CRM publicado (marco 3,
             // pilotando a tela de Importar — ver scraper/importar-no-crm.js),
@@ -1189,9 +1337,16 @@ async function main() {
             // NUNCA atualizava tag Ativo/Inativo/Nível de ninguém no CRM
             // sozinho — a causa raiz de leads ficarem com a tag errada/
             // desatualizada até alguém reimportar manualmente pela aba
-            // Importar. Roda ANTES da varredura de turmas (linha abaixo):
-            // ela precisa de leads já existentes/atualizados no CRM pra
-            // achar matrícula recente por telefone.
+            // Importar. **BUG REAL corrigido (2026-09-11)**: este passo
+            // rodava DEPOIS de Aniversariantes — numa filial recém-zerada
+            // (ex: depois de uma limpeza total), o sync de Aniversariantes
+            // (data_nascimento/e-mail/cidade/UF) tentava casar por nome
+            // contra leads que AINDA NÃO EXISTIAM, e todo mundo caía em
+            // "sem lead correspondente" (achado testando de verdade contra
+            // Barra do Garças/MT, recém-zerada nesta sessão: 112 de 112
+            // sem match). Agora roda ANTES de Aniversariantes/Turmas —
+            // essas duas precisam de leads já existentes/atualizados no
+            // CRM pra achar quem casar.
             if (filialCrm && (caminhoAtivos || caminhoInativos)) {
                 try {
                     const log = await importarNoCrm(pageCrm, filialCrm, { caminhoAtivos, caminhoInativos, caminhoInscricoes: null });
@@ -1203,6 +1358,43 @@ async function main() {
                     await pageCrm.screenshot({ path: `debug/mercurio-importar-crm-${label.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
                 }
             }
+
+            // Círculo de Amigos/Correntinha/Távolas/Janos — pessoas que
+            // NUNCA aparecem em "Ativos" (confirmado por print real,
+            // 2026-09-10/11), então sem isso nunca ganhavam lead nenhum.
+            // Roda ANTES de Aniversariantes, pra quem for criado aqui
+            // agora também já poder ser enriquecido com e-mail/cidade/UF
+            // na etapa seguinte, se aparecer lá.
+            await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
+            if (filialCrm) {
+                try {
+                    const { totalNovos, totalEnriquecidos } = await processarComplementar(page, filialCrm, label);
+                    console.log(`[complementar] ${filialCrm}: ${totalNovos} lead(s) novo(s), ${totalEnriquecidos} enriquecido(s) (Ativo/CA/Merlin/JN).`);
+                } catch (e) {
+                    algumaFalha = true;
+                    console.error(`[mercurio] Falha ao processar programas Complementares de "${filialCrm}":`, e.message);
+                    fs.mkdirSync('debug', { recursive: true });
+                    await page.screenshot({ path: `debug/mercurio-complementar-${label.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
+                }
+            }
+
+            // Volta pra tela de funções antes de Aniversariantes — cada
+            // etapa reabre a navegação (CADASTRO -> ...) do zero, mesmo
+            // padrão de isolamento de falha já usado no Ulisses (uma
+            // etapa falhar não devia impedir as outras).
+            await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
+            try {
+                const caminhoAniversariantes = await exportarAniversariantes(page, label);
+                const resultadoSync = await sincronizarAniversariantesNoCrm(label);
+                console.log(`[mercurio] Aniversariantes exportados — ${label}: ${caminhoAniversariantes} — ${resultadoSync}`);
+                if (filialCrm) await verificarAniversariosAtivosHoje(filialCrm);
+            } catch (e) {
+                algumaFalha = true;
+                console.error(`[mercurio] Falha ao exportar/sincronizar Aniversariantes de "${label}":`, e.message);
+                fs.mkdirSync('debug', { recursive: true });
+                await page.screenshot({ path: `debug/mercurio-aniversariantes-${label.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
+            }
+            await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});
 
             try {
                 if (filialCrm) {

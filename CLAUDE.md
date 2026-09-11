@@ -3589,6 +3589,59 @@ de `processarMatriculasRecentesTurmas()`).
   vazio/errado, mandar o HTML real das telas HISTÓRICO/ENDEREÇOS resolve
   rápido, mesmo padrão de sempre.
 
+#### Ativos/Inativos 100% completos sem depender do Ulisses (2026-09-11)
+
+Pedido explícito do usuário: "temos que ter ativos e inativos completos:
+com telefone, e-mail, cidade/UF, data de aniversário... não é pra
+depender do Ulisses pra nada". Resolvido reaproveitando telas do Mercúrio
+já comprovadamente funcionais, em vez de depender dos seletores ainda não
+confirmados de HISTÓRICO/ENDEREÇOS:
+
+- **E-mail/cidade/UF**: a tela **Aniversariantes** (já usada pra
+  `data_nascimento`) tem uma coluna "Endereço" com Logradouro/Bairro/
+  "CIDADE-UF-CEP"/E-mail em 4 linhas dentro da MESMA célula — confirmado
+  por print real. `extrairEnderecoAniversariante()` faz o parse (procura
+  a linha com "@" pra e-mail, e a linha no formato "CIDADE-UF-numero" pra
+  cidade/UF — CEP vira "0" quando não preenchido). `sincronizarAniversariantesNoCrm()`
+  agora grava `pessoaEmail`/`cidade`/`uf` além de `data_nascimento`,
+  sempre preservando valor já existente. **Não usa a coluna "Fone" desta
+  tela** — confirmado pelo usuário que vem sem DDD, não confiável.
+  Cobre Ativos E Inativos de uma vez (`INA` já está em
+  `SITUACOES_ANIVERSARIANTES`).
+- **Telefone**: `aplicarTelefoneDaTurma()` — a lista de alunos de cada
+  Turma (já lida por `processarTurmas()`, dado comprovadamente confiável)
+  tem telefone de TODO aluno, não só de quem matriculou recente; agora
+  preenche quem estiver sem telefone, em qualquer modo (Incremental ou
+  Completo), sem navegação extra. A lista "Ativos" nunca teve telefone —
+  só a Turma tem.
+- **Círculo de Amigos/Correntinha/Távolas/Janos** (`processarComplementar()`):
+  achado testando de verdade — essas pessoas **nunca aparecem na lista
+  "Ativos"** (é uma seção separada, "COMPLEMENTAR", no menu do Mercúrio,
+  confirmado por 4 prints reais). Sem isso, ninguém do Círculo de Amigos
+  nunca ganhava lead nem tag no CRM. Lê as 4 listas (`exportarComplementar()`,
+  2 formatos de coluna confirmados — "C. de Amigos" sem nascimento, as
+  outras 3 com) e, pra quem já existe (casado por nome), só adiciona
+  `"Ativo"` + o nível (`CA`/`Merlin`/`Merlin`/`JN`, mesmo mapeamento de
+  `classificarNivel()`); pra quem não existe, cria um lead novo — ID
+  sintético `BASE_ID_COMPLEMENTAR (970000000) + matrícula real do
+  Mercúrio` (aqui "Matr." já é a matrícula de verdade, confirmado no
+  print — diferente da tabela de Turma, onde é só um índice de linha),
+  coluna "Frios" (mesmo default de `colunasPadrao()`, js/app.js). Roda no
+  modo Incremental normal, ANTES de Aniversariantes (pra quem for criado
+  aqui já poder ser enriquecido na etapa seguinte).
+- **3 bugs reais corrigidos no mesmo dia, achados testando de verdade**:
+  (1) o parsing de `--turma`/filtro de filial não filtrava a `--` que o
+  Node deixa em `process.argv` quando roda um arquivo `.js` (não `-e`)
+  com um `--` solto na linha de comando — rodava nas 4 filiais mesmo
+  pedindo 1 só; (2) quando `--turma` estava AUSENTE, a exclusão de índice
+  descartava sempre a posição 0 (onde cai o nome da filial, quando é o
+  único argumento) — mesmo sintoma, causa diferente; (3) a etapa de
+  Aniversariantes rodava ANTES da importação de Ativos/Inativos no CRM —
+  numa filial recém-zerada, tentava casar por nome contra leads que
+  AINDA NÃO EXISTIAM (112 de 112 sem match, confirmado testando contra
+  Barra do Garças/MT). Reordenado: `importarNoCrm()` agora roda primeiro,
+  Complementar/Aniversariantes/Turmas depois.
+
 ### Lembrete de importação do Ulisses (WhatsApp pro admin)
 
 Como o Ulisses nunca roda sozinho, o risco real é ESQUECER de rodar —
