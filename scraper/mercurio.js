@@ -1518,11 +1518,53 @@ async function verificarLembreteImportacaoUlisses() {
     }
 }
 
+// BUG REAL GRAVÍSSIMO, achado em produção (2026-09-12): uma rodada LOCAL
+// em Modo Completo (Jardim América, iniciada às 17:41 do dia anterior)
+// ainda estava rodando quando o cron diário das 05:00 disparou o workflow
+// no GitHub Actions — as DUAS sessões logaram ao mesmo tempo com a MESMA
+// credencial compartilhada do Mercúrio (`filial='GLOBAL'` no cofre, só
+// existe 1 login pra todas as filiais/todo tipo de rodada). Resultado
+// observado: a rodada do cron (normalmente rápida, incremental) levou
+// quase 3 HORAS pra terminar as 4 filiais — sinal forte de que o Mercúrio
+// não isola bem 2 sessões simultâneas da mesma matrícula (mesma raiz já
+// documentada no bug de concorrência entre 2 rodadas CLOUD, corrigido com
+// `concurrency` no workflow — mas aquele fix só protege rodadas dentro do
+// GitHub Actions, nunca protegeria contra uma rodada LOCAL rodando ao
+// mesmo tempo). Não deu pra confirmar dado corrompido desta vez (as duas
+// rodadas terminaram "com sucesso"), mas o risco é real e já
+// documentado como GRAVÍSSIMO antes — por isso esta trava, e não só uma
+// nota de aviso: antes de fazer qualquer coisa (nem login ainda), verifica
+// se já existe uma rodada ativa (mesmo `scraper_progresso`/`id='mercurio'`
+// já usado pelo indicador do topbar) e ABORTA cedo se achar uma — best-
+// effort (erro na leitura nunca bloqueia, só a leitura de um progresso
+// genuinamente ativo bloqueia).
+const LIMITE_RODADA_ATIVA_MS = 5 * 60 * 1000; // mesmo limiar de "travado" do indicador (js/scraper-progresso.js)
+async function verificarRodadaJaEmAndamento() {
+    try {
+        const { data } = await supabaseAdmin.from('scraper_progresso').select('*').eq('id', 'mercurio').maybeSingle();
+        if (!data || data.concluido || !data.atualizado_em) return null;
+        const idadeMs = Date.now() - new Date(data.atualizado_em).getTime();
+        if (idadeMs > LIMITE_RODADA_ATIVA_MS) return null; // travada/morta (ex: processo derrubado à força) — não bloqueia
+        return data;
+    } catch {
+        return null; // best-effort — falha na leitura nunca deve travar uma rodada legítima
+    }
+}
+
 async function main() {
     let browser;
     let page;
     let pageCrm; // aba/contexto SEPARADO pro CRM publicado (sem httpCredentials do Mercúrio) — usado só quando alguma turma tem matrícula recente
     try {
+        const rodadaAtiva = await verificarRodadaJaEmAndamento();
+        if (rodadaAtiva) {
+            const idadeSeg = Math.round((Date.now() - new Date(rodadaAtiva.atualizado_em).getTime()) / 1000);
+            const msg = `Já existe uma rodada em andamento (filial "${rodadaAtiva.filial}", etapa "${rodadaAtiva.etapa}", atualizada há ${idadeSeg}s) — abortando esta nova rodada pra não logar 2x ao mesmo tempo no Mercúrio com a mesma credencial compartilhada (risco de corromper dado entre filiais, já aconteceu antes — ver CLAUDE.md). Rode de novo depois que a outra terminar.`;
+            console.error(`[mercurio] ${msg}`);
+            await registrarStatusSincronizacao('mercurio', 'GLOBAL', false, msg);
+            return;
+        }
+
         const httpAuth = await lerCredencial('mercurio_http', null);
         const { usuario: matricula, senha } = await lerCredencial('mercurio', null);
 
