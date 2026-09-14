@@ -103,7 +103,17 @@ async function aguardarLoginManual(page, emailEsperado) {
         // Espera o CLIQUE DE VERDADE do usuário (não um clique disparado pelo
         // próprio script) — só assim a mensagem é garantidamente vista antes
         // de seguir pra tela de login.
-        await page.waitForFunction('window.__ulissesLocalConfirmado === true', { timeout: TIMEOUT_LOGIN_MANUAL_MS });
+        // Bug real corrigido (2026-09-14): `waitForFunction(pageFunction,
+        // options)` com só 2 argumentos faz o Playwright tratar o objeto
+        // `{timeout: ...}` como o 2º parâmetro de verdade (`arg`, dado
+        // passado pra função da página), não como `options` — o timeout
+        // configurado (5 min) nunca era aplicado, caía sempre no padrão
+        // de 30s do Playwright. Confirmado em produção: usuário levou
+        // mais que 30s pra clicar "Ir para a tela de login" (tinha
+        // acabado de repetir o fluxo 2x por engano de filial) e a espera
+        // expirou achando que ele nunca ia clicar. Precisa do 3º
+        // argumento explícito pra `options` valer de verdade.
+        await page.waitForFunction('window.__ulissesLocalConfirmado === true', null, { timeout: TIMEOUT_LOGIN_MANUAL_MS });
     }
     await page.goto(URL_LOGIN, { waitUntil: 'domcontentloaded' });
     console.log('   Aguardando você concluir o login nessa janela (até 5 minutos)...');

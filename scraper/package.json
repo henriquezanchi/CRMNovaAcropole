@@ -9,6 +9,7 @@
     "ulisses-local": "node ulisses-local.js",
     "mercurio": "node --env-file-if-exists=.env mercurio.js",
     "mercurio-completo": "node --env-file-if-exists=.env mercurio.js -- --completo",
+    "capturar-eventos-centralizados": "node --env-file-if-exists=.env capturar-eventos-centralizados.js",
     "run": "node run.js"
   },
   "dependencies": {

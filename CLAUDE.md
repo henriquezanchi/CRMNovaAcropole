@@ -2959,6 +2959,33 @@ bloqueado).
          criou o evento — ficam em branco pra evento centralizado, editável
          manualmente na Agenda (rápido, 1x por campanha) até/se um dia
          existir acesso à conta criadora.
+       - **`scraper/capturar-eventos-centralizados.js`, NOVO (2026-09-14)**
+         — o usuário conseguiu a senha da conta que cria "Abertura de
+         Turma" centralizadamente (Setor Universitário), então essa
+         limitação parou de ser permanente. Script separado (não faz
+         parte do job diário nem do `ulisses-local.js` de cada filial —
+         roda avulso, só quando uma campanha nova de Abertura de Turma
+         começa): login manual nessa conta específica, abre cada card
+         FUTURO da aba "Links", lê Título/Imagem/Subtítulo/Informação/
+         Descrição — e a aba "Eventos" do painel, que aqui pode ter
+         **VÁRIAS linhas de filial marcadas ao mesmo tempo** (é quem
+         organiza pra região toda, diferente do caso de 1 filial só já
+         tratado em `lerDataHoraEVagas()`), cada uma com sua própria
+         Descrição/Data/Vagas. Casa o nome de cada linha marcada contra
+         as nossas 4 filiais (mesmo núcleo distintivo de
+         `tokenDistintivoFilial()`) e **só ATUALIZA** (nunca cria) a
+         linha de `eventos` que já existe pra aquela filial — sem essa
+         linha de base já criada pela Recepção normal daquela filial,
+         pula com aviso (`npm run capturar-eventos-centralizados`,
+         `scraper/package.json`). NUNCA sobrescreve um campo que já tinha
+         valor (mesmo princípio de preservação de sempre). **Não cria
+         filial nova nenhuma nem lead nenhum** — é só um complemento de
+         detalhe visual pra evento que já existe. **Ainda NÃO testado
+         contra o Ulisses real** (escrito com base na estrutura já
+         confirmada do painel — mesmos seletores de `ler()`/aba
+         "Eventos" já testados em outro contexto, mas a leitura de
+         MÚLTIPLAS linhas marcadas ao mesmo tempo é nova) — próxima
+         rodada com a conta do Setor Universitário valida.
        - **RESOLVIDO (2026-09-10, o usuário confirmou direto)**: são
          exclusivos do Garavelo mesmo — confirmado consultando os sites
          públicos das 3 outras filiais (`acropole.org.br/goiania-
