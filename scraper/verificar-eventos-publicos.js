@@ -31,10 +31,21 @@ function normalizarTexto(s) {
 // título gravado no CRM (pode ter reticências, emoji, quebra de linha
 // diferente) — em vez de exigir o nome inteiro, considera "encontrado" se
 // as 3 primeiras palavras "significativas" (>=4 letras, corta artigo/
-// preposição) aparecerem em sequência no texto da página.
-function trechoSignificativo(nomeEvento) {
-    const palavras = normalizarTexto(nomeEvento).split(' ').filter(p => p.length >= 4);
-    return palavras.slice(0, 3).join(' ');
+// preposição) aparecerem no texto da página.
+//
+// BUG REAL corrigido (2026-09-14, achado pelo usuário com print real):
+// a versão anterior JUNTAVA essas palavras com espaço ("BUSHIDO CODIGO
+// HONRA") e exigia essa string EXATA e CONTÍGUA no texto da página — mas
+// o texto real tem as preposições/artigos que foram filtrados DE VOLTA
+// no meio ("BUSHIDO O CÓDIGO DE HONRA..."), então a junção nunca batia.
+// Confirmado ao vivo: "Bushido"/"Workshop de Oratória" ESTAVAM na página
+// do Garavelo desde o primeiro carregamento (nem era timing/lazy-load),
+// só o comparador que nunca teria confirmado nada com esse formato de
+// título (qualquer nome com preposição no meio dava falso alarme).
+// Corrigido checando cada palavra significativa INDEPENDENTEMENTE (não
+// precisa estar contígua/na mesma ordem).
+function palavrasSignificativas(nomeEvento) {
+    return normalizarTexto(nomeEvento).split(' ').filter(p => p.length >= 4).slice(0, 3);
 }
 
 export async function verificarEventosPublicos(browser, filial, slug) {
@@ -58,8 +69,8 @@ export async function verificarEventosPublicos(browser, filial, slug) {
     }
 
     const naoConfirmados = eventos.filter(ev => {
-        const trecho = trechoSignificativo(ev.nome);
-        return trecho && !textoSite.includes(trecho);
+        const palavras = palavrasSignificativas(ev.nome);
+        return palavras.length > 0 && !palavras.every(p => textoSite.includes(p));
     });
     return { filial, semEventos: false, naoConfirmados, totalEventos: eventos.length };
 }
