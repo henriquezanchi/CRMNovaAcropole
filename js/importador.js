@@ -1567,6 +1567,37 @@ async function confirmarEnviarImportacao() {
         logImport(`${contRedirecionados} lead(s) "sem correspondência" nesta rodada foram casados com um lead JÁ EXISTENTE pelo nome, em vez de criar duplicado (comum em importação parcial — só Mercúrio, sem Inscrições desta vez).`, 'ok');
     }
 
+    // ---- Redireciona o CASO INVERSO do bloco acima: lead vindo do
+    // Ulisses com `pessoaIdentificador` REAL, mas que já existe nesta
+    // filial como um lead SINTÉTICO (criado por uma importação
+    // só-Mercúrio anterior, antes do Ulisses dessa pessoa nunca ter sido
+    // importado) — mesmo nome. Bug real GRAVÍSSIMO confirmado em
+    // produção (2026-09-14, Garavelo): 182 pares duplicados surgiram
+    // assim numa única importação (ex: "THAYENE DA SILVA LEMES MACHADO"
+    // já existia como `900000028` — Ativo, via Mercúrio — e ganhou uma
+    // 2ª linha `515131` — Ulisses — pra MESMA pessoa, porque o bloco
+    // acima só olhava a direção "sintético novo -> existente", nunca
+    // "real novo -> sintético existente"). Mesma trava de confiança de
+    // sempre (só redireciona com EXATAMENTE 1 candidato sem dono ainda),
+    // mas restrito a candidatos SINTÉTICOS especificamente — nunca
+    // redireciona pra um lead existente que já tinha um `pessoaIdentificador`
+    // real (isso seria mesclar 2 cadastros reais do Ulisses, um risco
+    // diferente, fora do escopo deste fix).
+    let contRedirecionadosInverso = 0;
+    resultadoImportacao.leads.forEach(lead => {
+        if (Number(lead.pessoaIdentificador) >= BASE_ID_ATIVOS_SEM_INSCRICAO) return; // esse já foi tratado no bloco acima
+        const candidatos = (existentesPorNome.get(normalizarNomeImport(lead.pessoaNome || '')) || [])
+            .filter(c => !idsExistentesJaRedirecionados.has(String(c.pessoaIdentificador)) && Number(c.pessoaIdentificador) >= BASE_ID_ATIVOS_SEM_INSCRICAO);
+        if (candidatos.length === 1) {
+            idsExistentesJaRedirecionados.add(String(candidatos[0].pessoaIdentificador));
+            lead.pessoaIdentificador = String(candidatos[0].pessoaIdentificador);
+            contRedirecionadosInverso++;
+        }
+    });
+    if (contRedirecionadosInverso > 0) {
+        logImport(`${contRedirecionadosInverso} lead(s) do Ulisses foram casados com um lead SINTÉTICO já existente (mesmo nome, criado antes por uma importação só-Mercúrio), em vez de criar duplicado.`, 'ok');
+    }
+
     // ---- Alerta: leads que já existiam nesta filial mas NÃO apareceram em
     //      nenhuma planilha desta vez. Pode ser gente que trancou/saiu sem
     //      que o time tivesse percebido por aqui, ou só caiu da planilha por

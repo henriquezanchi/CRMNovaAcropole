@@ -1093,6 +1093,26 @@ Decisões já tomadas (não precisam ser reabertas, a menos que o usuário peça
     reimportar só-Mercúrio pra alguém que já existia (criado numa rodada
     anterior com Inscrições) agora atualiza `tags`/`funil_agencia` do
     MESMO `pessoaIdentificador`, sem duplicar.
+  - **Bug real GRAVÍSSIMO, caso INVERSO deste (2026-09-14, confirmado em
+    produção rodando o Ulisses do Garavelo de verdade)**: o bloco acima só
+    tratava "lead sintético novo → existente" — nunca a direção oposta,
+    "lead com ID REAL do Ulisses → um lead SINTÉTICO que já existia" (ex:
+    alguém já era Ativo/Inativo pelo Mercúrio, sem telefone/e-mail do
+    Ulisses ainda, e essa importação trouxe o registro REAL dela do
+    Ulisses pela 1ª vez). Sem cobrir essa direção, cada pessoa nessa
+    situação virava um par duplicado — confirmado 182 pares assim numa
+    ÚNICA importação (Garavelo, depois de rodar o Ulisses pela 1ª vez
+    numa filial que já tinha meses de Mercúrio Modo Completo acumulado).
+    **Corrigido** com um 2º bloco simétrico, logo depois do primeiro:
+    mesma trava de confiança (só redireciona com EXATAMENTE 1 candidato),
+    mas os candidatos ficam restritos a quem JÁ É sintético (nunca
+    redireciona pra um lead que já tinha `pessoaIdentificador` real —
+    mesclar 2 cadastros reais do Ulisses é um risco diferente, fora
+    do escopo deste fix). **Os 182 pares já existentes no Garavelo
+    continuam lá** (esse fix só previne NOVOS casos dali pra frente) —
+    decisão do usuário: corrigir a causa raiz primeiro, decidir depois
+    se/como mesclar os que já existem (individualmente via "Leads a
+    Tratar", ou uma mesclagem em lote ainda não construída).
   - **Consequência direta**: com o bug corrigido, ficou seguro ligar a
     importação de Ativos/Inativos no job DIÁRIO automático do scraper —
     ver `importarNoCrm()` dentro de `main()` em `scraper/mercurio.js`
