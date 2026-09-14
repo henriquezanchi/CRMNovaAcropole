@@ -3482,7 +3482,7 @@ function abrirGaveta(id, opcoes = {}) {
     const temTelefone = !!(lead.pessoaTelefoneDDD && String(lead.pessoaTelefoneDDD).trim()) && !!(lead.pessoaTelefoneNumero && String(lead.pessoaTelefoneNumero).trim());
     const temEmail = !!(lead.pessoaEmail && String(lead.pessoaEmail).trim());
     gavetaLeadAberta = {
-        eventos: false,
+        eventos: true, // aberta por padrão (pedido do usuário, 2026-09-14) — ver de cara em quais eventos futuros o lead está inscrito
         abordagem: false,
         resumo: false,
         lembrete: false,

@@ -44,6 +44,7 @@ import { chromium } from 'playwright';
 import { supabaseAdmin, lerCredencial, registrarStatusSincronizacao } from './lib/supabaseAdmin.js';
 import { exportarCsvInscricoes, exportarCatalogoEventos, exportarComparecimento, sincronizarCatalogoEventosNoCrm, sincronizarComparecimentoNoCrm, salvarScreenshotErro } from './ulisses.js';
 import { verificarEventosPublicosDeTodasAsFiliais } from './verificar-eventos-publicos.js';
+import { importarNoCrm } from './importar-no-crm.js';
 
 const URL_LOGIN = 'https://www.acropolebrasil.com.br/login.html';
 const TIMEOUT_LOGIN_MANUAL_MS = 5 * 60 * 1000; // 5 min pra você fazer login na janela
@@ -212,7 +213,7 @@ async function verificarFilialLogada(page, filialEsperada, todasFiliaisNomes) {
     return { ok: null, motivo: `Não consegui confirmar automaticamente a filial logada (texto mostrado: "${textoBruto}") — seguindo mesmo assim, confira manualmente se os dados exportados fazem sentido. Se este texto for realmente de "${filialEsperada}", me avise pra eu gravar esse mapeamento e não depender mais de "ok: null" aqui.` };
 }
 
-async function processarFilialLocal(browser, filial, todasFiliaisNomes) {
+async function processarFilialLocal(browser, filial, todasFiliaisNomes, pageCrm) {
     console.log(`\n[ulisses-local] Filial: ${filial}`);
 
     let usuario = null;
@@ -253,8 +254,28 @@ async function processarFilialLocal(browser, filial, todasFiliaisNomes) {
     if (verificacao.ok === null) console.warn(`   ⚠️  ${verificacao.motivo}`);
     else console.log('   Filial confirmada — exportando...');
 
+    // BUG REAL GRAVÍSSIMO, achado pelo usuário (2026-09-14): a tela de
+    // Recepção do Ulisses mostrava 6 pré-inscritos num evento, mas a
+    // Agenda do CRM só linkava 1 — a CAUSA não era o casamento de
+    // sincronizarComparecimentoNoCrm() (esse já funciona certo), era que
+    // `exportarCsvInscricoes()` só EXPORTA o CSV pra disco, nunca o
+    // importa de verdade em `leads_inscricoes` — diferente do Mercúrio
+    // (scraper/mercurio.js chama importarNoCrm() sozinho todo dia), o
+    // lado do Ulisses nunca teve esse encadeamento. Resultado: a MAIORIA
+    // de quem se pré-inscreve pela primeira vez (nunca apareceu em
+    // Ativos/Inativos/Complementar/Aniversariantes do Mercúrio) simplesmente
+    // NÃO EXISTIA como lead ainda quando sincronizarComparecimentoNoCrm()
+    // tentava casar por telefone/e-mail — só quem por coincidência já
+    // era lead de outra fonte (ex: já Ativo) conseguia ser vinculado. Isso
+    // explica a estatística "341 sem lead achado" já vista numa rodada
+    // real. Corrigido: importa o CSV de Inscrições de verdade no CRM
+    // (mesmo caminho que o Mercúrio já usa, importarNoCrm() pilotando a
+    // tela de Importar publicada) ANTES de tentar sincronizar
+    // comparecimento — assim os leads existem a tempo de serem casados.
+    let caminhoCsvInscricoes = null;
     const etapas = [
-        { nome: 'exportar-csv-inscricoes', executar: () => exportarCsvInscricoes(page, filial) },
+        { nome: 'exportar-csv-inscricoes', executar: async () => { caminhoCsvInscricoes = await exportarCsvInscricoes(page, filial); return caminhoCsvInscricoes; } },
+        { nome: 'importar-inscricoes-no-crm', executar: () => importarNoCrm(pageCrm, filial, { caminhoAtivos: null, caminhoInativos: null, caminhoInscricoes: caminhoCsvInscricoes }) },
         { nome: 'catalogo-eventos', executar: () => exportarCatalogoEventos(page, filial) },
         { nome: 'sincronizar-eventos-crm', executar: () => sincronizarCatalogoEventosNoCrm(filial) },
         { nome: 'comparecimento', executar: () => exportarComparecimento(page, filial) },
@@ -268,7 +289,9 @@ async function processarFilialLocal(browser, filial, todasFiliaisNomes) {
         } catch (e) {
             algumaFalha = true;
             console.error(`   Falha em ${etapa.nome}:`, e.message);
-            await salvarScreenshotErro(page, filial, etapa.nome);
+            // "importar-inscricoes-no-crm" acontece na aba do CRM
+            // (pageCrm), não na do Ulisses — screenshot da página certa.
+            await salvarScreenshotErro(etapa.nome === 'importar-inscricoes-no-crm' ? pageCrm : page, filial, etapa.nome);
         }
     }
 
@@ -300,8 +323,13 @@ async function main() {
 
     const todasFiliaisNomes = (filiaisTodas || []).map(f => f.nome);
     const browser = await chromium.launch({ headless: false });
+    // Aba/contexto SEPARADO pro CRM publicado (mesmo padrão de `pageCrm`
+    // em scraper/mercurio.js) — reaproveitado entre as filiais, já que
+    // importarNoCrm()/abrirCrmComAcesso() é idempotente (só loga de novo
+    // se o localStorage daquele contexto ainda não tiver a sessão).
+    const pageCrm = await (await browser.newContext()).newPage();
     for (const f of filiais) {
-        await processarFilialLocal(browser, f.nome, todasFiliaisNomes);
+        await processarFilialLocal(browser, f.nome, todasFiliaisNomes, pageCrm);
     }
     await browser.close();
     console.log('\nConcluído. Arquivos em scraper/exports/.');

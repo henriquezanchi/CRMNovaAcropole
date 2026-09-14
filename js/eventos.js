@@ -1086,7 +1086,19 @@ async function carregarEventosDoLead(pessoaId) {
         return;
     }
 
-    eventosDoLeadAtual = data || [];
+    // Pedido do usuário (2026-09-14): destacar em quais eventos FUTUROS
+    // o lead está inscrito — a ordem antiga (só por criado_em) misturava
+    // tudo, um evento futuro relevante podia ficar escondido embaixo de
+    // vários passados vinculados há mais tempo. Futuros primeiro (o mais
+    // próximo no topo), depois passados (o mais recente primeiro) — mesmo
+    // padrão já usado em renderizarListaEventos() na Agenda.
+    const hojeISO = new Date().toISOString().slice(0, 10);
+    const todos = data || [];
+    const futuros = todos.filter(el => el.eventos && el.eventos.data >= hojeISO)
+        .sort((a, b) => a.eventos.data.localeCompare(b.eventos.data));
+    const passados = todos.filter(el => !el.eventos || el.eventos.data < hojeISO)
+        .sort((a, b) => (b.eventos?.data || '').localeCompare(a.eventos?.data || ''));
+    eventosDoLeadAtual = [...futuros, ...passados];
     renderizarEventosDoLead();
 }
 
@@ -1099,15 +1111,18 @@ function renderizarEventosDoLead() {
         return;
     }
 
+    const hojeISO = new Date().toISOString().slice(0, 10);
     container.innerHTML = eventosDoLeadAtual.map(el => {
         const ev = el.eventos;
         const nome = ev ? ev.nome : `Evento ${el.evento_id} (removido)`;
         const data = ev ? formatarDataEvento(ev.data) : '';
+        const ehFuturo = !!(ev && ev.data >= hojeISO);
         const compareceuTxt = el.compareceu === true ? ' · Compareceu' : (el.compareceu === false ? ' · Não compareceu' : '');
         const matriculadoTxt = el.matriculado === true ? ' · Matriculado 🎉' : '';
         return `
             <div class="drawer-evento-item">
                 <div class="drawer-evento-item-info">
+                    ${ehFuturo ? '<span class="tag tag-jornada" style="margin-right:4px;" title="Ainda vai acontecer"><i class="fa-solid fa-calendar-day"></i> Futuro</span>' : ''}
                     <strong>${escapeHTML(nome)}</strong>
                     ${data ? `<span style="color:#94a3b8;"> — ${escapeHTML(data)}</span>` : ''}
                 </div>

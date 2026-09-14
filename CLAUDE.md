@@ -1570,6 +1570,15 @@ sistemas fechados).
   já está vinculado; confirmar cria a linha em `evento_leads` com
   `resposta_convite` padrão `'pendente'` e atualiza tanto a lista da
   gaveta quanto o resumo agregado do card do evento na Agenda.
+  **Pedido do usuário (2026-09-14)**: gaveta "Eventos" agora abre por
+  padrão (`gavetaLeadAberta.eventos = true` em `abrirGaveta()`,
+  `js/app.js` — mesmo padrão de "Tags") e `carregarEventosDoLead()`
+  reordena a lista (futuros primeiro, mais próximo no topo; depois
+  passados, mais recente primeiro — mesmo critério de
+  `renderizarListaEventos()` na Agenda), com um badge "Futuro"
+  (`.tag-jornada`) em cada item ainda por vir — antes a lista só seguia
+  `criado_em`, podia esconder um evento futuro relevante embaixo de
+  vários passados.
 
 ## Importar Matrícula (`js/matricula-importar.js`)
 
@@ -2986,6 +2995,31 @@ bloqueado).
          "Eventos" já testados em outro contexto, mas a leitura de
          MÚLTIPLAS linhas marcadas ao mesmo tempo é nova) — próxima
          rodada com a conta do Setor Universitário valida.
+       - **Bug real GRAVÍSSIMO, achado pelo usuário rodando o Garavelo de
+         verdade (2026-09-14)**: a Recepção do Ulisses mostrava 6
+         pré-inscritos num evento, mas a Agenda do CRM só tinha vinculado
+         1. Não era bug de casamento (telefone/e-mail/nome já funcionavam
+         certo) — era que `exportarCsvInscricoes()`/`ulisses-local.js`
+         só EXPORTAVA o CSV de Inscrições pra disco, **nunca o importava
+         de verdade em `leads_inscricoes`** — diferente do Mercúrio
+         (`scraper/mercurio.js` chama `importarNoCrm()` sozinho todo
+         dia), esse encadeamento nunca existiu do lado do Ulisses. Quem
+         se pré-inscreve pela 1ª vez (nunca apareceu em Ativos/Inativos/
+         Complementar/Aniversariantes do Mercúrio) simplesmente não
+         existia como lead ainda quando `sincronizarComparecimentoNoCrm()`
+         tentava casar por telefone/e-mail — só quem já era lead de outra
+         fonte (ex: já Ativo) conseguia ser vinculado. Explica a
+         estatística "341 sem lead achado" já vista numa rodada real.
+         **Corrigido**: `processarFilialLocal()` (`ulisses-local.js`)
+         agora tem uma etapa nova, `importar-inscricoes-no-crm`, logo
+         depois de exportar o CSV — chama `importarNoCrm()` (mesma
+         função que o Mercúrio já usa, pilotando a tela de Importar do
+         CRM publicado) ANTES de tentar sincronizar comparecimento, numa
+         aba/contexto `pageCrm` separado (mesmo padrão de
+         `scraper/mercurio.js`), reaproveitado entre as filiais na mesma
+         rodada. **Ainda NÃO testado contra o Ulisses real** — próxima
+         rodada valida que os 6 pré-inscritos do exemplo aparecem todos
+         vinculados.
        - **RESOLVIDO (2026-09-10, o usuário confirmou direto)**: são
          exclusivos do Garavelo mesmo — confirmado consultando os sites
          públicos das 3 outras filiais (`acropole.org.br/goiania-
