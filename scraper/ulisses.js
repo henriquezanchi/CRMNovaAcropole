@@ -556,11 +556,21 @@ export async function sincronizarComparecimentoNoCrm(filial) {
         const m = (dataHora || '').match(/(\d{2})\/(\d{2})\/(\d{4})/);
         return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
     };
+    // Pedido do usuário (2026-09-14): "Abertura de Turma" criada
+    // centralizadamente por OUTRA filial (ex: Setor Universitário, pra
+    // toda a região de Goiânia) nunca aparece na NOSSA aba "Links" — só
+    // quem criou vê o painel de detalhes (imagem/vagas). Mas a HORA já
+    // vem de graça aqui, na própria opção do `<select>` da Recepção
+    // ("DD/MM/AAAA HH:MM") — só nunca tínhamos extraído, só a data.
+    // Sem precisar de acesso à filial criadora, evento centralizado já
+    // sai da Recepção com data E hora corretas (imagem/vagas continuam
+    // só manuais nesse caso — ver CLAUDE.md).
+    const paraHora = (dataHora) => (dataHora || '').match(/(\d{2}:\d{2})/)?.[1] || null;
     const eventosUnicos = new Map();
     for (const r of registros) {
         const dataISO = paraISO(r.eventoData);
         if (!r.eventoNome || !dataISO) continue;
-        eventosUnicos.set(`${r.eventoNome}|||${dataISO}`, { nome: r.eventoNome, data: dataISO });
+        eventosUnicos.set(`${r.eventoNome}|||${dataISO}`, { nome: r.eventoNome, data: dataISO, hora: paraHora(r.eventoData) });
     }
 
     // BUG REAL GRAVÍSSIMO, confirmado em produção (2026-09-10): o <select>
@@ -598,9 +608,9 @@ export async function sincronizarComparecimentoNoCrm(filial) {
 
     const tiposEvento = await carregarTiposEventoUlisses();
     const idPorEvento = new Map();
-    for (const { nome, data } of eventosUnicos.values()) {
+    for (const { nome, data, hora } of eventosUnicos.values()) {
         let { data: existente } = await supabaseAdmin
-            .from('eventos').select('id, tipo, nome, ativo')
+            .from('eventos').select('id, tipo, nome, ativo, hora')
             .eq('filial', filial).eq('nome', nome).eq('data', data)
             .maybeSingle();
 
@@ -620,7 +630,7 @@ export async function sincronizarComparecimentoNoCrm(filial) {
         // só uma correção pontual deste caso.
         if (!existente) {
             const { data: candidatosMesmaData } = await supabaseAdmin
-                .from('eventos').select('id, tipo, nome, ativo')
+                .from('eventos').select('id, tipo, nome, ativo, hora')
                 .eq('filial', filial).eq('data', data);
             const normNome = normalizarNomeUlisses(nome);
             const parecido = (candidatosMesmaData || []).find(c => {
@@ -647,7 +657,10 @@ export async function sincronizarComparecimentoNoCrm(filial) {
             // capturado. Se o Ulisses ainda lista o evento, ele deveria
             // estar ATIVO na nossa Agenda também.
             const tipo = !existente.tipo ? classificarTipoEventoUlisses(nome, tiposEvento) : null;
-            const payloadUpdate = { ativo: true, ...(tipo ? { tipo } : {}) };
+            // `hora` só é preenchida se ainda não tinha — nunca sobrescreve
+            // um valor real já capturado pelo catálogo completo (aba
+            // "Eventos" do painel de detalhes, ver lerDataHoraEVagas()).
+            const payloadUpdate = { ativo: true, ...(tipo ? { tipo } : {}), ...(!existente.hora && hora ? { hora } : {}) };
             await supabaseAdmin.from('eventos').update(payloadUpdate).eq('id', existente.id);
             continue;
         }
@@ -663,7 +676,7 @@ export async function sincronizarComparecimentoNoCrm(filial) {
             continue;
         }
         const { data: criado, error } = await supabaseAdmin
-            .from('eventos').insert({ filial, nome, data, ativo: true, tipo: classificarTipoEventoUlisses(nome, tiposEvento) }).select('id').single();
+            .from('eventos').insert({ filial, nome, data, hora, ativo: true, tipo: classificarTipoEventoUlisses(nome, tiposEvento) }).select('id').single();
         if (error) {
             console.warn(`[ulisses] Não consegui criar evento base "${nome}" (${data}, ${filial}):`, error.message);
             continue;

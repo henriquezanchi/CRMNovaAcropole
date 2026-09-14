@@ -2936,6 +2936,29 @@ bloqueado).
          local ser vinculado (manualmente pela tela de Participantes, ou
          automaticamente quando/se um participante local for encontrado
          numa rodada futura).
+       - **Hora do evento centralizado, capturada de graça (2026-09-14,
+         pedido do usuário: "Abertura de Turma" completa mesmo criada por
+         outra filial)**: tentamos logar na filial que centraliza
+         "Abertura de Turma" (ex: Setor Universitário) pra ler o painel
+         de detalhes completo (imagem/vagas) — sem acesso a essa conta.
+         O site público (`acropole.org.br/<slug>/`) também não ajuda,
+         confirmado testando ao vivo: é uma página institucional fixa
+         (endereço/WhatsApp), sem calendário de eventos reais. Achado um
+         ganho parcial sem precisar de acesso novo nenhum: a própria
+         opção do `<select>` da Recepção já vem como "DD/MM/AAAA HH:MM",
+         mas só a DATA era extraída (`paraISO()`) — a HORA ficava
+         descartada. `sincronizarComparecimentoNoCrm()` agora também
+         extrai a hora (`paraHora()`) e grava em `eventos.hora` ao criar
+         a linha base, ou preenche se ainda estiver vazia num evento já
+         existente (nunca sobrescreve um valor real já capturado pela
+         aba "Eventos" do catálogo completo). **Quem se inscreveu e quem
+         compareceu já eram 100% cobertos** por esta mesma função,
+         independente de quem criou o evento — não precisou de nada
+         novo. **Limitação aceita, sem solução automatizada por ora**:
+         imagem e vagas (capacidade) só existem no painel "Link" de quem
+         criou o evento — ficam em branco pra evento centralizado, editável
+         manualmente na Agenda (rápido, 1x por campanha) até/se um dia
+         existir acesso à conta criadora.
        - **RESOLVIDO (2026-09-10, o usuário confirmou direto)**: são
          exclusivos do Garavelo mesmo — confirmado consultando os sites
          públicos das 3 outras filiais (`acropole.org.br/goiania-
