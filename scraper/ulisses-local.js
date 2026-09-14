@@ -167,11 +167,31 @@ function tokenDistintivoFilial(nomeFilial) {
 // claramente com OUTRA filial conhecida.
 const TEXTO_BASE_GOIANIA = 'NOVA ACROPOLE - GOIAS - GOIANIA';
 async function verificarFilialLogada(page, filialEsperada, todasFiliaisNomes) {
-    let textoBruto;
+    // Bug real confirmado pelo usuário (2026-09-14): esse texto pode
+    // demorar mais que o normal pra carregar (servidor do Ulisses lento
+    // num dia específico) — lendo cedo demais, `textoBruto` vinha VAZIO
+    // (nada renderizado ainda), e um texto vazio normaliza pra um
+    // "sufixo vazio" — exatamente o mesmo sinal do caso genuíno de
+    // Jardim América ("Nova Acrópole - Goiás - Goiânia", que também não
+    // tem sufixo). Sem distinguir "ainda carregando" de "é Jardim
+    // América de verdade", 3 tentativas reais de Garavelo foram
+    // erradamente abortadas como se fossem Jardim América. Corrigido com
+    // espera ATIVA por um texto BRUTO não-vazio (até 10s, mesmo padrão já
+    // usado em exportarComparecimento()/exportarCatalogoEventos() pra
+    // esperar o Angular render de verdade) — só depois disso o "sufixo
+    // vazio" pode ser tratado como o caso genuíno de Jardim América.
+    let textoBruto = '';
     try {
-        textoBruto = await page.locator('ul.navbar-right a.ng-binding').first().innerText({ timeout: 5000 });
+        const locator = page.locator('ul.navbar-right a.ng-binding').first();
+        for (let tentativa = 0; tentativa < 20 && !textoBruto.trim(); tentativa++) {
+            textoBruto = await locator.innerText({ timeout: 1000 }).catch(() => '');
+            if (!textoBruto.trim()) await page.waitForTimeout(500);
+        }
     } catch (e) {
         return { ok: null, motivo: `Não consegui ler o nome da filial logada pra confirmar (${e.message}) — seguindo mesmo assim.` };
+    }
+    if (!textoBruto.trim()) {
+        return { ok: null, motivo: 'O nome da filial logada não carregou a tempo (10s) — seguindo mesmo assim, confira manualmente se os dados exportados fazem sentido.' };
     }
 
     const texto = normalizarTextoFilial(textoBruto);
