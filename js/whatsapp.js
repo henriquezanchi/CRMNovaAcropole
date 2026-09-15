@@ -774,22 +774,6 @@ async function gerarLinksConviteLote() {
             .upsert(vinculos, { onConflict: 'evento_id,pessoaIdentificador', ignoreDuplicates: true });
     }
 
-    // Pedido do usuário (2026-09-15): ao gerar os links de convite, já
-    // move os leads que receberam link pra coluna de Abordagem — reflete
-    // que eles deixaram de ser "frios" no funil. Só quem tem telefone
-    // (recebeu link de verdade) é movido; quem foi ignorado por falta de
-    // telefone fica onde estava. moverLeadsParaColuna() já cuida de
-    // update otimista + barra de desfazer + funil_agencia_atualizado_em,
-    // mesmo caminho de qualquer outra movimentação em massa do Kanban.
-    if (linhas.length > 0) {
-        const colunaAbordagem = encontrarColunaAbordagem();
-        if (colunaAbordagem) {
-            await moverLeadsParaColuna(linhas.map(l => l.id), colunaAbordagem);
-        } else {
-            console.warn('Nenhuma coluna de Abordagem encontrada (crie uma coluna do Kanban com "Abordagem" no nome) — lead(s) convidado(s) não foram movidos automaticamente.');
-        }
-    }
-
     const avisoSemTelefone = semTelefone > 0
         ? `<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-triangle-exclamation"></i> ${semTelefone} lead(s) sem telefone cadastrado foram ignorados.</p>`
         : '';
@@ -863,15 +847,27 @@ async function marcarTelefoneInvalidoLote(pessoaId) {
     renderizarCards();
 }
 
-function marcarContatoWhatsAppLoteEnviado(pessoaId, marcado) {
+// Pedido do usuário (2026-09-15): mover pra Abordagem SÓ quando a
+// caixinha é marcada de verdade (confirmando que mandou), não no momento
+// de gerar os links — antes movia todo mundo assim que o link era criado,
+// mesmo que a pessoa nunca tivesse clicado em "Abrir"/mandado nada.
+async function marcarContatoWhatsAppLoteEnviado(pessoaId, marcado) {
     const linha = document.getElementById('conviteLoteLinha-' + pessoaId);
     if (linha) linha.style.opacity = marcado ? '0.45' : '1';
     if (!marcado || !conviteLoteEventoAtual) return;
+
     if (typeof registrarLogAtividade === 'function') {
         registrarLogAtividade('convite_whatsapp_link', {
             pessoaIds: [pessoaId],
             detalhes: { evento: conviteLoteEventoAtual.nome, canal: 'wa.me (WhatsApp pessoal)' },
         });
+    }
+
+    const colunaAbordagem = typeof encontrarColunaAbordagem === 'function' ? encontrarColunaAbordagem() : null;
+    if (colunaAbordagem) {
+        await moverLeadsParaColuna([pessoaId], colunaAbordagem);
+    } else {
+        console.warn('Nenhuma coluna de Abordagem encontrada (crie uma coluna do Kanban com "Abordagem" no nome) — lead não foi movido automaticamente.');
     }
 }
 

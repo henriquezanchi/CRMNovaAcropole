@@ -2663,15 +2663,19 @@ risco de o número pessoal ser banido.
   relatório de "quem foi contatado" pode ser complementado cruzando
   `mensagens_whatsapp` (`direcao='saida'`) — ainda não construído, não é
   necessário enquanto o canal principal continua sendo o wa.me manual.
-- **Move pra "Em Abordagem" ao gerar os links** (pedido do usuário,
-  2026-09-15) — `encontrarColunaAbordagem()` (mesma heurística por
-  substring de `encontrarColunaRecontato()`, busca "ABORDAGEM" no
-  `key`/`label` de `columnsConfig`, nunca cria a coluna sozinha; já bate
-  com a 2ª coluna padrão do Kanban, `colunasPadrao()` em `js/app.js`, key
-  `"Abordagem"`/label `"Em Abordagem"`) + `moverLeadsParaColuna()`, só
-  pros leads que REALMENTE ganharam link (tem telefone) — quem foi
-  ignorado por falta de telefone fica onde estava. Reflete que esses
-  leads deixaram de ser "frios" assim que foram convidados.
+- **Move pra "Em Abordagem" só quando o checkbox é MARCADO, não ao gerar
+  os links** (pedido do usuário, 2026-09-15 — corrigido no mesmo dia: a
+  1ª versão movia todo mundo assim que o link era criado, mesmo sem
+  clicar em "Abrir"/mandar nada) — `encontrarColunaAbordagem()` (mesma
+  heurística por substring de `encontrarColunaRecontato()`, busca
+  "ABORDAGEM" no `key`/`label` de `columnsConfig`, nunca cria a coluna
+  sozinha; já bate com a 2ª coluna padrão do Kanban, `colunasPadrao()` em
+  `js/app.js`, key `"Abordagem"`/label `"Em Abordagem"`) +
+  `moverLeadsParaColuna()`, chamada de dentro de
+  `marcarContatoWhatsAppLoteEnviado()` — 1 lead por vez, no exato momento
+  em que a pessoa confirma que mandou. Mesmo gatilho que já grava em
+  `log_atividade` (ver bullet acima) — os dois efeitos (log + mover)
+  acontecem juntos, só ao marcar de verdade.
 - **"Telefone inválido" direto nesta lista** (pedido do usuário,
   2026-09-15) — botão `.icon-btn.danger` (ícone de telefone cortado) em
   cada linha, `marcarTelefoneInvalidoLote()`: mesmo efeito de
