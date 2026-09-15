@@ -3226,6 +3226,47 @@ bloqueado).
          "Eventos" já testados em outro contexto, mas a leitura de
          MÚLTIPLAS linhas marcadas ao mesmo tempo é nova) — próxima
          rodada com a conta do Setor Universitário valida.
+       - **Bug real GRAVÍSSIMO confirmado (2026-09-15) — data errada pra
+         filial que NÃO criou o evento**: a Recepção do Ulisses, vista
+         por uma filial que não criou a "Abertura de Turma" (ex:
+         Garavelo), mostra o ciclo inteiro já "juntado" numa única opção
+         (algo como "Abertura de turma de 25/09 a 01/10"), em vez de uma
+         data específica — e `sincronizarComparecimentoNoCrm()` (que só
+         entende UMA data por opção) sempre acaba gravando a ÚLTIMA data
+         do intervalo pra QUALQUER filial não-criadora, mesmo quando a
+         data real dela é outra. Confirmado ao vivo: Garavelo tinha
+         28/09/2026 de verdade (segundo a página pública de inscrição),
+         mas ficou gravado 01/10/2026 — igual Jardim América/Setor Oeste,
+         que por coincidência JÁ tinham 01/10 como data real.
+         **`scraper/corrigir-datas-inscricao-publica.js`, NOVO, testado
+         ao vivo com sucesso**: usa a página PÚBLICA de inscrição
+         (`inscricao.acropolebrasil.com.br/?eventoId=...`) como fonte de
+         verdade — ela lista "Selecione a unidade de interesse" com a
+         data EXATA de cada unidade, sem precisar de login nenhum (nem no
+         Ulisses da filial, nem na conta centralizadora). O usuário
+         confirmou que esse mesmo link (e a imagem do evento) aparece no
+         site institucional de cada filial — é só entrar lá, copiar o
+         link e baixar a imagem. Uso:
+         `npm run corrigir-datas-inscricao-publica -- "<link>" "<nome EXATO do evento em eventos.nome>"`.
+         Lê a página por PADRÃO DE TEXTO (não seletor CSS — não temos o
+         HTML real confirmado, só um print; mesmo princípio de "achar
+         pelo texto visível" já usado em outros pontos do scraper), casa
+         cada unidade com nossas 4 filiais pelo núcleo distintivo do nome
+         (mesma técnica de `nucleoFilialCrm()`), e **SEMPRE corrige** a
+         data/hora do evento futuro mais próximo já existente com aquele
+         nome exato naquela filial (diferente de
+         `capturar-eventos-centralizados.js`, que só completa campo
+         vazio — aqui a página pública é autoridade sobre ESTE dado
+         específico, então uma data errada precisa ser sobrescrita, não
+         só preservada). Nunca cria evento novo — só avisa se a filial
+         ainda não tiver a linha base (rodar a sincronização de
+         Comparecimento normal primeiro). Também grava `link_inscricao`
+         de quebra. **Testado contra a página real** (evento 24343):
+         leu as 9 unidades corretamente (3 delas nossas), confirmou
+         Garavelo/Jardim América/Setor Oeste já corretos depois da
+         correção manual feita nesta sessão (`336`/`500`/`418` — ver
+         acima). Barra do Garças não participa deste ciclo específico
+         (tem sua própria campanha local, datas diferentes).
        - **Bug real GRAVÍSSIMO, achado pelo usuário rodando o Garavelo de
          verdade (2026-09-14)**: a Recepção do Ulisses mostrava 6
          pré-inscritos num evento, mas a Agenda do CRM só tinha vinculado
