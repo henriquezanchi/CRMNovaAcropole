@@ -2672,6 +2672,16 @@ risco de o número pessoal ser banido.
   pros leads que REALMENTE ganharam link (tem telefone) — quem foi
   ignorado por falta de telefone fica onde estava. Reflete que esses
   leads deixaram de ser "frios" assim que foram convidados.
+- **"Telefone inválido" direto nesta lista** (pedido do usuário,
+  2026-09-15) — botão `.icon-btn.danger` (ícone de telefone cortado) em
+  cada linha, `marcarTelefoneInvalidoLote()`: mesmo efeito de
+  `marcarTelefoneInvalido()` (gaveta do lead, `js/app.js`) — limpa o
+  telefone e aplica as tags `"Telefone Inválido"`/`"Sem Telefone"` — mas
+  sem precisar abrir a gaveta (o lead nem está aberto aqui). Grava direto
+  em `leads_inscricoes`, então já vale pro CRM inteiro (Kanban, outras
+  telas), não só pra esta lista. A linha correspondente é removida do
+  modal (o link `wa.me` já gerado com o número antigo deixaria de fazer
+  sentido).
 
 ### Setup pendente (só o usuário consegue fazer, fora do código)
 Checklist completo: Business Manager → App tipo "Business" com produto

@@ -802,6 +802,7 @@ async function gerarLinksConviteLote() {
                 <div style="display:flex; align-items:center; gap:8px; padding:8px; border:1px solid var(--border-color); border-radius:6px;" id="conviteLoteLinha-${l.id}">
                     <input type="checkbox" onchange="marcarContatoWhatsAppLoteEnviado('${l.id}', this.checked)">
                     <span style="flex:1; font-size:13px;">${escapeHTML(l.nome)}</span>
+                    <button class="icon-btn danger" title="Marcar telefone como inválido (remove do cadastro em todo o CRM)" onclick="marcarTelefoneInvalidoLote('${l.id}')"><i class="fa-solid fa-phone-slash"></i></button>
                     <a href="${l.link}" target="_blank" rel="noopener" class="btn-secondary" style="text-decoration:none; font-size:12px; padding:6px 10px;"><i class="fa-brands fa-whatsapp"></i> Abrir</a>
                 </div>
             `).join('')}
@@ -826,6 +827,42 @@ async function gerarLinksConviteLote() {
 // tudo em mensagens_whatsapp automaticamente). Desmarcar não apaga o
 // registro já feito (log é append-only por design) — só evita gravar de
 // novo se a pessoa marcar/desmarcar querendo "ajeitar" antes de terminar.
+// Igual marcarTelefoneInvalido() (js/app.js), mas sem depender dos campos
+// da gaveta do lead (aqui o lead nem está aberto) — pedido do usuário
+// (2026-09-15): descobrir um telefone inválido enquanto se prepara pra
+// convidar é comum (número que não existe mais, etc.), e precisa valer
+// pro CRM inteiro, não só somir desta lista. Reaproveita as MESMAS 2
+// tags de sistema (`"Telefone Inválido"` + sincroniza `"Sem Telefone"`)
+// e grava direto em leads_inscricoes — o mesmo efeito de abrir a gaveta e
+// clicar no botão de lá, só que sem precisar sair deste modal.
+async function marcarTelefoneInvalidoLote(pessoaId) {
+    const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(pessoaId));
+    if (leadIndex === -1) return;
+    const lead = leadsAtuais[leadIndex];
+    if (!lead.pessoaTelefoneNumero) { alert('Não há telefone cadastrado pra marcar como inválido.'); return; }
+    if (!confirm(`Marcar o telefone de ${lead.pessoaNome} como inválido? O número atual será removido do cadastro em todo o CRM.`)) return;
+
+    lead.pessoaTelefoneDDD = '';
+    lead.pessoaTelefoneNumero = '';
+    let tagsArray = parseTags(lead.tags).map(t => t.trim()).filter(Boolean);
+    if (!tagsArray.includes('Telefone Inválido')) tagsArray.push('Telefone Inválido');
+    if (!tagsArray.includes('Sem Telefone')) tagsArray.push('Sem Telefone');
+    lead.tags = JSON.stringify(tagsArray);
+
+    const { error } = await window.supabaseClient
+        .from(NOME_TABELA)
+        .update({ pessoaTelefoneDDD: '', pessoaTelefoneNumero: '', tags: lead.tags })
+        .eq('pessoaIdentificador', pessoaId);
+    if (error) { alert('Erro ao salvar: ' + error.message); return; }
+
+    // O link wa.me já gerado com o número antigo deixaria de fazer
+    // sentido — tira a linha inteira da lista em vez de deixar um link
+    // morto clicável.
+    const linha = document.getElementById('conviteLoteLinha-' + pessoaId);
+    if (linha) linha.remove();
+    renderizarCards();
+}
+
 function marcarContatoWhatsAppLoteEnviado(pessoaId, marcado) {
     const linha = document.getElementById('conviteLoteLinha-' + pessoaId);
     if (linha) linha.style.opacity = marcado ? '0.45' : '1';
