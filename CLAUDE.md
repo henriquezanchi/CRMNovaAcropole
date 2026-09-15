@@ -2691,6 +2691,17 @@ risco de o número pessoal ser banido.
   senão o evento fica com "pendentes" fantasmas que nunca viram contato
   de verdade); só o vínculo com ESTE evento é removido, outros eventos do
   mesmo lead não são tocados.
+- **Bug real relatado pelo usuário (2026-09-15): "só está aparecendo os
+  eventos quando eu clico na tela de Eventos"** — `eventosAtuais`
+  (`js/eventos.js`) só é carregado ao abrir a aba Agenda ou ao trocar de
+  filial (`trocarFilial()`, `js/app.js`); numa sessão nova que nunca fez
+  nenhuma das duas coisas (ex: loga e usa o botão direto do Kanban),
+  ficava vazio pra sempre, e o botão "Convidar (Link)" achava que não
+  havia evento futuro nenhum. Corrigido chamando `carregarEventos()`
+  (sempre, pra já garantir dado fresco) dentro do próprio
+  `iniciarConvitesWhatsAppEmMassa()`, antes de checar a lista —
+  `#agendaLista` existe no DOM o tempo todo (só escondido por CSS quando
+  a aba não está ativa), então a busca funciona vinda de qualquer aba.
 
 ### Setup pendente (só o usuário consegue fazer, fora do código)
 Checklist completo: Business Manager → App tipo "Business" com produto

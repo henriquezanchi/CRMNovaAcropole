@@ -681,13 +681,24 @@ function enviarConviteEvento(evento) {
 // CRM pelo fluxo que já existe, "Importar Conversa de WhatsApp"
 // (js/importar-conversa-whatsapp.js) — nada novo precisa ser construído
 // pra sincronizar de volta.
-function iniciarConvitesWhatsAppEmMassa() {
+// Bug real relatado pelo usuário (2026-09-15): "só está aparecendo os
+// eventos quando eu clico na tela de Eventos" — `eventosAtuais` só é
+// carregado ao abrir a aba Agenda ou ao TROCAR de filial
+// (`trocarFilial()`, js/app.js); numa sessão nova, sem nunca ter feito
+// nenhuma das duas coisas, `eventosAtuais` fica vazio pra sempre, e este
+// botão (acessado direto do Kanban) achava que a filial não tinha
+// nenhum evento futuro. Corrigido buscando os eventos aqui também,
+// sempre, antes de checar a lista — garante que está sempre atual (pode
+// ter sido cadastrado 1 evento novo agora mesmo, em outra aba).
+async function iniciarConvitesWhatsAppEmMassa() {
     if (typeof cardsSelecionados === 'undefined' || cardsSelecionados.size === 0) {
         alert('Selecione 1 ou mais leads no Kanban antes (checkbox no canto de cada card).');
         return;
     }
     const select = document.getElementById('conviteLoteEventoSelect');
     if (!select) return;
+
+    if (typeof carregarEventos === 'function') await carregarEventos();
 
     const hojeISO = new Date().toISOString().slice(0, 10);
     const lista = (typeof eventosAtuais !== 'undefined' ? eventosAtuais : [])
