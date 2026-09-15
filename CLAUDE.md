@@ -243,6 +243,15 @@ migracao_lixeira_lead.sql         → coluna lixeira_em em leads_inscricoes + fu
                                      limpar_lixeira_leads_vencidos() + cron job diário (apaga
                                      quem está na lixeira há 30+ dias; ver "Lixeira de Leads");
                                      JÁ RODADA nesta sessão via `supabase db query --linked`
+migracao_link_inscricao_evento.sql → coluna link_inscricao em eventos (URL pública de
+                                     inscrição, editável no modal de Evento da Agenda) — vira
+                                     {linkInscricao} nas mensagens de convite via WhatsApp; JÁ
+                                     RODADA nesta sessão via `supabase db query --linked`
+migracao_modelos_mensagem_whatsapp.sql → tabela modelos_mensagem_whatsapp (modelos de convite
+                                     editáveis pelo CRM, "Gerenciar Mensagens" — ver seção
+                                     "Convites em massa via wa.me"), já vem com 3 modelos
+                                     (seed); JÁ RODADA nesta sessão via
+                                     `supabase db query --linked`
 ```
 
 ## Banco de dados (Supabase)
@@ -2704,23 +2713,59 @@ risco de o número pessoal ser banido.
   telas), não só pra esta lista. A linha correspondente é removida do
   modal (o link `wa.me` já gerado com o número antigo deixaria de fazer
   sentido).
-- **Texto do convite editável antes de gerar os links** (pedido do
-  usuário, 2026-09-15: "permita eu escrever/editar o texto base") —
-  `<textarea id="conviteLoteTextoBase">` na tela de escolha do evento,
-  pré-preenchida com `CONVITE_EVENTO_NAO_ALUNO` (ou o último texto usado,
-  salvo em `localStorage`, `crm_na_texto_convite_lote` — só neste
-  navegador) e um botão "Restaurar padrão"
-  (`restaurarTextoBaseConviteLotePadrao()`). `montarTextoConviteEvento()`
-  ganhou um 3º parâmetro opcional `templateCustom` — quando informado,
-  substitui a escolha automática entre `CONVITE_EVENTO_ATIVO`/
-  `CONVITE_EVENTO_NAO_ALUNO` (o convite individual da gaveta continua sem
-  esse parâmetro, comportamento de sempre). **Decisão de escopo**: o
-  texto editado vale igual pra TODOS os selecionados no lote, mesmo quem
-  já é aluno ativo — a distinção automática ativo/não-aluno só existe
-  quando NENHUM texto customizado é usado. Trocado `.replace()` por
-  `.replaceAll()` nos placeholders (`{nome}`/`{evento}`/etc.) — texto
-  digitado à mão pode repetir um placeholder mais de uma vez, e
-  `.replace()` simples só troca a 1ª ocorrência.
+- **Modelos de mensagem editáveis pelo CRM** (`modelos_mensagem_whatsapp`,
+  `migracao_modelos_mensagem_whatsapp.sql`) — pedido do usuário (2026-09-15):
+  1ª versão do mesmo dia salvava só 1 texto em `localStorage` (por
+  navegador); o usuário pediu mais 2 coisas: "uma mensagem pronta, sem
+  ter que escrever nada" e "poder editar as mensagens base, pra não ter
+  que editar de um por um" — resolvido trocando o texto único por uma
+  tabela de modelos COMPARTILHADA (RLS pública, mesmo padrão de
+  `tags_sugeridas`/`tipos_evento`), com uma tela própria **"Gerenciar
+  Mensagens"** (botão dentro do próprio modal de Convidar).
+  - Tela "Escolha do evento": `<select id="conviteLoteModeloSelect">`
+    lista os modelos (`carregarModelosMensagemWpp()`); escolher um carrega
+    o texto na caixa editável (`aplicarModeloConviteLote()`) — editar ali
+    vale só PARA ESTE ENVIO (some ao reabrir); pra mudar o modelo de vez,
+    usa "Gerenciar Mensagens". Lembra qual modelo foi usado por último
+    (`localStorage`, `crm_na_modelo_convite_lote_id`) e já vem
+    pré-selecionado da próxima vez.
+  - **"Gerenciar Mensagens"** (`abrirGerenciarModelosMensagem()`,
+    `#modalModelosMensagem`): lista cada modelo com nome + texto
+    editáveis + Salvar/Remover, e "+ Novo Modelo". Editar aqui MUDA DE
+    VEZ o modelo pra todo mundo que for usar o CRM depois — é a resposta
+    direta a "não ter que editar de um por um".
+  - **Seed inicial** (rodado nesta sessão via `supabase db query --linked`):
+    3 modelos — `"Convite Geral (Não-Aluno)"`/`"Divulgação (Aluno Ativo)"`
+    (os 2 textos que já existiam hardcoded, preservados) e
+    **`"Abertura de Turma - Interessados"`** (NOVO, já com `{linkInscricao}`
+    — pensado especificamente pra "mensagem pronta com o link de
+    inscrição", pra usar com a tag nova `"Demonstrou Interesse"`, ver
+    seção de Tags).
+  - **`{linkInscricao}`** — novo placeholder, preenchido a partir de
+    `eventos.link_inscricao` (`migracao_link_inscricao_evento.sql`, rodada
+    nesta sessão) — campo novo no modal de Evento (Agenda), ao lado de
+    "Ingresso". Preenchendo esse campo 1x por evento, a mensagem sai
+    "pronta, sem ter que escrever nada" pra qualquer lead — sem ele, o
+    placeholder vira string vazia (nunca quebra, só fica sem o link).
+  - **Best-effort com fallback embutido**: sem a migração rodada,
+    `carregarModelosMensagemWpp()` cai num array fixo
+    (`MODELOS_MENSAGEM_FALLBACK`, os 2 textos de sempre) — a tela de
+    Gerenciar Mensagens detecta esse caso (id começa com `"fallback-"`) e
+    avisa que precisa rodar a migração antes de editar/criar.
+  - `montarTextoConviteEvento()` ganhou um 3º parâmetro opcional
+    `templateCustom` — quando informado (sempre o caso no disparo em
+    massa), substitui a escolha automática entre `CONVITE_EVENTO_ATIVO`/
+    `CONVITE_EVENTO_NAO_ALUNO` (o convite individual da gaveta continua
+    sem esse parâmetro, comportamento de sempre). **Decisão de escopo
+    mantida**: o modelo escolhido vale igual pra TODOS os selecionados no
+    lote, mesmo quem já é aluno ativo — pra tratar diferente, basta
+    escolher/criar um modelo específico e rodar a campanha em 2 lotes.
+    Trocado `.replace()` por `.replaceAll()` nos placeholders — texto
+    digitado à mão pode repetir um placeholder mais de uma vez.
+  - **Não testado ao vivo** (migração aplicada e verificada direto no
+    banco via `curl`, mas o fluxo completo pela UI — abrir Convidar,
+    trocar modelo, editar em Gerenciar Mensagens — ainda não foi clicado
+    de verdade nesta sessão).
 - **Também remove o vínculo `evento_leads` "pendente" desse
   evento** (pedido do usuário: "nem chegamos a entrar em contato com
   eles" — telefone inválido não deveria contar como convite pendente,

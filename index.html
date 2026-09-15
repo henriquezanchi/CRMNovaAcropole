@@ -927,6 +927,11 @@
                 <label>Ingresso</label>
                 <input type="text" id="eventoIngressoInput" placeholder="Ex: Gratuito, R$ 20,00...">
             </div>
+            <div class="filter-group">
+                <label>Link de Inscrição</label>
+                <input type="text" id="eventoLinkInscricaoInput" placeholder="https://inscricao.acropolebrasil.com.br/...">
+                <small style="font-size:10px; color:var(--text-muted); line-height:1.4;">Vira {linkInscricao} nas mensagens de WhatsApp (Convidar por Link) — preenchendo aqui, a mensagem já sai pronta, sem precisar colar o link toda vez.</small>
+            </div>
             <div class="filter-group" id="eventoDataLimiteBloco">
                 <label>Data limite para inscrição (opcional)</label>
                 <input type="date" id="eventoDataLimiteInput">
@@ -1018,17 +1023,37 @@
                 <select id="conviteLoteEventoSelect" style="width:100%; padding:8px; margin-bottom:12px;"></select>
 
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-                    <label style="font-size:12px; font-weight:600;">Texto do convite (edite à vontade)</label>
-                    <button type="button" class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="restaurarTextoBaseConviteLotePadrao()"><i class="fa-solid fa-rotate-left"></i> Restaurar padrão</button>
+                    <label style="font-size:12px; font-weight:600;">Modelo de mensagem</label>
+                    <button type="button" class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="abrirGerenciarModelosMensagem()"><i class="fa-solid fa-pen-to-square"></i> Gerenciar Mensagens</button>
+                </div>
+                <select id="conviteLoteModeloSelect" style="width:100%; padding:8px; margin-bottom:8px;" onchange="aplicarModeloConviteLote()"></select>
+
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                    <label style="font-size:12px; font-weight:600;">Texto do convite (edite à vontade pra este envio)</label>
+                    <button type="button" class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="aplicarModeloConviteLote()"><i class="fa-solid fa-rotate-left"></i> Recarregar modelo</button>
                 </div>
                 <textarea id="conviteLoteTextoBase" style="width:100%; min-height:120px; padding:8px; font-family:inherit; font-size:13px; margin-bottom:6px;"></textarea>
                 <p style="font-size:11px; color:var(--text-muted); margin-bottom:12px;">
-                    Preenchidos automaticamente por lead: <code>{nome}</code>, <code>{evento}</code>, <code>{quando}</code>, <code>{atendente}</code>, <code>{filial}</code>, <code>{interesses}</code>. Fica salvo neste navegador pra próxima vez. Esse mesmo texto é usado pra todos os selecionados (não diferencia mais quem já é aluno ativo).
+                    Preenchidos automaticamente por lead/evento: <code>{nome}</code>, <code>{evento}</code>, <code>{quando}</code>, <code>{atendente}</code>, <code>{filial}</code>, <code>{interesses}</code>, <code>{linkInscricao}</code> (esse último só sai preenchido se o evento tiver um Link de Inscrição cadastrado na Agenda). Editar aqui vale só pra este envio — pra mudar o modelo de vez, use "Gerenciar Mensagens". Esse mesmo texto é usado pra todos os selecionados (não diferencia mais quem já é aluno ativo).
                 </p>
 
                 <button class="btn-primary" onclick="gerarLinksConviteLote()"><i class="fa-solid fa-link"></i> Gerar Links</button>
             </div>
             <div id="conviteLoteResultado" style="display:none;"></div>
+        </div>
+    </div>
+
+    <!-- Modal: Gerenciar Mensagens (modelos de convite WhatsApp, tabela modelos_mensagem_whatsapp) -->
+    <div class="overlay" id="overlayModalModelosMensagem" onclick="fecharGerenciarModelosMensagem()"></div>
+    <div class="modal" id="modalModelosMensagem">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-comment-dots"></i> Gerenciar Mensagens</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharGerenciarModelosMensagem()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">Editável aqui uma vez, vale pra todo mundo que usar "Convidar (Link)" daqui pra frente — sem precisar editar de um em um. Placeholders: <code>{nome}</code>, <code>{evento}</code>, <code>{quando}</code>, <code>{atendente}</code>, <code>{filial}</code>, <code>{interesses}</code>, <code>{linkInscricao}</code>.</p>
+            <div id="modelosMensagemLista"></div>
+            <button class="btn-secondary" style="margin-top:10px;" onclick="adicionarModeloMensagem()"><i class="fa-solid fa-plus"></i> Novo Modelo</button>
         </div>
     </div>
 

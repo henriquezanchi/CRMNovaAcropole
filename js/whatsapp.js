@@ -656,7 +656,8 @@ function montarTextoConviteEvento(lead, evento, templateCustom) {
         .replaceAll('{filial}', (typeof preencherValorAutomatico === 'function' ? preencherValorAutomatico('filial') : '') || filialAtual || '')
         .replaceAll('{evento}', evento.nome)
         .replaceAll('{quando}', quando)
-        .replaceAll('{interesses}', fraseInteresses);
+        .replaceAll('{interesses}', fraseInteresses)
+        .replaceAll('{linkInscricao}', evento.link_inscricao || '');
 }
 
 // Só preenche a caixa de texto do chat da gaveta (não envia sozinho) —
@@ -723,11 +724,9 @@ async function iniciarConvitesWhatsAppEmMassa() {
 
     select.innerHTML = lista.map(ev => `<option value="${ev.id}">${escapeHTML(ev.nome)} — ${typeof formatarDataEvento === 'function' ? formatarDataEvento(ev.data) : ev.data}</option>`).join('');
 
-    // Pedido do usuário (2026-09-15): editar o texto base antes de gerar
-    // os links — pré-preenche com o último texto usado (localStorage, só
-    // neste navegador) ou o padrão (CONVITE_EVENTO_NAO_ALUNO) na 1ª vez.
-    const textareaTexto = document.getElementById('conviteLoteTextoBase');
-    if (textareaTexto) textareaTexto.value = localStorage.getItem(CHAVE_STORAGE_TEXTO_CONVITE_LOTE) || CONVITE_EVENTO_NAO_ALUNO;
+    await carregarModelosMensagemWpp();
+    montarSelectModelosConviteLote();
+    aplicarModeloConviteLote();
 
     document.getElementById('conviteLoteEscolha').style.display = 'block';
     document.getElementById('conviteLoteResultado').style.display = 'none';
@@ -741,11 +740,128 @@ function fecharModalConviteLote() {
     document.getElementById('overlayModalConviteLote').classList.remove('active');
 }
 
-const CHAVE_STORAGE_TEXTO_CONVITE_LOTE = 'crm_na_texto_convite_lote';
+// ==========================================================
+// Modelos de mensagem (tabela modelos_mensagem_whatsapp) — pedido do
+// usuário (2026-09-15): "eu quero poder editar as mensagens base, para
+// não ter que editar de um por um" + "uma mensagem pronta, sem ter que
+// escrever nada". Substituiu o texto único salvo em localStorage (versão
+// anterior do mesmo dia) por modelos COMPARTILHADOS (banco, mesmo padrão
+// de tags_sugeridas/tipos_evento — RLS pública), editáveis em "Gerenciar
+// Mensagens", com {linkInscricao} preenchido automaticamente quando o
+// evento tem esse campo cadastrado na Agenda (migracao_link_inscricao_evento.sql).
+// ==========================================================
+const CHAVE_STORAGE_MODELO_CONVITE_LOTE = 'crm_na_modelo_convite_lote_id';
+let modelosMensagemWpp = [];
 
-function restaurarTextoBaseConviteLotePadrao() {
+// Best-effort: sem a migração rodada, cai num fallback embutido (os 2
+// textos que já existiam hardcoded) — nunca trava o recurso.
+const MODELOS_MENSAGEM_FALLBACK = [
+    { id: 'fallback-nao-aluno', nome: 'Convite Geral (Não-Aluno)', texto: CONVITE_EVENTO_NAO_ALUNO },
+    { id: 'fallback-ativo', nome: 'Divulgação (Aluno Ativo)', texto: CONVITE_EVENTO_ATIVO },
+];
+
+async function carregarModelosMensagemWpp() {
+    const { data, error } = await window.supabaseClient
+        .from('modelos_mensagem_whatsapp')
+        .select('*')
+        .order('ordem', { ascending: true });
+    if (error) {
+        console.warn('Não foi possível carregar modelos_mensagem_whatsapp (rode migracao_modelos_mensagem_whatsapp.sql se ainda não rodou) — usando modelos padrão embutidos.', error.message);
+        modelosMensagemWpp = MODELOS_MENSAGEM_FALLBACK;
+        return;
+    }
+    modelosMensagemWpp = (data && data.length > 0) ? data : MODELOS_MENSAGEM_FALLBACK;
+}
+
+function montarSelectModelosConviteLote() {
+    const select = document.getElementById('conviteLoteModeloSelect');
+    if (!select) return;
+    const ultimoUsadoId = localStorage.getItem(CHAVE_STORAGE_MODELO_CONVITE_LOTE);
+    select.innerHTML = modelosMensagemWpp.map(m => `<option value="${escapeHTML(String(m.id))}">${escapeHTML(m.nome)}</option>`).join('');
+    if (ultimoUsadoId && modelosMensagemWpp.some(m => String(m.id) === ultimoUsadoId)) {
+        select.value = ultimoUsadoId;
+    }
+}
+
+// Carrega o texto do modelo selecionado na caixa editável — chamada ao
+// abrir a tela, ao trocar o `<select>` de modelo, e pelo botão "Recarregar
+// modelo" (descarta qualquer edição feita só pra este envio).
+function aplicarModeloConviteLote() {
+    const select = document.getElementById('conviteLoteModeloSelect');
     const textarea = document.getElementById('conviteLoteTextoBase');
-    if (textarea) textarea.value = CONVITE_EVENTO_NAO_ALUNO;
+    if (!select || !textarea) return;
+    const modelo = modelosMensagemWpp.find(m => String(m.id) === select.value) || modelosMensagemWpp[0];
+    textarea.value = modelo ? modelo.texto : CONVITE_EVENTO_NAO_ALUNO;
+}
+
+// Tela "Gerenciar Mensagens" — editar/criar/remover modelos direto do
+// CRM, sem sessão de código nova (mesmo padrão de "Gerenciar Tipos de
+// Evento"/"Gerenciar Tags"). Precisa da migração rodada (tabela de
+// verdade) — sem ela, os fallbacks embutidos não têm `id` numérico real
+// pra salvar, então avisa em vez de tentar gravar algo que não existe.
+async function abrirGerenciarModelosMensagem() {
+    await carregarModelosMensagemWpp();
+    renderizarListaModelosMensagem();
+    document.getElementById('modalModelosMensagem').classList.add('open');
+    document.getElementById('overlayModalModelosMensagem').classList.add('active');
+}
+function fecharGerenciarModelosMensagem() {
+    document.getElementById('modalModelosMensagem').classList.remove('open');
+    document.getElementById('overlayModalModelosMensagem').classList.remove('active');
+    // Reflete qualquer edição/remoção feita na tela de gerenciar de volta
+    // no seletor da tela de convite (se estiver aberta por trás).
+    montarSelectModelosConviteLote();
+}
+
+function renderizarListaModelosMensagem() {
+    const container = document.getElementById('modelosMensagemLista');
+    if (!container) return;
+    if (modelosMensagemWpp.length === 0 || String(modelosMensagemWpp[0].id).startsWith('fallback-')) {
+        container.innerHTML = '<p style="font-size:12px; color:var(--danger,#dc2626);">Rode migracao_modelos_mensagem_whatsapp.sql no Supabase pra poder editar/criar modelos aqui — por enquanto só os modelos padrão embutidos estão disponíveis (não editáveis).</p>';
+        return;
+    }
+    container.innerHTML = modelosMensagemWpp.map(m => `
+        <div style="border:1px solid var(--border-color); border-radius:8px; padding:10px; margin-bottom:10px;">
+            <input type="text" value="${escapeHTML(m.nome)}" id="modeloMensagemNome-${m.id}" style="width:100%; font-weight:600; padding:6px; margin-bottom:6px;">
+            <textarea id="modeloMensagemTexto-${m.id}" style="width:100%; min-height:100px; padding:8px; font-family:inherit; font-size:13px; margin-bottom:6px;">${escapeHTML(m.texto)}</textarea>
+            <div style="display:flex; justify-content:flex-end; gap:6px;">
+                <button class="btn-secondary" style="font-size:11px; padding:4px 10px;" onclick="removerModeloMensagem(${m.id})"><i class="fa-solid fa-trash"></i> Remover</button>
+                <button class="btn-primary" style="font-size:11px; padding:4px 10px;" onclick="salvarModeloMensagem(${m.id})"><i class="fa-solid fa-check"></i> Salvar</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function salvarModeloMensagem(id) {
+    const nome = document.getElementById(`modeloMensagemNome-${id}`).value.trim();
+    const texto = document.getElementById(`modeloMensagemTexto-${id}`).value;
+    if (!nome || !texto.trim()) { alert('Nome e texto não podem ficar vazios.'); return; }
+    const { error } = await window.supabaseClient.from('modelos_mensagem_whatsapp').update({ nome, texto }).eq('id', id);
+    if (error) { alert('Erro ao salvar: ' + error.message); return; }
+    await carregarModelosMensagemWpp();
+    renderizarListaModelosMensagem();
+}
+
+async function removerModeloMensagem(id) {
+    if (!confirm('Remover este modelo de mensagem? Não afeta convites já enviados.')) return;
+    const { error } = await window.supabaseClient.from('modelos_mensagem_whatsapp').delete().eq('id', id);
+    if (error) { alert('Erro ao remover: ' + error.message); return; }
+    await carregarModelosMensagemWpp();
+    renderizarListaModelosMensagem();
+}
+
+async function adicionarModeloMensagem() {
+    const nome = prompt('Nome do novo modelo (ex: "Convite Palestra Gratuita"):');
+    if (!nome || !nome.trim()) return;
+    const maiorOrdem = modelosMensagemWpp.reduce((max, m) => Math.max(max, m.ordem || 0), -1);
+    const { error } = await window.supabaseClient.from('modelos_mensagem_whatsapp').insert({
+        nome: nome.trim(),
+        texto: 'Olá, {nome}!\n\nAqui é {atendente}, da Nova Acrópole {filial}, tudo bem?\n\nVai rolar {evento}{quando}!',
+        ordem: maiorOrdem + 1,
+    });
+    if (error) { alert('Erro ao criar modelo: ' + error.message); return; }
+    await carregarModelosMensagemWpp();
+    renderizarListaModelosMensagem();
 }
 
 // Mesma heurística por substring já usada em encontrarColunaRecontato()
@@ -780,12 +896,14 @@ async function gerarLinksConviteLote() {
     if (!evento) return;
     conviteLoteEventoAtual = evento;
 
-    // Texto editado pelo usuário (ou o padrão, se não mexeu em nada) —
-    // salvo em localStorage pra já vir preenchido da próxima vez que essa
-    // filial/atendente for disparar outra campanha.
+    // Texto que está na caixa agora (o modelo escolhido, com ou sem
+    // ajuste manual só pra este envio) — o modelo em si (persistente) só
+    // muda de verdade em "Gerenciar Mensagens"; aqui só lembramos QUAL
+    // modelo foi usado por último, pra já vir selecionado da próxima vez.
     const textareaTexto = document.getElementById('conviteLoteTextoBase');
     const textoBase = (textareaTexto ? textareaTexto.value : '').trim() || CONVITE_EVENTO_NAO_ALUNO;
-    localStorage.setItem(CHAVE_STORAGE_TEXTO_CONVITE_LOTE, textoBase);
+    const selectModelo = document.getElementById('conviteLoteModeloSelect');
+    if (selectModelo && selectModelo.value) localStorage.setItem(CHAVE_STORAGE_MODELO_CONVITE_LOTE, selectModelo.value);
 
     const ids = Array.from(cardsSelecionados);
     const linhas = [];

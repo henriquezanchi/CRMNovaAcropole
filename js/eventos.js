@@ -450,6 +450,7 @@ function abrirFormEvento(id) {
         document.getElementById('eventoDataInput').value = ev.data || '';
         document.getElementById('eventoHoraInput').value = ev.hora ? String(ev.hora).slice(0, 5) : '';
         document.getElementById('eventoIngressoInput').value = ev.ingresso || '';
+        document.getElementById('eventoLinkInscricaoInput').value = ev.link_inscricao || '';
         document.getElementById('eventoCapacidadeInput').value = (ev.capacidade === null || ev.capacidade === undefined) ? '' : ev.capacidade;
         document.getElementById('eventoDataLimiteInput').value = ev.data_limite_inscricao || '';
         btnDesativar.style.display = 'inline-flex';
@@ -471,6 +472,7 @@ function abrirFormEvento(id) {
         document.getElementById('eventoDataInput').value = '';
         document.getElementById('eventoHoraInput').value = '';
         document.getElementById('eventoIngressoInput').value = '';
+        document.getElementById('eventoLinkInscricaoInput').value = '';
         document.getElementById('eventoCapacidadeInput').value = '';
         document.getElementById('eventoDataLimiteInput').value = '';
         document.getElementById('eventoMultiFilialWrapper').style.display = 'flex';
@@ -531,6 +533,7 @@ async function salvarEvento() {
     const imagemUrl = document.getElementById('eventoImagemInput').value.trim() || null;
     const descricao = document.getElementById('eventoDescricaoInput').value.trim() || null;
     const ingresso = document.getElementById('eventoIngressoInput').value.trim() || null;
+    const linkInscricao = document.getElementById('eventoLinkInscricaoInput').value.trim() || null;
 
     if (!nome) { alert('Digite o nome do evento.'); return; }
 
@@ -551,7 +554,7 @@ async function salvarEvento() {
         const grupoEventoId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `grp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
         const registros = linhas.map(l => ({
-            filial: l.filial, nome, tipo, ingresso,
+            filial: l.filial, nome, tipo, ingresso, link_inscricao: linkInscricao,
             data: l.data, hora: l.hora,
             capacidade: l.capacidadeStr === '' ? null : Number(l.capacidadeStr),
             imagem_url: imagemUrl, descricao,
@@ -576,7 +579,7 @@ async function salvarEvento() {
     if (!data) { alert('Selecione a data do evento.'); return; }
     if (dataLimiteInscricao && dataLimiteInscricao < data) { alert('A data limite de inscrição não pode ser antes da data do evento.'); return; }
 
-    const payload = { filial: filialAtual, nome, tipo, data, hora, ingresso, capacidade, data_limite_inscricao: dataLimiteInscricao, imagem_url: imagemUrl, descricao };
+    const payload = { filial: filialAtual, nome, tipo, data, hora, ingresso, link_inscricao: linkInscricao, capacidade, data_limite_inscricao: dataLimiteInscricao, imagem_url: imagemUrl, descricao };
 
     const { error } = eventoEditandoId
         ? await window.supabaseClient.from(NOME_TABELA_EVENTOS).update(payload).eq('id', eventoEditandoId)
