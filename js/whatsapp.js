@@ -438,8 +438,30 @@ const chatDrawer = criarChatController({ messagesId: 'drawer-messages', inputAre
 // houver) os interesses do lead conforme as tags da família "Interesses /
 // Origem". Dois textos-base conforme o lead já é aluno ativo ou não —
 // ajuste livremente, são só um ponto de partida.
-const CONVITE_EVENTO_NAO_ALUNO = `Olá, {nome}! Tudo bem? Aqui é {atendente}, da Nova Acrópole - {filial}. 😊 Vai rolar {evento}{quando} e eu queria muito te convidar pra vir!{interesses} Posso te passar mais detalhes?`;
-const CONVITE_EVENTO_ATIVO = `Olá, {nome}! Tudo bem? Aqui é {atendente}, da Nova Acrópole - {filial}. 😊 Vai rolar {evento}{quando}, e você é muito importante nesse momento! Você pode: 1) encaminhar esse convite pra quem você acha que ia gostar de conhecer; 2) me passar o telefone de alguém que valeria a pena a gente chamar pessoalmente; ou 3) topar ser voluntário(a) no dia, ajudando a receber o pessoal. Me conta o que topa fazer? 🙏`;
+// Quebrado em parágrafos curtos (linha em branco entre cada um) — pedido
+// do usuário (2026-09-15), depois de ver o texto real chegando tudo
+// espremido numa linha só. Sem emoji de propósito — o emoji chegava
+// corrompido (mojibake, "�") no texto pré-preenchido do link wa.me (ver
+// "Convites em massa via wa.me"); mais simples remover do que tentar
+// diagnosticar um problema de encoding numa dependência externa (URL do
+// WhatsApp). `{filial}` aqui já vem COM a preposição (ex: "do Garavelo",
+// "de Barra do Garças" — mesmo valor de preencherValorAutomatico('filial'),
+// que já é usado nos templates aprovados da Meta), por isso o texto não
+// tem mais um "-" fixo antes dela.
+const CONVITE_EVENTO_NAO_ALUNO = `Olá, {nome}!
+
+Aqui é {atendente}, da Nova Acrópole {filial}, tudo bem?
+
+Vai rolar {evento}{quando} e eu queria muito te convidar pra vir!{interesses}
+
+Posso te passar mais detalhes?`;
+const CONVITE_EVENTO_ATIVO = `Olá, {nome}!
+
+Aqui é {atendente}, da Nova Acrópole {filial}, tudo bem?
+
+Vai rolar {evento}{quando}, e você é muito importante nesse momento! Você pode: 1) encaminhar esse convite pra quem você acha que ia gostar de conhecer; 2) me passar o telefone de alguém que valeria a pena a gente chamar pessoalmente; ou 3) topar ser voluntário(a) no dia, ajudando a receber o pessoal.
+
+Me conta o que topa fazer?`;
 
 // Nome de quem está mandando. Prioriza o usuário LOGADO (js/usuarios.js,
 // login nominal por conta) — nesse caso não pergunta nada, o nome já é o
@@ -621,7 +643,7 @@ function montarTextoConviteEvento(lead, evento) {
     return (ehAtivo ? CONVITE_EVENTO_ATIVO : CONVITE_EVENTO_NAO_ALUNO)
         .replace('{nome}', primeiroNome)
         .replace('{atendente}', atendente || 'a equipe da Nova Acrópole')
-        .replace('{filial}', filialAtual || '')
+        .replace('{filial}', (typeof preencherValorAutomatico === 'function' ? preencherValorAutomatico('filial') : '') || filialAtual || '')
         .replace('{evento}', evento.nome)
         .replace('{quando}', quando)
         .replace('{interesses}', fraseInteresses);
