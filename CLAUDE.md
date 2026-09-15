@@ -2703,7 +2703,25 @@ risco de o número pessoal ser banido.
   em `leads_inscricoes`, então já vale pro CRM inteiro (Kanban, outras
   telas), não só pra esta lista. A linha correspondente é removida do
   modal (o link `wa.me` já gerado com o número antigo deixaria de fazer
-  sentido). **Também remove o vínculo `evento_leads` "pendente" desse
+  sentido).
+- **Texto do convite editável antes de gerar os links** (pedido do
+  usuário, 2026-09-15: "permita eu escrever/editar o texto base") —
+  `<textarea id="conviteLoteTextoBase">` na tela de escolha do evento,
+  pré-preenchida com `CONVITE_EVENTO_NAO_ALUNO` (ou o último texto usado,
+  salvo em `localStorage`, `crm_na_texto_convite_lote` — só neste
+  navegador) e um botão "Restaurar padrão"
+  (`restaurarTextoBaseConviteLotePadrao()`). `montarTextoConviteEvento()`
+  ganhou um 3º parâmetro opcional `templateCustom` — quando informado,
+  substitui a escolha automática entre `CONVITE_EVENTO_ATIVO`/
+  `CONVITE_EVENTO_NAO_ALUNO` (o convite individual da gaveta continua sem
+  esse parâmetro, comportamento de sempre). **Decisão de escopo**: o
+  texto editado vale igual pra TODOS os selecionados no lote, mesmo quem
+  já é aluno ativo — a distinção automática ativo/não-aluno só existe
+  quando NENHUM texto customizado é usado. Trocado `.replace()` por
+  `.replaceAll()` nos placeholders (`{nome}`/`{evento}`/etc.) — texto
+  digitado à mão pode repetir um placeholder mais de uma vez, e
+  `.replace()` simples só troca a 1ª ocorrência.
+- **Também remove o vínculo `evento_leads` "pendente" desse
   evento** (pedido do usuário: "nem chegamos a entrar em contato com
   eles" — telefone inválido não deveria contar como convite pendente,
   senão o evento fica com "pendentes" fantasmas que nunca viram contato

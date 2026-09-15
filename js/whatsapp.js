@@ -609,7 +609,14 @@ async function confirmarConviteComFoto() {
 // enviarConviteEvento() pra ser reaproveitado também pelo disparo em massa
 // via link wa.me (ver "Convites em massa via wa.me" mais abaixo), sem
 // duplicar a lógica de {nome}/{atendente}/{quando}/{interesses}.
-function montarTextoConviteEvento(lead, evento) {
+// `templateCustom` opcional (pedido do usuário, 2026-09-15: "permita eu
+// escrever/editar o texto base que será enviado através do link") —
+// quando informado, SUBSTITUI a escolha automática entre
+// CONVITE_EVENTO_ATIVO/CONVITE_EVENTO_NAO_ALUNO (usado pelo disparo em
+// massa via wa.me, onde a pessoa edita 1 texto pra todo o lote antes de
+// gerar os links); sem ele, comportamento de sempre (convite individual
+// da gaveta).
+function montarTextoConviteEvento(lead, evento, templateCustom) {
     const tagsLead = (typeof parseTags === 'function' ? parseTags(lead.tags) : []).map(t => t.trim()).filter(Boolean);
     const ehAtivo = tagsLead.includes('Ativo') || tagsLead.includes('Aluno Ativo');
     const primeiroNome = primeiroNomeFormatado(lead.pessoaNome);
@@ -640,13 +647,16 @@ function montarTextoConviteEvento(lead, evento) {
         quando = ` no dia ${dataFormatada}${horaFormatada ? ' às ' + horaFormatada : ''}`;
     }
 
-    return (ehAtivo ? CONVITE_EVENTO_ATIVO : CONVITE_EVENTO_NAO_ALUNO)
-        .replace('{nome}', primeiroNome)
-        .replace('{atendente}', atendente || 'a equipe da Nova Acrópole')
-        .replace('{filial}', (typeof preencherValorAutomatico === 'function' ? preencherValorAutomatico('filial') : '') || filialAtual || '')
-        .replace('{evento}', evento.nome)
-        .replace('{quando}', quando)
-        .replace('{interesses}', fraseInteresses);
+    // replaceAll (não replace) — texto CUSTOM editado à mão pode repetir
+    // um placeholder mais de 1 vez; com replace() simples, só a 1ª
+    // ocorrência seria trocada, deixando "{nome}" literal na 2ª.
+    return (templateCustom || (ehAtivo ? CONVITE_EVENTO_ATIVO : CONVITE_EVENTO_NAO_ALUNO))
+        .replaceAll('{nome}', primeiroNome)
+        .replaceAll('{atendente}', atendente || 'a equipe da Nova Acrópole')
+        .replaceAll('{filial}', (typeof preencherValorAutomatico === 'function' ? preencherValorAutomatico('filial') : '') || filialAtual || '')
+        .replaceAll('{evento}', evento.nome)
+        .replaceAll('{quando}', quando)
+        .replaceAll('{interesses}', fraseInteresses);
 }
 
 // Só preenche a caixa de texto do chat da gaveta (não envia sozinho) —
@@ -712,6 +722,13 @@ async function iniciarConvitesWhatsAppEmMassa() {
     }
 
     select.innerHTML = lista.map(ev => `<option value="${ev.id}">${escapeHTML(ev.nome)} — ${typeof formatarDataEvento === 'function' ? formatarDataEvento(ev.data) : ev.data}</option>`).join('');
+
+    // Pedido do usuário (2026-09-15): editar o texto base antes de gerar
+    // os links — pré-preenche com o último texto usado (localStorage, só
+    // neste navegador) ou o padrão (CONVITE_EVENTO_NAO_ALUNO) na 1ª vez.
+    const textareaTexto = document.getElementById('conviteLoteTextoBase');
+    if (textareaTexto) textareaTexto.value = localStorage.getItem(CHAVE_STORAGE_TEXTO_CONVITE_LOTE) || CONVITE_EVENTO_NAO_ALUNO;
+
     document.getElementById('conviteLoteEscolha').style.display = 'block';
     document.getElementById('conviteLoteResultado').style.display = 'none';
     document.getElementById('conviteLoteResultado').innerHTML = '';
@@ -722,6 +739,13 @@ async function iniciarConvitesWhatsAppEmMassa() {
 function fecharModalConviteLote() {
     document.getElementById('modalConviteLote').classList.remove('open');
     document.getElementById('overlayModalConviteLote').classList.remove('active');
+}
+
+const CHAVE_STORAGE_TEXTO_CONVITE_LOTE = 'crm_na_texto_convite_lote';
+
+function restaurarTextoBaseConviteLotePadrao() {
+    const textarea = document.getElementById('conviteLoteTextoBase');
+    if (textarea) textarea.value = CONVITE_EVENTO_NAO_ALUNO;
 }
 
 // Mesma heurística por substring já usada em encontrarColunaRecontato()
@@ -756,6 +780,13 @@ async function gerarLinksConviteLote() {
     if (!evento) return;
     conviteLoteEventoAtual = evento;
 
+    // Texto editado pelo usuário (ou o padrão, se não mexeu em nada) —
+    // salvo em localStorage pra já vir preenchido da próxima vez que essa
+    // filial/atendente for disparar outra campanha.
+    const textareaTexto = document.getElementById('conviteLoteTextoBase');
+    const textoBase = (textareaTexto ? textareaTexto.value : '').trim() || CONVITE_EVENTO_NAO_ALUNO;
+    localStorage.setItem(CHAVE_STORAGE_TEXTO_CONVITE_LOTE, textoBase);
+
     const ids = Array.from(cardsSelecionados);
     const linhas = [];
     let semTelefone = 0;
@@ -767,7 +798,7 @@ async function gerarLinksConviteLote() {
         const numeroWaMe = telefoneParaWaMe(lead);
         if (!numeroWaMe) { semTelefone++; return; }
 
-        const texto = montarTextoConviteEvento(lead, evento);
+        const texto = montarTextoConviteEvento(lead, evento, textoBase);
         const link = `https://wa.me/${numeroWaMe}?text=${encodeURIComponent(texto)}`;
         linhas.push({ id, nome: lead.pessoaNome || 'Sem nome', link });
         vinculos.push({ evento_id: eventoId, pessoaIdentificador: lead.pessoaIdentificador });

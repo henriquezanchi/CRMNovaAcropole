@@ -1016,6 +1016,16 @@
             <div id="conviteLoteEscolha">
                 <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">Escolha o evento — vamos gerar 1 link por lead selecionado, já com o convite pronto pra enviar do seu WhatsApp pessoal.</p>
                 <select id="conviteLoteEventoSelect" style="width:100%; padding:8px; margin-bottom:12px;"></select>
+
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                    <label style="font-size:12px; font-weight:600;">Texto do convite (edite à vontade)</label>
+                    <button type="button" class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="restaurarTextoBaseConviteLotePadrao()"><i class="fa-solid fa-rotate-left"></i> Restaurar padrão</button>
+                </div>
+                <textarea id="conviteLoteTextoBase" style="width:100%; min-height:120px; padding:8px; font-family:inherit; font-size:13px; margin-bottom:6px;"></textarea>
+                <p style="font-size:11px; color:var(--text-muted); margin-bottom:12px;">
+                    Preenchidos automaticamente por lead: <code>{nome}</code>, <code>{evento}</code>, <code>{quando}</code>, <code>{atendente}</code>, <code>{filial}</code>, <code>{interesses}</code>. Fica salvo neste navegador pra próxima vez. Esse mesmo texto é usado pra todos os selecionados (não diferencia mais quem já é aluno ativo).
+                </p>
+
                 <button class="btn-primary" onclick="gerarLinksConviteLote()"><i class="fa-solid fa-link"></i> Gerar Links</button>
             </div>
             <div id="conviteLoteResultado" style="display:none;"></div>
