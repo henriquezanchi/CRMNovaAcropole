@@ -413,8 +413,18 @@ export async function exportarComparecimento(page, filial) {
     });
     console.log(`[ulisses] Comparecimento: ${opcoesRecentes.length} de ${opcoes.length} evento(s) dentro dos últimos 3 anos (${filial}).`);
 
+    // Progresso a cada 10 eventos — sem isso, filiais grandes (centenas de
+    // eventos, cada um exigindo selecionar + ler a lista de participantes)
+    // passam minutos SEM NENHUMA linha no terminal, indistinguível de
+    // travado de verdade (bug real relatado pelo usuário, 2026-09-15,
+    // Jardim América — 273 eventos, tela sem indicação nenhuma de avanço).
     const registros = [];
+    let processados = 0;
     for (const opcaoTexto of opcoesRecentes) {
+        processados++;
+        if (processados === 1 || processados % 10 === 0 || processados === opcoesRecentes.length) {
+            console.log(`[ulisses] Comparecimento: processando ${processados}/${opcoesRecentes.length} (${filial})...`);
+        }
         try {
             await combobox.selectOption({ label: opcaoTexto });
             // Sem indicador de carregamento claro na tela — a lista de
