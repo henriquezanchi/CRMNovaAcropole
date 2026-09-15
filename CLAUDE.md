@@ -2685,7 +2685,12 @@ risco de o número pessoal ser banido.
   em `leads_inscricoes`, então já vale pro CRM inteiro (Kanban, outras
   telas), não só pra esta lista. A linha correspondente é removida do
   modal (o link `wa.me` já gerado com o número antigo deixaria de fazer
-  sentido).
+  sentido). **Também remove o vínculo `evento_leads` "pendente" desse
+  evento** (pedido do usuário: "nem chegamos a entrar em contato com
+  eles" — telefone inválido não deveria contar como convite pendente,
+  senão o evento fica com "pendentes" fantasmas que nunca viram contato
+  de verdade); só o vínculo com ESTE evento é removido, outros eventos do
+  mesmo lead não são tocados.
 
 ### Setup pendente (só o usuário consegue fazer, fora do código)
 Checklist completo: Business Manager → App tipo "Business" com produto

@@ -839,6 +839,24 @@ async function marcarTelefoneInvalidoLote(pessoaId) {
         .eq('pessoaIdentificador', pessoaId);
     if (error) { alert('Erro ao salvar: ' + error.message); return; }
 
+    // Pedido do usuário (2026-09-15): telefone inválido significa que a
+    // gente NEM CHEGOU a entrar em contato — o vínculo "pendente" criado
+    // em evento_leads quando o link foi gerado (ver gerarLinksConviteLote())
+    // não deveria contar nesse caso, senão o evento fica com um
+    // "pendente" fantasma que nunca vai virar contato de verdade. Remove
+    // o vínculo desse evento específico (o mesmo lead pode continuar
+    // vinculado a OUTROS eventos, esses não são tocados).
+    if (conviteLoteEventoAtual) {
+        await window.supabaseClient
+            .from(typeof NOME_TABELA_EVENTO_LEADS !== 'undefined' ? NOME_TABELA_EVENTO_LEADS : 'evento_leads')
+            .delete()
+            .eq('evento_id', conviteLoteEventoAtual.id)
+            .eq('pessoaIdentificador', pessoaId);
+        if (typeof carregarResumoParticipantes === 'function' && typeof eventosAtuais !== 'undefined') {
+            carregarResumoParticipantes(eventosAtuais);
+        }
+    }
+
     // O link wa.me já gerado com o número antigo deixaria de fazer
     // sentido — tira a linha inteira da lista em vez de deixar um link
     // morto clicável.
