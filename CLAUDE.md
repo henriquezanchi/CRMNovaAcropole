@@ -2570,8 +2570,62 @@ precisamos reinventar isso, só entregar a foto certa na hora certa.
   desbloqueio da API (ver seção "Bloqueio da API do WhatsApp").
 - **Só existe hoje pra 1 lead por vez**, a partir da gaveta (mesmo ponto
   de entrada de "Convidar pra Evento") — envio em massa pra vários
-  membros de uma vez (ex: via seleção no Kanban) não foi construído,
-  fica como extensão natural se o volume pedir.
+  membros de uma vez (ex: via seleção no Kanban) não foi construído pra
+  ESTA foto real via Graph API (continua bloqueada pelo "API access
+  blocked"); pra convite em massa de TEXTO, ver "Convites em massa via
+  wa.me" logo abaixo, que resolve isso por outro caminho, sem depender da
+  Meta.
+
+### Convites em massa via wa.me (WhatsApp pessoal, enquanto a Meta não libera)
+
+Pedido do usuário (2026-09-15): disparar convite pra dezenas de leads de
+uma vez, urgente, usando o WHATSAPP PESSOAL dele (não o número da Meta,
+ainda bloqueado — ver seção acima), sem gastar com gateway terceiro
+(Z-API/Evolution API, cogitados e descartados pra este caso: pra um
+volume de "dezenas", o risco/custo de um gateway não compensa) e sem
+risco de o número pessoal ser banido.
+
+- **A decisão-chave**: o que causa bloqueio no WhatsApp não é "usar
+  automação", é o PADRÃO de comportamento (rajada de mensagens idênticas
+  pra gente que nunca teve contato, com links, sem pausa) — então a
+  solução não precisa de nenhuma ferramenta nova, só precisa continuar
+  sendo tecnicamente idêntica a "digitar a mensagem na mão".
+- **Implementado**: botão "Convidar (Link)" na barra de seleção em massa
+  do Kanban (`#bulkActionBar`, ao lado de "Mesclar") —
+  `iniciarConvitesWhatsAppEmMassa()`/`gerarLinksConviteLote()`
+  (`js/whatsapp.js`), modal `#modalConviteLote` (`index.html`). Fluxo:
+  escolhe 1+ leads no Kanban (checkbox de sempre) → escolhe o evento (só
+  os ainda não "passados", mesmo critério `dataEfetivaLimite()` de
+  sempre) → o sistema gera **1 link `wa.me/55DDDNUMERO?text=...` por
+  lead**, com o convite já personalizado (reaproveita a MESMA lógica de
+  texto do convite individual — `montarTextoConviteEvento(lead, evento)`,
+  extraída de `enviarConviteEvento()` pra não duplicar `{nome}`/
+  `{atendente}`/`{quando}`/`{interesses}`). Clicar no link abre o
+  WhatsApp Web logado com o número PESSOAL, com o texto já preenchido na
+  caixa — quem aperta "Enviar" é a pessoa, um por um. Isso é
+  tecnicamente IDÊNTICO a mandar na mão (zero automação de verdade), só
+  economiza o trabalho de digitar a mesma mensagem repetidamente.
+  - Cada checkbox ao lado do link só serve pra marcar visualmente "já
+    enviei este" (esmaece a linha) — é estado local do modal, não
+    persiste, não precisa (é uma sessão de cliques só, geralmente feita
+    de uma vez).
+  - Lead sem telefone cadastrado é ignorado (contado num aviso), não
+    trava o resto da lista.
+  - Cada lead com telefone também é vinculado a `evento_leads`
+    (`resposta_convite` no padrão `'pendente'` do banco, `upsert(...,
+    {onConflict: 'evento_id,pessoaIdentificador', ignoreDuplicates:
+    true})` — nunca sobrescreve uma resposta já dada) — assim o
+    "Follow-up de Eventos" do Dashboard e o resumo de participantes do
+    evento já sabem quem foi convidado, mesmo que a mensagem tenha sido
+    mandada por fora da Graph API.
+- **Sincronizar a conversa de volta pro CRM depois**: não precisa de nada
+  novo — usa o MESMO fluxo que já existe, "Importar Conversa de WhatsApp"
+  (`js/importar-conversa-whatsapp.js`, ver seção própria): exportar a
+  conversa do celular (.txt/.zip) e importar na gaveta do lead (1 a 1) ou
+  em lote (`.zip` múltiplos, "Leads a Tratar" → "Conversas Importadas").
+- **Não testado ao vivo** (não foi disparado um convite de verdade nesta
+  sessão) — validar contra o Kanban real na próxima vez que o usuário for
+  disparar um convite de verdade.
 
 ### Setup pendente (só o usuário consegue fazer, fora do código)
 Checklist completo: Business Manager → App tipo "Business" com produto

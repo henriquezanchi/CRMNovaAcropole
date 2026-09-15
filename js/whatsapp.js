@@ -583,15 +583,11 @@ async function confirmarConviteComFoto() {
     await chatDrawer.abrir(currentLeadId); // recarrega o chat pra já mostrar a foto enviada
 }
 
-// Só preenche a caixa de texto do chat da gaveta (não envia sozinho) —
-// o SDR revisa e manda, igual qualquer outra mensagem. Só funciona dentro
-// da janela de 24h (preencherTexto() devolve false fora dela, já que nesse
-// caso só dá pra enviar por template aprovado); nesse caso, mostra o texto
-// num alert pra copiar manualmente.
-function enviarConviteEvento(evento) {
-    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(currentLeadId));
-    if (!lead) return;
-
+// Monta o texto final do convite pra QUALQUER lead + evento — extraído de
+// enviarConviteEvento() pra ser reaproveitado também pelo disparo em massa
+// via link wa.me (ver "Convites em massa via wa.me" mais abaixo), sem
+// duplicar a lógica de {nome}/{atendente}/{quando}/{interesses}.
+function montarTextoConviteEvento(lead, evento) {
     const tagsLead = (typeof parseTags === 'function' ? parseTags(lead.tags) : []).map(t => t.trim()).filter(Boolean);
     const ehAtivo = tagsLead.includes('Ativo') || tagsLead.includes('Aluno Ativo');
     const primeiroNome = primeiroNomeFormatado(lead.pessoaNome);
@@ -622,17 +618,146 @@ function enviarConviteEvento(evento) {
         quando = ` no dia ${dataFormatada}${horaFormatada ? ' às ' + horaFormatada : ''}`;
     }
 
-    const texto = (ehAtivo ? CONVITE_EVENTO_ATIVO : CONVITE_EVENTO_NAO_ALUNO)
+    return (ehAtivo ? CONVITE_EVENTO_ATIVO : CONVITE_EVENTO_NAO_ALUNO)
         .replace('{nome}', primeiroNome)
         .replace('{atendente}', atendente || 'a equipe da Nova Acrópole')
         .replace('{filial}', filialAtual || '')
         .replace('{evento}', evento.nome)
         .replace('{quando}', quando)
         .replace('{interesses}', fraseInteresses);
+}
 
+// Só preenche a caixa de texto do chat da gaveta (não envia sozinho) —
+// o SDR revisa e manda, igual qualquer outra mensagem. Só funciona dentro
+// da janela de 24h (preencherTexto() devolve false fora dela, já que nesse
+// caso só dá pra enviar por template aprovado); nesse caso, mostra o texto
+// num alert pra copiar manualmente.
+function enviarConviteEvento(evento) {
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(currentLeadId));
+    if (!lead) return;
+
+    const texto = montarTextoConviteEvento(lead, evento);
     const preencheu = chatDrawer.preencherTexto(texto);
     if (!preencheu) {
         alert('Essa conversa está fora da janela de 24h, então não dá pra preencher o campo de texto livre (precisa de um template aprovado). Aqui está o texto do convite pra copiar manualmente:\n\n' + texto);
+    }
+}
+
+// ==========================================================
+// Convites em massa via link wa.me (WhatsApp pessoal, enquanto a API da
+// Meta está bloqueada — ver CLAUDE.md "Bloqueio da API do WhatsApp")
+// ==========================================================
+// Pedido do usuário: disparar convite pra dezenas de leads de uma vez, do
+// PRÓPRIO WhatsApp pessoal, sem risco de bloqueio e sem gastar com gateway
+// terceiro. A ideia: gerar 1 link "click to chat" (wa.me/55DDDNUMERO?text=...)
+// por lead selecionado, já com o convite personalizado preenchido — clicar
+// no link abre o WhatsApp Web (logado com o número pessoal) com o texto
+// pronto na caixa de digitação, e quem manda de verdade é a pessoa, com um
+// clique em Enviar. Isso é TECNICAMENTE idêntico a digitar a mensagem na
+// mão (zero automação) — é o que evita risco de bloqueio, não o "gerenciador"
+// usado. Depois do disparo, a conversa (se exportada do celular) entra no
+// CRM pelo fluxo que já existe, "Importar Conversa de WhatsApp"
+// (js/importar-conversa-whatsapp.js) — nada novo precisa ser construído
+// pra sincronizar de volta.
+function iniciarConvitesWhatsAppEmMassa() {
+    if (typeof cardsSelecionados === 'undefined' || cardsSelecionados.size === 0) {
+        alert('Selecione 1 ou mais leads no Kanban antes (checkbox no canto de cada card).');
+        return;
+    }
+    const select = document.getElementById('conviteLoteEventoSelect');
+    if (!select) return;
+
+    const hojeISO = new Date().toISOString().slice(0, 10);
+    const lista = (typeof eventosAtuais !== 'undefined' ? eventosAtuais : [])
+        .filter(ev => (typeof dataEfetivaLimite === 'function' ? dataEfetivaLimite(ev) : ev.data) >= hojeISO)
+        .slice()
+        .sort((a, b) => (a.data + (a.hora || '')).localeCompare(b.data + (b.hora || '')));
+
+    if (lista.length === 0) {
+        alert('Nenhum evento futuro cadastrado pra esta filial ainda — cadastre um na aba Agenda antes de convidar.');
+        return;
+    }
+
+    select.innerHTML = lista.map(ev => `<option value="${ev.id}">${escapeHTML(ev.nome)} — ${typeof formatarDataEvento === 'function' ? formatarDataEvento(ev.data) : ev.data}</option>`).join('');
+    document.getElementById('conviteLoteEscolha').style.display = 'block';
+    document.getElementById('conviteLoteResultado').style.display = 'none';
+    document.getElementById('conviteLoteResultado').innerHTML = '';
+    document.getElementById('modalConviteLote').classList.add('open');
+    document.getElementById('overlayModalConviteLote').classList.add('active');
+}
+
+function fecharModalConviteLote() {
+    document.getElementById('modalConviteLote').classList.remove('open');
+    document.getElementById('overlayModalConviteLote').classList.remove('active');
+}
+
+// Só dígitos de DDI+DDD+número — formato exigido pelo link wa.me (sem
+// espaço, traço ou "+"). Assume Brasil (55), já que é o único país
+// atendido hoje.
+function telefoneParaWaMe(lead) {
+    const ddd = String(lead.pessoaTelefoneDDD || '').replace(/\D/g, '');
+    const numero = String(lead.pessoaTelefoneNumero || '').replace(/\D/g, '');
+    if (!ddd || !numero) return null;
+    return `55${ddd}${numero}`;
+}
+
+async function gerarLinksConviteLote() {
+    const select = document.getElementById('conviteLoteEventoSelect');
+    const eventoId = select ? Number(select.value) : null;
+    const evento = (typeof eventosAtuais !== 'undefined' ? eventosAtuais : []).find(e => e.id === eventoId);
+    if (!evento) return;
+
+    const ids = Array.from(cardsSelecionados);
+    const linhas = [];
+    let semTelefone = 0;
+    const vinculos = [];
+
+    ids.forEach(id => {
+        const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(id));
+        if (!lead) return;
+        const numeroWaMe = telefoneParaWaMe(lead);
+        if (!numeroWaMe) { semTelefone++; return; }
+
+        const texto = montarTextoConviteEvento(lead, evento);
+        const link = `https://wa.me/${numeroWaMe}?text=${encodeURIComponent(texto)}`;
+        linhas.push({ id, nome: lead.pessoaNome || 'Sem nome', link });
+        vinculos.push({ evento_id: eventoId, pessoaIdentificador: lead.pessoaIdentificador });
+    });
+
+    // Já registra o convite em evento_leads (resposta_convite default
+    // 'pendente', mesmo default do convite manual na gaveta) — assim o
+    // "Follow-up de Eventos" do Dashboard e o resumo de participantes do
+    // evento já enxergam quem foi convidado, mesmo antes de qualquer
+    // resposta. ignoreDuplicates: nunca sobrescreve um vínculo que já
+    // existe (ex: alguém que já tinha respondido "recusado").
+    if (vinculos.length > 0) {
+        await window.supabaseClient
+            .from(typeof NOME_TABELA_EVENTO_LEADS !== 'undefined' ? NOME_TABELA_EVENTO_LEADS : 'evento_leads')
+            .upsert(vinculos, { onConflict: 'evento_id,pessoaIdentificador', ignoreDuplicates: true });
+    }
+
+    const avisoSemTelefone = semTelefone > 0
+        ? `<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-triangle-exclamation"></i> ${semTelefone} lead(s) sem telefone cadastrado foram ignorados.</p>`
+        : '';
+
+    document.getElementById('conviteLoteResultado').innerHTML = `
+        <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">Clique em cada link — ele abre o WhatsApp Web já com o convite pronto, você só confere e aperta Enviar. Marque conforme for enviando, pra não perder onde parou.</p>
+        ${avisoSemTelefone}
+        <div style="display:flex; flex-direction:column; gap:6px; max-height:340px; overflow-y:auto;">
+            ${linhas.map(l => `
+                <div style="display:flex; align-items:center; gap:8px; padding:8px; border:1px solid var(--border-color); border-radius:6px;" id="conviteLoteLinha-${l.id}">
+                    <input type="checkbox" onchange="document.getElementById('conviteLoteLinha-${l.id}').style.opacity = this.checked ? '0.45' : '1'">
+                    <span style="flex:1; font-size:13px;">${escapeHTML(l.nome)}</span>
+                    <a href="${l.link}" target="_blank" rel="noopener" class="btn-secondary" style="text-decoration:none; font-size:12px; padding:6px 10px;"><i class="fa-brands fa-whatsapp"></i> Abrir</a>
+                </div>
+            `).join('')}
+        </div>
+    `;
+    document.getElementById('conviteLoteEscolha').style.display = 'none';
+    document.getElementById('conviteLoteResultado').style.display = 'block';
+
+    if (linhas.length === 0) {
+        alert('Nenhum lead selecionado tem telefone cadastrado — não há link pra gerar.');
     }
 }
 

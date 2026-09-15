@@ -270,6 +270,7 @@
                 <button class="btn-secondary" onclick="aplicarTagEmMassa('remove')" title="Remover esta tag de todos os selecionados"><i class="fa-solid fa-tag"></i> − Tag</button>
                 <span style="width:1px; height:20px; background:rgba(255,255,255,0.25);"></span>
                 <button class="btn-secondary" onclick="iniciarMesclagemManual()" title="Mesclar os leads selecionados (2 ou mais) — mesmo sem o sistema ter sugerido"><i class="fa-solid fa-code-merge"></i> Mesclar</button>
+                <button class="btn-secondary" onclick="iniciarConvitesWhatsAppEmMassa()" title="Gera 1 link do WhatsApp Web por lead, já com o convite preenchido — você clica e envia manualmente do seu número pessoal, sem custo e sem risco de bloqueio"><i class="fa-brands fa-whatsapp"></i> Convidar (Link)</button>
                 <button class="btn-secondary" onclick="moverSelecionadosParaLixeira()" title="Move pra lixeira — fica lá 30 dias antes de apagar de vez"><i class="fa-solid fa-trash"></i> Lixeira</button>
                 <button class="btn-secondary" onclick="limparSelecao()">Cancelar seleção</button>
             </div>
@@ -1001,6 +1002,23 @@
         </div>
         <div class="modal-footer">
             <button class="btn-danger" onclick="confirmarMesclagem()"><i class="fa-solid fa-code-merge"></i> Mesclar</button>
+        </div>
+    </div>
+
+    <!-- Modal: Convites em massa via link wa.me (WhatsApp pessoal, enquanto a API da Meta está bloqueada) -->
+    <div class="overlay" id="overlayModalConviteLote" onclick="fecharModalConviteLote()"></div>
+    <div class="modal" id="modalConviteLote">
+        <div class="modal-header">
+            <h3><i class="fa-brands fa-whatsapp"></i> Convidar por WhatsApp (links)</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharModalConviteLote()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <div id="conviteLoteEscolha">
+                <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">Escolha o evento — vamos gerar 1 link por lead selecionado, já com o convite pronto pra enviar do seu WhatsApp pessoal.</p>
+                <select id="conviteLoteEventoSelect" style="width:100%; padding:8px; margin-bottom:12px;"></select>
+                <button class="btn-primary" onclick="gerarLinksConviteLote()"><i class="fa-solid fa-link"></i> Gerar Links</button>
+            </div>
+            <div id="conviteLoteResultado" style="display:none;"></div>
         </div>
     </div>
 
