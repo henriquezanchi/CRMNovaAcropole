@@ -459,7 +459,17 @@ export async function exportarComparecimento(page, filial) {
             // reais (por atributo ng-repeat/ng-show do Angular), não mais
             // heurística de texto.
             const linhas = page.locator('tr[ng-repeat="contato in emails"]');
-            await linhas.first().waitFor({ timeout: 5000 }).catch(() => {});
+            // Timeout reduzido de 5000ms pra 1200ms (2026-09-15): a MAIORIA
+            // dos eventos antigos/desativados do histórico tem ZERO
+            // participantes (confirmado ao vivo, Jardim América — vários
+            // "[DESAT] ___ ___ ..." sem ninguém) — pra esses, o `waitFor`
+            // SEMPRE esgota o timeout inteiro esperando uma linha que nunca
+            // vai aparecer, e isso multiplicado por centenas de eventos
+            // "vazios" é o que fazia uma filial grande parecer travada por
+            // dezenas de minutos sem gerar nenhum erro (só demora real). O
+            // wait fixo de 700ms logo acima já dá tempo pro Angular digerir
+            // a troca de seleção antes desta checagem começar.
+            await linhas.first().waitFor({ timeout: 1200 }).catch(() => {});
             const totalLinhas = await linhas.count();
             for (let i = 0; i < totalLinhas; i++) {
                 const linha = linhas.nth(i);
