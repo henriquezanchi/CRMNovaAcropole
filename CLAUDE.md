@@ -428,6 +428,17 @@ mesma regra de confiança total usada pra tags/filiais/eventos.
 - **Colunas do Kanban são dinâmicas**, configuráveis pelo usuário (botão
   "Gerenciar Colunas"), guardadas em `localStorage` (client-side, não no
   banco — cada navegador tem sua própria config de colunas hoje).
+  `colunasPadrao()` (`js/app.js`) só vale pra board NOVO (localStorage
+  vazio) — mudar essa lista NÃO aparece sozinha em quem já tem colunas
+  salvas; pra adicionar numa conta que já usa o CRM, é sempre manual
+  ("Gerenciar Colunas" → "+ Nova Coluna"). 5ª coluna padrão,
+  **"Truncados"** (pedido do usuário, 2026-09-15): pra lead que nunca foi
+  um prospecto válido de verdade (mudou de cidade, respondeu com
+  grosseria, é aluno/prospecto de OUTRA escola/franquia) — diferente de
+  "Perdido" (que significa "tentamos vender e não deu certo"), essa é
+  fora de escopo desde o início. De propósito NÃO entra na heurística de
+  `ehColunaPerdido()` (não pede motivo estruturado — "Preço"/"Horário" não
+  fazem sentido aqui), é só uma coluna de arquivo.
 - **Gaveta de colunas**: cada coluna tem um botão pra ser "guardada"
   (`recolherColuna()`), some do board mas os leads dela continuam intactos
   — vira um chip com contagem numa barra acima do Kanban

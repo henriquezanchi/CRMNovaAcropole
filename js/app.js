@@ -124,7 +124,16 @@ function colunasPadrao() {
         { key: 'Frios', label: 'Frios', color: '#64748b' },
         { key: 'Abordagem', label: 'Em Abordagem', color: '#c5a059' },
         { key: 'RSVP', label: 'RSVP Ativo', color: '#3b82f6' },
-        { key: 'Matriculados', label: 'Matriculados', color: '#005a4b' }
+        { key: 'Matriculados', label: 'Matriculados', color: '#005a4b' },
+        // Pedido do usuário (2026-09-15): lead fora do escopo de verdade
+        // (mudou de cidade, respondeu com grosseria, é aluno/prospecto de
+        // OUTRA escola/franquia etc.) — diferente de "Perdido" (que
+        // significa "tentamos vender e não deu certo"), aqui o lead nunca
+        // foi um prospecto válido pra começo de conversa. Fica de fora da
+        // heurística de "Perdido"/ehColunaPerdido() de propósito — não
+        // pede motivo estruturado (Preço/Horário/etc. não fazem sentido
+        // aqui), só arquiva.
+        { key: 'Truncados', label: 'Truncados', color: '#78716c' }
     ];
 }
 
