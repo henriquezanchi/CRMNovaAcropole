@@ -2626,6 +2626,32 @@ risco de o número pessoal ser banido.
 - **Não testado ao vivo** (não foi disparado um convite de verdade nesta
   sessão) — validar contra o Kanban real na próxima vez que o usuário for
   disparar um convite de verdade.
+- **Texto revisado (2026-09-15)**: quebrado em parágrafos curtos (linha em
+  branco entre cada um, pedido do usuário depois de ver o texto real
+  chegando espremido numa linha só no wa.me) e sem emoji (o emoji chegava
+  corrompido — "�" — no texto pré-preenchido do link; mais simples tirar
+  do que diagnosticar um problema de encoding numa URL externa). `{filial}`
+  passou a usar `nome_com_preposicao` (ex: "do Garavelo") em vez do nome
+  cru da filial com um "-" fixo na frente — mesmo valor já usado nos
+  templates aprovados da Meta (`preencherValorAutomatico('filial')`), as 4
+  filiais já têm esse campo preenchido.
+- **"Quem foi contatado" agora é registrado de verdade** (pedido do
+  usuário: "incluir no relatório as pessoas que foram contatadas") — o
+  checkbox "já enviei este" em cada linha do modal deixou de ser só
+  visual: ao MARCAR (não ao desmarcar — log é append-only), grava 1 linha
+  em `log_atividade` (`acao='convite_whatsapp_link'`,
+  `marcarContatoWhatsAppLoteEnviado()`, `js/whatsapp.js`) com o lead e o
+  nome do evento. Isso já aparece automaticamente na tela "Log de
+  Atividade" (aba Relatórios) — sem precisar de relatório novo nenhum,
+  `formatarDetalhesLog()`/`ROTULOS_ACAO_LOG` (`js/log-atividade.js`)
+  ganharam o caso `convite_whatsapp_link`. É o sinal mais próximo que
+  temos de "mandei de verdade" enquanto o envio é manual (não dá pra
+  confirmar entrega/leitura vindo de um link wa.me, diferente de um envio
+  real pela Meta Cloud API, que já grava tudo sozinho em
+  `mensagens_whatsapp`). **Quando a API da Meta for liberada**, o mesmo
+  relatório de "quem foi contatado" pode ser complementado cruzando
+  `mensagens_whatsapp` (`direcao='saida'`) — ainda não construído, não é
+  necessário enquanto o canal principal continua sendo o wa.me manual.
 
 ### Setup pendente (só o usuário consegue fazer, fora do código)
 Checklist completo: Business Manager → App tipo "Business" com produto

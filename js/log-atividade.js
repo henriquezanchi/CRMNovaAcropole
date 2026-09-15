@@ -75,6 +75,7 @@ const ROTULOS_ACAO_LOG = {
     excluir_lixeira_definitivo: 'Excluiu lead definitivamente (lixeira)',
     lixeira_expirada_apagada: 'Lixeira: apagou lead(s) vencido(s) (30 dias, automático)',
     recuperacao_detectada_scraper: 'Detectou reingresso/recuperação (scraper Mercúrio)',
+    convite_whatsapp_link: 'Contato via WhatsApp (link pessoal)',
 };
 
 // Mostra até esse nº de nomes por entrada antes de resumir em "e mais N" —
@@ -165,6 +166,8 @@ function formatarDetalhesLog(l, mapaNomes) {
             return `apagou <strong>${escapeHTML(String(d.quantidade ?? '?'))} lead(s)</strong> vencido(s) da lixeira (30 dias, automático)`;
         case 'recuperacao_detectada_scraper':
             return `detectou reingresso de <strong>${escapeHTML(d.nome || '?')}</strong> (Recuperado)${d.dataReingresso ? ` — reingresso em ${escapeHTML(d.dataReingresso)}` : ''}`;
+        case 'convite_whatsapp_link':
+            return `contatou ${nomes || '(sem lead identificado)'} via WhatsApp (${escapeHTML(d.canal || 'link pessoal')}) sobre <strong>${escapeHTML(d.evento || '?')}</strong>`;
         default:
             return Object.entries(d).map(([k, v]) => `${escapeHTML(k)}: ${escapeHTML(typeof v === 'object' ? JSON.stringify(v) : String(v))}`).join(' · ');
     }

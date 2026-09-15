@@ -723,11 +723,14 @@ function telefoneParaWaMe(lead) {
     return `55${ddd}${numero}`;
 }
 
+let conviteLoteEventoAtual = null; // usado por marcarContatoWhatsAppLoteEnviado() abaixo, pra não precisar embutir o nome do evento (pode ter aspas) dentro de um atributo onchange
+
 async function gerarLinksConviteLote() {
     const select = document.getElementById('conviteLoteEventoSelect');
     const eventoId = select ? Number(select.value) : null;
     const evento = (typeof eventosAtuais !== 'undefined' ? eventosAtuais : []).find(e => e.id === eventoId);
     if (!evento) return;
+    conviteLoteEventoAtual = evento;
 
     const ids = Array.from(cardsSelecionados);
     const linhas = [];
@@ -763,12 +766,12 @@ async function gerarLinksConviteLote() {
         : '';
 
     document.getElementById('conviteLoteResultado').innerHTML = `
-        <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">Clique em cada link — ele abre o WhatsApp Web já com o convite pronto, você só confere e aperta Enviar. Marque conforme for enviando, pra não perder onde parou.</p>
+        <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">Clique em cada link — ele abre o WhatsApp Web já com o convite pronto, você só confere e aperta Enviar. Marque conforme for enviando: isso grava no Log de Atividade quem foi contatado de verdade, pra aparecer no relatório.</p>
         ${avisoSemTelefone}
         <div style="display:flex; flex-direction:column; gap:6px; max-height:340px; overflow-y:auto;">
             ${linhas.map(l => `
                 <div style="display:flex; align-items:center; gap:8px; padding:8px; border:1px solid var(--border-color); border-radius:6px;" id="conviteLoteLinha-${l.id}">
-                    <input type="checkbox" onchange="document.getElementById('conviteLoteLinha-${l.id}').style.opacity = this.checked ? '0.45' : '1'">
+                    <input type="checkbox" onchange="marcarContatoWhatsAppLoteEnviado('${l.id}', this.checked)">
                     <span style="flex:1; font-size:13px;">${escapeHTML(l.nome)}</span>
                     <a href="${l.link}" target="_blank" rel="noopener" class="btn-secondary" style="text-decoration:none; font-size:12px; padding:6px 10px;"><i class="fa-brands fa-whatsapp"></i> Abrir</a>
                 </div>
@@ -780,6 +783,29 @@ async function gerarLinksConviteLote() {
 
     if (linhas.length === 0) {
         alert('Nenhum lead selecionado tem telefone cadastrado — não há link pra gerar.');
+    }
+}
+
+// Marcar o checkbox "já enviei este" não é só visual — grava em
+// log_atividade (mesma tabela append-only de auditoria já usada pra
+// mover lead/tags/mesclagem, ver js/log-atividade.js), pra dar pra
+// consultar DEPOIS "quem foi contatado de verdade" — pedido do usuário
+// (2026-09-15): "incluir no relatório as pessoas que foram contatadas".
+// Só marca ao CONFIRMAR (checked=true) — é o sinal mais próximo que temos
+// de "mandei de verdade" (não dá pra confirmar entrega/leitura vindo de
+// um link wa.me, diferente do envio via Meta Cloud API, que já grava
+// tudo em mensagens_whatsapp automaticamente). Desmarcar não apaga o
+// registro já feito (log é append-only por design) — só evita gravar de
+// novo se a pessoa marcar/desmarcar querendo "ajeitar" antes de terminar.
+function marcarContatoWhatsAppLoteEnviado(pessoaId, marcado) {
+    const linha = document.getElementById('conviteLoteLinha-' + pessoaId);
+    if (linha) linha.style.opacity = marcado ? '0.45' : '1';
+    if (!marcado || !conviteLoteEventoAtual) return;
+    if (typeof registrarLogAtividade === 'function') {
+        registrarLogAtividade('convite_whatsapp_link', {
+            pessoaIds: [pessoaId],
+            detalhes: { evento: conviteLoteEventoAtual.nome, canal: 'wa.me (WhatsApp pessoal)' },
+        });
     }
 }
 
