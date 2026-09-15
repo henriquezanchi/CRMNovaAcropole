@@ -713,6 +713,19 @@ function fecharModalConviteLote() {
     document.getElementById('overlayModalConviteLote').classList.remove('active');
 }
 
+// Mesma heurística por substring já usada em encontrarColunaRecontato()
+// (js/eventos.js)/"Matriculados" — nunca cria a coluna sozinha, só avisa
+// no console se não achar. "Abordagem" já é o nome da 2ª coluna padrão do
+// Kanban (colunasPadrao(), js/app.js: key "Abordagem", label "Em
+// Abordagem"), mas o time pode ter renomeado — por isso busca por
+// substring nas duas, não por chave fixa.
+function encontrarColunaAbordagem() {
+    if (typeof columnsConfig === 'undefined') return null;
+    const normalizar = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
+    const col = columnsConfig.find(c => normalizar(c.key).includes('ABORDAGEM') || normalizar(c.label).includes('ABORDAGEM'));
+    return col ? col.key : null;
+}
+
 // Só dígitos de DDI+DDD+número — formato exigido pelo link wa.me (sem
 // espaço, traço ou "+"). Assume Brasil (55), já que é o único país
 // atendido hoje.
@@ -759,6 +772,22 @@ async function gerarLinksConviteLote() {
         await window.supabaseClient
             .from(typeof NOME_TABELA_EVENTO_LEADS !== 'undefined' ? NOME_TABELA_EVENTO_LEADS : 'evento_leads')
             .upsert(vinculos, { onConflict: 'evento_id,pessoaIdentificador', ignoreDuplicates: true });
+    }
+
+    // Pedido do usuário (2026-09-15): ao gerar os links de convite, já
+    // move os leads que receberam link pra coluna de Abordagem — reflete
+    // que eles deixaram de ser "frios" no funil. Só quem tem telefone
+    // (recebeu link de verdade) é movido; quem foi ignorado por falta de
+    // telefone fica onde estava. moverLeadsParaColuna() já cuida de
+    // update otimista + barra de desfazer + funil_agencia_atualizado_em,
+    // mesmo caminho de qualquer outra movimentação em massa do Kanban.
+    if (linhas.length > 0) {
+        const colunaAbordagem = encontrarColunaAbordagem();
+        if (colunaAbordagem) {
+            await moverLeadsParaColuna(linhas.map(l => l.id), colunaAbordagem);
+        } else {
+            console.warn('Nenhuma coluna de Abordagem encontrada (crie uma coluna do Kanban com "Abordagem" no nome) — lead(s) convidado(s) não foram movidos automaticamente.');
+        }
     }
 
     const avisoSemTelefone = semTelefone > 0
