@@ -1730,6 +1730,17 @@ async function executarMovimentoParaColuna(ids, novaColuna) {
         const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(id));
         if (lead) { lead.funil_agencia = novaColuna; lead.funil_agencia_atualizado_em = agora; }
     });
+
+    // Pedido do usuário (2026-09-15): ao mover pra outra coluna, some com
+    // a seleção desses leads — aqui (não só no botão "Mover") cobre
+    // TODOS os caminhos de movimentação de uma vez só (arrastar-e-soltar,
+    // "Convidar (Link)" movendo pra Abordagem, motivo de perda), já que
+    // executarMovimentoParaColuna() é o único ponto que todos passam.
+    if (typeof cardsSelecionados !== 'undefined') {
+        ids.forEach(id => cardsSelecionados.delete(String(id)));
+        if (typeof atualizarBarraSelecao === 'function') atualizarBarraSelecao();
+    }
+
     renderizarCards();
     mostrarUndoMovimento(anteriores, novaColuna);
 

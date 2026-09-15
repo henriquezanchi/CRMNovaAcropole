@@ -769,6 +769,12 @@ mesma regra de confiança total usada pra tags/filiais/eventos.
   diferente, então o array final é calculado por lead e enviado como 1
   update por lead em paralelo (`Promise.all`), sem barra de desfazer (não
   pedido).
+  **Deseleciona sozinho ao mover** (pedido do usuário, 2026-09-15) —
+  `executarMovimentoParaColuna()` (função única por baixo de QUALQUER
+  movimentação — botão "Mover", arrastar-e-soltar, "Convidar (Link)"
+  movendo pra Abordagem, confirmação de Motivo de Perda) tira os ids
+  movidos de `cardsSelecionados` e atualiza a barra — não precisa mais
+  desmarcar manualmente depois de mover.
   **`moverLeadsParaColuna()` virou um portão**: só decide se a coluna de
   destino é "Perdido"/"Lixeira" (`ehColunaPerdido()` — ver "Motivos de
   Perda" abaixo) e, se for, abre o modal de motivo em vez de mover
