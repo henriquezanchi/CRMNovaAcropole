@@ -719,6 +719,18 @@ mesma regra de confiança total usada pra tags/filiais/eventos.
   de texto por coluna é separada e continua consultando o banco inteiro
   (não só o que já foi carregado no navegador) via `processarBuscaColuna()`
   — importante pra colunas com muitos milhares de leads (ex: "Frios").
+  **Filtro por "Resumo da Conversa"** (pedido do usuário, 2026-09-15):
+  seção própria no dropdown de Filtros — checkbox "Tem resumo preenchido"
+  (`data-tem-resumo`, `1`/`0` conforme `resumo_ia` está vazio ou não) +
+  campo de texto "Palavra-chave no resumo" (`data-resumo`, o texto do
+  campo em minúsculo, comparado por `.includes()`) — os dois combináveis
+  (ex: "tem resumo" + "escola" acha só quem tem anotação mencionando
+  "escola"). Mesmo padrão dos outros filtros de campo (Evento/Telefone/
+  E-mail): só aplica ao clicar "Aplicar"
+  (`aplicarFiltroColunaCampos()`), roda 100% no navegador sobre os cards
+  já renderizados (proxy — só verifica quem já foi carregado/paginado
+  pra esta coluna, mesmo limite de sempre), não é uma busca no banco
+  inteiro como `processarBuscaColuna()`.
 - **Filtro Rápido dinâmico** (`#filtrosRapidosContainer`, `renderizarFiltrosRapidos()`):
   mostra até 5 tags — toda ativação de tag num filtro de coluna
   (`toggleFiltroColunaChip`) ou clique num filtro rápido (`quickFilterTag`)

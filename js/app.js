@@ -111,7 +111,7 @@ function filtroColunaVazio() {
     // tagsExcluidas: "filter out" — esconde o lead se ele tiver QUALQUER
     // uma dessas tags, independente do que estiver marcado em `tags`
     // (que continua sendo E — precisa ter todas).
-    return { tags: [], tagsExcluidas: [], evento: '', dataDe: '', dataAte: '', temTelefone: false, temEmail: false };
+    return { tags: [], tagsExcluidas: [], evento: '', dataDe: '', dataAte: '', temTelefone: false, temEmail: false, temResumo: false, resumoTexto: '' };
 }
 
 function getFiltroColuna(key) {
@@ -391,6 +391,11 @@ function renderizarColunas() {
                             <label class="col-tag-option"><input type="checkbox" id="filtroTemTelefone-${col.key}"> Tem telefone</label>
                             <label class="col-tag-option"><input type="checkbox" id="filtroTemEmail-${col.key}"> Tem e-mail</label>
                         </div>
+                        <div class="col-filter-section">
+                            <div class="col-filter-section-title">Resumo da Conversa</div>
+                            <label class="col-tag-option"><input type="checkbox" id="filtroTemResumo-${col.key}"> Tem resumo preenchido</label>
+                            <input type="text" id="filtroResumoTexto-${col.key}" placeholder="Palavra-chave no resumo..." style="margin-top:6px;" onkeydown="if(event.key==='Enter') aplicarFiltroColunaCampos('${col.key}')">
+                        </div>
                         <div class="col-filter-actions">
                             <button type="button" class="btn-mini btn-secondary-mini" onclick="limparFiltroColuna('${col.key}')">Limpar</button>
                             <button type="button" class="btn-mini btn-primary-mini" onclick="aplicarFiltroColunaCampos('${col.key}')"><i class="fa-solid fa-check"></i> Aplicar</button>
@@ -619,6 +624,12 @@ function renderizarCards() {
         );
         const temTelefone = lead.pessoaTelefoneNumero && String(lead.pessoaTelefoneNumero).trim() !== '';
         const temEmail = lead.pessoaEmail && String(lead.pessoaEmail).trim() !== '';
+        // Pedido do usuário (2026-09-15): filtrar por "tem Resumo da
+        // Conversa preenchido" + palavra-chave dentro dele — separado do
+        // data-search geral (nome/telefone/e-mail) porque é uma busca de
+        // propósito diferente (conteúdo de anotação, não identidade).
+        const temResumo = lead.resumo_ia && String(lead.resumo_ia).trim() !== '';
+        const resumoAttr = escapeHTML(String(lead.resumo_ia || '').toLowerCase());
         // Lembrete de follow-up (soneca): vencido HOJE ou atrasado vira
         // prioridade máxima ("Ligar Hoje", sobe pro topo da coluna); no
         // FUTURO, o card fica em soneca (não aparece na coluna até o dia
@@ -656,6 +667,7 @@ function renderizarCards() {
             <div class="lead-card ${slaVencido ? 'lead-card-sla-vencido' : ''}" draggable="true" id="card-${identificador}" data-tags="${tagsAttr}" data-search="${textoBuscaAttr}"
                  data-evento="${escapeHTML(String(lead.eventoNome || '').toLowerCase())}" data-eventodata="${escapeHTML(lead.eventoData || '')}"
                  data-tem-telefone="${temTelefone ? '1' : '0'}" data-tem-email="${temEmail ? '1' : '0'}"
+                 data-tem-resumo="${temResumo ? '1' : '0'}" data-resumo="${resumoAttr}"
                  ondragstart="arrastar(event, '${identificador}')"
                  ondragend="this.style.opacity='1'"
                  ${slaVencido ? `title="Sem contato há mais de ${SLA_HORAS_COLUNA_FRIA}h nesta coluna"` : ''}
@@ -907,6 +919,8 @@ function aplicarFiltroColunaCampos(key) {
     filtro.dataAte = (document.getElementById(`filtroDataAte-${key}`) || {}).value || '';
     filtro.temTelefone = (document.getElementById(`filtroTemTelefone-${key}`) || {}).checked || false;
     filtro.temEmail = (document.getElementById(`filtroTemEmail-${key}`) || {}).checked || false;
+    filtro.temResumo = (document.getElementById(`filtroTemResumo-${key}`) || {}).checked || false;
+    filtro.resumoTexto = (document.getElementById(`filtroResumoTexto-${key}`) || {}).value || '';
     aplicarFiltroVisualColuna(key);
     atualizarBadgeFiltroColuna(key);
 }
@@ -918,6 +932,8 @@ function limparFiltroColuna(key) {
     const da = document.getElementById(`filtroDataAte-${key}`); if (da) da.value = '';
     const tt = document.getElementById(`filtroTemTelefone-${key}`); if (tt) tt.checked = false;
     const te = document.getElementById(`filtroTemEmail-${key}`); if (te) te.checked = false;
+    const tr = document.getElementById(`filtroTemResumo-${key}`); if (tr) tr.checked = false;
+    const rt = document.getElementById(`filtroResumoTexto-${key}`); if (rt) rt.value = '';
 
     const opcoes = opcoesFiltroColuna[key] || { tags: [] };
     montarChipsTagsAgrupados(`tagsChips-${key}`, opcoes.tags, [], (v) => toggleFiltroColunaChip(key, 'tags', v));
@@ -937,6 +953,8 @@ function atualizarBadgeFiltroColuna(key) {
     if (filtro.dataAte) n++;
     if (filtro.temTelefone) n++;
     if (filtro.temEmail) n++;
+    if (filtro.temResumo) n++;
+    if (filtro.resumoTexto) n++;
 
     if (n > 0) {
         badge.style.display = 'inline-flex';
@@ -1162,8 +1180,10 @@ function aplicarFiltroVisualColuna(key) {
         const dataOk = datasNoIntervalo(card.getAttribute('data-eventodata') || '', filtro.dataDe, filtro.dataAte);
         const telefoneOk = !filtro.temTelefone || card.getAttribute('data-tem-telefone') === '1';
         const emailOk = !filtro.temEmail || card.getAttribute('data-tem-email') === '1';
+        const temResumoOk = !filtro.temResumo || card.getAttribute('data-tem-resumo') === '1';
+        const resumoTextoOk = !filtro.resumoTexto || (card.getAttribute('data-resumo') || '').includes(filtro.resumoTexto.toLowerCase());
 
-        card.style.display = (textoOk && tagsOk && tagsExcluidasOk && eventoOk && dataOk && telefoneOk && emailOk) ? 'block' : 'none';
+        card.style.display = (textoOk && tagsOk && tagsExcluidasOk && eventoOk && dataOk && telefoneOk && emailOk && temResumoOk && resumoTextoOk) ? 'block' : 'none';
     });
 }
 
