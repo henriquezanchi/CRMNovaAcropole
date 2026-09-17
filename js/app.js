@@ -1671,6 +1671,87 @@ async function excluirDefinitivoDaLixeira(id, nome) {
 }
 
 // ==========================================
+// REMOÇÃO A PEDIDO DO LEAD (LGPD) — pedido do usuário (2026-09-17)
+// ==========================================
+// Diferente da Lixeira (reversível por 30 dias) e da Zona de Perigo (apaga
+// a filial inteira), isto é um "direito ao esquecimento" pontual: a
+// própria pessoa pediu pra sair do cadastro. Faz 3 coisas, nesta ordem:
+//   1. Grava em `contatos_removidos_lgpd` (nome/telefone/e-mail
+//      normalizados) — consultada por confirmarEnviarImportacao()
+//      (js/importador.js) ANTES de enviar qualquer lead ao Supabase, pra
+//      nunca recriar essa pessoa numa reimportação futura do Ulisses/
+//      Mercúrio.
+//   2. Enfileira em `fila_desativacao_ulisses` (status 'pendente') — o
+//      Ulisses tem sua PRÓPRIA ação "Desativar contato" (tela
+//      #/telemarketing, liga contato.desativado + motivo='Não Pertube'),
+//      só que só dá pra automatizar em modo ASSISTIDO (mesma limitação de
+//      sempre — Cloudflare barra acesso 100% automático). Em vez de abrir
+//      um Chromium na hora, a tarefa fica pendente e é processada sozinha
+//      na PRÓXIMA rodada semanal de `ulisses-local.js` daquela filial
+//      (ver processarFilaDesativacaoUlisses(), scraper/ulisses.js).
+//   3. Apaga a linha de `leads_inscricoes` de vez (sem Lixeira — é
+//      definitivo, por isso o confirm() é bem explícito).
+async function abrirRemoverLeadLgpd() {
+    if (!currentLeadId) return;
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(currentLeadId));
+    if (!lead) return;
+
+    if (!confirm(`Remover "${lead.pessoaNome}" do cadastro A PEDIDO DELA?\n\nIsso vai:\n- apagar o cadastro DEFINITIVAMENTE do CRM (diferente da Lixeira, não tem como restaurar);\n- impedir que ela volte numa reimportação futura do Ulisses/Mercúrio;\n- agendar a desativação do contato no Ulisses (feita sozinha na próxima importação semanal).`)) return;
+
+    const telefoneBusca = [lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero].filter(Boolean).join('') || null;
+    const nomeNormalizado = typeof normalizarNomeImport === 'function'
+        ? normalizarNomeImport(lead.pessoaNome || '')
+        : String(lead.pessoaNome || '').toUpperCase().trim();
+    const telefoneNormalizado = typeof normalizarTelefoneParaChave === 'function'
+        ? normalizarTelefoneParaChave(lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero)
+        : null;
+    const emailNormalizado = (lead.pessoaEmail || '').trim().toLowerCase() || null;
+    const atendente = typeof obterNomeAtendente === 'function' ? obterNomeAtendente() : null;
+
+    const { error: erroSupressao } = await window.supabaseClient.from('contatos_removidos_lgpd').insert({
+        filial: filialAtual,
+        nome: lead.pessoaNome,
+        nome_normalizado: nomeNormalizado,
+        telefone_normalizado: telefoneNormalizado,
+        email_normalizado: emailNormalizado,
+        motivo: 'Pedido do lead',
+        removido_por: atendente,
+    });
+    if (erroSupressao) {
+        alert('Erro ao registrar a remoção (rode migracao_lgpd_remocao_contato.sql se ainda não rodou): ' + erroSupressao.message);
+        return;
+    }
+
+    const { error: erroFila } = await window.supabaseClient.from('fila_desativacao_ulisses').insert({
+        filial: filialAtual,
+        nome: lead.pessoaNome,
+        telefone_busca: telefoneBusca,
+        status: 'pendente',
+    });
+    if (erroFila) console.warn('Não foi possível enfileirar a desativação no Ulisses (a remoção no CRM já foi salva):', erroFila.message);
+
+    if (typeof registrarLogAtividade === 'function') {
+        registrarLogAtividade('remocao_lgpd', {
+            pessoaIds: [String(currentLeadId)],
+            detalhes: { nome: lead.pessoaNome, telefone: telefoneBusca, email: emailNormalizado },
+        });
+    }
+
+    const idParaApagar = currentLeadId;
+    const nomeParaApagar = lead.pessoaNome;
+    fecharGaveta();
+    const { error: erroDelete } = await window.supabaseClient.from(NOME_TABELA).delete().eq('pessoaIdentificador', idParaApagar);
+    if (erroDelete) {
+        alert('O registro de remoção/fila foi salvo, mas apagar o lead do CRM falhou: ' + erroDelete.message + ' — tente excluir manualmente pela Lixeira.');
+        return;
+    }
+
+    leadsAtuais = leadsAtuais.filter(l => String(l.pessoaIdentificador) !== String(idParaApagar));
+    renderizarCards();
+    alert(`"${nomeParaApagar}" removido(a) do CRM. A desativação no Ulisses acontece sozinha na próxima importação semanal (ou rode "npm run ulisses-local" antes, se for urgente).`);
+}
+
+// ==========================================
 // EDIÇÃO DE TAGS EM MASSA
 // ==========================================
 // Reaproveita a mesma seleção da barra de ação em massa. Diferente de
@@ -3410,7 +3491,7 @@ const FAMILIAS_TAG = [
     // histórico de eventos + config de trilhas_tipo_evento (sistema de
     // follow-up). Cor própria pra distinguir de tag customizada comum.
     { label: 'Jornada', testar: t => /^(Trilha|Jornada): /i.test(t), classe: () => 'tag-jornada' },
-    { label: 'Cadastro', testar: t => /^Sem (Telefone|E-mail)$/i.test(t), classe: () => 'tag-warning' },
+    { label: 'Cadastro', testar: t => /^(Sem (Telefone|E-mail)|Conferir Telefone)$/i.test(t), classe: () => 'tag-warning' },
     { label: 'Engajamento / SDR', testar: t => /(n[ãa]o atende|caixa postal|n[ãa]o responde|inv[áa]lido|no-?show)/i.test(t), classe: () => 'tag-error' },
     { label: 'Objeções', testar: t => /^objeç[ãa]o/i.test(t), classe: () => 'tag-warning' },
     { label: 'Interesses / Origem', testar: t => /^(interesse|busca autoconhecimento|s[áa]bado filos[óo]fico|filosofilme|voluntariado|indicaç[ãa]o de aluno)/i.test(t), classe: () => 'tag-success' },
@@ -3487,6 +3568,16 @@ function primeiroNomeFormatado(nomeCompleto) {
     return primeiro.charAt(0).toUpperCase() + primeiro.slice(1).toLowerCase();
 }
 
+// Pedido do usuário (2026-09-17): "como prefere ser chamado" — pra quem
+// não gosta de um dos nomes do cadastro (ou nome social/situação
+// parecida). Usado em qualquer {nome} automático (convites de WhatsApp,
+// preencherValorAutomatico() em js/whatsapp.js) NO LUGAR do primeiro nome
+// — preenchido = vence; vazio = comportamento de sempre.
+function nomeParaChamar(lead) {
+    const preferido = lead && lead.como_prefere_ser_chamado ? String(lead.como_prefere_ser_chamado).trim() : '';
+    return preferido || primeiroNomeFormatado(lead ? lead.pessoaNome : '');
+}
+
 // Gavetas colapsáveis da ficha do lead (Eventos/Como Abordar/Resumo/
 // Lembrete/Tags/Contato/Histórico). Estado É por abertura de gaveta, não
 // persiste entre leads — cada abrirGaveta() recalcula os padrões do zero:
@@ -3532,10 +3623,16 @@ function abrirGaveta(id, opcoes = {}) {
         historico: false,
     };
 
-    document.getElementById('drawer-name').innerText = lead.pessoaNome;
+    // Pedido do usuário (2026-09-17): quando tem "como prefere ser
+    // chamado" preenchido, mostra logo no topo da gaveta — sem precisar
+    // abrir a gaveta "Contato" pra descobrir antes de ligar/mandar mensagem.
+    document.getElementById('drawer-name').innerText = lead.como_prefere_ser_chamado
+        ? `${lead.pessoaNome} (chamar de "${lead.como_prefere_ser_chamado}")`
+        : lead.pessoaNome;
     document.getElementById('drawer-subtitle').innerText = montarSubtituloDrawer(lead);
     document.getElementById('drawer-chat-header').innerText = `${lead.pessoaNome} (${lead.pessoaTelefoneDDD || ''} ${lead.pessoaTelefoneNumero || ''})`;
 
+    document.getElementById('drawer-como-prefere-chamado').value = lead.como_prefere_ser_chamado || '';
     document.getElementById('drawer-tel-ddd').value = lead.pessoaTelefoneDDD || '';
     document.getElementById('drawer-tel-numero').value = lead.pessoaTelefoneNumero || '';
     document.getElementById('drawer-email').value = lead.pessoaEmail || '';
@@ -4078,6 +4175,26 @@ async function salvarEmailLead() {
 // Data de Nascimento — nenhuma das 3 planilhas traz esse dado hoje, então
 // é preenchida manualmente aqui; alimenta o card "Aniversariantes do Mês"
 // no Dashboard (migracao_data_nascimento.sql).
+// Pedido do usuário (2026-09-17): "como prefere ser chamado" — pra quem
+// não gosta de um dos nomes do cadastro (ou situação parecida, ex: nome
+// social). Vazio = comportamento de sempre (usa o primeiro nome do
+// cadastro em qualquer {nome} automático — ver montarTextoConviteEvento()/
+// preencherValorAutomatico(), js/whatsapp.js, que já priorizam este campo
+// quando preenchido).
+async function salvarComoPrefereSerChamadoLead() {
+    const valor = document.getElementById('drawer-como-prefere-chamado').value.trim() || null;
+
+    const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(currentLeadId));
+    if (leadIndex !== -1) leadsAtuais[leadIndex].como_prefere_ser_chamado = valor;
+
+    const { error } = await window.supabaseClient
+        .from(NOME_TABELA)
+        .update({ como_prefere_ser_chamado: valor })
+        .eq('pessoaIdentificador', currentLeadId);
+
+    if (error) alert('Erro ao salvar "como prefere ser chamado" (rode migracao_como_prefere_ser_chamado.sql se ainda não rodou): ' + error.message);
+}
+
 async function salvarDataNascimentoLead() {
     const input = document.getElementById('drawer-data-nascimento');
     const dataNascimento = input.value || null;

@@ -65,6 +65,7 @@ const ROTULOS_ACAO_LOG = {
     tag_massa: 'Editou tags em massa',
     mesclar_leads: 'Mesclou leads',
     excluir_leads_filial: 'Excluiu leads da filial (Zona de Perigo)',
+    remocao_lgpd: 'Removeu contato a pedido do lead (LGPD)',
     importacao: 'Importação de planilha',
     motivo_perda: 'Registrou motivo de perda',
     limpeza_total_reimportacao: 'Limpeza total pra reimportação',
@@ -168,6 +169,11 @@ function formatarDetalhesLog(l, mapaNomes) {
             return `detectou reingresso de <strong>${escapeHTML(d.nome || '?')}</strong> (Recuperado)${d.dataReingresso ? ` — reingresso em ${escapeHTML(d.dataReingresso)}` : ''}`;
         case 'convite_whatsapp_link':
             return `contatou ${nomes || '(sem lead identificado)'} via WhatsApp (${escapeHTML(d.canal || 'link pessoal')}) sobre <strong>${escapeHTML(d.evento || '?')}</strong>`;
+        // Usa d.nome DIRETO (não `nomes`/resolverNomesLeadsLog) — o lead já
+        // foi apagado de leads_inscricoes quando este log é lido depois,
+        // então a resolução por pessoa_ids nunca acharia nada.
+        case 'remocao_lgpd':
+            return `removeu <strong>${escapeHTML(d.nome || '?')}</strong> do cadastro A PEDIDO DELA (LGPD)${d.telefone ? ` — tel. ${escapeHTML(d.telefone)}` : ''}`;
         default:
             return Object.entries(d).map(([k, v]) => `${escapeHTML(k)}: ${escapeHTML(typeof v === 'object' ? JSON.stringify(v) : String(v))}`).join(' · ');
     }

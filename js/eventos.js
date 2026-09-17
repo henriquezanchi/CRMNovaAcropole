@@ -1122,21 +1122,65 @@ function renderizarEventosDoLead() {
         const ehFuturo = !!(ev && ev.data >= hojeISO);
         const compareceuTxt = el.compareceu === true ? ' · Compareceu' : (el.compareceu === false ? ' · Não compareceu' : '');
         const matriculadoTxt = el.matriculado === true ? ' · Matriculado 🎉' : '';
+        // Só dá pra "acessar" o evento se ele ainda existir (não removido) —
+        // pedido do usuário (2026-09-17): clicar no nome abre a Agenda já
+        // no modal de Participantes DESTE evento, em vez de só mostrar texto.
+        const nomeHtml = ev
+            ? `<a href="javascript:void(0)" onclick="abrirEventoDaGavetaLead(${el.evento_id})" title="Abrir este evento na Agenda"><strong>${escapeHTML(nome)}</strong></a>`
+            : `<strong>${escapeHTML(nome)}</strong>`;
         return `
             <div class="drawer-evento-item">
                 <div class="drawer-evento-item-info">
                     ${ehFuturo ? '<span class="tag tag-jornada" style="margin-right:4px;" title="Ainda vai acontecer"><i class="fa-solid fa-calendar-day"></i> Futuro</span>' : ''}
-                    <strong>${escapeHTML(nome)}</strong>
+                    ${nomeHtml}
                     ${data ? `<span style="color:#94a3b8;"> — ${escapeHTML(data)}</span>` : ''}
                 </div>
                 <div class="drawer-evento-item-status">
-                    <span class="tag ${CLASSES_RESPOSTA_CONVITE[el.resposta_convite] || ''}">${ROTULOS_RESPOSTA_CONVITE[el.resposta_convite] || el.resposta_convite}</span>
+                    <select class="participante-resposta" onchange="alterarRespostaConviteNaGaveta(${el.id}, this.value)">
+                        <option value="pendente" ${el.resposta_convite === 'pendente' ? 'selected' : ''}>Não confirmado</option>
+                        <option value="confirmado" ${el.resposta_convite === 'confirmado' ? 'selected' : ''}>Confirmado</option>
+                        <option value="recusado" ${el.resposta_convite === 'recusado' ? 'selected' : ''}>Recusado</option>
+                    </select>
                     ${compareceuTxt}${matriculadoTxt}
                     <button class="icon-btn danger" title="Remover convite" onclick="removerEventoDoLeadNaGaveta(${el.id})"><i class="fa-solid fa-xmark"></i></button>
                 </div>
             </div>
         `;
     }).join('');
+}
+
+// Abre a Agenda já no modal de Participantes deste evento — pedido do
+// usuário (2026-09-17): "acessar o evento através dessa aba na gaveta do
+// lead". Fecha a gaveta primeiro (evita sobrepor gaveta + modal) e garante
+// eventosAtuais fresco antes de abrir (mesmo cuidado já usado em
+// iniciarConvitesWhatsAppEmMassa() — abrirParticipantesEvento() busca o
+// evento em eventosAtuais pelo id, que só é populado ao abrir a Agenda ou
+// trocar de filial).
+async function abrirEventoDaGavetaLead(eventoId) {
+    if (!eventoId) return;
+    if (typeof fecharGaveta === 'function') fecharGaveta();
+    if (typeof switchModule === 'function') switchModule('tab-agenda', 'Agenda de Eventos', 'Atividades e capacidade por filial');
+    if (typeof carregarEventos === 'function') await carregarEventos();
+    await abrirParticipantesEvento(eventoId);
+}
+
+// Alterna a resposta ao convite direto na gaveta do lead — pedido do
+// usuário (2026-09-17), sem precisar abrir o modal de Participantes do
+// evento só pra isso. Mesmo update de atualizarRespostaParticipante() (modal
+// de Participantes), só que atualizando eventosDoLeadAtual em vez de
+// participantesAtuais.
+async function alterarRespostaConviteNaGaveta(id, valor) {
+    const { error } = await window.supabaseClient
+        .from(NOME_TABELA_EVENTO_LEADS)
+        .update({ resposta_convite: valor, atualizado_em: new Date().toISOString() })
+        .eq('id', id);
+    if (error) { alert('Erro ao atualizar resposta: ' + error.message); return; }
+
+    const el = eventosDoLeadAtual.find(x => x.id === id);
+    if (el) el.resposta_convite = valor;
+    renderizarEventosDoLead();
+    await carregarResumoParticipantes(eventosAtuais);
+    renderizarListaEventos();
 }
 
 async function removerEventoDoLeadNaGaveta(id) {

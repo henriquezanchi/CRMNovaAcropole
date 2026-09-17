@@ -42,7 +42,7 @@
 import 'dotenv/config';
 import { chromium } from 'playwright';
 import { supabaseAdmin, lerCredencial, registrarStatusSincronizacao } from './lib/supabaseAdmin.js';
-import { exportarCsvInscricoes, exportarCatalogoEventos, exportarComparecimento, sincronizarCatalogoEventosNoCrm, sincronizarComparecimentoNoCrm, salvarScreenshotErro } from './ulisses.js';
+import { exportarCsvInscricoes, exportarCatalogoEventos, exportarComparecimento, sincronizarCatalogoEventosNoCrm, sincronizarComparecimentoNoCrm, processarFilaDesativacaoUlisses, salvarScreenshotErro } from './ulisses.js';
 import { verificarEventosPublicosDeTodasAsFiliais } from './verificar-eventos-publicos.js';
 import { importarNoCrm } from './importar-no-crm.js';
 
@@ -280,6 +280,12 @@ async function processarFilialLocal(browser, filial, todasFiliaisNomes, pageCrm)
         { nome: 'sincronizar-eventos-crm', executar: () => sincronizarCatalogoEventosNoCrm(filial) },
         { nome: 'comparecimento', executar: () => exportarComparecimento(page, filial) },
         { nome: 'sincronizar-comparecimento-crm', executar: () => sincronizarComparecimentoNoCrm(filial) },
+        // Pedido do usuário (2026-09-17): quem foi removido do CRM a
+        // pedido do lead (ver abrirRemoverLeadLgpd(), js/app.js) fica
+        // enfileirado aqui — já estamos logados nesta filial, então
+        // aproveita pra desativar no Ulisses também, sem precisar de uma
+        // rodada/janela separada.
+        { nome: 'fila-desativacao-ulisses', executar: () => processarFilaDesativacaoUlisses(page, filial) },
     ];
     let algumaFalha = false;
     for (const etapa of etapas) {

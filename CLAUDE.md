@@ -252,6 +252,15 @@ migracao_modelos_mensagem_whatsapp.sql → tabela modelos_mensagem_whatsapp (mod
                                      "Convites em massa via wa.me"), já vem com 3 modelos
                                      (seed); JÁ RODADA nesta sessão via
                                      `supabase db query --linked`
+migracao_lgpd_remocao_contato.sql → tabelas contatos_removidos_lgpd (bloqueia reimportação
+                                     futura de quem pediu remoção) e fila_desativacao_ulisses
+                                     (tarefa pendente processada pela rodada semanal do
+                                     scraper — ver seção "Remoção a Pedido do Lead (LGPD)");
+                                     JÁ RODADA nesta sessão via `supabase db query --linked`
+migracao_como_prefere_ser_chamado.sql → coluna como_prefere_ser_chamado em leads_inscricoes
+                                     (editável na gaveta, tem prioridade sobre o primeiro
+                                     nome em qualquer {nome} automático de convite); JÁ
+                                     RODADA nesta sessão via `supabase db query --linked`
 ```
 
 ## Banco de dados (Supabase)
@@ -323,6 +332,20 @@ Colunas relevantes:
   (ordenação de 2 níveis: hoje primeiro, resto por dia crescente — antes
   era só cronológico, então o aniversariante de hoje podia ficar
   escondido no meio/fim da lista dependendo do dia do mês).
+- `como_prefere_ser_chamado` (text, nullable, `migracao_como_prefere_ser_chamado.sql`
+  — pedido do usuário 2026-09-17): "para pessoas que não gostam de ser
+  chamadas por um dos nomes, ou outra situação similar" (nome social,
+  apelido etc.). Editável no topo do bloco "Contato" da gaveta
+  (`salvarComoPrefereSerChamadoLead()`, `js/app.js`) — quando preenchido,
+  também aparece direto no CABEÇALHO da gaveta (`"Fulano (chamar de
+  'X')"`), sem precisar abrir "Contato" pra descobrir antes de ligar/
+  mandar mensagem. Tem PRIORIDADE sobre o primeiro nome em qualquer
+  `{nome}` automático — `nomeParaChamar(lead)` (`js/app.js`, usada por
+  `preencherValorAutomatico()`/`montarTextoConviteEvento()`/
+  `confirmarConviteComFoto()` em `js/whatsapp.js`) devolve o valor deste
+  campo quando preenchido, senão cai no primeiro nome de sempre
+  (`primeiroNomeFormatado()`). Vazio = comportamento idêntico ao de
+  antes.
 
 ### Tabela `filiais`
 `id`, `nome`, `ativo`, `ordem`. Hoje tem 3: Goiânia - Jardim América, Goiânia
@@ -870,6 +893,60 @@ mesma regra de confiança total usada pra tags/filiais/eventos.
   Matrículas por Mês, Leads a Tratar) ainda podem contar um lead recém-
   jogado na lixeira até ele ser apagado de vez; aceitável por ora, mesmo
   nível de precisão "proxy" já documentado no resto do app.
+- **Remoção a Pedido do Lead (LGPD)** (`abrirRemoverLeadLgpd()`, botão de
+  usuário-cortado ao lado do ícone da Lixeira na gaveta do lead,
+  `migracao_lgpd_remocao_contato.sql` — pedido do usuário 2026-09-17):
+  diferente da Lixeira (reversível, 30 dias) e da Zona de Perigo (apaga a
+  filial inteira), isto é "direito ao esquecimento" pontual — a própria
+  pessoa pediu pra sair do cadastro. 3 efeitos, nesta ordem:
+  1. Grava em `contatos_removidos_lgpd` (nome/telefone/e-mail
+     normalizados, por filial) — consultada por
+     `confirmarEnviarImportacao()` (`js/importador.js`) ANTES de enviar
+     qualquer lead ao Supabase: quem bate (telefone/e-mail normalizado, ou
+     nome normalizado quando a remoção foi salva sem contato — mesma
+     hierarquia de confiança de "Leads a Tratar") é PULADO e contado num
+     aviso no log — nunca mais recriado sozinho numa reimportação futura
+     do Ulisses/Mercúrio.
+  2. Enfileira em `fila_desativacao_ulisses` (`status='pendente'`,
+     nome + telefone pra busca) — o Ulisses tem sua PRÓPRIA ação de
+     desativar contato (ver abaixo), mas só dá pra automatizar em modo
+     ASSISTIDO (mesma limitação de sempre — Cloudflare barra acesso 100%
+     automático); em vez de abrir um Chromium na hora, a tarefa fica
+     pendente e é processada sozinha na PRÓXIMA rodada de
+     `npm run ulisses-local` daquela filial.
+  3. Apaga a linha de `leads_inscricoes` de vez (sem Lixeira — é
+     definitivo, por isso o `confirm()` é bem explícito sobre as 3
+     consequências antes de agir).
+  - **Lado do Ulisses** (`processarFilaDesativacaoUlisses()`,
+    `scraper/ulisses.js`, chamada como última etapa de
+    `processarFilialLocal()` em `scraper/ulisses-local.js` — já dentro da
+    mesma sessão logada, sem navegação/login extra): a tela real é
+    `#/telemarketing` (HTML confirmado pelo usuário) — cada contato tem um
+    link vermelho "Desativar contato" (`ng-click="naoPertube(contato)"`)
+    que liga `contato.desativado` + `contato.motivo = 'Não Pertube'` — é
+    uma flag do CONTATO (não da inscrição/evento específico). A função usa
+    a caixa "Busca geral por nome, email, telefone e evento e observação"
+    (`page.getByPlaceholder(/busca geral/i)`) — tenta primeiro por
+    TELEFONE, só cai pro NOME se o telefone não achar nada — e só clica em
+    "Desativar contato" quando a busca acha **exatamente 1** contato ATIVO
+    (`a:visible` — filtra quem já foi desativado antes, o link deles já
+    não existe mais visível, vira o label "Não pertube"). Best-effort,
+    nunca arrisca a pessoa errada: 0 encontrado vira `nao_encontrado`, 2+
+    batendo vira `ambiguo` (nenhum é clicado), e cada tentativa grava
+    `status`/`observacao`/`processado_em` na própria linha da fila, pra dar
+    pra auditar depois quem foi de fato desativado. **Limitação aceita, não
+    confirmada**: não sabemos com certeza se essa busca enxerga contatos de
+    QUALQUER evento ou só do evento selecionado no combo do topo — se
+    sobrar gente "não encontrado" com frequência, pode ser esse o motivo
+    (revisar manualmente pela tela normal do Ulisses nesse caso).
+  - **Log de Atividade**: `acao='remocao_lgpd'` grava `nome`/`telefone`
+    direto em `detalhes` (não confia em resolver por `pessoa_ids` depois —
+    o lead já foi apagado quando alguém for ler o log, a resolução normal
+    acharia "não encontrado").
+  - **Ainda NÃO testado ao vivo** contra o Ulisses real (a automação da
+    tela `#/telemarketing` foi escrita a partir do HTML real mandado pelo
+    usuário, mas nunca clicada de verdade em produção) — a próxima rodada
+    de `ulisses-local.js` com 1+ item pendente na fila valida.
 - **Radar de Acompanhantes** (vínculo familiar): grupo de N leads que se
   conhecem (cônjuge, amigos, quem veio junto) — implementado com UMA
   coluna (`grupo_familiar_id`, uuid, `migracao_vinculo_familiar.sql`) em
@@ -2703,16 +2780,34 @@ risco de o número pessoal ser banido.
   em que a pessoa confirma que mandou. Mesmo gatilho que já grava em
   `log_atividade` (ver bullet acima) — os dois efeitos (log + mover)
   acontecem juntos, só ao marcar de verdade.
-- **"Telefone inválido" direto nesta lista** (pedido do usuário,
-  2026-09-15) — botão `.icon-btn.danger` (ícone de telefone cortado) em
-  cada linha, `marcarTelefoneInvalidoLote()`: mesmo efeito de
-  `marcarTelefoneInvalido()` (gaveta do lead, `js/app.js`) — limpa o
-  telefone e aplica as tags `"Telefone Inválido"`/`"Sem Telefone"` — mas
-  sem precisar abrir a gaveta (o lead nem está aberto aqui). Grava direto
-  em `leads_inscricoes`, então já vale pro CRM inteiro (Kanban, outras
-  telas), não só pra esta lista. A linha correspondente é removida do
-  modal (o link `wa.me` já gerado com o número antigo deixaria de fazer
-  sentido).
+- **"Conferir telefone" direto nesta lista** (botão de lupa em cada linha,
+  `marcarTelefoneParaVerificarLote()`) — pedido do usuário 2026-09-15,
+  **comportamento trocado em 2026-09-17**: a 1ª versão (`marcarTelefoneInvalidoLote()`)
+  apagava o telefone na hora, igual `marcarTelefoneInvalido()` da gaveta do
+  lead. O usuário apontou que boa parte dos casos reais é só ERRO DE
+  DIGITAÇÃO perceptível (1 dígito trocado), não um número que realmente
+  não existe mais — apagar de cara jogava fora um dado bom demais cedo.
+  Agora **nunca mexe no telefone**: só aplica a tag nova
+  `"Conferir Telefone"` (família "Cadastro" em `FAMILIAS_TAG`, `js/app.js`
+  — mesma cor de "Sem Telefone"/"Sem E-mail") e move o lead pra uma coluna
+  dedicada de conferência, achada por `encontrarColunaVerificarTelefone()`
+  (mesma heurística por substring de `encontrarColunaAbordagem()` — aceita
+  "Verificar"/"Conferir"/"Atualizar Cadastro" no nome, nunca cria a coluna
+  sozinha; sem achar, avisa em `alert()` pra criar uma em "Gerenciar
+  Colunas" e deixa o lead onde estava). Continua removendo o vínculo
+  "pendente" do evento atual em `evento_leads` (mesmo motivo de sempre:
+  telefone suspeito também significa que não chegamos a contatar de
+  verdade) e tirando a linha da lista (o link `wa.me` gerado não serve
+  mais até o número ser conferido).
+- **Fechar o modal não perde o lote gerado** (pedido do usuário,
+  2026-09-17: "se eu sair dessa tela, consigo voltar?") — antes, reabrir
+  "Convidar (Link)" sempre resetava pro passo 1 (escolher evento), mesmo
+  só fechando sem querer no X/clicando fora, descartando a lista de links
+  + quem já tinha sido marcado como enviado. Agora
+  `iniciarConvitesWhatsAppEmMassa()` checa se já existe um resultado
+  renderizado nesta sessão e, se sim, só reabre o modal onde parou — só
+  reinicia do zero pelo botão explícito "Novo lote" dentro do resultado
+  (`reiniciarConviteLote()`).
 - **Modelos de mensagem editáveis pelo CRM** (`modelos_mensagem_whatsapp`,
   `migracao_modelos_mensagem_whatsapp.sql`) — pedido do usuário (2026-09-15):
   1ª versão do mesmo dia salvava só 1 texto em `localStorage` (por

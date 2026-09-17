@@ -111,7 +111,7 @@ const TEMPLATES_WHATSAPP = [
 function preencherValorAutomatico(chave, leadId) {
     if (chave === 'nome') {
         const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
-        return lead ? primeiroNomeFormatado(lead.pessoaNome) : '';
+        return lead ? nomeParaChamar(lead) : '';
     }
     if (chave === 'atendente') {
         return obterNomeAtendente() || '';
@@ -582,7 +582,7 @@ async function confirmarConviteComFoto() {
     const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(currentLeadId));
     if (!lead) return;
 
-    const primeiroNome = primeiroNomeFormatado(lead.pessoaNome);
+    const primeiroNome = nomeParaChamar(lead);
     const dataFormatada = (typeof formatarDataEvento === 'function') ? formatarDataEvento(evento.data) : evento.data;
     const caption = `📢 ${evento.nome} — ${dataFormatada}! Compartilhe no seu Status do WhatsApp ou nos Stories do Instagram e ajude a divulgar 💙`;
 
@@ -619,7 +619,7 @@ async function confirmarConviteComFoto() {
 function montarTextoConviteEvento(lead, evento, templateCustom) {
     const tagsLead = (typeof parseTags === 'function' ? parseTags(lead.tags) : []).map(t => t.trim()).filter(Boolean);
     const ehAtivo = tagsLead.includes('Ativo') || tagsLead.includes('Aluno Ativo');
-    const primeiroNome = primeiroNomeFormatado(lead.pessoaNome);
+    const primeiroNome = nomeParaChamar(lead);
     const atendente = obterNomeAtendente();
 
     // Interesses — só as tags da família "Interesses / Origem" (mesma
@@ -706,6 +706,21 @@ async function iniciarConvitesWhatsAppEmMassa() {
         alert('Selecione 1 ou mais leads no Kanban antes (checkbox no canto de cada card).');
         return;
     }
+
+    // Pedido do usuário (2026-09-17): "se eu sair dessa tela, consigo
+    // voltar?" — antes, reabrir esta tela (mesmo só fechando sem querer no
+    // X/clicando fora) sempre voltava pro passo 1 (escolher evento) e
+    // descartava a lista de links já gerada + quem já tinha sido marcado
+    // como enviado. Se já existe um lote gerado nesta sessão, só reabre o
+    // modal de onde parou — só reinicia do zero pelo botão explícito
+    // "Começar um novo lote" (reiniciarConviteLote()) dentro do resultado.
+    const resultadoExistente = document.getElementById('conviteLoteResultado');
+    if (resultadoExistente && resultadoExistente.innerHTML.trim() !== '') {
+        document.getElementById('modalConviteLote').classList.add('open');
+        document.getElementById('overlayModalConviteLote').classList.add('active');
+        return;
+    }
+
     const select = document.getElementById('conviteLoteEventoSelect');
     if (!select) return;
 
@@ -939,14 +954,17 @@ async function gerarLinksConviteLote() {
         : '';
 
     document.getElementById('conviteLoteResultado').innerHTML = `
-        <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">Clique em cada link — ele abre o WhatsApp Web já com o convite pronto, você só confere e aperta Enviar. Marque conforme for enviando: isso grava no Log de Atividade quem foi contatado de verdade, pra aparecer no relatório.</p>
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; margin-bottom:8px;">
+            <p style="font-size:12px; color:var(--text-muted); margin:0;">Clique em cada link — ele abre o WhatsApp Web já com o convite pronto, você só confere e aperta Enviar. Marque conforme for enviando: isso grava no Log de Atividade quem foi contatado de verdade, pra aparecer no relatório. Fechar esta tela não perde a lista — reabrir por "Convidar (Link)" volta exatamente aqui.</p>
+            <button type="button" class="btn-secondary" style="font-size:11px; padding:4px 8px; white-space:nowrap;" onclick="reiniciarConviteLote()"><i class="fa-solid fa-rotate-left"></i> Novo lote</button>
+        </div>
         ${avisoSemTelefone}
         <div style="display:flex; flex-direction:column; gap:6px; max-height:340px; overflow-y:auto;">
             ${linhas.map(l => `
                 <div style="display:flex; align-items:center; gap:8px; padding:8px; border:1px solid var(--border-color); border-radius:6px;" id="conviteLoteLinha-${l.id}">
                     <input type="checkbox" onchange="marcarContatoWhatsAppLoteEnviado('${l.id}', this.checked)">
                     <span style="flex:1; font-size:13px;">${escapeHTML(l.nome)}</span>
-                    <button class="icon-btn danger" title="Marcar telefone como inválido (remove do cadastro em todo o CRM)" onclick="marcarTelefoneInvalidoLote('${l.id}')"><i class="fa-solid fa-phone-slash"></i></button>
+                    <button class="icon-btn" title="Marcar telefone pra conferir depois (não apaga o número — pode ser só erro de digitação)" onclick="marcarTelefoneParaVerificarLote('${l.id}')"><i class="fa-solid fa-magnifying-glass"></i></button>
                     <a href="${l.link}" target="_blank" rel="noopener" class="btn-secondary" style="text-decoration:none; font-size:12px; padding:6px 10px;"><i class="fa-brands fa-whatsapp"></i> Abrir</a>
                 </div>
             `).join('')}
@@ -960,52 +978,70 @@ async function gerarLinksConviteLote() {
     }
 }
 
-// Marcar o checkbox "já enviei este" não é só visual — grava em
-// log_atividade (mesma tabela append-only de auditoria já usada pra
-// mover lead/tags/mesclagem, ver js/log-atividade.js), pra dar pra
-// consultar DEPOIS "quem foi contatado de verdade" — pedido do usuário
-// (2026-09-15): "incluir no relatório as pessoas que foram contatadas".
-// Só marca ao CONFIRMAR (checked=true) — é o sinal mais próximo que temos
-// de "mandei de verdade" (não dá pra confirmar entrega/leitura vindo de
-// um link wa.me, diferente do envio via Meta Cloud API, que já grava
-// tudo em mensagens_whatsapp automaticamente). Desmarcar não apaga o
-// registro já feito (log é append-only por design) — só evita gravar de
-// novo se a pessoa marcar/desmarcar querendo "ajeitar" antes de terminar.
-// Igual marcarTelefoneInvalido() (js/app.js), mas sem depender dos campos
-// da gaveta do lead (aqui o lead nem está aberto) — pedido do usuário
-// (2026-09-15): descobrir um telefone inválido enquanto se prepara pra
-// convidar é comum (número que não existe mais, etc.), e precisa valer
-// pro CRM inteiro, não só somir desta lista. Reaproveita as MESMAS 2
-// tags de sistema (`"Telefone Inválido"` + sincroniza `"Sem Telefone"`)
-// e grava direto em leads_inscricoes — o mesmo efeito de abrir a gaveta e
-// clicar no botão de lá, só que sem precisar sair deste modal.
-async function marcarTelefoneInvalidoLote(pessoaId) {
+// Descarta o lote atual (links + marcações) e volta pro passo 1 (escolher
+// evento/modelo) — único jeito de reiniciar de propósito, já que reabrir o
+// modal normalmente preserva o lote em andamento (ver comentário em
+// iniciarConvitesWhatsAppEmMassa()).
+function reiniciarConviteLote() {
+    const resultado = document.getElementById('conviteLoteResultado');
+    resultado.innerHTML = '';
+    resultado.style.display = 'none';
+    document.getElementById('conviteLoteEscolha').style.display = 'block';
+}
+
+// Tag própria pra "esse telefone parece errado, mas não temos certeza" —
+// pedido do usuário (2026-09-17): "muitos deles estão apenas com erro de
+// digitação perceptível". Diferente de "Telefone Inválido" (que já
+// significa "confirmamos que não presta, apagamos"), esta NUNCA apaga o
+// número — só sinaliza pra alguém conferir com calma depois (ex: comparar
+// com o cadastro do Ulisses, tentar 1 dígito trocado). Cai na família
+// "Cadastro" (mesma cor de "Sem Telefone"/"Sem E-mail" — ver FAMILIAS_TAG,
+// js/app.js).
+const TAG_CONFERIR_TELEFONE = 'Conferir Telefone';
+
+// Mesma heurística por substring já usada em encontrarColunaAbordagem()/
+// encontrarColunaRecontato() — nunca cria a coluna sozinha, só avisa se não
+// achar. Aceita "Verificar"/"Conferir" (a família da tag) ou "Atualizar
+// Cadastro" (nome já citado no CLAUDE.md como sugestão pra esse caso).
+function encontrarColunaVerificarTelefone() {
+    if (typeof columnsConfig === 'undefined') return null;
+    const normalizar = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
+    const col = columnsConfig.find(c => {
+        const chave = normalizar(c.key), rotulo = normalizar(c.label);
+        return chave.includes('VERIFICAR') || rotulo.includes('VERIFICAR')
+            || chave.includes('CONFERIR') || rotulo.includes('CONFERIR')
+            || chave.includes('ATUALIZAR CADASTRO') || rotulo.includes('ATUALIZAR CADASTRO');
+    });
+    return col ? col.key : null;
+}
+
+// Marca o telefone pra CONFERIR depois — pedido do usuário (2026-09-17):
+// a versão anterior (marcarTelefoneInvalidoLote) apagava o número na hora,
+// mas boa parte dos casos reais é só erro de digitação perceptível (1
+// dígito trocado), não um número que realmente não existe mais. Agora
+// NUNCA mexe no telefone — só aplica a tag TAG_CONFERIR_TELEFONE e move o
+// lead pra uma coluna dedicada de conferência (encontrarColunaVerificarTelefone()),
+// pra alguém revisar com calma sem perder o dado original.
+async function marcarTelefoneParaVerificarLote(pessoaId) {
     const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(pessoaId));
     if (leadIndex === -1) return;
     const lead = leadsAtuais[leadIndex];
-    if (!lead.pessoaTelefoneNumero) { alert('Não há telefone cadastrado pra marcar como inválido.'); return; }
-    if (!confirm(`Marcar o telefone de ${lead.pessoaNome} como inválido? O número atual será removido do cadastro em todo o CRM.`)) return;
+    if (!confirm(`Marcar o telefone de ${lead.pessoaNome} pra conferir depois? O número CONTINUA no cadastro — só ganha a tag "${TAG_CONFERIR_TELEFONE}" e sai desta lista.`)) return;
 
-    lead.pessoaTelefoneDDD = '';
-    lead.pessoaTelefoneNumero = '';
     let tagsArray = parseTags(lead.tags).map(t => t.trim()).filter(Boolean);
-    if (!tagsArray.includes('Telefone Inválido')) tagsArray.push('Telefone Inválido');
-    if (!tagsArray.includes('Sem Telefone')) tagsArray.push('Sem Telefone');
+    if (!tagsArray.includes(TAG_CONFERIR_TELEFONE)) tagsArray.push(TAG_CONFERIR_TELEFONE);
     lead.tags = JSON.stringify(tagsArray);
 
     const { error } = await window.supabaseClient
         .from(NOME_TABELA)
-        .update({ pessoaTelefoneDDD: '', pessoaTelefoneNumero: '', tags: lead.tags })
+        .update({ tags: lead.tags })
         .eq('pessoaIdentificador', pessoaId);
     if (error) { alert('Erro ao salvar: ' + error.message); return; }
 
-    // Pedido do usuário (2026-09-15): telefone inválido significa que a
-    // gente NEM CHEGOU a entrar em contato — o vínculo "pendente" criado
-    // em evento_leads quando o link foi gerado (ver gerarLinksConviteLote())
-    // não deveria contar nesse caso, senão o evento fica com um
-    // "pendente" fantasma que nunca vai virar contato de verdade. Remove
-    // o vínculo desse evento específico (o mesmo lead pode continuar
-    // vinculado a OUTROS eventos, esses não são tocados).
+    // Mesmo motivo de sempre: telefone suspeito também significa que a
+    // gente NEM CHEGOU a entrar em contato de verdade — o vínculo
+    // "pendente" criado em evento_leads quando o link foi gerado (ver
+    // gerarLinksConviteLote()) não deveria contar nesse caso.
     if (conviteLoteEventoAtual) {
         await window.supabaseClient
             .from(typeof NOME_TABELA_EVENTO_LEADS !== 'undefined' ? NOME_TABELA_EVENTO_LEADS : 'evento_leads')
@@ -1017,9 +1053,15 @@ async function marcarTelefoneInvalidoLote(pessoaId) {
         }
     }
 
-    // O link wa.me já gerado com o número antigo deixaria de fazer
-    // sentido — tira a linha inteira da lista em vez de deixar um link
-    // morto clicável.
+    const colunaVerificar = encontrarColunaVerificarTelefone();
+    if (colunaVerificar) {
+        await moverLeadsParaColuna([pessoaId], colunaVerificar);
+    } else {
+        alert(`Tag "${TAG_CONFERIR_TELEFONE}" aplicada, mas não encontrei nenhuma coluna com "Verificar"/"Conferir" no nome pra mover o lead automaticamente — crie uma em "Gerenciar Colunas" (o lead continua na coluna atual por enquanto).`);
+    }
+
+    // O link wa.me já gerado não faz mais sentido nesta lista (o objetivo
+    // agora é conferir o número antes de tentar de novo) — tira a linha.
     const linha = document.getElementById('conviteLoteLinha-' + pessoaId);
     if (linha) linha.remove();
     renderizarCards();

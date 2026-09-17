@@ -1800,7 +1800,42 @@ async function confirmarEnviarImportacao() {
     if (porId.size < registrosFinais.length) {
         logImport(`Aviso: ${registrosFinais.length - porId.size} registro(s) com pessoaIdentificador repetido no mesmo lote — mantido só 1 por id, pra não travar a importação inteira (revise possíveis duplicados nesta filial depois).`, 'warn');
     }
-    const registrosDedupe = [...porId.values()];
+    let registrosDedupe = [...porId.values()];
+
+    // ---- Bloqueia reimportação de quem já pediu remoção do cadastro
+    // (LGPD) — pedido do usuário (2026-09-17): "tirar do cadastro a
+    // pedido do lead" não pode voltar sozinho só porque o Ulisses/Mercúrio
+    // ainda tem o registro dela. Casa por telefone/e-mail normalizado
+    // (alta confiança) OU nome normalizado (só quando a remoção foi
+    // gravada SEM telefone/e-mail — mesma hierarquia de confiança já
+    // usada em "Leads a Tratar": nome sozinho é heurística, telefone/
+    // e-mail é garantia). Roda sobre o lote já deduplicado, ANTES do
+    // envio ao Supabase — quem bate aqui simplesmente não é enviado.
+    const { data: removidosLgpd, error: erroRemovidosLgpd } = await window.supabaseClient
+        .from('contatos_removidos_lgpd')
+        .select('nome_normalizado, telefone_normalizado, email_normalizado')
+        .eq('filial', resultadoImportacao.filial);
+    if (erroRemovidosLgpd) {
+        logImport('Aviso: não consegui checar a lista de remoções por LGPD (rode migracao_lgpd_remocao_contato.sql se ainda não rodou) — seguindo sem esse filtro.', 'warn');
+    } else if (removidosLgpd && removidosLgpd.length > 0) {
+        const telefonesSuprimidos = new Set(removidosLgpd.map(r => r.telefone_normalizado).filter(Boolean));
+        const emailsSuprimidos = new Set(removidosLgpd.map(r => r.email_normalizado).filter(Boolean));
+        const nomesSuprimidosSemContato = new Set(
+            removidosLgpd.filter(r => !r.telefone_normalizado && !r.email_normalizado).map(r => r.nome_normalizado)
+        );
+        const bloqueados = [];
+        registrosDedupe = registrosDedupe.filter(r => {
+            const tel = normalizarTelefoneParaChave(r.pessoaTelefoneDDD, r.pessoaTelefoneNumero);
+            const email = (r.pessoaEmail || '').trim().toLowerCase();
+            const nome = normalizarNomeImport(r.pessoaNome || '');
+            const bate = (tel && telefonesSuprimidos.has(tel)) || (email && emailsSuprimidos.has(email)) || (nome && nomesSuprimidosSemContato.has(nome));
+            if (bate) bloqueados.push(r.pessoaNome || '(sem nome)');
+            return !bate;
+        });
+        if (bloqueados.length > 0) {
+            logImport(`${bloqueados.length} pessoa(s) NÃO reimportada(s) por já terem pedido remoção do cadastro (LGPD): ${bloqueados.slice(0, 20).join(', ')}${bloqueados.length > 20 ? '...' : ''}.`, 'warn');
+        }
+    }
 
     // Mesma rede de segurança, agora pra `matricula_mercurio` — tem
     // índice ÚNICO por filial (migracao_matricula_mercurio.sql), então 2

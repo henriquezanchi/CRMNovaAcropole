@@ -979,6 +979,101 @@ export async function sincronizarCatalogoEventosNoCrm(filial) {
     return `${criados} evento(s) criado(s), ${atualizados} atualizado(s)${ignorados ? `, ${ignorados} ignorado(s) sem data/título` : ''}.`;
 }
 
+// Fila de desativação de contato no Ulisses (LGPD) — pedido do usuário
+// (2026-09-17): o CRM só ENFILEIRA (`fila_desativacao_ulisses`, ver
+// migracao_lgpd_remocao_contato.sql) quando alguém pede pra sair do
+// cadastro — quem de fato desativa no Ulisses é esta função, chamada
+// dentro da rodada semanal normal (já logada, ver ulisses-local.js).
+//
+// Tela real (`#/telemarketing`, print/HTML do usuário 2026-09-17): cada
+// contato tem um link vermelho "Desativar contato"
+// (`ng-click="naoPertube(contato)"`) que liga `contato.desativado` +
+// `contato.motivo = 'Não Pertube'` — é uma flag do CONTATO (não da
+// inscrição/evento específico), então em teoria funciona independente de
+// qual evento está selecionado no combo do topo. Usa a caixa "Busca geral
+// por nome, email, telefone e evento e observação" pra achar a pessoa,
+// em vez de tentar montar a linha certa manualmente.
+//
+// Best-effort, nunca arrisca a pessoa errada: se a busca não achar
+// ninguém (0 resultado ATIVO — um contato já desativado antes não conta,
+// o link dele já não existe mais visível) ou achar mais de 1 contato
+// batendo, a tarefa fica 'nao_encontrado'/'ambiguo' em vez de clicar.
+// Tenta primeiro por TELEFONE (mais específico) e só cai pro NOME se o
+// telefone não achar nada. Limitação aceita, não confirmada: não sabemos
+// com certeza se a busca enxerga contatos de QUALQUER evento ou só do
+// evento selecionado no combo — se sobrar gente "não encontrado" com
+// frequência, pode ser esse o motivo (revisar manualmente pela tela).
+export async function processarFilaDesativacaoUlisses(page, filial) {
+    const { data: pendentes, error } = await supabaseAdmin
+        .from('fila_desativacao_ulisses')
+        .select('*')
+        .eq('filial', filial)
+        .eq('status', 'pendente');
+    if (error) throw new Error('Erro ao buscar fila de desativação: ' + error.message);
+    if (!pendentes || pendentes.length === 0) return '0 pendente(s).';
+
+    if (!page.url().includes('#/telemarketing')) {
+        await page.goto('https://www.acropolebrasil.com.br/#/telemarketing', { waitUntil: 'domcontentloaded' });
+    }
+    await fecharAvisosBloqueantes(page);
+
+    const campoBusca = page.getByPlaceholder(/busca geral/i);
+    await campoBusca.waitFor({ timeout: 15000 });
+    const botaoFiltrar = page.getByRole('button', { name: 'Filtrar' });
+
+    const marcar = (id, status, observacao) => supabaseAdmin
+        .from('fila_desativacao_ulisses')
+        .update({ status, processado_em: new Date().toISOString(), observacao: observacao ? String(observacao).slice(0, 500) : null })
+        .eq('id', id);
+
+    let concluidas = 0, naoEncontradas = 0, ambiguas = 0, falhas = 0;
+    for (const tarefa of pendentes) {
+        const termosBusca = [tarefa.telefone_busca, tarefa.nome].filter(Boolean);
+        let resolvida = false;
+        try {
+            for (const termo of termosBusca) {
+                await campoBusca.fill(String(termo));
+                await botaoFiltrar.click();
+                await page.waitForTimeout(1000);
+
+                // `:visible` filtra os já desativados (o link some, vira o
+                // label "Não pertube") — sem isso, um homônimo já
+                // desativado antes contaria como "ambíguo" à toa.
+                const linksDesativar = page.locator('a:visible', { hasText: 'Desativar contato' });
+                const total = await linksDesativar.count();
+                if (total === 0) continue; // tenta o próximo termo (ex: nome, se telefone não achou nada)
+
+                if (total > 1) {
+                    await marcar(tarefa.id, 'ambiguo', `${total} contato(s) bateram com a busca "${termo}" — não desativei nenhum pra não arriscar a pessoa errada.`);
+                    ambiguas++; resolvida = true; break;
+                }
+
+                await linksDesativar.first().click();
+                await page.waitForTimeout(800);
+                const aindaVisivel = await linksDesativar.first().isVisible().catch(() => false);
+                if (aindaVisivel) {
+                    await marcar(tarefa.id, 'falha', `Cliquei em "Desativar contato" (busca "${termo}"), mas o link continuou visível — pode não ter salvo.`);
+                    falhas++;
+                } else {
+                    await marcar(tarefa.id, 'concluida', null);
+                    concluidas++;
+                }
+                resolvida = true;
+                break;
+            }
+        } catch (e) {
+            await marcar(tarefa.id, 'falha', e.message);
+            falhas++; resolvida = true;
+        }
+        if (!resolvida) {
+            await marcar(tarefa.id, 'nao_encontrado', `Nenhum contato ativo encontrado buscando por: ${termosBusca.join(' / ')}.`);
+            naoEncontradas++;
+        }
+    }
+
+    return `${concluidas} desativado(s), ${naoEncontradas} não encontrado(s), ${ambiguas} ambíguo(s) (pulado(s)), ${falhas} falha(s) — de ${pendentes.length} pendente(s).`;
+}
+
 export async function salvarScreenshotErro(page, filial, etapa) {
     fs.mkdirSync('debug', { recursive: true });
     await page.screenshot({ path: `debug/ulisses-${etapa}-${filial.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
@@ -1008,6 +1103,7 @@ async function processarFilial(browser, filial) {
         { nome: 'sincronizar-eventos-crm', executar: () => sincronizarCatalogoEventosNoCrm(filial) },
         { nome: 'comparecimento', executar: () => exportarComparecimento(page, filial) },
         { nome: 'sincronizar-comparecimento-crm', executar: () => sincronizarComparecimentoNoCrm(filial) },
+        { nome: 'fila-desativacao-ulisses', executar: () => processarFilaDesativacaoUlisses(page, filial) },
     ];
     let algumaFalha = false;
     for (const etapa of etapas) {
