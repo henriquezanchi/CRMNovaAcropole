@@ -3267,6 +3267,26 @@ bloqueado).
          correção manual feita nesta sessão (`336`/`500`/`418` — ver
          acima). Barra do Garças não participa deste ciclo específico
          (tem sua própria campanha local, datas diferentes).
+         **Segunda rodada, o evento de verdade "Abertura de Turma"
+         (2026-09-17)**: o evento acima ("Aula Experimental") é só a
+         aula-teste antes da turma abrir — o usuário pediu pra achar e
+         corrigir também o evento de MATRÍCULA de verdade ("Novas turmas
+         do Curso de Filosofia para Viver" no nosso banco). O
+         `eventoId` foi achado pesquisando o site institucional do
+         Garavelo (`acropole.org.br/garavelo/`, via WebFetch — cada
+         filial tem seu próprio slug em `filiais.slug_site_publico`),
+         que lista os cards de evento com o link de inscrição real ao
+         lado — achou `eventoId=24344` (diferente do 24343 da Aula
+         Experimental). Rodando o script contra ele: **as 3 filiais
+         estavam erradas** (não só 1 desta vez) — todas tinham
+         2026-10-14 gravado, mas o real é Garavelo 05/10, Jardim América
+         E Setor Oeste 08/10 (essas duas coincidentemente batiam entre
+         si, mas não com Garavelo nem com a data antiga gravada).
+         Confirma que esse bug (data "juntada" do ciclo inteiro, sempre
+         vira a ÚLTIMA data pra filial não-criadora) afeta bem mais gente
+         do que só 1 filial por campanha — vale sempre rodar o script pra
+         TODAS as filiais de uma campanha, não só conferir a que parece
+         mais suspeita.
        - **Bug real GRAVÍSSIMO, achado pelo usuário rodando o Garavelo de
          verdade (2026-09-14)**: a Recepção do Ulisses mostrava 6
          pré-inscritos num evento, mas a Agenda do CRM só tinha vinculado
