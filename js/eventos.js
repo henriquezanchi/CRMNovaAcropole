@@ -1191,10 +1191,22 @@ async function removerEventoDoLeadNaGaveta(id) {
     renderizarEventosDoLead();
 }
 
-function abrirFormConvidarEventoNaGaveta() {
+// Bug real relatado pelo usuário (2026-09-17): lead novo (manual, por
+// indicação) em Setor Oeste mostrava "Nenhum evento disponível pra
+// convidar" mesmo com eventos futuros reais cadastrados pra essa filial —
+// MESMO bug já corrigido em iniciarConvitesWhatsAppEmMassa() (js/whatsapp.js,
+// 2026-09-15), só que nunca replicado aqui: `eventosAtuais` só é carregado
+// ao abrir a aba Agenda ou trocar de filial (carregarEventos()); numa
+// sessão que só usa o Kanban/gaveta, sem nunca fazer nenhuma das duas
+// coisas, o array fica vazio pra sempre e este `<select>` nunca tem nada
+// pra oferecer. Corrigido chamando carregarEventos() aqui também, sempre,
+// antes de montar a lista — função virou `async` por isso.
+async function abrirFormConvidarEventoNaGaveta() {
     const form = document.getElementById('drawer-eventos-form');
     const select = document.getElementById('drawer-eventos-select');
     if (!form || !select) return;
+
+    if (typeof carregarEventos === 'function') await carregarEventos();
 
     // Só oferece eventos ainda "ativos" (não passaram da data efetiva —
     // ver dataEfetivaLimite()) — um "Abertura de Turma" com data limite de

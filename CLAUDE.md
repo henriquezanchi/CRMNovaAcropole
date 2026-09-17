@@ -2878,6 +2878,20 @@ risco de o número pessoal ser banido.
   `iniciarConvitesWhatsAppEmMassa()`, antes de checar a lista —
   `#agendaLista` existe no DOM o tempo todo (só escondido por CSS quando
   a aba não está ativa), então a busca funciona vinda de qualquer aba.
+  **Mesmo bug, 2 focos irmãos nunca corrigidos junto (achado pelo usuário
+  2026-09-17, lead novo por indicação em Setor Oeste)**: o botão
+  "+Convidar" da gaveta "Eventos (Convites)"
+  (`abrirFormConvidarEventoNaGaveta()`, `js/eventos.js`) e o botão
+  "Convidar pra Evento" no cabeçalho do chat da gaveta
+  (`abrirSeletorConviteEvento()`, `js/whatsapp.js`) filtravam
+  `eventosAtuais` do mesmo jeito, mas nunca chamavam `carregarEventos()`
+  antes — mostravam "Nenhum evento disponível pra convidar" mesmo com
+  eventos futuros reais cadastrados, sempre que a sessão nunca tinha
+  aberto a Agenda/trocado de filial (típico de quem só usa "Novo Lead
+  Manual" + a gaveta direto). As 2 agora também chamam `carregarEventos()`
+  antes de montar a lista (viraram `async`) — mesmo remédio, agora nos 3
+  pontos de entrada que existem pra convidar 1 lead (gaveta "Eventos",
+  chat da gaveta, e o lote via wa.me).
 
 ### Setup pendente (só o usuário consegue fazer, fora do código)
 Checklist completo: Business Manager → App tipo "Business" com produto

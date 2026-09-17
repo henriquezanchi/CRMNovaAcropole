@@ -519,11 +519,17 @@ function proximaOcorrenciaMesmoDiaSemana(dataISO) {
 // Abre o mini-seletor de evento (só eventos ainda não "passados" da
 // filial atual, mesmo critério de dataEfetivaLimite() usado no resto da
 // Agenda — js/eventos.js) logo abaixo do cabeçalho do chat da gaveta.
-function abrirSeletorConviteEvento() {
+// Mesmo bug do "+Convidar" da gaveta "Eventos (Convites)" (js/eventos.js,
+// corrigido 2026-09-17) — `eventosAtuais` só carrega ao abrir a Agenda ou
+// trocar de filial; sem isso, uma sessão que só usa Kanban/gaveta via um
+// lead novo nunca teria evento nenhum pra oferecer aqui.
+async function abrirSeletorConviteEvento() {
     if (typeof currentLeadId === 'undefined' || !currentLeadId) return;
     const select = document.getElementById('drawerConviteEventoSelect');
     const form = document.getElementById('drawerConviteEventoForm');
     if (!select || !form) return;
+
+    if (typeof carregarEventos === 'function') await carregarEventos();
 
     const hojeISO = new Date().toISOString().slice(0, 10);
     const lista = (typeof eventosAtuais !== 'undefined' ? eventosAtuais : [])
