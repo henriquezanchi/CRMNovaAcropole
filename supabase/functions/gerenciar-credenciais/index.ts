@@ -46,8 +46,8 @@ Deno.serve(async (req) => {
     // sido atualizada — bug real, achado nesta sessão: o botão "Salvar" do
     // bloco "CRM Publicado" sempre retornava esse erro, nunca chegou a
     // gravar nada.
-    if (sistema !== "ulisses" && sistema !== "mercurio" && sistema !== "mercurio_http" && sistema !== "crm_acesso") {
-        return json({ ok: false, erro: "sistema precisa ser 'ulisses', 'mercurio', 'mercurio_http' ou 'crm_acesso'" }, 400);
+    if (sistema !== "ulisses" && sistema !== "mercurio" && sistema !== "mercurio_http" && sistema !== "crm_acesso" && sistema !== "ulisses_api") {
+        return json({ ok: false, erro: "sistema precisa ser 'ulisses', 'mercurio', 'mercurio_http', 'crm_acesso' ou 'ulisses_api'" }, 400);
     }
     if (!senha || senha.trim() === "") {
         return json({ ok: false, erro: "senha é obrigatória" }, 400);
@@ -55,10 +55,12 @@ Deno.serve(async (req) => {
     if (sistema === "ulisses" && (!filial || filial.trim() === "")) {
         return json({ ok: false, erro: "filial é obrigatória para o Ulisses (cada filial tem uma senha diferente)" }, 400);
     }
-    // Mercúrio (e a autenticação HTTP básica dele) e o portão do CRM
-    // publicado são credenciais únicas, compartilhadas/globais — ignora
-    // qualquer filial que venha no corpo e força o valor global fixo.
-    if (sistema === "mercurio" || sistema === "mercurio_http" || sistema === "crm_acesso") filial = "GLOBAL";
+    // Mercúrio (e a autenticação HTTP básica dele), o portão do CRM
+    // publicado e a API oficial do Ulisses (client_id/client_secret M2M,
+    // 1 aplicação só no Auth0 deles) são credenciais únicas,
+    // compartilhadas/globais — ignora qualquer filial que venha no corpo
+    // e força o valor global fixo.
+    if (sistema === "mercurio" || sistema === "mercurio_http" || sistema === "crm_acesso" || sistema === "ulisses_api") filial = "GLOBAL";
 
     const { error } = await supabaseAdmin.rpc("salvar_credencial_scraper", {
         p_sistema: sistema,

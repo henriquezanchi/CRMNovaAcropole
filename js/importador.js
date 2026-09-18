@@ -394,7 +394,15 @@ async function renderizarCredenciaisScraper() {
         </div>
         <p style="font-size:11px; margin:-4px 0 14px;">${formatarStatus('mercurio|GLOBAL')}</p>
 
-        <p style="font-size:11px; color:var(--text-muted); margin-top:8px;"><i class="fa-solid fa-circle-info"></i> O login do Ulisses é sempre manual (Cloudflare exige resolver o desafio de verificação você mesmo) — por isso não tem senha pra salvar aqui. Rode <code>npm run ulisses-local</code> na sua máquina de confiança quando precisar importar.</p>
+        <div class="tag-filter-grupo-titulo">Ulisses — API oficial (OAuth2 Client Credentials, via Auth0 — 1 client só, compartilhado entre todas as filiais)</div>
+        <div class="coluna-row">
+            <input type="text" id="credUsuarioUlissesApi" placeholder="Client ID" style="flex:1;">
+            <input type="password" id="credSenhaUlissesApi" placeholder="Client Secret" style="flex:1;">
+            <button class="btn-secondary" onclick="salvarCredencialScraper('ulisses_api', null)"><i class="fa-solid fa-floppy-disk"></i> Salvar</button>
+        </div>
+        <p style="font-size:11px; margin:-4px 0 14px;">${formatarStatus('ulisses_api|GLOBAL')}</p>
+
+        <p style="font-size:11px; color:var(--text-muted); margin-top:8px;"><i class="fa-solid fa-circle-info"></i> O login do Ulisses continua manual pra quem usa a tela normal (Cloudflare exige resolver o desafio você mesmo) — não tem senha de usuário/site pra salvar aqui. Rode <code>npm run ulisses-local</code> na sua máquina de confiança quando precisar importar por lá; a API oficial acima é um caminho separado, ainda em teste (ver CLAUDE.md).</p>
     `;
 }
 
@@ -408,6 +416,7 @@ async function salvarCredencialScraper(sistema) {
         mercurio: { usuario: 'credUsuarioMercurio', senha: 'credSenhaMercurio' },
         mercurio_http: { usuario: 'credUsuarioMercurioHttp', senha: 'credSenhaMercurioHttp' },
         crm_acesso: { usuario: 'credUsuarioCrmAcesso', senha: 'credSenhaCrmAcesso' },
+        ulisses_api: { usuario: 'credUsuarioUlissesApi', senha: 'credSenhaUlissesApi' },
     };
     const ids = idsPorSistema[sistema];
     const inputSenha = ids ? document.getElementById(ids.senha) : null;

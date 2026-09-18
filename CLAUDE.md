@@ -266,6 +266,16 @@ migracao_rpc_leads_ativos_inativos.sql → função leads_ativos_inativos_da_fil
                                      pra pré-carregar tags Ativo/Inativo fora da paginação
                                      principal (mesmo problema/solução de Matriculados); JÁ
                                      RODADA nesta sessão via `supabase db query --linked`
+migracao_rede_ativos_inativos.sql → tabela pessoas_ativas_rede (status Ativo/Inativo
+                                     independente de filial, alimentada pelo scraper do
+                                     Mercúrio — ver seção "Rede de Ativos/Inativos"); JÁ
+                                     RODADA nesta sessão via `supabase db query --linked`
+migracao_credenciais_scraper_ulisses_api.sql → alarga a constraint de "sistema" em
+                                     credenciais_scraper pra aceitar 'ulisses_api'
+                                     (client_id/client_secret da API oficial do Ulisses,
+                                     OAuth2 Client Credentials — ver seção "API oficial do
+                                     Ulisses"); JÁ RODADA nesta sessão via
+                                     `supabase db query --linked`
 ```
 
 ## Banco de dados (Supabase)
@@ -4338,6 +4348,102 @@ confirmados de HISTÓRICO/ENDEREÇOS:
   AINDA NÃO EXISTIAM (112 de 112 sem match, confirmado testando contra
   Barra do Garças/MT). Reordenado: `importarNoCrm()` agora roda primeiro,
   Complementar/Aniversariantes/Turmas depois.
+
+### API oficial do Ulisses (OAuth2 Client Credentials, via Auth0) — em negociação (2026-09-18)
+
+Descoberta nova, potencialmente GRANDE: existe uma API REST oficial por
+trás do Ulisses (`https://api.acropolebrasil.com.br/`, documentada em
+`/v3/api-docs` — Swagger, Spring Boot), com autenticação
+machine-to-machine (OAuth2 Client Credentials Grant, tenant Auth0
+`acropolebrasil.us.auth0.com`). Se isso avançar, **substitui o scraper
+Playwright do Ulisses inteiro** (login manual, Cloudflare, HTML frágil)
+por chamadas HTTP diretas — muito mais simples e confiável.
+
+- **Contato**: Célio Vasconcelos, responsável pelo banco de dados do
+  Ulisses do lado da Acrópole Brasil (contato via WhatsApp do usuário,
+  fora do CRM). Ele confirmou que a API existe e já passou um client
+  M2M — mas foi explícito: **"Para estudo, enquanto preparo o acesso a
+  chamadas"** (ele sempre soube que era só sandbox por enquanto) e,
+  quando soube que a integração está sendo construída com IA, respondeu
+  **"Se eu me envolver nisso, não tem fim"** + "Estuda o protocolo
+  OAuth2 com JWT" — um recado real (em tom de brincadeira, sem climão)
+  de que ele não quer virar suporte técnico sob demanda de uma lista
+  crescente de pedidos. **Lição de relacionamento, não só técnica**: não
+  mandar pra ele mais mensagens técnicas/listas de endpoint por
+  iniciativa própria — ele já sabe o que falta (mandamos 1 vez, com a
+  lista completa de endpoints/tags) e vai liberar no tempo dele. Deixar o
+  lado nosso PRONTO e só confirmar quando ele avisar, em vez de cutucar.
+- **Endpoints mapeados** (lendo o Swagger completo, 63 rotas — não é
+  chute): a API cobre tanto o que interessa pro CRM (inscrições, eventos,
+  comparecimento) quanto um sistema de e-mail marketing próprio do
+  Ulisses (grupos, mensagens, envios — fora do nosso escopo). Os
+  relevantes:
+  - `GET /facade/csvInscricoes/{filialId}` — o CSV de Inscrições direto,
+    sem Playwright.
+  - `GET /facade/participantes/{eventoId}` — participantes de um evento.
+  - `POST /facade/compareceu/{emailEventoId}/{compareceu}` — marcar
+    comparecimento.
+  - `GET /facade/filiaisAtivas` / `GET /facade/filial/{filialId}` — lista
+    de filiais e o ID interno de cada uma NO SISTEMA DELES (ainda não
+    sabemos o mapeamento pras nossas 4 filiais — só descobrimos quando
+    `filiaisAtivas()` parar de dar 401).
+  - `GET /facade/listarTodosEventos/{filialId}` — catálogo de eventos.
+  - **Públicos, já funcionam com o client atual, sem scope nenhum**:
+    `GET /tiposEvento`, `GET /proximosEventos`, `GET /evento/{eventoId}`,
+    `GET /eventos/{filialId}` — dá pra usar hoje mesmo se algum dia fizer
+    sentido (ex: catálogo de eventos futuros sem precisar de permissão).
+- **Estado da autorização, confirmado por teste real (não suposição)**:
+  o token é emitido normalmente (`grant_type=client_credentials`), mas o
+  JWT devolvido **não tem nenhum claim `scope`** — decodificado e
+  conferido. Pedir um `scope` explícito no corpo do POST pro Auth0 (ex:
+  `"scope":"read:eventos read:inscricoes"`) devolve
+  `{"error":"access_denied","error_description":"Client has not been
+  granted scopes: ..."}` — prova objetiva de que NADA foi concedido
+  ainda pro client `6ZTGIIVJGxQ4BoZmjgOe1t3QR9luUHqA` nessa API, do lado
+  do painel Auth0 da Acrópole Brasil (aba "Machine to Machine
+  Applications" da API, ou RBAC/Permissions se estiver habilitado).
+  Reflete exatamente o "enquanto preparo o acesso a chamadas" que o
+  Célio já tinha avisado — não é bug nem má configuração da nossa parte.
+- **Credencial já salva no cofre** (`credenciais_scraper`, novo valor de
+  `sistema`: `'ulisses_api'`, `migracao_credenciais_scraper_ulisses_api.sql`
+  — JÁ RODADA nesta sessão via `supabase db query --linked`): client_id
+  vai em `usuario`, client_secret cifrado em `senha_cifrada`, sempre
+  `filial='GLOBAL'` (é 1 aplicação M2M só, compartilhada — igual
+  Mercúrio). Salva também na UI: bloco novo "Ulisses — API oficial" em
+  "Login Automático" (`renderizarCredenciaisScraper()`/
+  `salvarCredencialScraper()`, `js/importador.js`) — e na Edge Function
+  `gerenciar-credenciais` (aceita `sistema='ulisses_api'` agora, mesma
+  validação/força `filial='GLOBAL'` de `mercurio`/`mercurio_http`/
+  `crm_acesso`).
+- **`scraper/ulisses-api.js`, NOVO** — cliente pronto pra essa API:
+  `obterTokenUlissesApi()` (lê o client do cofre via `lerCredencial('ulisses_api',
+  null)`, cacheia o token em memória por até 24h, renova sozinho) +
+  `chamarApi()` genérica autenticada, e uma função exportada por
+  endpoint relevante (`tiposEvento`/`proximosEventos`/`evento`/
+  `eventosPorFilial` públicas; `filiaisAtivas`/`filial`/
+  `listarTodosEventos`/`participantesEvento`/`csvInscricoes`/
+  `marcarCompareceu` protegidas). **De propósito NÃO encadeado em
+  nenhum job ainda** (`main()` de `ulisses.js`/`mercurio.js` não chama
+  nada daqui) — os protegidos sempre vão dar 401 até o Célio liberar, não
+  faz sentido gerar erro constante num job que já roda sozinho.
+- **`scraper/testar-ulisses-api.js`, NOVO** (`npm run testar-ulisses-api`,
+  dentro de `scraper/`) — roda os 2 grupos de endpoint (públicos e
+  protegidos) e imprime um relatório simples (✅ funcionou / 🔒 ainda
+  bloqueado com 401, o esperado / ❌ erro de verdade, inesperado). Existe
+  especificamente pra checar "o Célio já liberou?" a qualquer momento sem
+  precisar pedir pra alguém rodar `curl` na mão. **Testado ao vivo
+  (2026-09-18, `C:\Scrapper`)**: públicos retornam 200 com dado real
+  (`tiposEvento`: 7 valores; `proximosEventos`: eventos reais com
+  `eventoId`/nome/data); os 5 protegidos retornam 401, como esperado —
+  confirma que o módulo funciona de ponta a ponta (lê cofre → token →
+  chamada), só falta a autorização do lado deles.
+- **Próximo passo real**: nenhum, por enquanto — é esperar o Célio. Assim
+  que ele confirmar que liberou, rodar `npm run testar-ulisses-api` (em
+  `C:\Scrapper\scraper`, depois de copiar os arquivos de lá — ver
+  convenção de sincronização no topo desta seção do scraper) é o
+  suficiente pra confirmar e decidir o que migrar primeiro pra API (o
+  candidato mais óbvio é `csvInscricoes`, que elimina o Cloudflare por
+  completo pra Inscrições).
 
 ### Lembrete de importação do Ulisses (WhatsApp pro admin)
 

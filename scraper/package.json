@@ -11,6 +11,7 @@
     "mercurio-completo": "node --env-file-if-exists=.env mercurio.js -- --completo",
     "capturar-eventos-centralizados": "node --env-file-if-exists=.env capturar-eventos-centralizados.js",
     "corrigir-datas-inscricao-publica": "node --env-file-if-exists=.env corrigir-datas-inscricao-publica.js",
+    "testar-ulisses-api": "node --env-file-if-exists=.env testar-ulisses-api.js",
     "run": "node run.js"
   },
   "dependencies": {
