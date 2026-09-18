@@ -856,6 +856,77 @@ function parseTagsMercurio(tagsData) {
     } catch { return [String(tagsData).replace(/[[\]"]/g, '')]; }
 }
 
+// Mesma lógica de normalizarTelefoneParaChave() (js/importador.js) —
+// pequena duplicação deliberada, evita importar um arquivo de front-end
+// aqui só por essa função. Ignora o 9º dígito de celular, pra "com 9" e
+// "sem 9" caírem na mesma chave.
+function normalizarTelefoneParaChaveRede(ddd, numero) {
+    const dddLimpo = String(ddd || '').replace(/\D/g, '');
+    let numeroLimpo = String(numero || '').replace(/\D/g, '');
+    if (!dddLimpo || !numeroLimpo) return null;
+    if (numeroLimpo.length === 9 && numeroLimpo.startsWith('9')) numeroLimpo = numeroLimpo.slice(1);
+    if (numeroLimpo.length !== 8) return null;
+    return dddLimpo + numeroLimpo;
+}
+
+// Mantém pessoas_ativas_rede em dia pra ESTA filial — pedido do usuário
+// (2026-09-18): uma aluna ativa do Jardim América que participou de uma
+// palestra no Setor Oeste (e entrou no Ulisses de lá) ganha um 2º lead,
+// próprio de Setor Oeste, que o Mercúrio de Setor Oeste nunca marcaria
+// como Ativo/Inativo (ele não a conhece como aluna dele) — mesmo sendo a
+// MESMA pessoa. Esta tabela é a "lista geral" pedida: casada só por
+// telefone/e-mail (nunca por nome — homônimo entre filiais é risco
+// demais sem um identificador forte), consultada pelo CRM
+// (carregarRedeAtivosInativos(), js/app.js) pra mostrar um badge próprio
+// ("Ativo (Jardim América)") em qualquer lead de outra unidade que bata.
+// Reaproveita leads_ativos_inativos_da_filial() (mesma RPC já usada pro
+// CRM corrigir a paginação de Ativo/Inativo, ver migracao_rpc_leads_ativos_inativos.sql).
+// Upsert manual (sem constraint única no banco — "único por telefone OU
+// por e-mail" não dá pra expressar numa constraint simples): busca linha
+// existente batendo qualquer um dos dois, atualiza se achar, cria se não.
+export async function sincronizarRedeAtivosInativos(filialCrm) {
+    const { data: leads, error } = await supabaseAdmin.rpc('leads_ativos_inativos_da_filial', { p_filial: filialCrm });
+    if (error) return `falha ao consultar Ativos/Inativos (${error.message}).`;
+    if (!leads || leads.length === 0) return '0 pessoa(s) Ativo/Inativo nesta filial.';
+
+    let gravados = 0, semIdentificador = 0;
+    for (const lead of leads) {
+        const tagsArr = parseTagsMercurio(lead.tags).map(t => String(t).trim());
+        const status = tagsArr.includes('Ativo') ? 'Ativo' : (tagsArr.includes('Inativo') ? 'Inativo' : null);
+        if (!status) continue;
+
+        const telefoneNormalizado = normalizarTelefoneParaChaveRede(lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero);
+        const emailNormalizado = (lead.pessoaEmail || '').trim().toLowerCase() || null;
+        if (!telefoneNormalizado && !emailNormalizado) { semIdentificador++; continue; }
+
+        const filtroOr = [
+            telefoneNormalizado ? `telefone_normalizado.eq.${telefoneNormalizado}` : null,
+            emailNormalizado ? `email_normalizado.eq.${emailNormalizado}` : null,
+        ].filter(Boolean).join(',');
+        const { data: existentes } = await supabaseAdmin
+            .from('pessoas_ativas_rede')
+            .select('id')
+            .or(filtroOr)
+            .limit(1);
+
+        const payload = {
+            telefone_normalizado: telefoneNormalizado,
+            email_normalizado: emailNormalizado,
+            nome: lead.pessoaNome,
+            status,
+            filial: filialCrm,
+            atualizado_em: new Date().toISOString(),
+        };
+        if (existentes && existentes.length > 0) {
+            await supabaseAdmin.from('pessoas_ativas_rede').update(payload).eq('id', existentes[0].id);
+        } else {
+            await supabaseAdmin.from('pessoas_ativas_rede').insert(payload);
+        }
+        gravados++;
+    }
+    return `${gravados} pessoa(s) sincronizada(s)${semIdentificador ? `, ${semIdentificador} sem telefone/e-mail (ignorada(s))` : ''}.`;
+}
+
 // Avisa o chefe da filial/professor responsável quando um aluno ATIVO
 // (não qualquer lead — só quem já é aluno de verdade) faz aniversário
 // hoje. Roda logo depois de sincronizarAniversariantesNoCrm() pra essa
@@ -1753,6 +1824,21 @@ async function main() {
                 fs.mkdirSync('debug', { recursive: true });
                 await page.screenshot({ path: `debug/mercurio-turmas-${label.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
             }
+            // Pedido do usuário (2026-09-18): mantém pessoas_ativas_rede em
+            // dia pra ESTA filial — roda por ÚLTIMO (depois de Turmas, que
+            // já preencheu telefone de quem ainda não tinha) pra sincronizar
+            // com o telefone/e-mail mais completo possível. Não depende da
+            // página do Ulisses/Mercúrio (só Supabase), então roda mesmo se
+            // as etapas anteriores tiverem falhado parcialmente.
+            if (filialCrm) {
+                try {
+                    const resultadoRede = await sincronizarRedeAtivosInativos(filialCrm);
+                    console.log(`[rede-ativos] ${filialCrm}: ${resultadoRede}`);
+                } catch (e) {
+                    console.error(`[mercurio] Falha ao sincronizar rede de Ativos/Inativos de "${filialCrm}":`, e.message);
+                }
+            }
+
             // Volta pra tela de funções antes da próxima filial, com ou
             // sem erro — senão a próxima iteração começa num lugar errado.
             await page.goto(URL_FUNCOES, { waitUntil: 'domcontentloaded' }).catch(() => {});

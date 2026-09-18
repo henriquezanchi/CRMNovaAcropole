@@ -560,6 +560,43 @@ mesma regra de confiança total usada pra tags/filiais/eventos.
   em produção (string jsonb contendo o JSON). Testado ao vivo: a função
   devolveu exatamente 174 linhas pra Setor Oeste (80 Ativo + 94 Inativo,
   bate com a contagem já confirmada por SQL direto).
+- **Rede de Ativos/Inativos (independente de filial)** — pedido do
+  usuário (2026-09-18): "uma aluna ativa do Jardim América participou de
+  uma palestra no Setor Oeste e entrou no Ulisses de lá... não deveria
+  importar que não é a mesma escola". O 2º lead dela (o de Setor Oeste)
+  nunca ganha a tag `"Ativo"` local — o Mercúrio de Setor Oeste não a
+  conhece como aluna dele — mesmo sendo a MESMA pessoa, aluna de verdade
+  da rede. Resolvido com uma tabela GLOBAL,
+  `pessoas_ativas_rede` (`migracao_rede_ativos_inativos.sql`):
+  - **Alimentada por** `sincronizarRedeAtivosInativos(filialCrm)`
+    (`scraper/mercurio.js`, exportada), chamada como ÚLTIMA etapa do
+    processamento de cada filial (depois de Turmas, que já preencheu
+    telefone de quem ainda não tinha) — reaproveita a MESMA RPC
+    `leads_ativos_inativos_da_filial()` já usada pra corrigir a paginação
+    (ver bullet acima). Casada só por **telefone/e-mail normalizados**,
+    NUNCA por nome (homônimo entre filiais diferentes é risco real demais
+    sem um identificador forte). Upsert manual em JS (busca linha
+    existente por telefone OU e-mail batendo, atualiza se achar, cria se
+    não) — não dá pra expressar "único por telefone OU e-mail" numa
+    constraint simples do Postgres.
+  - **Consultada pelo CRM** — `carregarRedeAtivosInativos()` (`js/app.js`,
+    chamada 1x no `DOMContentLoaded`, tabela pequena pra rede inteira)
+    monta 2 `Map`s (por telefone/por e-mail); `renderizarCards()` usa
+    `buscarStatusRedeAtivosInativos(lead)` pra decidir se mostra um badge
+    **PRÓPRIO** (pedido explícito do usuário: rotulado, não o mesmo badge
+    "Ativo"/"Inativo" normal) — `"Ativo (Jardim América)"`/`"Inativo (X)"`,
+    reaproveitando as cores `.tag-ativo`/`.tag-exaluno` + ícone de prédio
+    (`fa-building-circle-check`). Só aparece quando o lead NÃO já tem a
+    tag local (senão duplicaria o badge de quem já é Ativo/Inativo na
+    própria filial) e quando a filial da rede é DIFERENTE da filial do
+    lead (senão seria redundante).
+  - **Testado ao vivo**: RPC + upsert confirmados rodando contra Setor
+    Oeste (175 pessoas sincronizadas). Ainda não confirmado visualmente
+    no navegador com um caso real de cross-filial (precisa de alguém que
+    bata por telefone/e-mail em 2 filiais ao mesmo tempo pra ver o badge
+    na tela) — a próxima vez que a rodada completa do scraper rodar nas 5
+    filiais, e alguém encontrar um caso assim navegando o CRM, confirma
+    ponta a ponta.
 - **Sistema de tags:**
   - Três tags "de sistema", geradas pelo importador: `"Ativo"` (verde,
     `.tag-ativo` — aparece normalmente no Kanban, não é mais escondido:

@@ -343,6 +343,68 @@ async function carregarAtivosInativosSemPaginacao(filial) {
 }
 
 // ==========================================
+// REDE DE ATIVOS/INATIVOS (independente de filial) — pedido do usuário
+// (2026-09-18): "uma aluna ativa do Jardim América participou de uma
+// palestra no Setor Oeste e entrou no Ulisses de lá... não deveria
+// importar que não é a mesma escola". O lead dela em Setor Oeste nunca
+// ganha a tag Ativo/Inativo local (o Mercúrio de Setor Oeste não a
+// conhece), mesmo sendo a MESMA pessoa. `pessoas_ativas_rede`
+// (migracao_rede_ativos_inativos.sql), alimentada por
+// scraper/mercurio.js (sincronizarRedeAtivosInativos()), é a "lista
+// geral" — carregada 1x aqui (tabela pequena, poucos milhares de linhas
+// no total da rede) e consultada por lead ao renderizar cards
+// (renderizarCards()), casando por telefone/e-mail (nunca nome —
+// homônimo entre filiais é risco real demais).
+// ==========================================
+let redeAtivosInativos = [];
+let mapaRedeAtivosInativosTelefone = new Map();
+let mapaRedeAtivosInativosEmail = new Map();
+
+async function carregarRedeAtivosInativos() {
+    const TAMANHO_PAGINA = 1000;
+    let acumulado = [];
+    for (let de = 0; ; de += TAMANHO_PAGINA) {
+        const { data, error } = await window.supabaseClient
+            .from('pessoas_ativas_rede')
+            .select('telefone_normalizado, email_normalizado, status, filial')
+            .range(de, de + TAMANHO_PAGINA - 1);
+        if (error) {
+            console.warn('Não foi possível carregar a rede de Ativos/Inativos (rode migracao_rede_ativos_inativos.sql se ainda não rodou):', error.message);
+            return;
+        }
+        acumulado = [...acumulado, ...(data || [])];
+        if (!data || data.length < TAMANHO_PAGINA) break;
+    }
+    redeAtivosInativos = acumulado;
+    mapaRedeAtivosInativosTelefone = new Map();
+    mapaRedeAtivosInativosEmail = new Map();
+    acumulado.forEach(r => {
+        if (r.telefone_normalizado) mapaRedeAtivosInativosTelefone.set(r.telefone_normalizado, r);
+        if (r.email_normalizado) mapaRedeAtivosInativosEmail.set(r.email_normalizado, r);
+    });
+    renderizarCards();
+}
+
+// Devolve {status, filial} se este lead bate (por telefone/e-mail) com
+// alguém marcado Ativo/Inativo em QUALQUER filial da rede — null se não
+// achar nada. A chamada em renderizarCards() só usa o resultado quando a
+// filial bate DIFERENTE da própria filial do lead (senão duplicaria o
+// badge normal de quem já é Ativo/Inativo aqui mesmo).
+function buscarStatusRedeAtivosInativos(lead) {
+    const telefoneNormalizado = typeof normalizarTelefoneParaChave === 'function'
+        ? normalizarTelefoneParaChave(lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero)
+        : null;
+    if (telefoneNormalizado && mapaRedeAtivosInativosTelefone.has(telefoneNormalizado)) {
+        return mapaRedeAtivosInativosTelefone.get(telefoneNormalizado);
+    }
+    const emailNormalizado = (lead.pessoaEmail || '').trim().toLowerCase();
+    if (emailNormalizado && mapaRedeAtivosInativosEmail.has(emailNormalizado)) {
+        return mapaRedeAtivosInativosEmail.get(emailNormalizado);
+    }
+    return null;
+}
+
+// ==========================================
 // 2. COLUNAS DINÂMICAS DO KANBAN
 // ==========================================
 function renderizarColunas() {
@@ -602,6 +664,17 @@ function renderizarCards() {
         }
         if (tagsLimpo.includes('Inativo') || tagsLimpo.includes('Ex-Aluno (Inativo)')) {
             badgesHTML += `<span class="tag tag-exaluno">Inativo</span>`;
+        }
+        // Ativo/Inativo em OUTRA filial da rede (ver "REDE DE ATIVOS/
+        // INATIVOS" acima) — só quando esta filial NÃO já tem a tag local
+        // (senão duplicaria o badge de graça pra quem já é Ativo/Inativo
+        // aqui mesmo).
+        if (!tagsLimpo.includes('Ativo') && !tagsLimpo.includes('Aluno Ativo') && !tagsLimpo.includes('Inativo') && !tagsLimpo.includes('Ex-Aluno (Inativo)')) {
+            const statusRede = typeof buscarStatusRedeAtivosInativos === 'function' ? buscarStatusRedeAtivosInativos(lead) : null;
+            if (statusRede && statusRede.filial !== lead.filial) {
+                const classeRede = statusRede.status === 'Ativo' ? 'tag-ativo' : 'tag-exaluno';
+                badgesHTML += `<span class="tag ${classeRede}" title="${escapeHTML(statusRede.status)} de verdade, só que em outra unidade da rede"><i class="fa-solid fa-building-circle-check"></i> ${escapeHTML(statusRede.status)} (${escapeHTML(statusRede.filial)})</span>`;
+            }
         }
         // "Recuperado": estava Inativo e voltou a ser Ativo (aplicada pelo
         // importador) — badge sempre visível, igual Ativo/Inativo, pra
