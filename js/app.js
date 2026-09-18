@@ -221,20 +221,26 @@ async function carregarLeads(filial, resetar = true) {
         inicioLote = 0;
         leadsAtuais = [];
         if (typeof iniciarNotificacoesParaFilial === 'function') iniciarNotificacoesParaFilial();
-        // Carrega a coluna de Matriculados por FORA da paginação normal —
-        // bug real relatado pelo usuário: a paginação principal (abaixo)
-        // ordena TODOS os leads da filial por pessoaIdentificador e só traz
-        // os primeiros `tamanhoLote` — em filiais com muitos leads "Frios"
-        // (a maioria da base), um lead recém-matriculado com
-        // pessoaIdentificador "tardio" na ordenação simplesmente não
-        // aparecia em NENHUMA coluna (nem em Matriculados) até alguém
-        // clicar "Carregar Mais" o suficiente pra alcançar aquele id —
-        // mesmo que a coluna Matriculados em si tenha poucos leads. Isso
-        // é sempre uma quantidade pequena (matrícula é o passo final,
-        // naturalmente bem menos leads que o funil inteiro), então buscar
-        // ela inteira de uma vez, direto, é seguro e resolve o sintoma —
-        // sem precisar redesenhar a paginação do resto do Kanban.
-        await carregarMatriculadosSemPaginacao(filial);
+        // Carrega TODAS as colunas SECUNDÁRIAS por FORA da paginação normal
+        // — bug real, mesma classe já corrigida antes só pra "Matriculados"
+        // (2026-09-11) e pra tags Ativo/Inativo (2026-09-18), agora
+        // generalizado depois do usuário relatar o MESMO sintoma numa 3ª
+        // coluna ("Em Abordagem"): a paginação principal (abaixo) ordena
+        // TODOS os leads da filial por pessoaIdentificador e só traz os
+        // primeiros `tamanhoLote` — em filiais com muitos leads "Frios" (a
+        // maioria da base, e sempre a 1ª coluna do funil), um lead que já
+        // foi movido pra QUALQUER outra coluna (Em Abordagem, Matriculados,
+        // Perdido, Truncados, ou uma coluna custom) simplesmente não
+        // aparecia em lugar nenhum até alguém clicar "Carregar Mais" o
+        // suficiente pra alcançar aquele id — o card "parecia" preso à
+        // paginação de Frios, mas na real é a MESMA paginação global que
+        // afeta todo mundo, só que a maioria dos leads "novos" cai em Frios.
+        // Qualquer coluna que NÃO seja a 1ª do funil é, por definição, gente
+        // que já foi trabalhada (bem menos volume que o funil inteiro) —
+        // então buscar TODAS elas inteiras de uma vez é seguro. Só a 1ª
+        // coluna (o "balde" de leads nunca trabalhados) continua paginada
+        // de verdade.
+        await carregarColunasSecundariasSemPaginacao(filial);
         await carregarAtivosInativosSemPaginacao(filial);
         atualizarContagemLixeira();
     }
@@ -265,8 +271,9 @@ async function carregarLeads(filial, resetar = true) {
     }
 
     // Deduplica por pessoaIdentificador — necessário desde que
-    // carregarMatriculadosSemPaginacao() (acima) pode ter carregado
-    // adiantado um lead que essa página normal também traria.
+    // carregarColunasSecundariasSemPaginacao()/carregarAtivosInativosSemPaginacao()
+    // (acima) podem ter carregado adiantado um lead que essa página
+    // normal também traria.
     const idsJaCarregados = new Set(leadsAtuais.map(l => l.pessoaIdentificador));
     const novosSemDuplicar = (data || []).filter(l => !idsJaCarregados.has(l.pessoaIdentificador));
     leadsAtuais = [...leadsAtuais, ...novosSemDuplicar];
@@ -281,31 +288,34 @@ async function carregarLeads(filial, resetar = true) {
     renderizarCards();
 }
 
-// Busca TODOS os leads da coluna "Matriculados" da filial (paginado 1000
-// em 1000 — mesma lição de PostgREST de sempre), fora da paginação
-// principal de carregarLeads() — ver comentário ali. A coluna é achada
-// pela MESMA heurística por substring já usada em outros pontos do
-// projeto (js/eventos.js, js/matricula-importar.js) — nunca cria a
-// coluna sozinha, só não faz nada se não existir nenhuma com "matricul"
-// no nome/chave.
-async function carregarMatriculadosSemPaginacao(filial) {
+// Busca TODOS os leads de cada coluna SECUNDÁRIA da filial (toda coluna
+// exceto a 1ª — ver comentário em carregarLeads()), paginado 1000 em 1000
+// por coluna (mesma lição de PostgREST de sempre: corta em 1000 linhas
+// por página mesmo pedindo limit maior). Superseder de
+// carregarMatriculadosSemPaginacao() (só cobria "Matriculados" por
+// substring) — generalizada pra qualquer coluna, 2026-09-18, depois do
+// usuário relatar o MESMO sintoma em "Em Abordagem".
+async function carregarColunasSecundariasSemPaginacao(filial) {
     const validKeys = typeof getColumnKeys === 'function' ? getColumnKeys() : columnsConfig.map(c => c.key);
-    const matriculadosKey = validKeys.find(k => k.toLowerCase().includes('matricul'));
-    if (!matriculadosKey) return;
+    if (validKeys.length < 2) return; // só existe a 1ª coluna — nada "secundário" pra pré-carregar
 
     const TAMANHO_PAGINA = 1000;
-    for (let de = 0; ; de += TAMANHO_PAGINA) {
-        const { data, error } = await window.supabaseClient
-            .from(NOME_TABELA)
-            .select('*')
-            .eq('filial', filial)
-            .eq('funil_agencia', matriculadosKey)
-            .is('lixeira_em', null)
-            .order('pessoaIdentificador', { ascending: true })
-            .range(de, de + TAMANHO_PAGINA - 1);
-        if (error) { console.error('Erro ao pré-carregar Matriculados:', error); return; }
-        leadsAtuais = [...leadsAtuais, ...(data || [])];
-        if (!data || data.length < TAMANHO_PAGINA) break;
+    for (const key of validKeys.slice(1)) {
+        for (let de = 0; ; de += TAMANHO_PAGINA) {
+            const { data, error } = await window.supabaseClient
+                .from(NOME_TABELA)
+                .select('*')
+                .eq('filial', filial)
+                .eq('funil_agencia', key)
+                .is('lixeira_em', null)
+                .order('pessoaIdentificador', { ascending: true })
+                .range(de, de + TAMANHO_PAGINA - 1);
+            if (error) { console.error(`Erro ao pré-carregar a coluna "${key}":`, error); break; }
+            const idsJaCarregados = new Set(leadsAtuais.map(l => l.pessoaIdentificador));
+            const novos = (data || []).filter(l => !idsJaCarregados.has(l.pessoaIdentificador));
+            leadsAtuais = [...leadsAtuais, ...novos];
+            if (!data || data.length < TAMANHO_PAGINA) break;
+        }
     }
 }
 
@@ -1675,7 +1685,7 @@ async function confirmarNovoLeadManual() {
 // ninguém abrir o CRM pra isso acontecer.
 //
 // Limitação conhecida: só a listagem principal do Kanban
-// (carregarLeads()/carregarMatriculadosSemPaginacao()) e as buscas
+// (carregarLeads()/carregarColunasSecundariasSemPaginacao()) e as buscas
 // (global/por coluna) excluem lead na lixeira — alguns relatórios que
 // consultam o banco DIRETO (RPCs da Agenda do Dia, Matrículas por Mês,
 // Leads a Tratar) ainda podem contar um lead recém-jogado na lixeira até

@@ -519,16 +519,26 @@ mesma regra de confiança total usada pra tags/filiais/eventos.
   quebra, o lead que faltava em Matriculados. Buscar por nome funcionava
   (`processarBuscaGlobal()`/`processarBuscaColuna()` batem direto no
   banco, sem depender do que já foi paginado) — mas exige já saber o nome,
-  não ajuda a DESCOBRIR quem matriculou recentemente. Corrigido com
-  `carregarMatriculadosSemPaginacao()`: sempre que a filial é
-  (re)carregada (`resetar=true`), busca a coluna "Matriculados" (mesma
-  heurística por substring `matricul` já usada em `js/eventos.js`/
-  `js/matricula-importar.js`) INTEIRA de uma vez, fora da paginação
-  principal — é sempre um volume pequeno (matrícula é o passo final do
-  funil), então buscar tudo de cara é seguro. A paginação principal
-  deduplica por `pessoaIdentificador` antes de concatenar, pra não
-  desenhar o mesmo lead 2x quando a janela normal alcança alguém que já
-  tinha sido pré-carregado assim.
+  não ajuda a DESCOBRIR quem matriculou recentemente. Corrigido
+  originalmente só pra "Matriculados" (`carregarMatriculadosSemPaginacao()`,
+  achada por substring `matricul`) — **generalizada pra QUALQUER coluna em
+  2026-09-18**, depois do usuário reportar o MESMO sintoma numa 3ª coluna
+  ("Em Abordagem": só 3 de 8 leads apareciam, e clicar "Carregar Mais" em
+  Frios — sem nada a ver com Abordagem — revelava mais alguns; o usuário
+  descreveu como "a coluna Em Abordagem está atrelada à coluna Frios",
+  mas não é um vínculo entre colunas, é a MESMA paginação global que
+  afeta o Kanban inteiro, só que a maioria dos leads "novos" cai mesmo em
+  Frios). Trocado por `carregarColunasSecundariasSemPaginacao()`: sempre
+  que a filial é (re)carregada (`resetar=true`), busca TODA coluna que
+  NÃO seja a 1ª do funil (`validKeys.slice(1)`, paginado 1000 em 1000 por
+  coluna) inteira de uma vez, fora da paginação principal — qualquer
+  coluna que não seja a 1ª é, por definição, gente já trabalhada (bem
+  menos volume que o funil inteiro), então buscar todas de cara é seguro.
+  Só a 1ª coluna (o "balde" de leads nunca trabalhados, tipicamente
+  "Frios") continua paginada de verdade. A paginação principal deduplica
+  por `pessoaIdentificador` antes de concatenar, pra não desenhar o mesmo
+  lead 2x quando a janela normal alcança alguém que já tinha sido
+  pré-carregado assim.
 - **Tags "Ativo"/"Inativo" invisíveis em filiais grandes — MESMA classe do
   bug acima, achado pelo usuário (2026-09-18)**: as tags existem no banco
   (confirmado consultando direto o Supabase), mas nunca chegavam a
