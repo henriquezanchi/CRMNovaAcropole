@@ -1260,6 +1260,34 @@ Decisões já tomadas (não precisam ser reabertas, a menos que o usuário peça
     duplicados antigos ainda precisam de uma limpeza manual/mesclagem via
     "Leads a Tratar" em algum momento), mas garante que 1 duplicado
     nunca mais trava a importação de uma filial inteira.
+  - **Bug real #6, GRAVÍSSIMO (2026-09-17) — mesma classe do Bug #3, mas
+    contra o banco, não dentro do lote**: a rede de segurança de
+    `matricula_mercurio` acima só dedupa duplicado DENTRO do próprio lote
+    desta importação — nunca contra o que JÁ EXISTE no banco. Quando o
+    Mercúrio reaproveita um número de "Matr." (aluno antigo saiu, outro
+    entrou depois com o MESMO número) e o lead antigo ainda guarda esse
+    `matricula_mercurio` no CRM, o upsert do lead novo com a mesma
+    matrícula colide com a constraint única (`uq_leads_matricula_mercurio`)
+    — e como é 1 único `.upsert()` em lote, isso derruba o LOTE INTEIRO
+    (confirmado em produção, lendo os logs reais do GitHub Actions: "Erro
+    no lote 0–500: duplicate key value violates unique constraint
+    'uq_leads_matricula_mercurio'" — Jardim América, 2713 leads, e
+    Garavelo, 92 leads, TODO DIA em que 1 caso desses aparecer, sem
+    NENHUM Ativo/Inativo sendo atualizado pra essas 2 filiais enquanto
+    isso). Foi a causa real de "as outras escolas estão sem leads
+    ativos/inativos marcados" — as tags não somem, ficam desatualizadas
+    porque a importação diária falha silenciosamente (GitHub Actions
+    mostra ✅ verde mesmo assim, o erro só aparece dentro do log do
+    passo). **Corrigido**: `confirmarEnviarImportacao()` agora cruza
+    `registrosDedupe` contra `existentes` (já buscado no topo da função,
+    já trazia `matricula_mercurio`) — se uma matrícula do lote atual já
+    pertence a um `pessoaIdentificador` DIFERENTE no banco, libera essa
+    matrícula do lado ANTIGO (`update matricula_mercurio = null`) ANTES
+    do upsert do lote, com aviso no log de quantas foram "realocadas".
+    Corrige o bloqueio de origem pra sempre — não só esta rodada.
+    **Ainda não testado ao vivo** (corrigido a partir da leitura do log
+    real, não reproduzido isoladamente) — a próxima reimportação de
+    Jardim América/Garavelo confirma.
   - **Bug real #4, GRAVÍSSIMO (2026-09-10) — CAUSA RAIZ do Bug #3 e de
     vários sintomas relatados pelo usuário**: `exportarAtivosEInativos()`/
     `exportarAniversariantes()`/`processarMatriculasRecentesTurmas()`

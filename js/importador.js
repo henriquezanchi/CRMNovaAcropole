@@ -1854,6 +1854,43 @@ async function confirmarEnviarImportacao() {
         logImport(`Aviso: ${matriculasZeradas} matrícula(s) do Mercúrio repetida(s) entre pessoas DIFERENTES no mesmo lote — mantida só na primeira ocorrência, zerada nas demais (revise depois).`, 'warn');
     }
 
+    // BUG REAL GRAVÍSSIMO, achado em produção (2026-09-17) analisando logs
+    // reais do GitHub Actions: a checagem acima só cobre duplicado DENTRO
+    // do lote desta importação — nunca contra o que JÁ EXISTE no banco.
+    // Quando o Mercúrio reaproveita/realoca um número de matrícula (aluno
+    // saiu, outro entrou com o mesmo "Matr." depois) e o lead ANTIGO ainda
+    // guarda esse `matricula_mercurio` no CRM, o upsert do lead NOVO com a
+    // MESMA matrícula colide com a constraint única — e como é 1 statement
+    // de UPSERT em lote, isso derruba o LOTE INTEIRO (500 leads de uma vez
+    // em Jardim América, todos os 92 de Garavelo), travando a importação
+    // de Ativos/Inativos pra filial inteira TODO DIA em que aparecer 1 caso
+    // assim (confirmado: "Goiânia - Jardim América"/"Goiânia - Garavelo"
+    // falhando com "duplicate key value violates unique constraint
+    // 'uq_leads_matricula_mercurio'" em rodadas consecutivas do scraper).
+    // `existentes` (buscado no topo desta função) já traz `matricula_mercurio`
+    // de quem já está no banco — reaproveitado aqui pra zerar a matrícula
+    // do lado ANTIGO quando um lead DIFERENTE está chegando com o mesmo
+    // número (o lead novo leva a matrícula; o antigo perde, já que não é
+    // mais dele de verdade).
+    const matriculaParaIdExistente = new Map();
+    existentes.forEach(e => { if (e.matricula_mercurio) matriculaParaIdExistente.set(String(e.matricula_mercurio), String(e.pessoaIdentificador)); });
+    const idsParaLiberarMatricula = [];
+    registrosDedupe.forEach(r => {
+        if (!r.matricula_mercurio) return;
+        const idAntigo = matriculaParaIdExistente.get(String(r.matricula_mercurio));
+        if (idAntigo && idAntigo !== String(r.pessoaIdentificador)) idsParaLiberarMatricula.push(idAntigo);
+    });
+    if (idsParaLiberarMatricula.length > 0) {
+        logImport(`Aviso: ${idsParaLiberarMatricula.length} matrícula(s) do Mercúrio foram REALOCADAS pra outra pessoa (o número "Matr." saiu de quem tinha antes) — liberando do lado antigo antes de enviar, pra não travar o lote inteiro.`, 'warn');
+        const { error: erroLiberarMatricula } = await window.supabaseClient
+            .from(NOME_TABELA)
+            .update({ matricula_mercurio: null })
+            .in('pessoaIdentificador', idsParaLiberarMatricula);
+        if (erroLiberarMatricula) {
+            logImport('Erro ao liberar matrícula(s) do lado antigo — a importação pode travar no lote com esse conflito: ' + erroLiberarMatricula.message, 'err');
+        }
+    }
+
     logImport(`Enviando ${registrosDedupe.length} leads ao Supabase, em lotes de 500...`);
 
     const TAMANHO_LOTE_ENVIO = 500;
