@@ -235,6 +235,7 @@ async function carregarLeads(filial, resetar = true) {
         // ela inteira de uma vez, direto, é seguro e resolve o sintoma —
         // sem precisar redesenhar a paginação do resto do Kanban.
         await carregarMatriculadosSemPaginacao(filial);
+        await carregarAtivosInativosSemPaginacao(filial);
         atualizarContagemLixeira();
     }
 
@@ -304,6 +305,39 @@ async function carregarMatriculadosSemPaginacao(filial) {
             .range(de, de + TAMANHO_PAGINA - 1);
         if (error) { console.error('Erro ao pré-carregar Matriculados:', error); return; }
         leadsAtuais = [...leadsAtuais, ...(data || [])];
+        if (!data || data.length < TAMANHO_PAGINA) break;
+    }
+}
+
+// Mesmo problema do bug acima (Matriculados), mas pra tags "Ativo"/
+// "Inativo" — bug real relatado pelo usuário (2026-09-18): as tags
+// existem no banco (confirmado consultando direto), mas ficam invisíveis
+// no Kanban de filiais grandes porque esses leads costumam ter ID
+// SINTÉTICO (900000000+/950000000+ — "Ativos/Inativos sem correspondência
+// em Inscrições", ver js/importador.js), que sorta sempre no FINAL da
+// ordenação ascendente por pessoaIdentificador — atrás de qualquer lead
+// com ID real do Ulisses. Confirmado: em Setor Oeste, 925 leads têm ID
+// menor que a faixa sintética (carregam primeiro) contra só 174
+// Ativo/Inativo, todos sintéticos — com a página padrão de 500, NENHUM
+// deles chegava a carregar. Não dá pra filtrar `tags` (jsonb) direto do
+// supabase-js (`.ilike()`/`.or()` já deu "operator does not exist: jsonb
+// ~~* unknown" antes — ver leads_agenda_geral_prioritarios()), por isso
+// usa a função SQL leads_ativos_inativos_da_filial()
+// (migracao_rpc_leads_ativos_inativos.sql).
+async function carregarAtivosInativosSemPaginacao(filial) {
+    // Paginado 1000 em 1000 (mesma lição de sempre: o PostgREST limita a
+    // 1000 linhas por resposta mesmo numa função — sem isso, filiais
+    // grandes como Jardim América, com 2700+ Ativo/Inativo, perderiam
+    // silenciosamente tudo depois da linha 1000).
+    const TAMANHO_PAGINA = 1000;
+    for (let de = 0; ; de += TAMANHO_PAGINA) {
+        const { data, error } = await window.supabaseClient
+            .rpc('leads_ativos_inativos_da_filial', { p_filial: filial })
+            .range(de, de + TAMANHO_PAGINA - 1);
+        if (error) { console.warn('Não foi possível pré-carregar Ativos/Inativos (rode migracao_rpc_leads_ativos_inativos.sql se ainda não rodou):', error.message); return; }
+        const idsJaCarregados = new Set(leadsAtuais.map(l => l.pessoaIdentificador));
+        const novos = (data || []).filter(l => !idsJaCarregados.has(l.pessoaIdentificador));
+        leadsAtuais = [...leadsAtuais, ...novos];
         if (!data || data.length < TAMANHO_PAGINA) break;
     }
 }

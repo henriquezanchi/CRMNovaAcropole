@@ -261,6 +261,11 @@ migracao_como_prefere_ser_chamado.sql → coluna como_prefere_ser_chamado em lea
                                      (editável na gaveta, tem prioridade sobre o primeiro
                                      nome em qualquer {nome} automático de convite); JÁ
                                      RODADA nesta sessão via `supabase db query --linked`
+migracao_rpc_leads_ativos_inativos.sql → função leads_ativos_inativos_da_filial() — usada
+                                     por carregarAtivosInativosSemPaginacao() (js/app.js)
+                                     pra pré-carregar tags Ativo/Inativo fora da paginação
+                                     principal (mesmo problema/solução de Matriculados); JÁ
+                                     RODADA nesta sessão via `supabase db query --linked`
 ```
 
 ## Banco de dados (Supabase)
@@ -524,6 +529,37 @@ mesma regra de confiança total usada pra tags/filiais/eventos.
   deduplica por `pessoaIdentificador` antes de concatenar, pra não
   desenhar o mesmo lead 2x quando a janela normal alcança alguém que já
   tinha sido pré-carregado assim.
+- **Tags "Ativo"/"Inativo" invisíveis em filiais grandes — MESMA classe do
+  bug acima, achado pelo usuário (2026-09-18)**: as tags existem no banco
+  (confirmado consultando direto o Supabase), mas nunca chegavam a
+  carregar no Kanban — esses leads costumam ter ID SINTÉTICO
+  (`900000000+`/`950000000+`, "Ativos/Inativos sem correspondência em
+  Inscrições", ver `js/importador.js`), que sorta sempre no FINAL da
+  ordenação ascendente por `pessoaIdentificador` usada pela paginação
+  principal — atrás de QUALQUER lead com ID real do Ulisses. Confirmado em
+  produção: em "Goiânia - Setor Oeste", 925 leads têm ID menor que a faixa
+  sintética (carregam primeiro) contra só 174 Ativo/Inativo, todos
+  sintéticos — com a página padrão de 500, nenhum deles chegava a
+  aparecer, mesmo depois de recarregar a página inteira. Corrigido com o
+  mesmo remédio de Matriculados: `carregarAtivosInativosSemPaginacao()`
+  (`js/app.js`), chamada também dentro do bloco `if (resetar)` de
+  `carregarLeads()`, busca TODOS os leads com a tag `"Ativo"` ou
+  `"Inativo"` da filial de uma vez, fora da paginação principal (e
+  também paginada em 1000 — o PostgREST trunca em 1000 linhas mesmo numa
+  função, e filiais como Jardim América têm 2700+ Ativo/Inativo juntos).
+  **Diferente de Matriculados, não dá pra filtrar por `funil_agencia`
+  (coluna simples) — precisa filtrar por CONTEÚDO de `tags` (jsonb), e
+  `.ilike()`/`.or()` do supabase-js direto numa coluna jsonb já deu
+  `"operator does not exist: jsonb ~~* unknown"` antes (mesmo motivo de
+  `leads_agenda_geral_prioritarios()`)** — por isso existe a função SQL
+  `leads_ativos_inativos_da_filial(p_filial)` (`migracao_rpc_leads_ativos_inativos.sql`),
+  chamada via `.rpc(...)`, que faz o cast/containment (`(tags #>> '{}')::jsonb
+  @> '["Ativo"]'::jsonb`) direto em SQL — a mesma técnica usada nesta
+  sessão pra auditar as tags de Setor Oeste, e que funciona tanto se
+  `tags` já for um array jsonb de verdade quanto no formato real observado
+  em produção (string jsonb contendo o JSON). Testado ao vivo: a função
+  devolveu exatamente 174 linhas pra Setor Oeste (80 Ativo + 94 Inativo,
+  bate com a contagem já confirmada por SQL direto).
 - **Sistema de tags:**
   - Três tags "de sistema", geradas pelo importador: `"Ativo"` (verde,
     `.tag-ativo` — aparece normalmente no Kanban, não é mais escondido:
