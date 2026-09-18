@@ -885,9 +885,21 @@ function normalizarTelefoneParaChaveRede(ddd, numero) {
 // por e-mail" não dá pra expressar numa constraint simples): busca linha
 // existente batendo qualquer um dos dois, atualiza se achar, cria se não.
 export async function sincronizarRedeAtivosInativos(filialCrm) {
-    const { data: leads, error } = await supabaseAdmin.rpc('leads_ativos_inativos_da_filial', { p_filial: filialCrm });
-    if (error) return `falha ao consultar Ativos/Inativos (${error.message}).`;
-    if (!leads || leads.length === 0) return '0 pessoa(s) Ativo/Inativo nesta filial.';
+    // Paginado 1000 em 1000 — mesma lição de sempre, o PostgREST corta em
+    // 1000 linhas por resposta mesmo numa função (bug real corrigido
+    // 2026-09-18: sem isso, Jardim América — 2762 Ativo/Inativo — perdia
+    // silenciosamente os últimos 1762 nesta sincronização).
+    const TAMANHO_PAGINA = 1000;
+    let leads = [];
+    for (let de = 0; ; de += TAMANHO_PAGINA) {
+        const { data, error } = await supabaseAdmin
+            .rpc('leads_ativos_inativos_da_filial', { p_filial: filialCrm })
+            .range(de, de + TAMANHO_PAGINA - 1);
+        if (error) return `falha ao consultar Ativos/Inativos (${error.message}).`;
+        leads = [...leads, ...(data || [])];
+        if (!data || data.length < TAMANHO_PAGINA) break;
+    }
+    if (leads.length === 0) return '0 pessoa(s) Ativo/Inativo nesta filial.';
 
     let gravados = 0, semIdentificador = 0;
     for (const lead of leads) {
