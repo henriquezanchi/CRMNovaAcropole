@@ -4584,7 +4584,13 @@ precisar mexer em nada do lado do agendamento/Edge Functions.
   Garavelo ficou com `2026-10-05`, Jardim América/Setor Oeste com
   `2026-10-08` (ambos batendo com a correção manual feita antes via
   `corrigir-datas-inscricao-publica.js`) e `capacidade=200` preenchida
-  automaticamente pela 1ª vez. `sincronizarInscricoesFilialViaApi()`
+  automaticamente pela 1ª vez. **`imagem_url`/`link_inscricao` também
+  propagam pra TODAS as filiais que compartilham o evento** (pedido do
+  usuário logo depois do 1º teste — `ev.linkFinal` vira `link_inscricao`,
+  mesmo link em todas, já que o `eventoId` é o mesmo) — confirmado no
+  banco: Garavelo/Jardim América/Setor Oeste ficaram todos com a MESMA
+  imagem e o MESMO link de inscrição do evento criado pelo Setor
+  Universitário, sem precisar cadastrar nada à mão na Agenda. `sincronizarInscricoesFilialViaApi()`
   testado contra Barra do Garças/MT: 857 leads importados com sucesso
   (82 casados com sintéticos já existentes, sem duplicar), Lead Forte/
   Jornada calculados normalmente — o log é idêntico ao de uma importação

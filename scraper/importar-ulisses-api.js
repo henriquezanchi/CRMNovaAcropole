@@ -176,9 +176,16 @@ export async function sincronizarEventosUlissesApi() {
             const hora = horaBrasilia(produto.dataEvento);
             const capacidade = produto.numeroVagas ?? null;
             const imagemUrl = ev.imagem || null;
+            // `linkFinal` é o link público de inscrição pra ESTE evento
+            // (ex: "https://inscricao.acropolebrasil.com.br/?eventoId=...")
+            // — mesmo link pra todas as filiais que compartilham o
+            // evento (o eventoId é o mesmo), grava em `link_inscricao`
+            // (já usado pelo placeholder {linkInscricao} nos modelos de
+            // WhatsApp, ver CLAUDE.md "Convites em massa via wa.me").
+            const linkInscricao = ev.linkFinal || null;
 
             let { data: existente } = await supabaseAdmin
-                .from('eventos').select('id, hora, capacidade, imagem_url, ingresso, descricao, tipo')
+                .from('eventos').select('id, hora, capacidade, imagem_url, ingresso, descricao, tipo, link_inscricao')
                 .eq('filial', filialCrmNome).eq('nome', nome).eq('data', data)
                 .maybeSingle();
 
@@ -189,7 +196,7 @@ export async function sincronizarEventosUlissesApi() {
             // (espaço a mais, capitalização, etc.) em vez de duplicar.
             if (!existente) {
                 const { data: candidatosMesmaData } = await supabaseAdmin
-                    .from('eventos').select('id, hora, capacidade, imagem_url, ingresso, descricao, tipo, nome')
+                    .from('eventos').select('id, hora, capacidade, imagem_url, ingresso, descricao, tipo, link_inscricao, nome')
                     .eq('filial', filialCrmNome).eq('data', data);
                 const normNome = normalizarNomeUlisses(nome);
                 existente = (candidatosMesmaData || []).find(c => {
@@ -206,6 +213,7 @@ export async function sincronizarEventosUlissesApi() {
                     capacidade: capacidade ?? existente.capacidade,
                     imagem_url: imagemUrl || existente.imagem_url,
                     descricao: descricao || existente.descricao,
+                    link_inscricao: linkInscricao || existente.link_inscricao,
                     tipo: existente.tipo || tipo,
                     ativo: true,
                 }).eq('id', existente.id);
@@ -213,7 +221,7 @@ export async function sincronizarEventosUlissesApi() {
             } else {
                 await supabaseAdmin.from('eventos').insert({
                     filial: filialCrmNome, nome, data, hora, capacidade,
-                    imagem_url: imagemUrl, descricao, tipo, ativo: true,
+                    imagem_url: imagemUrl, descricao, link_inscricao: linkInscricao, tipo, ativo: true,
                 });
                 criados++;
             }
