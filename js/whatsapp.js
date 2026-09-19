@@ -611,6 +611,70 @@ async function confirmarConviteComFoto() {
     await chatDrawer.abrir(currentLeadId); // recarrega o chat pra já mostrar a foto enviada
 }
 
+// "Nova Turma" (botão próprio na gaveta, só pra Ativos — ver
+// btnConviteAberturaTurma em index.html/abrirGaveta() em js/app.js):
+// pedido do usuário (2026-09-19) — "encaminhar para os ativos uma
+// mensagem com imagem, link e texto sobre a próxima abertura de turma da
+// filial dele, que ele possa encaminhar para seus contatos e seus
+// grupos". Diferente do seletor genérico "Convidar pra Evento" (lista
+// TODOS os eventos futuros, exige escolher um manualmente), este botão
+// já acha sozinho a Abertura de Turma certa da filial ATUAL (mesma
+// filial do lead, já que a gaveta só abre com o Kanban filtrado por
+// ela) — zero busca manual. Reaproveita 100% `montarTextoConviteEvento()`
+// (o lead já é Ativo, então cai automaticamente no texto
+// CONVITE_EVENTO_ATIVO — "encaminhe pra quem você acha que ia gostar...")
+// e só ACRESCENTA o link de inscrição (`eventos.link_inscricao`,
+// alimentado automaticamente pelo scraper via API — ver CLAUDE.md, "API
+// oficial do Ulisses") no final, satisfazendo os 3 pedidos junto:
+// imagem + link + texto.
+async function enviarConviteAberturaTurmaFilial() {
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(currentLeadId));
+    if (!lead) return;
+
+    if (typeof carregarEventos === 'function') await carregarEventos();
+    const hojeISO = new Date().toISOString().slice(0, 10);
+    const evento = (typeof eventosAtuais !== 'undefined' ? eventosAtuais : [])
+        .filter(ev => ev.tipo === 'Abertura de Turma')
+        .filter(ev => (typeof dataEfetivaLimite === 'function' ? dataEfetivaLimite(ev) : ev.data) >= hojeISO)
+        .sort((a, b) => a.data.localeCompare(b.data))[0];
+
+    if (!evento) {
+        alert('Nenhuma Abertura de Turma futura cadastrada pra esta filial ainda — a sincronização automática do Ulisses (5h da manhã) ou o cadastro manual na Agenda resolvem isso.');
+        return;
+    }
+
+    const caption = montarTextoConviteEvento(lead, evento)
+        + (evento.link_inscricao ? `\n\nInscreva-se ou indique alguém: ${evento.link_inscricao}` : '');
+    const dataFormatada = (typeof formatarDataEvento === 'function') ? formatarDataEvento(evento.data) : evento.data;
+    const primeiroNome = nomeParaChamar(lead);
+
+    // Sem imagem cadastrada no evento (raro — normalmente vem do
+    // catálogo do Ulisses), cai pro mesmo comportamento de "Gerar Texto":
+    // só preenche a caixa, não envia sozinho.
+    if (!evento.imagem_url) {
+        const preencheu = chatDrawer.preencherTexto(caption);
+        if (!preencheu) alert('Essa conversa está fora da janela de 24h, então não dá pra preencher o campo de texto livre. Aqui está o texto pra copiar manualmente:\n\n' + caption);
+        return;
+    }
+
+    if (!confirm(`Enviar convite (foto + link) da próxima Abertura de Turma ("${evento.nome}", ${dataFormatada}) pra ${primeiroNome}, pronto pra encaminhar pros contatos e grupos dele(a)?`)) return;
+
+    const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
+        body: { pessoaIdentificador: currentLeadId, tipo: 'imagem', imagemUrl: evento.imagem_url, caption, atendenteNome: obterNomeAtendente() }
+    });
+    if (error) { alert('Erro ao enviar: ' + error.message); return; }
+    if (!data.ok) {
+        if (data.erro === 'janela_fechada') {
+            alert('Essa conversa está fora da janela de 24h — não dá pra enviar uma foto agora (só template aprovado funciona fora dela). Aqui está o texto, pra mandar de outra forma:\n\n' + caption);
+        } else {
+            console.error('Erro ao enviar convite de Abertura de Turma:', data.detalhe || data.erro);
+            alert('Não foi possível enviar: ' + mensagemErroWpp(data));
+        }
+        return;
+    }
+    await chatDrawer.abrir(currentLeadId); // recarrega o chat pra já mostrar a foto enviada
+}
+
 // Monta o texto final do convite pra QUALQUER lead + evento — extraído de
 // enviarConviteEvento() pra ser reaproveitado também pelo disparo em massa
 // via link wa.me (ver "Convites em massa via wa.me" mais abaixo), sem

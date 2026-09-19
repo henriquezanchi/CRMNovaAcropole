@@ -163,7 +163,21 @@ export async function sincronizarEventosUlissesApi() {
 
         const descricao = [ev.dadoPequeno, ev.dadoMedio, ev.dadoGrande, ev.dadoFinal]
             .map(t => (t || '').trim()).filter(Boolean).join('\n\n') || null;
-        const tipo = classificarTipoEventoUlisses(nome, tiposEvento);
+        // Bug real achado testando o botão "Nova Turma" (2026-09-19): o
+        // catálogo `tipos_evento` só reconhece "Abertura de Turma" pela
+        // palavra-chave literal "ABERTURA DE TURMA" — mas o NOME real da
+        // campanha atual é "Novas turmas do Curso de Filosofia para
+        // Viver", que não bate com nenhuma palavra-chave, então `tipo`
+        // ficava `null` (afeta TUDO que depende dele: tag "Inscrito:
+        // Abertura de Turma", trilha/Jornada, destaque no calendário da
+        // Agenda do Dia, e o próprio botão novo). A API do Ulisses já
+        // classifica isso com muito mais confiança
+        // (`ev.tipoEvento === 'ABERTURA_DE_TURMA'`, um enum de verdade,
+        // não palavra-chave) — usado aqui como FALLBACK só quando nosso
+        // catálogo não reconhece nada, nunca sobrescrevendo uma
+        // classificação manual já feita em "Gerenciar Tipos".
+        const tipo = classificarTipoEventoUlisses(nome, tiposEvento)
+            || (ev.tipoEvento === 'ABERTURA_DE_TURMA' ? 'Abertura de Turma' : null);
 
         for (const fe of ev.filiaisEventos || []) {
             const filialCrmNome = fe.filial && nomePorFilialIdUlisses.get(fe.filial.id);

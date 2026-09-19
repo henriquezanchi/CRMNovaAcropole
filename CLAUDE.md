@@ -2812,6 +2812,72 @@ precisamos reinventar isso, só entregar a foto certa na hora certa.
   wa.me" logo abaixo, que resolve isso por outro caminho, sem depender da
   Meta.
 
+### "Nova Turma" — convite de Abertura de Turma sob demanda, só pra Ativos
+
+Pedido do usuário (2026-09-19): "quero poder encaminhar para os ativos
+uma mensagem com imagem, link e texto sobre a próxima abertura de turma
+da filial dele, que ele possa encaminhar para seus contatos e seus
+grupos. Isso deve ser acessável na gaveta do lead". Diferente do
+"Convidar pra Evento" genérico (lista TODOS os eventos futuros, exige
+escolher um manualmente), este é um atalho de 1 clique específico pra
+Abertura de Turma.
+
+- **Botão `#btnConviteAberturaTurma`** ("Nova Turma", ícone de capelo),
+  no cabeçalho do chat da gaveta, ao lado de "Convidar pra Evento" —
+  **só aparece pra leads com a tag `"Ativo"`/`"Aluno Ativo"`**
+  (`abrirGaveta()`, `js/app.js`, toggle de `display` igual outros blocos
+  condicionais da gaveta, ex: "Saída (Inativo)"). Não pré-verifica se
+  existe uma Abertura de Turma cadastrada antes de mostrar o botão (isso
+  o próprio clique resolve, sem gastar uma consulta extra só pra decidir
+  visibilidade).
+- **`enviarConviteAberturaTurmaFilial()`** (`js/whatsapp.js`): acha
+  sozinho, em `eventosAtuais` (já carregado da filial atual — mesma
+  garantia de `carregarEventos()` já usada no resto do fluxo de convite),
+  o evento com `tipo === 'Abertura de Turma'` mais próximo que ainda não
+  "passou" (`dataEfetivaLimite()`). Sem nenhum encontrado, avisa e para.
+  Achando, reaproveita **100%** `montarTextoConviteEvento()` — como o
+  lead já é Ativo, isso já cai automaticamente no texto
+  `CONVITE_EVENTO_ATIVO` (pede pra encaminhar/indicar contato/ser
+  voluntário) — e só ACRESCENTA o link de inscrição
+  (`evento.link_inscricao`, alimentado automaticamente pelo scraper via
+  API do Ulisses — ver seção própria) no final do texto. Satisfaz os 3
+  pedidos (imagem + link + texto) reaproveitando quase tudo que já
+  existia: com `imagem_url` no evento, envia direto como mensagem de
+  MÍDIA real (mesmo caminho de `confirmarConviteComFoto()`, `whatsapp-send`
+  com `tipo:'imagem'`, pede `confirm()` antes por ser envio de verdade);
+  sem imagem, cai pro comportamento de "Gerar Texto" (só preenche a
+  caixa, não envia sozinho).
+- **Bug real achado testando isto (2026-09-19), NADA A VER com o botão
+  em si — afeta o app inteiro**: o evento real da campanha atual
+  ("Novas turmas do Curso de Filosofia para Viver") estava com
+  `tipo = null` no banco, mesmo já sincronizado com data/imagem/link
+  corretos (ver seção "API oficial do Ulisses" acima) — o catálogo
+  `tipos_evento` só reconhece "Abertura de Turma" pela palavra-chave
+  literal `"ABERTURA DE TURMA"`, que não aparece nesse nome de campanha.
+  Isso silenciosamente quebrava TUDO que depende de `tipo === 'Abertura
+  de Turma'` — não só este botão novo, mas também a tag `"Inscrito:
+  Abertura de Turma"`, o destaque dourado no "Calendário de Eventos
+  Futuros" da Agenda do Dia, etc. **Corrigido na fonte**, em
+  `sincronizarEventosUlissesApi()` (`scraper/importar-ulisses-api.js`):
+  quando o catálogo por palavra-chave não reconhece nada, cai num
+  fallback usando o PRÓPRIO enum da API do Ulisses
+  (`ev.tipoEvento === 'ABERTURA_DE_TURMA'` → `"Abertura de Turma"`) — um
+  sinal bem mais confiável que tentar adivinhar por palavra-chave o nome
+  de campanhas que variam a cada ciclo. Só esse 1 mapeamento foi feito
+  (não os outros enums do Ulisses, tipo `CURSO_LIVRE`/`LIVE` — sem
+  correspondência clara e óbvia no nosso catálogo, não valia arriscar
+  chute). Rodando a sincronização de novo já corrigiu retroativamente o
+  evento real (confirmado no banco: `tipo` virou `"Abertura de Turma"`).
+- **Testado ao vivo, ponta a ponta** (Playwright contra uma cópia local
+  do CRM servida por `python -m http.server`, mesmo Supabase de
+  produção): botão aparece só pro lead com tag Ativo (confirmado com 2
+  leads reais de Goiânia - Garavelo, 1 com e 1 sem a tag); clicar nele
+  achou a Abertura de Turma certa e mostrou o `confirm()` com o nome do
+  evento, data formatada (05/10/2026) e o primeiro nome do lead —
+  dispensado sem confirmar de verdade (evita mandar mensagem real durante
+  o teste, e o envio real ia esbarrar no bloqueio conhecido da API da
+  Meta de qualquer forma).
+
 ### Convites em massa via wa.me (WhatsApp pessoal, enquanto a Meta não libera)
 
 Pedido do usuário (2026-09-15): disparar convite pra dezenas de leads de

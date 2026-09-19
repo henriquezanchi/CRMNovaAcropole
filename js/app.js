@@ -3863,6 +3863,20 @@ function abrirGaveta(id, opcoes = {}) {
     aplicarEstadoGavetasLead();
     carregarVinculoFamiliar(id);
     if (typeof carregarEventosDoLead === 'function') carregarEventosDoLead(id);
+
+    // Botão "Nova Turma" (js/whatsapp.js) — só pra Ativos, pedido do
+    // usuário (2026-09-19): mandar pro ALUNO ATIVO foto+link da próxima
+    // Abertura de Turma da PRÓPRIA filial, pronta pra ele encaminhar pros
+    // contatos/grupos dele. Não pré-verifica se existe uma Abertura de
+    // Turma cadastrada (isso o próprio clique resolve, sem precisar de
+    // outra consulta só pra decidir se mostra o botão) — só filtra por tag.
+    const btnAberturaTurma = document.getElementById('btnConviteAberturaTurma');
+    if (btnAberturaTurma) {
+        const tagsLeadAtivo = parseTags(lead.tags).map(t => t.trim());
+        const ehAtivoParaConvite = tagsLeadAtivo.includes('Ativo') || tagsLeadAtivo.includes('Aluno Ativo');
+        btnAberturaTurma.style.display = ehAtivoParaConvite ? 'inline-flex' : 'none';
+    }
+
     if (typeof chatDrawer !== 'undefined') chatDrawer.abrir(id, opcoes.templateWhatsapp || null);
     document.getElementById('leadDrawer').classList.add('open');
     document.getElementById('overlay').classList.add('active');
