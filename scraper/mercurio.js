@@ -23,6 +23,8 @@ import { chromium } from 'playwright';
 import { supabaseAdmin, lerCredencial, registrarStatusSincronizacao, atualizarProgresso } from './lib/supabaseAdmin.js';
 import { abrirCrmNaFilialParaMatricula, importarMatriculaViaTexto } from './importar-matricula-no-crm.js';
 import { importarNoCrm } from './importar-no-crm.js';
+import { sincronizarEventosUlissesApi, sincronizarInscricoesFilialViaApi, resolverFilialIdUlisses } from './importar-ulisses-api.js';
+import { filiaisAtivas as filiaisAtivasUlisses } from './ulisses-api.js';
 import fs from 'node:fs';
 
 const URL_LOGIN = 'https://mercurio.oinabn.com.br/';
@@ -1730,6 +1732,29 @@ async function main() {
         if (cadastros.length === 0) throw new Error(`Nenhuma filial bate com o filtro "${filtro}" (filiais encontradas: ${cadastrosTodos.map(c => c.label).join(', ')}).`);
         console.log(`[mercurio] ${cadastros.length} filial(is) encontrada(s): ${cadastros.map(c => c.label).join(', ')}`);
 
+        // Ulisses via API OFICIAL (2026-09-18, pedido do usuário: incluir
+        // o Ulisses na importação automática de 5h junto com o Mercúrio) —
+        // não precisa mais de login manual/Cloudflare pra isso, é só uma
+        // chamada HTTPS autenticada (OAuth2 Client Credentials, ver
+        // scraper/ulisses-api.js). Roda ANTES do loop de filiais porque
+        // sincroniza o CATÁLOGO de eventos de uma vez só, inclusive do
+        // Setor Universitário (quem cria "Abertura de Turma"/"Aula
+        // Experimental" centralizadamente pra toda a região — ver
+        // CLAUDE.md) — precisa existir ANTES da importação de Inscrições
+        // de cada filial, pra vincularEventoLeadsAutomaticamente()
+        // (js/importador.js) já achar o evento certo e linkar sozinho.
+        // Best-effort: falha aqui não impede o resto da rodada do
+        // Mercúrio nem a importação de Inscrições por CSV manual de
+        // sempre continuar funcionando.
+        let filiaisUlissesApi = null;
+        try {
+            filiaisUlissesApi = await filiaisAtivasUlisses();
+            const resumoEventosUlisses = await sincronizarEventosUlissesApi();
+            console.log('[ulisses-api] Catálogo de eventos sincronizado:', resumoEventosUlisses);
+        } catch (e) {
+            console.error('[ulisses-api] Falha ao sincronizar catálogo de eventos via API (não impede o resto da rodada):', e.message);
+        }
+
         let algumaFalha = false;
         let totalRecuperadosGeral = 0;
         let totalEnderecosGeral = 0;
@@ -1779,6 +1804,33 @@ async function main() {
                     console.error(`[mercurio] Falha ao importar Ativos/Inativos no CRM de "${filialCrm}":`, e.message);
                     fs.mkdirSync('debug', { recursive: true });
                     await pageCrm.screenshot({ path: `debug/mercurio-importar-crm-${label.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
+                }
+            }
+
+            // Inscrições do Ulisses via API oficial — roda logo depois do
+            // Mercúrio (Ativos/Inativos) e ANTES de Complementar/
+            // Aniversariantes/Turmas, mesmo raciocínio de sempre: cria
+            // leads novos (quem se inscreveu em algo mas nunca apareceu
+            // em Ativos/Inativos/Complementar) antes das etapas que
+            // dependem de leads já existirem/atualizados. Isolado por
+            // filial — uma filial sem match no Ulisses (ex: "Goiânia
+            // II", ainda sem correspondência achada) ou bloqueada do lado
+            // deles (ex: Setor Oeste, 403 confirmado em 2026-09-18) só
+            // avisa e segue pras próximas, nunca trava a rodada inteira.
+            if (filialCrm && filiaisUlissesApi) {
+                const filialIdUlisses = resolverFilialIdUlisses(filialCrm, filiaisUlissesApi);
+                if (filialIdUlisses) {
+                    try {
+                        const logInscricoes = await sincronizarInscricoesFilialViaApi(pageCrm, filialCrm, filialIdUlisses);
+                        console.log(`[ulisses-api] Inscrições importadas — ${filialCrm}: ${logInscricoes.slice(-500)}`);
+                    } catch (e) {
+                        algumaFalha = true;
+                        console.error(`[ulisses-api] Falha ao importar Inscrições via API de "${filialCrm}":`, e.message);
+                        fs.mkdirSync('debug', { recursive: true });
+                        await pageCrm.screenshot({ path: `debug/ulisses-api-inscricoes-${label.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
+                    }
+                } else {
+                    console.warn(`[ulisses-api] Filial "${filialCrm}" sem correspondência no sistema do Ulisses — pulando Inscrições via API pra ela.`);
                 }
             }
 
@@ -1859,8 +1911,8 @@ async function main() {
         const sufixoFiltro = filtro ? ` (filtro: "${filtro}")` : '';
         const sufixoModo = modoCompleto ? ' [MODO COMPLETO]' : '';
         await registrarStatusSincronizacao('mercurio', null, !algumaFalha, algumaFalha
-            ? `Login OK, mas 1+ exportação (Ativos/Inativos ou Aniversariantes) falhou — ver logs e prints do workflow.${sufixoFiltro}${sufixoModo}`
-            : `Login + exportação de Ativos/Inativos + Aniversariantes (já sincronizados no CRM) OK para ${cadastros.length} filial(is)${sufixoFiltro}${sufixoModo} — ${totalRecuperadosGeral} recuperação(ões) detectada(s), ${totalEnderecosGeral} endereço(s) atualizado(s).`);
+            ? `Login OK, mas 1+ exportação (Ativos/Inativos, Aniversariantes ou Inscrições do Ulisses via API) falhou — ver logs e prints do workflow.${sufixoFiltro}${sufixoModo}`
+            : `Login + exportação de Ativos/Inativos + Aniversariantes + Inscrições do Ulisses via API (já sincronizados no CRM) OK para ${cadastros.length} filial(is)${sufixoFiltro}${sufixoModo} — ${totalRecuperadosGeral} recuperação(ões) detectada(s), ${totalEnderecosGeral} endereço(s) atualizado(s).`);
 
         // Roda sempre, mesmo se alguma filial falhou acima — o lembrete de
         // rodar o Ulisses importa MAIS ainda quando algo deu errado.

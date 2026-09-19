@@ -844,10 +844,10 @@ export async function sincronizarComparecimentoNoCrm(filial) {
 // técnica já usada em js/app.js (distanciaLevenshtein(), correção de
 // provedor de e-mail) — reimplementada aqui pro lado do Node, mesmo padrão
 // de pequena duplicação deliberada de classificarTipoEventoUlisses().
-function normalizarNomeUlisses(s) {
+export function normalizarNomeUlisses(s) {
     return (s || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
 }
-function distanciaLevenshteinUlisses(a, b) {
+export function distanciaLevenshteinUlisses(a, b) {
     const m = a.length, n = b.length;
     const d = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
     for (let i = 0; i <= m; i++) d[i][0] = i;
@@ -864,7 +864,7 @@ function distanciaLevenshteinUlisses(a, b) {
 // rejeita nomes claramente diferentes. Sem nome de um dos lados pra
 // comparar, não bloqueia (retorna true — não temos como avaliar, melhor
 // preservar o comportamento antigo do que rejeitar à toa).
-function primeiroNomeParecidoUlisses(nomeA, nomeB) {
+export function primeiroNomeParecidoUlisses(nomeA, nomeB) {
     const tokenA = normalizarNomeUlisses(nomeA).split(' ')[0] || '';
     const tokenB = normalizarNomeUlisses(nomeB).split(' ')[0] || '';
     if (!tokenA || !tokenB) return true;
@@ -883,11 +883,11 @@ function primeiroNomeParecidoUlisses(nomeA, nomeB) {
 // passado ou futuro, achado na tela Recepção) — sem isso, evento PASSADO
 // nunca ganhava `tipo` nenhum (só existia via a linha "base", que não
 // classificava nada).
-async function carregarTiposEventoUlisses() {
+export async function carregarTiposEventoUlisses() {
     const { data } = await supabaseAdmin.from('tipos_evento').select('nome, ordem, palavras_chave').order('ordem', { ascending: true });
     return data || [];
 }
-function classificarTipoEventoUlisses(nomeEvento, tiposEvento) {
+export function classificarTipoEventoUlisses(nomeEvento, tiposEvento) {
     const escaparRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     for (const t of tiposEvento || []) {
         const chaves = String(t.palavras_chave || '').split(',').map(p => p.trim()).filter(Boolean);

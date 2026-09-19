@@ -4479,6 +4479,127 @@ por chamadas HTTP diretas — muito mais simples e confiável.
   antes de codificar. Rodar `npm run testar-ulisses-api` continua sendo o
   jeito rápido de reconfirmar que o acesso não foi revogado.
 
+#### Ulisses entra na importação automática de 5h (2026-09-18)
+
+Pedido do usuário: "vamos incluir o ulisses na importação automática com
+o mercúrio, às 5h da manhã. importe também o setor universitário (os
+eventos de abertura de turma, aula experimental, etc)". Implementado
+inteiramente via a API oficial (acima) — sem precisar de mais nenhuma
+navegação/login manual — encadeado dentro do MESMO `main()` de
+`scraper/mercurio.js`, então já herda o agendamento existente (`pg_cron`
+5h Brasília, botão "Rodar Mercúrio Agora", disparo por 1 filial só) sem
+precisar mexer em nada do lado do agendamento/Edge Functions.
+
+- **`scraper/importar-ulisses-api.js`, NOVO** — 2 funções principais:
+  - `sincronizarEventosUlissesApi()`: roda 1 VEZ por rodada (não por
+    filial) — busca `filiaisAtivas()` da API + nossas filiais ativas
+    (Supabase), casa cada uma por nome (mesma técnica de núcleo
+    distintivo já usada em `mercurio.js`/`resolverFilialCrm()`), lista os
+    eventos de cada filial nossa **+ do Setor Universitário
+    (`filialId=16`, hardcoded — não é filial nossa no CRM, só fonte de
+    eventos)** via `listarTodosEventos()`, filtra por recência
+    (`maiorDataProduto` dentro de ~90 dias pra trás, ou ausente — senão
+    filiais com 800+ eventos de histórico tornariam a rodada lenta à
+    toa), e pra cada `eventoId` único chama `evento(id)` (público) UMA
+    vez — o retorno traz `filiaisEventos[]` com a data/vagas EXATAS de
+    CADA filial que participa daquele evento. **Isso resolve de vez o
+    bug histórico de "data errada pra quem não criou o evento"**
+    (documentado extensivamente acima, `corrigir-datas-inscricao-publica.js`)
+    — antes dependia de raspar a página pública de inscrição pra
+    desambiguar; agora a própria API já devolve a data certa por filial,
+    direto. Cria/atualiza `eventos` (match por filial+nome+data exato,
+    com fallback por nome PARECIDO reaproveitando
+    `distanciaLevenshteinUlisses()`/`normalizarNomeUlisses()`, agora
+    **exportadas de `ulisses.js`** pra reuso), nunca sobrescrevendo com
+    `null` um campo que já tinha valor (mesmo princípio de
+    `sincronizarCatalogoEventosNoCrm()`). `tipo` continua classificado
+    pela MESMA tabela `tipos_evento`/palavras-chave de sempre (não pelo
+    enum próprio do Ulisses — evita divergir do que "Gerenciar Tipos" já
+    edita).
+  - `sincronizarInscricoesFilialViaApi(pageCrm, filialCrm, filialIdUlisses)`:
+    busca `csvInscricoes(filialIdUlisses)` (texto CSV, já EXATAMENTE no
+    formato que `processarPlanilhas()` espera — confirmado ao vivo, zero
+    transformação), escreve num arquivo temporário (UTF-8 — a API já
+    devolve `charset=utf-8`) e reaproveita 100% o `importarNoCrm()` já
+    existente (mesma automação Playwright que pilota a tela de Importar
+    do CRM publicado, usada pelo Mercúrio) — evita duplicar a lógica de
+    cruzamento/tags/Lead Forte, que continua vivendo só em
+    `js/importador.js`.
+  - `resolverFilialIdUlisses(nomeFilialCrm, filiaisUlisses)`: casamento
+    de nome dinâmico (não é uma lista fixa de 4 IDs hardcoded) — busca
+    entre TODAS as filiais do sistema deles (140+, nacional) por núcleo
+    distintivo batendo com `labelBotaoLandingPage`. Isso significa que
+    uma filial nova (e.g. se "Goiânia II" um dia bater o nome certo, ou
+    uma 6ª filial for criada) entra automaticamente, sem precisar editar
+    código — só não escolhe se a busca for ambígua (0 ou 2+ candidatos).
+- **Encadeamento em `scraper/mercurio.js` `main()`**: `sincronizarEventosUlissesApi()`
+  roda 1x, ANTES do loop de filiais (Setor Universitário "abastece"
+  várias filiais de uma vez, então tem que existir antes de qualquer
+  importação de Inscrições rodar). Dentro do loop, por filial,
+  `sincronizarInscricoesFilialViaApi()` roda logo depois da importação de
+  Ativos/Inativos do Mercúrio e ANTES de Complementar/Aniversariantes/
+  Turmas — mesmo raciocínio de sempre (cria leads novos antes das etapas
+  que dependem deles já existirem). Como a linha de `eventos` já existe
+  nesse ponto (evento sincronizado no passo global), o `vincularEventoLeadsAutomaticamente()`
+  que já roda dentro de `confirmarEnviarImportacao()` (ver seção do
+  Importador) já casa e cria os `evento_leads` sozinho — nenhum código
+  novo precisou lidar com isso.
+- **LIMITAÇÃO REAL #1, confirmada testando ao vivo — comparecimento NÃO
+  vem pela API**: o endpoint que traria isso (`GET /facade/emails/{eventoId}`,
+  bem mais rico que `participantesEvento`, com telefone/e-mail/
+  `compareceu` por pessoa) devolve **500 Internal Server Error** pro
+  nosso client M2M: `"Cannot invoke Claim.asString() because
+  emailClaim is null"` — um bug do lado deles: esse endpoint espera um
+  JWT de USUÁRIO humano (com claim de e-mail), que client_credentials
+  nunca tem. `GET /facade/email/{id}` (detalhe de 1 pessoa) funciona
+  normal via M2M e devolve telefone/e-mail, mas SEM o array
+  `emailEventos`/`compareceu`. Ou seja: **via API dá pra sincronizar
+  quem se INSCREVEU (Inscrições, automático desde hoje), mas não quem de
+  fato COMPARECEU** — isso continua exigindo `npm run ulisses-local`
+  (Playwright, tela Recepção) até a Acrópole Brasil corrigir esse bug do
+  lado deles (não é algo que dê pra contornar daqui).
+- **LIMITAÇÃO REAL #2, confirmada testando ao vivo — 2 furos**:
+  1. `filialId=132` (Goiânia - Setor Oeste) continua dando 403 em
+     qualquer endpoint que dependa de "listar a partir dessa filial"
+     (`listarTodosEventos`/`csvInscricoes`/`filial`) — as outras filiais
+     funcionam. Isolado por filial (log de aviso, não trava a rodada) —
+     mas, na prática, a maior parte dos dados de Setor Oeste ainda chega
+     de outra forma: quando um evento é listado a partir de OUTRA filial
+     (ex: Setor Universitário) e Setor Oeste também participa dele, o
+     `evento(id)` (público) devolve a entrada de Setor Oeste normalmente
+     dentro de `filiaisEventos` — só o CSV de Inscrições de Setor Oeste
+     mesmo é que fica de fora até o Célio corrigir a permissão dessa
+     filial especificamente.
+  2. `GET /evento/{id}` (público) devolve **400 Bad Request**
+     ("Todas as vagas já foram preenchidas.") pra eventos com vagas
+     esgotadas — parece intencional do lado deles (o endpoint público é
+     pensado pra alimentar a página de inscrição, que não faz sentido
+     mostrar pra evento lotado), mas isso significa que não conseguimos
+     detalhe algum (nem imagem/descrição/data por filial) de um evento já
+     lotado. Isolado por evento (log de aviso, pula só aquele).
+- **Testado ao vivo, ponta a ponta, em produção (2026-09-18)**:
+  `sincronizarEventosUlissesApi()` rodou contra as 4 filiais + Setor
+  Universitário — 11 eventos atualizados (0 duplicado criado), incluindo
+  a "Abertura de Turma" real (`eventoId=24344`): confirmado no banco que
+  Garavelo ficou com `2026-10-05`, Jardim América/Setor Oeste com
+  `2026-10-08` (ambos batendo com a correção manual feita antes via
+  `corrigir-datas-inscricao-publica.js`) e `capacidade=200` preenchida
+  automaticamente pela 1ª vez. `sincronizarInscricoesFilialViaApi()`
+  testado contra Barra do Garças/MT: 857 leads importados com sucesso
+  (82 casados com sintéticos já existentes, sem duplicar), Lead Forte/
+  Jornada calculados normalmente — o log é idêntico ao de uma importação
+  manual normal, só que sem precisar de navegador nenhum no Ulisses.
+  Rodada completa de `main()` (Mercúrio + Ulisses via API encadeados)
+  validada filtrando por 1 filial só antes de confiar na rodada
+  automática de 5h com as 4 de uma vez.
+- **Não migrado ainda**: o catálogo completo de eventos (`exportarCatalogoEventos()`)
+  e o comparecimento (`exportarComparecimento()`/`sincronizarComparecimentoNoCrm()`)
+  do lado do Playwright (`ulisses.js`/`ulisses-local.js`) continuam
+  existindo e não foram removidos — o comparecimento em especial SEMPRE
+  vai continuar precisando deles, pela limitação #1 acima. `npm run
+  ulisses-local` continua sendo o caminho pra isso (rodar manualmente
+  quando quiser comparecimento atualizado).
+
 ### Lembrete de importação do Ulisses (WhatsApp pro admin)
 
 Como o Ulisses nunca roda sozinho, o risco real é ESQUECER de rodar —

@@ -5,19 +5,19 @@
 // oficial do Ulisses" pro histórico completo (conversa com o Célio,
 // endpoints mapeados no Swagger, status de autorização).
 //
-// ESTADO ATUAL (2026-09-18): a credencial (client_id/client_secret) já
-// está salva no cofre (sistema='ulisses_api', filial='GLOBAL' —
-// migracao_credenciais_scraper_ulisses_api.sql), e o token é emitido
-// normalmente, mas o client AINDA NÃO tem nenhum scope/permission
-// autorizado do lado da Acrópole Brasil — só os endpoints públicos
-// funcionam (tiposEvento/proximosEventos/evento/eventos). Os que
-// precisamos de verdade (csvInscricoes/participantes/compareceu/
-// filiaisAtivas/filial/listarTodosEventos) devolvem 401 até o Célio
-// autorizar. Este módulo já fica pronto pra quando isso acontecer — não
-// está encadeado em nenhum job (main() de ulisses.js/mercurio.js) ainda,
-// de propósito, pra não gerar erro constante enquanto fica bloqueado. Use
-// `npm run testar-ulisses-api` (scraper/testar-ulisses-api.js) pra
-// conferir o status a qualquer momento, sem precisar mexer em código.
+// ESTADO ATUAL (2026-09-18): LIBERADO pela Acrópole Brasil (Célio). Todos
+// os endpoints protegidos funcionam — COM UMA EXCEÇÃO confirmada testando
+// ao vivo: `filialId=132` (Goiânia - Setor Oeste) devolve 403 ("Este
+// usuário não tem permissão de acesso à esta filial") em qualquer
+// endpoint protegido, enquanto as outras filiais (15/14/44/16/65) e os
+// endpoints públicos funcionam normal — parece um esquecimento na
+// autorização por filial do lado deles, não um bug daqui. Todo código que
+// itera filiais precisa isolar essa falha por filial (mesmo princípio já
+// usado em `mercurio.js`/`ulisses.js` — 1 filial falhar não trava as
+// outras), nunca travar o job inteiro por causa disso. Ver
+// `scraper/importar-ulisses-api.js` pra sincronização de verdade
+// (Inscrições/Eventos/Comparecimento) e CLAUDE.md, seção "API oficial do
+// Ulisses", pro histórico completo.
 import { lerCredencial } from './lib/supabaseAdmin.js';
 
 const AUTH0_TOKEN_URL = 'https://acropolebrasil.us.auth0.com/oauth/token';
@@ -83,6 +83,14 @@ export const filiaisAtivas = () => chamarApi('/facade/filiaisAtivas', { esperado
 export const filial = (filialId) => chamarApi(`/facade/filial/${filialId}`, { esperado: 'precisa de scope autorizado pela Acrópole Brasil' });
 export const listarTodosEventos = (filialId) => chamarApi(`/facade/listarTodosEventos/${filialId}`, { esperado: 'precisa de scope autorizado pela Acrópole Brasil' });
 export const participantesEvento = (eventoId) => chamarApi(`/facade/participantes/${eventoId}`, { esperado: 'precisa de scope autorizado pela Acrópole Brasil' });
+// `emailsDoEvento` (não `participantesEvento`, que só devolve
+// pessoaId/pessoaNome — EmailDTO, confirmado no Swagger) é quem de fato
+// serve pra sincronizar comparecimento/telefone/e-mail: cada `Email`
+// devolvido traz `ddd`/`telefone`/`email`/`nome` e um array
+// `emailEventos[]` — cada item tem `evento.id`/`compareceu`/`data`, dá
+// pra achar a entrada certa filtrando por `evento.id === eventoId`.
+export const emailsDoEvento = (eventoId) => chamarApi(`/facade/emails/${eventoId}`, { esperado: 'precisa de scope autorizado pela Acrópole Brasil' });
+export const emailPorId = (id) => chamarApi(`/facade/email/${id}`, { esperado: 'precisa de scope autorizado pela Acrópole Brasil' });
 export const csvInscricoes = (filialId) => chamarApi(`/facade/csvInscricoes/${filialId}`, { esperado: 'precisa de scope autorizado pela Acrópole Brasil', texto: true });
 export const marcarCompareceu = (emailEventoId, compareceu) =>
     chamarApi(`/facade/compareceu/${emailEventoId}/${compareceu ? 'true' : 'false'}`, { method: 'POST', esperado: 'precisa de scope autorizado pela Acrópole Brasil' });
