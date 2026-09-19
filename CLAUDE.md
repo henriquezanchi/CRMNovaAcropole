@@ -4349,7 +4349,7 @@ confirmados de HISTÓRICO/ENDEREÇOS:
   Barra do Garças/MT). Reordenado: `importarNoCrm()` agora roda primeiro,
   Complementar/Aniversariantes/Turmas depois.
 
-### API oficial do Ulisses (OAuth2 Client Credentials, via Auth0) — em negociação (2026-09-18)
+### API oficial do Ulisses (OAuth2 Client Credentials, via Auth0) — LIBERADA (2026-09-18)
 
 Descoberta nova, potencialmente GRANDE: existe uma API REST oficial por
 trás do Ulisses (`https://api.acropolebrasil.com.br/`, documentada em
@@ -4437,13 +4437,47 @@ por chamadas HTTP diretas — muito mais simples e confiável.
   `eventoId`/nome/data); os 5 protegidos retornam 401, como esperado —
   confirma que o módulo funciona de ponta a ponta (lê cofre → token →
   chamada), só falta a autorização do lado deles.
-- **Próximo passo real**: nenhum, por enquanto — é esperar o Célio. Assim
-  que ele confirmar que liberou, rodar `npm run testar-ulisses-api` (em
-  `C:\Scrapper\scraper`, depois de copiar os arquivos de lá — ver
-  convenção de sincronização no topo desta seção do scraper) é o
-  suficiente pra confirmar e decidir o que migrar primeiro pra API (o
-  candidato mais óbvio é `csvInscricoes`, que elimina o Cloudflare por
-  completo pra Inscrições).
+- **LIBERADO de verdade (2026-09-18, confirmado ao vivo)**: rodando
+  `npm run testar-ulisses-api` de novo, os 5 endpoints protegidos que
+  antes davam 401 agora respondem 200 com dado real —
+  `filiaisAtivas()`/`filial(1)`/`listarTodosEventos(1)`/
+  `participantesEvento(24343)`/`csvInscricoes(1)` todos ✅. O Célio
+  autorizou o client sem precisar de nenhuma mensagem nova da nossa
+  parte — confirma que a estratégia de "deixar pronto e esperar" (ver
+  bullet acima) foi a certa.
+- **Mapeamento de `filialId` (sistema deles) → filial do CRM**, resolvido
+  consultando `filiaisAtivas()` (140 filiais no total, sistema nacional
+  da Acrópole Brasil) e casando pelo `labelBotaoLandingPage` (mais
+  confiável que `nome` — já vem no formato exato usado no site público de
+  cada unidade):
+  | `filialId` (Ulisses) | `labelBotaoLandingPage` | Filial no CRM |
+  |---|---|---|
+  | 15 | Goiânia - Jardim América | Goiânia - Jardim América |
+  | 132 | Goiânia - Setor Oeste | Goiânia - Setor Oeste |
+  | 14 | Ap. de Goiânia - Garavelo | Goiânia - Garavelo |
+  | 44 | Barra do Garças | Barra do Garças/MT |
+  | 16 | Goiânia - Setor Universitário | (não é filial nossa no CRM — é
+  quem centraliza "Abertura de Turma" pra região, ver bullet sobre isso
+  na seção de Ulisses acima; agora dá pra puxar os dados dela direto pela
+  API se um dia fizer sentido) |
+  | 65 | Goiânia - Goiania 2 | Goiânia II (criada nesta sessão, só
+  Mercúrio importado até agora — a API já permitiria trazer as
+  Inscrições dela também) |
+  Não existe coluna pra guardar esse `filialId` ainda (nem migração
+  criada) — quando o próximo passo (migrar algum endpoint de verdade pro
+  scraper) for feito, decidir se vale a pena adicionar uma coluna
+  `filial_id_ulisses` em `filiais` ou só manter um mapa fixo no código do
+  scraper (mais simples, já que são só 4-6 filiais e mudam raramente).
+- **Próximo passo real**: nenhum código novo ainda — é uma DECISÃO a
+  tomar com o usuário (não assumida aqui): qual endpoint migrar primeiro
+  do Playwright (`scraper/ulisses.js`/`ulisses-local.js`) pra
+  `scraper/ulisses-api.js`. Candidato mais óbvio: `csvInscricoes`, que
+  elimina o Cloudflare/login manual por completo pra Inscrições — mas
+  isso muda o encadeamento de `importar-no-crm.js`
+  (hoje espera um arquivo CSV em disco) e precisa de decisão sobre
+  Setor Universitário (dado extra disponível agora, nunca puxado antes)
+  antes de codificar. Rodar `npm run testar-ulisses-api` continua sendo o
+  jeito rápido de reconfirmar que o acesso não foi revogado.
 
 ### Lembrete de importação do Ulisses (WhatsApp pro admin)
 
