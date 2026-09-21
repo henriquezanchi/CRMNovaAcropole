@@ -32,6 +32,8 @@
            onclick="switchModule('tab-dashboard', 'Visão Geral', 'Dashboard de performance da unidade')"></i>
         <i class="fa-solid fa-users-viewfinder sidebar-icon active" data-tab="tab-crm" title="CRM e Prospecção"
            onclick="switchModule('tab-crm', 'Prospecção Ativa', 'CRM Modularizado VS Code')"></i>
+        <i class="fa-solid fa-list-check sidebar-icon" data-tab="tab-tarefas" title="Tarefas"
+           onclick="switchModule('tab-tarefas', 'Tarefas', 'Quem faz o quê, até quando')"></i>
         <i class="fa-solid fa-calendar-days sidebar-icon" data-tab="tab-agenda" title="Agenda de Eventos"
            onclick="switchModule('tab-agenda', 'Agenda de Eventos', 'Atividades e capacidade por filial')"></i>
         <i class="fa-solid fa-table-cells sidebar-icon" data-tab="tab-mapa-turmas" title="Mapa de Turmas"
@@ -305,6 +307,27 @@
         <!-- ==========================================================
              ABA 2b — MAPA DE TURMAS
         =========================================================== -->
+        <!-- ==========================================================
+             ABA — TAREFAS (js/tarefas.js)
+        =========================================================== -->
+        <div id="tab-tarefas" class="tab-pane">
+            <div class="agenda-content">
+                <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+                    <div>
+                        <h3 style="font-size:16px; color:var(--na-green-dark);">Tarefas</h3>
+                        <p class="report-sub">Quem precisa fazer o quê, pra quem, até quando. Marcar uma tarefa como concluída pode mover o lead de coluna automaticamente (e vice-versa), se a tarefa tiver isso configurado.</p>
+                    </div>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                        <label style="font-size:12px; display:flex; align-items:center; gap:5px; white-space:nowrap;">
+                            <input type="checkbox" id="tarefasVerTodasFiliais" onchange="carregarTarefas()"> Ver de todas as filiais
+                        </label>
+                        <button class="btn-primary" onclick="abrirNovaTarefa()"><i class="fa-solid fa-plus"></i> Nova Tarefa</button>
+                    </div>
+                </div>
+                <div id="listaTarefas" style="margin-top:16px; display:flex; flex-direction:column; gap:10px;"></div>
+            </div>
+        </div>
+
         <div id="tab-mapa-turmas" class="tab-pane">
             <div class="agenda-content">
                 <div>
@@ -1314,7 +1337,9 @@
         <div class="modal-body">
             <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">
                 Cada usuário só vê, na sidebar, os módulos marcados abaixo. "Admin" também vê e edita esta tela.
-                O nome de quem está logado aparece nas mensagens de WhatsApp enviadas por ele.
+                O nome de quem está logado aparece nas mensagens de WhatsApp enviadas por ele. A equipe (Agência/
+                Voluntários) é usada em <strong>Tarefas</strong>, pra atribuir uma tarefa a um time inteiro.
+                <button class="btn-mini btn-secondary-mini" style="margin-left:6px;" onclick="abrirGerenciarEquipes()"><i class="fa-solid fa-people-group"></i> Gerenciar Equipes</button>
             </p>
             <div id="listaUsuariosCrm"></div>
             <div style="display:flex; gap:8px; margin-top:14px; padding-top:14px; border-top:1px solid var(--border-color);">
@@ -1325,6 +1350,86 @@
         </div>
         <div class="modal-footer">
             <button class="btn-primary" onclick="fecharGerenciarUsuarios()"><i class="fa-solid fa-check"></i> Fechar</button>
+        </div>
+    </div>
+
+    <!-- Gerenciar Equipes (js/tarefas.js) — Agência/Voluntários, editável -->
+    <div class="modal" id="modalGerenciarEquipes" style="max-width:420px;">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-people-group"></i> Gerenciar Equipes</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharGerenciarEquipes()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">Usada como responsável de uma Tarefa (a tarefa inteira, não pessoa a pessoa) e pra atribuir voluntário de cada escola em "Gerenciar Usuários".</p>
+            <div id="listaEquipesModal"></div>
+            <div style="display:flex; gap:8px; margin-top:14px; padding-top:14px; border-top:1px solid var(--border-color);">
+                <input type="text" id="novaEquipeNome" placeholder="Nome da nova equipe" style="flex:1; padding:8px 10px; border-radius:6px; border:1px solid #cbd5e1; font-size:13px;">
+                <button class="btn-primary" onclick="adicionarEquipe()"><i class="fa-solid fa-plus"></i> Criar</button>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-primary" onclick="fecharGerenciarEquipes()"><i class="fa-solid fa-check"></i> Fechar</button>
+        </div>
+    </div>
+
+    <!-- Nova/Editar Tarefa (js/tarefas.js) -->
+    <div class="modal" id="modalTarefa" style="max-width:600px;">
+        <div class="modal-header">
+            <h3 id="modalTarefaTitulo"><i class="fa-solid fa-list-check"></i> Nova Tarefa</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharModalTarefa()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <input type="text" id="tarefaTitulo" placeholder="Título da tarefa (ex: Mandar mensagem pra quem sumiu há 1 semana)" style="padding:8px 10px; border-radius:6px; border:1px solid #cbd5e1; font-size:13px;">
+                <textarea id="tarefaDescricao" placeholder="Descrição (opcional)" rows="2" style="padding:8px 10px; border-radius:6px; border:1px solid #cbd5e1; font-size:13px; resize:vertical;"></textarea>
+
+                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                    <div style="flex:1; min-width:180px;">
+                        <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:3px;">Filial</label>
+                        <select id="tarefaFilial" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid #cbd5e1; font-size:12px;"></select>
+                    </div>
+                    <div style="flex:1; min-width:150px;">
+                        <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:3px;">Prazo (opcional)</label>
+                        <input type="date" id="tarefaPrazo" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid #cbd5e1; font-size:12px;">
+                    </div>
+                </div>
+
+                <div>
+                    <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:3px;">Responsável</label>
+                    <div style="display:flex; gap:10px; align-items:center; margin-bottom:6px;">
+                        <label style="font-size:12px; display:flex; align-items:center; gap:4px;"><input type="radio" name="tarefaTipoResponsavel" value="usuario" checked onchange="atualizarTipoResponsavelTarefa()"> Pessoa</label>
+                        <label style="font-size:12px; display:flex; align-items:center; gap:4px;"><input type="radio" name="tarefaTipoResponsavel" value="equipe" onchange="atualizarTipoResponsavelTarefa()"> Equipe</label>
+                        <label style="font-size:12px; display:flex; align-items:center; gap:4px;"><input type="radio" name="tarefaTipoResponsavel" value="nenhum" onchange="atualizarTipoResponsavelTarefa()"> Sem responsável</label>
+                    </div>
+                    <select id="tarefaResponsavelUsuario" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid #cbd5e1; font-size:12px;"></select>
+                    <select id="tarefaResponsavelEquipe" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid #cbd5e1; font-size:12px; display:none;"></select>
+                </div>
+
+                <div style="display:flex; gap:10px; flex-wrap:wrap; background:#f8fafc; padding:10px; border-radius:8px;">
+                    <div style="flex:1; min-width:200px;">
+                        <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:3px;" title="Ao mover um lead desta tarefa PRA esta coluna, o item dele na tarefa já é marcado como concluído sozinho.">Concluir sozinho ao mover pra coluna...</label>
+                        <select id="tarefaColunaGatilho" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid #cbd5e1; font-size:12px;"></select>
+                    </div>
+                    <div style="flex:1; min-width:200px;">
+                        <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:3px;" title="Ao marcar um lead como concluído (manualmente ou pelo gatilho acima), ele já é movido pra esta coluna.">Mover pra coluna ao concluir...</label>
+                        <select id="tarefaColunaDestino" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid #cbd5e1; font-size:12px;"></select>
+                    </div>
+                </div>
+
+                <div>
+                    <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:3px;">Leads desta tarefa</label>
+                    <input type="text" id="tarefaBuscaLead" placeholder="Buscar lead por nome ou telefone, pra adicionar..." oninput="buscarLeadParaTarefa(this.value)" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid #cbd5e1; font-size:12px;">
+                    <div id="tarefaBuscaLeadResultados" style="margin-top:4px;"></div>
+                    <div id="tarefaListaLeads" style="margin-top:8px; display:flex; flex-direction:column; gap:4px; max-height:260px; overflow-y:auto;"></div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer" style="justify-content:space-between;">
+            <button class="btn-secondary" id="tarefaBtnCancelar" style="display:none;" onclick="cancelarTarefaAtual()"><i class="fa-solid fa-ban"></i> Cancelar Tarefa</button>
+            <div style="display:flex; gap:8px;">
+                <button class="btn-secondary" onclick="fecharModalTarefa()">Fechar</button>
+                <button class="btn-primary" onclick="salvarTarefa()"><i class="fa-solid fa-check"></i> Salvar</button>
+            </div>
         </div>
     </div>
 
@@ -1371,6 +1476,7 @@
     <script src="js/visao-geral.js"></script>
     <!-- 3f3. Contas de usuário (login nominal + permissão por módulo) -->
     <script src="js/usuarios.js"></script>
+    <script src="js/tarefas.js"></script>
     <!-- 3f4. Indicador de progresso do scraper do Mercúrio (topbar) -->
     <script src="js/scraper-progresso.js"></script>
     <!-- 3g. Portão de acesso (senha única do time) — carregado por último só

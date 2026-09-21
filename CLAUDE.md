@@ -56,6 +56,10 @@ js/usuarios.js       → módulo separado: tela "Gerenciar Usuários" (só admin
 js/visao-geral.js    → módulo separado: "Agenda do Dia — Todas as Filiais", bloco no topo da
                         aba Visão Geral/Dashboard que cruza TODAS as filiais de uma vez,
                         independente da filial selecionada — ver seção própria
+js/tarefas.js        → módulo separado: aba "Tarefas" (quem faz o quê, até quando) +
+                        "Gerenciar Equipes" — responsável de uma tarefa é um usuário OU uma
+                        equipe, e o status sincroniza nos 2 sentidos com a coluna do Kanban
+                        do(s) lead(s) vinculado(s) — ver seção própria
 scraper/             → login automatizado no Ulisses/Mercúrio via Playwright, roda fora do
                         Supabase (GitHub Actions, .github/workflows/scraper.yml) — ver seção
                         própria "Scraper Ulisses/Mercúrio"
@@ -276,6 +280,14 @@ migracao_credenciais_scraper_ulisses_api.sql → alarga a constraint de "sistema
                                      OAuth2 Client Credentials — ver seção "API oficial do
                                      Ulisses"); JÁ RODADA nesta sessão via
                                      `supabase db query --linked`
+migracao_equipes.sql              → tabela equipes (Agência/Voluntários, seed inicial) +
+                                     coluna equipe_id em usuarios_crm — base do módulo de
+                                     Tarefas, rodar ANTES de migracao_tarefas.sql; JÁ RODADA
+                                     nesta sessão via `supabase db query --linked`
+migracao_tarefas.sql              → tabelas tarefas + tarefa_leads (N:N — 1 tarefa pode ter
+                                     vários leads, status de conclusão por lead dentro da
+                                     tarefa) — ver seção "Tarefas e Equipes"; JÁ RODADA nesta
+                                     sessão via `supabase db query --linked`
 ```
 
 ## Banco de dados (Supabase)
@@ -2187,6 +2199,167 @@ tratar informações), cada um só com os módulos que faz sentido pra ele.
   de usuários; criar um usuário só com `tab-crm` e logar como ele mostra
   SÓ esse ícone, sem a engrenagem de usuários — confirmado por
   automação (Playwright).
+- **Novo módulo adiciona um 9º ícone/aba** (`tab-tarefas`) — ver seção
+  "Tarefas e Equipes" abaixo. **Armadilha real, já corrigida nesta
+  sessão**: adicionar uma aba nova ao código NÃO a torna visível pra
+  quem já tem conta — `modulos` é um array gravado no BANCO por usuário
+  (`usuarios_crm.modulos`), só populado com os módulos que existiam no
+  momento em que a conta foi criada/editada pela última vez. Sem
+  atualizar isso manualmente, o próprio admin (`"Henrique"`) e a conta
+  `"Scraper Automatico"` ficariam sem ver `tab-tarefas` mesmo sendo
+  admin — corrigido adicionando `'tab-tarefas'` ao `modulos` dos dois
+  direto no banco (mesmo remédio de sempre: "Gerenciar Usuários" →
+  marcar o checkbox do módulo novo pra cada conta que precisar dele,
+  incluindo contas que já existiam antes desta sessão).
+
+## Tarefas e Equipes (`js/tarefas.js`)
+
+Pedido do usuário (2026-09-21), parte de uma lista bem maior de ideias de
+gestão de time (tarefas, metas, menções/comentários, resumo de trabalho,
+espaço de comunicação interna, fluxograma de automação) — mapeadas e
+priorizadas ANTES de codificar (ver decisões abaixo), com o usuário
+confirmando explicitamente por onde comecei: **"Equipes → Tarefas"**,
+deixando os outros pedidos (Metas, Menções/Comentários, Resumos na tela,
+Fluxograma de automação "se X então Y") registrados como próximas etapas
+naturais, ainda NÃO construídas.
+
+- **Decisões confirmadas com o usuário antes de codificar** (evitou
+  retrabalho — mudam a modelagem de dados por completo):
+  1. Voluntário usa login NOMINAL COMPLETO (nome+senha), igual já existe
+     em `usuarios_crm`/"Gerenciar Usuários" — não um cadastro mais leve
+     sem senha. O master de cada escola cria a conta do próprio
+     voluntário na mesma tela de sempre.
+  2. Uma tarefa pode ter **VÁRIOS leads** (ex: "mandar mensagem pra
+     estes 20 leads" = 1 tarefa só) — por isso existe `tarefa_leads`
+     (N:N), com o status de conclusão **POR LEAD dentro da tarefa**, não
+     1 status pra tarefa inteira (calculado na hora — "3/5 concluídos"
+     — nunca guardado separado, pra nunca dessincronizar).
+  3. O "fluxograma" pedido é um motor de regras visual ("se X, então
+     Y") — o mais arriscado/complexo da lista, fica pra ÚLTIMO, depois
+     de Tarefas já existir de verdade (não tem o que orquestrar antes
+     disso).
+- **Campo de observações no lead — já existe, sem precisar de nada
+  novo**: `resumo_ia` ("Resumo da Conversa") e `abordagem_sugerida`
+  ("Como Abordar") já são texto livre editável na gaveta hoje — o
+  usuário perguntou se isso já existia antes de eu sugerir criar mais um
+  campo.
+
+### `equipes` (`migracao_equipes.sql`)
+
+Tabela simples (`id`, `nome`, `ordem`), mesmo padrão de acesso público
+de `tags_sugeridas`/`tipos_evento` — editável (criar/renomear/reordenar
+por arrastar, remover) em **"Gerenciar Equipes"**
+(`abrirGerenciarEquipes()`, botão dentro do modal "Gerenciar Usuários")
+sem precisar de sessão de código nova pra uma 3ª equipe um dia. Seed
+inicial: `"Agência"` (o time do próprio usuário, atravessa qualquer
+filial) e `"Voluntários"` (cada escola cadastra os próprios). Cada
+`usuarios_crm` pode ter um `equipe_id` (nullable — continua funcionando
+sem isso preenchido), escolhido por um `<select>` na própria linha do
+usuário em "Gerenciar Usuários". `equipeId`/`equipeNome` também entram
+no objeto salvo em `localStorage` no login (`js/acesso.js`,
+`tentarAcesso()`), prontos pra uso futuro (ex: pré-selecionar "minha
+equipe" como responsável ao abrir "Nova Tarefa" — ainda não feito, mas o
+dado já está disponível).
+
+### `tarefas` + `tarefa_leads` (`migracao_tarefas.sql`)
+
+- **`tarefas`**: `titulo`, `descricao`, `filial` (null = tarefa
+  cross-filial, tipicamente da Agência — aparece na lista independente
+  de qual filial está selecionada no topbar), `responsavel_usuario_id`
+  OU `responsavel_equipe_id` (nunca os dois — a UI só mostra 1 `<select>`
+  por vez, conforme o rádio "Pessoa"/"Equipe"/"Sem responsável"),
+  `prazo` (date, opcional), `criado_por` (nome de quem criou, mesmo
+  padrão de `log_atividade.autor`), `cancelada` (soft — "Cancelar
+  Tarefa" no modal de edição só marca esse boolean, nunca apaga a linha
+  nem os vínculos).
+- **`coluna_gatilho_conclusao`/`coluna_ao_concluir`**: guardam a CHAVE
+  crua da coluna do Kanban (`columnsConfig[].key`) — **mesma heurística
+  de "guardar o texto e confiar" já usada em TODO o resto do app pra
+  colunas** (Motivos de Perda, Matriculados, Recontato, Abordagem,
+  Verificar Telefone — nunca existiu uma tabela de "colunas válidas" no
+  servidor, colunas são 100% client-side/localStorage, ver bullet
+  "Colunas do Kanban são dinâmicas" no topo deste arquivo). Se o usuário
+  renomear/apagar a coluna depois de configurar isso numa tarefa, o
+  vínculo só some de bater (fica órfão, sem erro) — nunca quebra nada.
+- **`tarefa_leads`**: N:N (`tarefa_id`, `"pessoaIdentificador"` — texto,
+  SEM FK, mesmo padrão de `evento_leads`), `concluida`/`concluida_em`/
+  `concluida_via` (`'manual'` ou `'coluna'`, só informativo — pra saber
+  COMO cada item foi concluído olhando a tela).
+- **Sincronização BIDIRECIONAL com o Kanban** — o pedido central do
+  usuário ("status pode mudar manualmente ou automaticamente quando
+  mudamos o lead de coluna, e vice-versa"):
+  1. **Mover lead → conclui tarefa**: `sincronizarTarefasAoMoverColuna(ids,
+     novaColuna)` (`js/tarefas.js`), chamada de dentro de
+     `executarMovimentoParaColuna()` (`js/app.js` — o ÚNICO ponto por
+     onde QUALQUER movimentação passa, arrastar-e-soltar/botão "Mover"/
+     ações em massa/etc., mesmo ponto único já usado por `log_atividade`)
+     — best-effort, nunca impede a movimentação em si. Busca
+     `tarefa_leads` ainda não concluídos desses leads, com o `join`
+     embutido do PostgREST pra já trazer `tarefas.coluna_gatilho_conclusao`
+     junto (`select('..., tarefas(coluna_gatilho_conclusao, cancelada)')`),
+     e marca `concluida=true, concluida_via='coluna'` só quem bate com a
+     coluna nova.
+  2. **Concluir tarefa (manual) → move lead**: `alternarConclusaoTarefaLead()`,
+     chamada pelo checkbox de cada lead dentro do modal de edição da
+     tarefa — se a tarefa tiver `coluna_ao_concluir` configurada, chama
+     `moverLeadsParaColuna([pessoaIdentificador], coluna)` (a MESMA
+     função que arrastar-e-soltar/barra de seleção em massa já usam —
+     ganha de graça a barra de "Desfazer", o registro em
+     `funil_agencia_atualizado_em`/SLA visual, e até o modal de Motivo de
+     Perda se a coluna configurada for uma coluna "Perdido").
+- **Aba `tab-tarefas`** (9º ícone da sidebar): lista as tarefas
+  ativas da filial atual + as cross-filial (`filial is null`), com
+  checkbox "Ver de todas as filiais" pra remover esse filtro. Cada card
+  mostra responsável, filial, prazo (borda vermelha se atrasada e ainda
+  não 100% concluída — mesmo espírito visual do SLA de coluna fria),
+  e "X/Y concluído(s)" — clicar abre o modal de edição completo.
+- **Modal de Nova/Editar Tarefa**: busca de lead por nome/telefone
+  reaproveitando o mesmo padrão de `.or().ilike()` já usado em Vínculo
+  Familiar/Leads a Tratar — **sem filial escolhida (tarefa "Agência"),
+  busca em TODAS as filiais de uma vez** (mesmo espírito cross-filial já
+  usado na Importação em Lote de Conversas de WhatsApp), com a filial de
+  cada resultado mostrada pra diferenciar homônimos. Leads NOVOS
+  (adicionados nesta sessão do modal) só são de fato vinculados ao
+  clicar "Salvar"; leads que JÁ faziam parte da tarefa (modo edição) têm
+  o checkbox de conclusão direto na lista, sem precisar salvar de novo.
+- **Testado ao vivo, ponta a ponta, em produção** (Playwright contra
+  cópia local do CRM, Supabase real, filial Goiânia - Garavelo, leads
+  reais revertidos pra coluna original depois do teste): confirmadas as
+  DUAS direções da sincronização — (1) criar tarefa com
+  `coluna_ao_concluir='Abordagem'`, marcar o checkbox de um lead como
+  concluído → `tarefa_leads.concluida_via='manual'` E o lead moveu de
+  "Frios" pra "Abordagem" de verdade; (2) criar outra tarefa com
+  `coluna_gatilho_conclusao='RSVP'`, mover esse lead pra "RSVP" via
+  `executarMovimentoParaColuna()` (mesmo caminho de qualquer
+  movimentação real no Kanban) → o item da tarefa marcou
+  `concluida=true, concluida_via='coluna'` SOZINHO, sem clicar em nada
+  na tela de Tarefas.
+- **Não construído nesta rodada** (registrado, não esquecido — próximas
+  etapas naturais depois desta base existir):
+  - **Metas** (ex: "N contatos hoje", "N inscrições na Abertura de
+    Turma") calculadas automaticamente pelo CRM, não reportadas à mão —
+    precisa definir de onde vem o sinal de "contato" (hoje `log_atividade`
+    registra mudança de coluna/tag, mas não um evento explícito de
+    "liguei pra essa pessoa"; pode precisar de uma ação nova, tipo um
+    botão "Registrar Contato" na gaveta).
+  - **Menções (@usuário) em comentários** — não existe sistema de
+    comentário nenhum ainda (nem em tarefa, nem em lead); a Central de
+    Notificações (`js/notificacoes.js`) só dispara em 5 gatilhos fixos
+    do sistema hoje, precisaria de um 6º gatilho pra "fulano te
+    mencionou".
+  - **Espaço de comunicação interna** (discutir mudança de sistema,
+    atendimento a um lead específico) — cogitado unificar com comentários
+    de tarefa (acima), em vez de 2 sistemas de mensagem interna
+    separados; decisão de design ainda em aberto.
+  - **Resumo do trabalho na TELA** (voluntários pro master da escola,
+    todos pro usuário) — já existe a LÓGICA pronta via WhatsApp
+    (`resumo-semanal-chefe`, baseada em `log_atividade`), só falta
+    expor isso como uma tela/relatório dentro do próprio CRM, com
+    filtro por equipe/usuário.
+  - **Fluxograma (motor de regras "se X, então Y")** — de propósito por
+    último; a ideia é que ele CRIE/CONFIGURE tarefas automaticamente
+    (ex: "se lead entra em Perdido, cria tarefa de follow-up pra
+    Voluntários em 7 dias") em vez de ser um sistema paralelo.
 
 ## Agenda do Dia — Todas as Filiais (`js/visao-geral.js`)
 

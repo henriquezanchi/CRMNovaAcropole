@@ -76,10 +76,14 @@ function fecharGerenciarUsuarios() {
 async function carregarUsuariosCrm() {
     const { data, error } = await window.supabaseClient
         .from('usuarios_crm')
-        .select('id, nome, modulos, eh_admin, ativo, criado_em')
+        .select('id, nome, modulos, eh_admin, ativo, criado_em, equipe_id')
         .order('criado_em');
     if (error) { alert('Erro ao carregar usuários: ' + error.message); return; }
     usuariosCrmCache = data || [];
+    // Equipes (migracao_equipes.sql) — pra popular o <select> de cada
+    // usuário. Carregado sempre que a tela de Usuários abre, mesmo cache
+    // pequeno reaproveitado por js/tarefas.js quando essa aba abrir.
+    if (typeof carregarEquipesTarefas === 'function') await carregarEquipesTarefas();
     renderizarListaUsuariosCrm();
 }
 
@@ -97,11 +101,17 @@ function renderizarListaUsuariosCrm() {
                 <input type="checkbox" data-usuario="${u.id}" data-modulo="${m.id}" ${modulosSet.has(m.id) ? 'checked' : ''} onchange="salvarModulosUsuarioCrm('${u.id}')">
                 ${m.label}
             </label>`).join('');
+        const equipesOpcoes = (typeof equipesTarefasCache !== 'undefined' ? equipesTarefasCache : [])
+            .map(eq => `<option value="${eq.id}" ${String(u.equipe_id) === String(eq.id) ? 'selected' : ''}>${escapeHTML(eq.nome)}</option>`).join('');
         return `
             <div style="border:1px solid var(--border-color); border-radius:8px; padding:12px; margin-bottom:10px; ${u.ativo ? '' : 'opacity:0.5;'}">
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;">
                     <strong>${escapeHTML(u.nome)}</strong>
                     <div style="display:flex; gap:6px; align-items:center;">
+                        <select style="font-size:11px; padding:3px 4px;" title="Equipe (usada em Tarefas)" onchange="salvarEquipeUsuarioCrm('${u.id}', this.value)">
+                            <option value="">Sem equipe</option>
+                            ${equipesOpcoes}
+                        </select>
                         <label style="font-size:11px; display:flex; align-items:center; gap:4px;"><input type="checkbox" ${u.eh_admin ? 'checked' : ''} onchange="alternarAdminUsuarioCrm('${u.id}', this.checked)"> Admin</label>
                         <label style="font-size:11px; display:flex; align-items:center; gap:4px;"><input type="checkbox" ${u.ativo ? 'checked' : ''} onchange="alternarAtivoUsuarioCrm('${u.id}', this.checked)"> Ativo</label>
                         <button class="btn-mini btn-secondary-mini" onclick="resetarSenhaUsuarioCrm('${u.id}')" title="Definir nova senha"><i class="fa-solid fa-key"></i></button>
@@ -129,6 +139,13 @@ async function salvarModulosUsuarioCrm(idUsuario) {
             aplicarPermissoesModulosUsuario();
         }
     }
+}
+
+async function salvarEquipeUsuarioCrm(idUsuario, equipeId) {
+    const { error } = await window.supabaseClient.from('usuarios_crm').update({ equipe_id: equipeId || null }).eq('id', idUsuario);
+    if (error) { alert('Erro ao salvar equipe: ' + error.message); return; }
+    const u = usuariosCrmCache.find(u => u.id === idUsuario);
+    if (u) u.equipe_id = equipeId || null;
 }
 
 async function alternarAdminUsuarioCrm(idUsuario, valor) {

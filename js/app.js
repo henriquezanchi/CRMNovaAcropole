@@ -1985,6 +1985,15 @@ async function executarMovimentoParaColuna(ids, novaColuna) {
         pessoaIds: ids.map(String),
         detalhes: { novaColuna, colunasAnteriores: [...new Set(anteriores.map(a => a.funilAnterior))] }
     });
+
+    // Tarefas (js/tarefas.js) — mover um lead pra uma coluna que é
+    // "gatilho de conclusão" de algum item de tarefa dele marca esse item
+    // como concluído sozinho (pedido do usuário: "status pode mudar...
+    // automaticamente quando mudamos o lead de coluna"). Best-effort,
+    // nunca impede a movimentação em si.
+    if (typeof sincronizarTarefasAoMoverColuna === 'function') {
+        sincronizarTarefasAoMoverColuna(ids, novaColuna).catch(e => console.warn('Erro ao sincronizar tarefas com a movimentação de coluna:', e.message));
+    }
 }
 
 // ==========================================
@@ -2412,7 +2421,8 @@ const ICONES_MODULO = {
     'tab-whatsapp': 'fa-brands fa-whatsapp',
     'tab-relatorios': 'fa-solid fa-chart-simple',
     'tab-leads-tratar': 'fa-solid fa-clone',
-    'tab-importar': 'fa-solid fa-file-import'
+    'tab-importar': 'fa-solid fa-file-import',
+    'tab-tarefas': 'fa-solid fa-list-check'
 };
 
 function switchModule(tabId, title, subtitle) {
@@ -2451,6 +2461,7 @@ function switchModule(tabId, title, subtitle) {
     if (tabId === 'tab-importar' && typeof popularFilialImportacao === 'function') {
         popularFilialImportacao();
     }
+    if (tabId === 'tab-tarefas' && typeof carregarTarefas === 'function') carregarTarefas();
 }
 
 // ==========================================

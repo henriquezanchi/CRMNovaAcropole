@@ -48,7 +48,7 @@ async function tentarAcesso() {
 
     const { data: usuario, error } = await window.supabaseClient
         .from('usuarios_crm')
-        .select('id, nome, senha_hash, modulos, eh_admin, ativo')
+        .select('id, nome, senha_hash, modulos, eh_admin, ativo, equipe_id, equipes(nome)')
         .eq('nome', nome)
         .eq('ativo', true)
         .maybeSingle();
@@ -61,8 +61,12 @@ async function tentarAcesso() {
         return;
     }
 
+    // equipeId/equipeNome (migracao_equipes.sql) — usados pra já sugerir
+    // "minha equipe" como responsável ao criar uma tarefa (js/tarefas.js),
+    // sem precisar escolher toda vez.
     localStorage.setItem(CHAVE_USUARIO_LOGADO, JSON.stringify({
         id: usuario.id, nome: usuario.nome, modulos: usuario.modulos || [], ehAdmin: !!usuario.eh_admin,
+        equipeId: usuario.equipe_id || null, equipeNome: (usuario.equipes && usuario.equipes.nome) || null,
     }));
     esconderOverlayAcesso();
     if (typeof aplicarPermissoesModulosUsuario === 'function') aplicarPermissoesModulosUsuario();
