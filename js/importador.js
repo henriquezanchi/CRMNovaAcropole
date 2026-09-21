@@ -701,9 +701,24 @@ document.addEventListener('DOMContentLoaded', restaurarAcompanhamentoMercurioSeH
 // Actions (2026-09-21) — confirmado por 2 testes reais que esse domínio
 // bloqueia o GitHub Actions pelo Cloudflare mesmo numa chamada HTTPS pura
 // com token (não só navegação de browser). O botão "Sincronizar via API do
-// Ulisses agora" (index.html) agora é um link simples pro protocolo local
-// abrirulissesapi://, igual "Importar Ulisses" — sem JS de disparo/poll
-// nenhum aqui; roda 100% na máquina de confiança (sincronizar-ulisses-api-local.mjs).
+// Ulisses agora" (index.html) usa o protocolo local abrirulissesapi://,
+// igual "Importar Ulisses" — roda 100% na máquina de confiança
+// (sincronizar-ulisses-api-local.mjs).
+//
+// Por filial (pedido do usuário, 2026-09-21 — "quando estivermos com 20
+// filiais, vai ficar impraticável esperar todas se eu precisar atualizar
+// uma específica"): a filial escolhida no MESMO `<select>` do botão do
+// Mercúrio vai como querystring na URL do protocolo
+// (`abrirulissesapi://rodar?filial=...`) — o Windows repassa a URL
+// completa pro `.bat`/script local (ver `Sincronizar Ulisses API.bat` e
+// o parsing em `sincronizar-ulisses-api-local.mjs`), que extrai o valor
+// e filtra como sempre (mesmo `FILTRO_FILIAL`/núcleo distintivo usado em
+// todo o resto do scraper). Vazio = todas as filiais, comportamento de
+// sempre.
+function abrirProtocoloUlissesApi(filial) {
+    const url = 'abrirulissesapi://rodar' + (filial ? `?filial=${encodeURIComponent(filial)}` : '');
+    window.location.href = url;
+}
 
 
 // Chave de telefone pra casar registros por número em vez de nome — cobre

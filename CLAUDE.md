@@ -4939,17 +4939,53 @@ filial — não pelo cron).
   o GitHub Actions não consegue mais entregar pra este domínio.
 - **Novo protocolo customizado `abrirulissesapi://`** (mesmo mecanismo
   de `abrirulisses://`, ver seção própria abaixo) registrado em
-  `HKCU\Software\Classes\abrirulissesapi`, apontando pra
-  `C:\Scrapper\scraper\Sincronizar Ulisses API.bat` (`npm run ulisses-api-local`,
-  todas as filiais). O botão "Sincronizar via API do Ulisses agora" (aba
-  Importar → "Sincronização Automática") deixou de invocar a Edge
-  Function/GitHub Actions — agora é um link simples `<a href="abrirulissesapi://rodar">`,
-  igual "Importar Ulisses (abre no seu PC)". `dispararUlissesApiAgora()`/
-  `botoesDispararUlissesApi()`/todo o JS de disparo+poll criado antes
-  nesta mesma sessão foi REMOVIDO (`js/importador.js`) — sem sentido
-  manter um caminho morto que só falharia sempre. `renderizarStatusSincronizacaoScraper()`
-  voltou a ter só 2 parâmetros (o 3º, criado só pra esse botão, também
-  foi removido).
+  `HKCU\Software\Classes\abrirulissesapi`. O botão "Sincronizar via API
+  do Ulisses agora" (aba Importar → "Sincronização Automática") deixou
+  de invocar a Edge Function/GitHub Actions — agora chama
+  `abrirProtocoloUlissesApi(filial)` (`js/importador.js`), que monta
+  `abrirulissesapi://rodar?filial=...` (usando o MESMO `<select>` de
+  filial do botão do Mercúrio — "Todas as filiais" ou uma só) e navega
+  pra essa URL. `dispararUlissesApiAgora()`/`botoesDispararUlissesApi()`/
+  todo o JS de disparo+poll via GitHub Actions criado antes nesta mesma
+  sessão foi REMOVIDO — sem sentido manter um caminho morto que só
+  falharia sempre. `renderizarStatusSincronizacaoScraper()` voltou a ter
+  só 2 parâmetros (o 3º, criado só pra esse botão antigo, também foi
+  removido).
+  - **Por filial** (pedido do usuário, 2026-09-21 — "quando estivermos
+    com 20 filiais, vai ficar impraticável esperar todas se eu precisar
+    atualizar uma específica"): já era possível por CLI
+    (`npm run ulisses-api-local -- "Garavelo"`) desde que o script foi
+    criado — só faltava expor no botão do CRM.
+  - **Bug real, achado testando de verdade**: registrar o protocolo
+    apontando pra um `.bat` (`"cmd.exe" /c ""...\Sincronizar Ulisses
+    API.bat" "%1""`) corrompia a URL — `cmd.exe` interpreta `%` como
+    caractere de variável (`%1`, `%2`...), então uma querystring
+    codificada (`?filial=Barra%20do%20Gar%C3%A7as`) chegava ao script
+    como `"Barra0do0GarA7as"` (`%20`/`%C3` interpretados como parâmetros
+    `%2`/`%C` vazios seguidos do dígito literal que sobrou). **Corrigido
+    registrando o protocolo DIRETO pro `node.exe`**, sem `cmd.exe`/`.bat`
+    nenhum no meio: `"C:\Program Files\nodejs\node.exe"
+    "C:\Scrapper\scraper\sincronizar-ulisses-api-local.mjs" "%1"` — o
+    Windows substitui `%1` pela URL completa ANTES de qualquer shell
+    processá-la, e como não existe MAIS NENHUM shell no caminho, a URL
+    chega intacta no `process.argv[2]` do Node (que já faz o
+    `new URL(...).searchParams.get('filial')` certinho, com
+    `decodeURIComponent` embutido). O script ganhou um
+    `process.chdir()` no topo (substitui o `cd /d` que o `.bat` fazia —
+    sem ele, `dotenv/config` não acharia o `.env` da pasta certa) e usa
+    imports DINÂMICOS (não estáticos) depois do `chdir()`, já que imports
+    estáticos são içados e rodariam antes dele. **Lição pra qualquer
+    protocolo customizado futuro que precise de parâmetro**: nunca passar
+    por `cmd.exe`/`.bat` no meio — vai direto pro executável final
+    (`.exe`), sempre. `Sincronizar Ulisses API.bat` continua existindo
+    (sem `%1`) só pra quem preferir dar duplo-clique manual sem passar
+    filial nenhuma.
+  - **Testado ao vivo, 2 formas diferentes de disparo, ambas OK depois do
+    fix**: `node sincronizar-ulisses-api-local.mjs
+    "abrirulissesapi://rodar?filial=Barra%20do%20Gar%C3%A7as"` (mesmo
+    comando que o registro roda) → só Barra do Garças, 857 leads; e
+    `cmd /c start "" "abrirulissesapi://rodar?filial=Goi%C3%A2nia%20II"`
+    (mais parecido com o clique real de um navegador) → só Goiânia II.
 - **Testado ao vivo, com sucesso, direto de `C:\Scrapper`** (IP
   residencial): `node sincronizar-ulisses-api-local.mjs "Garavelo"` — 0
   bloqueio Cloudflare, catálogo sincronizado (9 eventos atualizados),
