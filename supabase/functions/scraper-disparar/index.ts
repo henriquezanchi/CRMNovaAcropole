@@ -1,13 +1,12 @@
 // Edge Function: dispara o workflow do GitHub Actions (.github/workflows/
 // scraper.yml) sob demanda, a partir de um clique no CRM — em vez de
-// esperar o agendamento diário (05:00 Brasília). O login MANUAL do
-// Ulisses (Cloudflare) nunca passa por aqui — continua exigindo
-// `ulisses-local.js` na máquina de confiança. Mas desde 2026-09-18 o
-// CATÁLOGO de eventos/Inscrições do Ulisses via API oficial (sem
-// Cloudflare, sem login manual) roda dentro do MESMO script
-// (mercurio.js) — este disparo cobre isso também, e com
-// `somenteUlissesApi: true` pula o Mercúrio inteiro e só sincroniza essa
-// parte (bem mais rápido — ver "somente_ulisses_api" no workflow).
+// esperar o agendamento diário (05:00 Brasília). Só faz sentido pro
+// Mercúrio: tudo relacionado ao Ulisses (login manual E, confirmado
+// 2026-09-21, também a API oficial — api.acropolebrasil.com.br está
+// atrás do MESMO Cloudflare, que bloqueia até uma chamada HTTPS pura com
+// token vinda do GitHub Actions) precisa rodar da máquina de confiança —
+// ver scraper/ulisses-local.js / scraper/sincronizar-ulisses-api-local.mjs,
+// nunca por aqui.
 //
 // Usa a API REST do GitHub (workflow_dispatch), com um Personal Access
 // Token guardado como secret (GITHUB_TOKEN_DISPATCH — nome próprio pra
@@ -45,18 +44,10 @@ Deno.serve(async (req) => {
     // pro workflow_dispatch — o próprio `mercurio.js` já sabe filtrar por
     // esse valor (env `FILTRO_FILIAL`, mesmo filtro do uso local por
     // linha de comando).
-    //
-    // `somenteUlissesApi` opcional — pedido do usuário (2026-09-21): pular
-    // o Mercúrio inteiro e só sincronizar eventos/Inscrições do Ulisses
-    // via API oficial (bem mais rápido que esperar uma rodada completa do
-    // Mercúrio só pra atualizar eventos) — vira `inputs.somente_ulisses_api`
-    // pro workflow_dispatch, que `mercurio.js` lê como env `SOMENTE_ULISSES_API`.
     let filial = "";
-    let somenteUlissesApi = false;
     try {
         const body = await req.json();
         if (body && typeof body.filial === "string") filial = body.filial;
-        if (body && body.somenteUlissesApi === true) somenteUlissesApi = true;
     } catch { /* corpo vazio ({}) é o caso normal (todas as filiais) */ }
 
     try {
@@ -70,7 +61,7 @@ Deno.serve(async (req) => {
                     "Content-Type": "application/json",
                     "User-Agent": "crm-nova-acropole-scraper-disparar",
                 },
-                body: JSON.stringify({ ref: GITHUB_REF, inputs: { filial, somente_ulisses_api: somenteUlissesApi ? "true" : "" } }),
+                body: JSON.stringify({ ref: GITHUB_REF, inputs: { filial } }),
             },
         );
 

@@ -45,6 +45,22 @@ import { supabaseAdmin, lerCredencial, registrarStatusSincronizacao } from './li
 import { exportarCsvInscricoes, exportarCatalogoEventos, exportarComparecimento, sincronizarCatalogoEventosNoCrm, sincronizarComparecimentoNoCrm, processarFilaDesativacaoUlisses, salvarScreenshotErro } from './ulisses.js';
 import { verificarEventosPublicosDeTodasAsFiliais } from './verificar-eventos-publicos.js';
 import { importarNoCrm } from './importar-no-crm.js';
+// API oficial (eventos + Inscrições) — MOVIDA PRA CÁ (2026-09-21): rodava
+// dentro de scraper/mercurio.js (GitHub Actions), mas confirmado testando
+// de verdade (2 disparos reais, 2 bloqueios) que api.acropolebrasil.com.br
+// está atrás do MESMO Cloudflare que já bloqueava o login por navegador —
+// só que aqui o bloqueio acontece numa chamada HTTPS pura (com token
+// Bearer válido, sem navegador nenhum envolvido), então "não é navegação
+// de browser" NÃO era suficiente pra escapar dele, ao contrário do que se
+// assumia. Resposta real recebida do GitHub Actions:
+// `GET /facade/filiaisAtivas -> 403 ... "Just a moment..."` (a mesma
+// página de desafio do Cloudflare, servida no lugar do JSON esperado).
+// Rodando desta máquina (IP residencial, não datacenter), funciona sem
+// desafio nenhum — mesmo motivo de sempre pro resto deste arquivo. Ver
+// CLAUDE.md, seção "Origem dos vínculos evento_leads"/"API oficial do
+// Ulisses" pro histórico completo.
+import { sincronizarEventosUlissesApi, sincronizarInscricoesFilialViaApi, resolverFilialIdUlisses } from './importar-ulisses-api.js';
+import { filiaisAtivas as filiaisAtivasUlissesApi } from './ulisses-api.js';
 
 const URL_LOGIN = 'https://www.acropolebrasil.com.br/login.html';
 const TIMEOUT_LOGIN_MANUAL_MS = 5 * 60 * 1000; // 5 min pra você fazer login na janela
@@ -213,7 +229,7 @@ async function verificarFilialLogada(page, filialEsperada, todasFiliaisNomes) {
     return { ok: null, motivo: `Não consegui confirmar automaticamente a filial logada (texto mostrado: "${textoBruto}") — seguindo mesmo assim, confira manualmente se os dados exportados fazem sentido. Se este texto for realmente de "${filialEsperada}", me avise pra eu gravar esse mapeamento e não depender mais de "ok: null" aqui.` };
 }
 
-async function processarFilialLocal(browser, filial, todasFiliaisNomes, pageCrm) {
+async function processarFilialLocal(browser, filial, todasFiliaisNomes, pageCrm, filiaisUlissesApi) {
     console.log(`\n[ulisses-local] Filial: ${filial}`);
 
     let usuario = null;
@@ -274,6 +290,17 @@ async function processarFilialLocal(browser, filial, todasFiliaisNomes, pageCrm)
     // comparecimento — assim os leads existem a tempo de serem casados.
     let caminhoCsvInscricoes = null;
     const etapas = [
+        // Eventos/Inscrições via API oficial — PRIMEIRO: não depende do
+        // login manual no Ulisses (já feito nesta função, mas esta etapa
+        // não usa aquela sessão, só `pageCrm` + o token OAuth2), e cria/
+        // atualiza os leads/eventos mais recentes ANTES do catálogo/
+        // comparecimento via Playwright (mesma ordem de sempre — evita
+        // casar contra dado desatualizado).
+        { nome: 'sincronizar-inscricoes-via-api', executar: () => {
+            const filialIdUlisses = filiaisUlissesApi ? resolverFilialIdUlisses(filial, filiaisUlissesApi) : null;
+            if (!filialIdUlisses) return Promise.resolve('sem correspondência no sistema do Ulisses (ou API indisponível nesta rodada) — pulando');
+            return sincronizarInscricoesFilialViaApi(pageCrm, filial, filialIdUlisses);
+        } },
         { nome: 'exportar-csv-inscricoes', executar: async () => { caminhoCsvInscricoes = await exportarCsvInscricoes(page, filial); return caminhoCsvInscricoes; } },
         { nome: 'importar-inscricoes-no-crm', executar: () => importarNoCrm(pageCrm, filial, { caminhoAtivos: null, caminhoInativos: null, caminhoInscricoes: caminhoCsvInscricoes }) },
         { nome: 'catalogo-eventos', executar: () => exportarCatalogoEventos(page, filial) },
@@ -303,7 +330,7 @@ async function processarFilialLocal(browser, filial, todasFiliaisNomes, pageCrm)
 
     await registrarStatusSincronizacao('ulisses', filial, !algumaFalha, algumaFalha
         ? 'Login manual (modo assistido) OK, mas 1+ exportação falhou — ver logs e prints locais (pasta debug/).'
-        : 'Login manual (modo assistido) + exportação de Inscrições, catálogo de eventos e comparecimento OK.');
+        : 'Login manual (modo assistido) + Inscrições via API + exportação de Inscrições/catálogo de eventos/comparecimento via Playwright OK.');
     await page.close();
 }
 
@@ -327,6 +354,21 @@ async function main() {
     console.log(`${filiais.length} filial(is) ativa(s): ${filiais.map(f => f.nome).join(', ')}`);
     console.log('Uma janela do Chromium vai abrir por vez — faça login em cada uma quando ela aparecer.\n');
 
+    // Catálogo de eventos via API oficial — 1x, ANTES do loop (mesmo
+    // motivo de sempre: Setor Universitário abastece várias filiais de
+    // uma vez, precisa existir antes da sincronização de Inscrições de
+    // cada uma). Best-effort — se a API estiver fora do ar por outro
+    // motivo (não Cloudflare, já que rodamos localmente), cada filial só
+    // pula essa etapa (ver `sincronizar-inscricoes-via-api` acima).
+    let filiaisUlissesApi = null;
+    try {
+        filiaisUlissesApi = await filiaisAtivasUlissesApi();
+        const resumo = await sincronizarEventosUlissesApi();
+        console.log('[ulisses-api] Catálogo de eventos sincronizado:', resumo);
+    } catch (e) {
+        console.error('[ulisses-api] Falha ao sincronizar catálogo de eventos via API (não impede o resto da rodada):', e.message);
+    }
+
     const todasFiliaisNomes = (filiaisTodas || []).map(f => f.nome);
     const browser = await chromium.launch({ headless: false });
     // Aba/contexto SEPARADO pro CRM publicado (mesmo padrão de `pageCrm`
@@ -335,7 +377,7 @@ async function main() {
     // se o localStorage daquele contexto ainda não tiver a sessão).
     const pageCrm = await (await browser.newContext()).newPage();
     for (const f of filiais) {
-        await processarFilialLocal(browser, f.nome, todasFiliaisNomes, pageCrm);
+        await processarFilialLocal(browser, f.nome, todasFiliaisNomes, pageCrm, filiaisUlissesApi);
     }
     await browser.close();
     console.log('\nConcluído. Arquivos em scraper/exports/.');

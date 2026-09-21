@@ -1267,14 +1267,17 @@
             <hr style="border:none; border-top:1px solid var(--border-color); margin:4px 0 14px;">
 
             <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
-                <strong>Eventos + Inscrições do Ulisses</strong> — desde 2026-09-18, via API oficial (sem
-                Cloudflare, sem login manual): já roda de carona dentro do "Rodar Mercúrio Agora" acima, mas
-                o botão abaixo dispara SÓ essa parte (pula o Mercúrio inteiro) — mais rápido quando você só
-                quer atualizar eventos/inscrições agora.
+                <strong>Eventos + Inscrições do Ulisses</strong> — via API oficial, sem login manual. <strong>Só
+                funciona rodando na SUA máquina de confiança</strong> (mesmo motivo do login do Ulisses:
+                confirmado em 2026-09-21 que o GitHub Actions também é bloqueado pelo Cloudflare pra esse
+                domínio, mesmo numa chamada autenticada sem navegador) — por isso não é mais um disparo
+                remoto: o botão abaixo abre um processo rápido e SEM JANELA VISÍVEL na sua máquina (sem
+                login, sem Chromium na tela). Se não abrir nada, rode <code>npm run ulisses-api-local</code>
+                direto pelo terminal como alternativa.
             </p>
-            <button class="btn-primary btn-disparar-ulisses-api" onclick="dispararUlissesApiAgora(document.getElementById('mercurioFilialFiltro').value || null)" style="width:100%; margin-bottom:10px;">
-                <i class="fa-solid fa-cloud-arrow-down"></i> Sincronizar via API do Ulisses agora
-            </button>
+            <a href="abrirulissesapi://rodar" class="btn-primary" style="width:100%; margin-bottom:10px; display:block; text-align:center; text-decoration:none; box-sizing:border-box;">
+                <i class="fa-solid fa-cloud-arrow-down"></i> Sincronizar via API do Ulisses agora (no seu PC)
+            </a>
 
             <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
                 <strong>Comparecimento (quem de fato compareceu)</strong> continua manual de propósito — a API

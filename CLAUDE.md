@@ -4851,57 +4851,97 @@ precisar mexer em nada do lado do agendamento/Edge Functions.
   ulisses-local` continua sendo o caminho pra isso (rodar manualmente
   quando quiser comparecimento atualizado).
 
-#### Botão dedicado "Sincronizar via API do Ulisses agora" (2026-09-21)
+#### CORREÇÃO GRAVE (2026-09-21): a API do Ulisses TAMBÉM é bloqueada pelo GitHub Actions
 
-Pedido do usuário: o "Rodar Mercúrio Agora" já dispara a sincronização do
-Ulisses via API (ver acima), mas só de carona numa rodada COMPLETA do
-Mercúrio (login, Ativos/Inativos de cada filial, Turmas...) — pesado
-demais só pra "atualizar os eventos agora". Agora existe um caminho
-dedicado, bem mais rápido, que pula o Mercúrio por completo:
+A seção acima ("Ulisses entra na importação automática de 5h") e o
+"Estado atual: LIBERADO" documentado em `scraper/ulisses-api.js`
+descreviam a API como uma forma de "bypassar" o Cloudflare porque "é uma
+chamada HTTPS pura, não navegação de browser" — **essa premissa estava
+ERRADA**, descoberta ao tentar construir um botão dedicado pra disparar
+só essa sincronização via GitHub Actions (pedido do usuário: "o botão
+deveria invocar a API do Ulisses e atualizar os eventos e demais
+dados"). **Confirmado por 2 disparos reais, 2 bloqueios idênticos**:
 
-- **`executarSomenteUlissesApi()`** (`scraper/mercurio.js`) — branch NOVO
-  no topo de `main()`, acionado por `SOMENTE_ULISSES_API=true` (env var):
-  sai ANTES de ler qualquer credencial do Mercúrio. Abre só `pageCrm`
-  (pilota a tela de Importar do CRM publicado — mesma função de sempre,
-  `sincronizarInscricoesFilialViaApi()`), nunca a `page` do Mercúrio
-  (sem `httpCredentials`, sem login nenhum nele). Chama
-  `sincronizarEventosUlissesApi()` 1x (catálogo, todas as filiais +
-  Setor Universitário) e, por filial (respeitando o mesmo filtro
-  `FILTRO_FILIAL`/núcleo distintivo de sempre), `sincronizarInscricoesFilialViaApi()`.
-  Reaproveita `verificarRodadaJaEmAndamento()` (mesmo lock de
-  `scraper_progresso`) pra nunca pisar numa rodada completa do Mercúrio
-  já em andamento na MESMA tela de Importar.
-  - **Status registrado como `sistema='ulisses'`** (não um valor novo)
-    — de propósito: "última rodada do Ulisses" no CRM passa a refletir
-    tanto um login manual (`ulisses-local.js`) quanto esta sincronização
-    via API, e as duas são igualmente "dado real atualizado". Evita
-    precisar alargar a constraint de `status_sincronizacao_automatica.sistema`.
-- **Workflow** (`.github/workflows/scraper.yml`): novo input
-  `somente_ulisses_api` (string `'true'`/vazio), repassado como env
-  `SOMENTE_ULISSES_API` pro MESMO passo `node mercurio.js` (é o mesmo
-  script, só ramifica no topo) — continua na mesma `concurrency: {group:
-  scraper-mercurio, cancel-in-progress: true}`, então um disparo cancela
-  qualquer rodada anterior (completa OU só-Ulisses) da mesma forma segura
-  de sempre.
-- **Edge Function `scraper-disparar`** (redeployada) — aceita
-  `{filial, somenteUlissesApi: true}` no corpo, repassa
-  `inputs.somente_ulisses_api: "true"` pro `workflow_dispatch`.
-- **CRM**: novo botão "Sincronizar via API do Ulisses agora"
-  (`dispararUlissesApiAgora()`, `js/importador.js`) dentro do modal
-  "Sincronização Automática" (aba Importar), abaixo do bloco de eventos/
-  Inscrições — usa o MESMO `<select>` de filial do botão do Mercúrio.
-  Acompanhamento próprio (poll de 10s, timeout de 5min — bem mais curto
-  que o do Mercúrio, 20min, já que esta rodada não visita o site do
-  Mercúrio nem faz login manual em nada). `renderizarStatusSincronizacaoScraper()`
-  ganhou um 3º parâmetro (`mensagemExtraUlisses`) pra mostrar o spinner
-  de "rodando" no bloco do Ulisses (antes só o do Mercúrio tinha essa
-  mensagem inline).
-- **A tela "Login Automático"/"Sincronização Automática" (aba Importar)
-  ganhou um texto atualizado**: deixou claro que Eventos+Inscrições já
-  são automáticos (5h + este botão) e só Comparecimento continua exigindo
-  o Chromium local (`abrirulisses://rodar`) — o texto antigo ainda dizia
-  "o Ulisses continua manual de propósito", que ficou incorreto depois da
-  liberação da API.
+```
+GET /facade/filiaisAtivas -> 403 ... "Just a moment..." (desafio do
+Cloudflare, no lugar do JSON esperado — mesmo com Bearer token válido,
+sem navegador nenhum envolvido)
+```
+
+`api.acropolebrasil.com.br` está atrás do MESMO Cloudflare que já
+bloqueava o login por navegador — e esse Cloudflare também bloqueia por
+**reputação de IP/ASN** (datacenter/cloud, ex: GitHub Actions), não só
+por detectar ausência de execução de JS numa navegação. **Consequência
+séria**: desde que essa sincronização foi "encadeada" na rodada diária
+automática do Mercúrio (2026-09-18), toda vez que ela rodou via GitHub
+Actions (inclusive o cron das 5h) ela **falhou silenciosamente** — o
+`catch` só logava no console (nunca marcava `algumaFalha`), e a mensagem
+final em `status_sincronizacao_automatica` dizia **"+ Inscrições do
+Ulisses via API ... OK" mesmo assim** (bug de verdade, incondicional,
+não checava se a etapa realmente rodou). Evidência cruzada: 0 vínculos
+`evento_leads` novos com `origem='ulisses'` desde 2026-09-19 (dia da
+última sincronização real, feita por um disparo manual filtrado por
+filial — não pelo cron).
+
+**Corrigido, com pivot de arquitetura**:
+- **`executarSomenteUlissesApi()`** (`scraper/mercurio.js`, `export`ada)
+  ganhou uma guarda no topo: se `process.env.GITHUB_ACTIONS === 'true'`,
+  falha IMEDIATO com uma mensagem clara (`registrarStatusSincronizacao`)
+  em vez de tentar e receber o HTML confuso do Cloudflare. A chamada
+  inline de dentro da rodada COMPLETA do Mercúrio (`main()`) tem a MESMA
+  guarda — pula de cara quando `GITHUB_ACTIONS=true`, e agora um sinal
+  próprio (`ulissesApiPulado`) faz a mensagem final dizer honestamente
+  "[Ulisses via API: pulado aqui]" em vez do "OK" incondicional de antes.
+  `mercurio.js` ganhou a mesma guarda de `ulisses.js`
+  (`if (process.argv[1] === fileURLToPath(import.meta.url)) main();`) —
+  necessária pra poder `import`ar `executarSomenteUlissesApi` de outro
+  script sem disparar a rodada completa do Mercúrio por efeito colateral.
+- **`.github/workflows/scraper.yml`**: o input `somente_ulisses_api`
+  (criado e removido na mesma sessão) foi tirado — não faz sentido expor
+  um controle que sempre falha. Comentário do topo do arquivo atualizado
+  pra deixar claro que NADA do Ulisses (login OU API) funciona daqui.
+- **`scraper/ulisses-local.js`** (roda na máquina de confiança, sempre
+  funcionou pra Ulisses) ganhou um passo NOVO por filial,
+  `sincronizar-inscricoes-via-api` (chama `sincronizarInscricoesFilialViaApi()`),
+  mais uma chamada global de `sincronizarEventosUlissesApi()` antes do
+  loop — agora QUALQUER rodada de `npm run ulisses-local` já sincroniza
+  eventos/Inscrições via API de carona, além do comparecimento via
+  Playwright de sempre.
+- **`scraper/sincronizar-ulisses-api-local.mjs`, NOVO** — caminho
+  dedicado e **100% HEADLESS** (sem Chromium visível, sem login manual
+  nenhum, já que é só chamada HTTPS + pilotar a tela de Importar do
+  PRÓPRIO CRM): `npm run ulisses-api-local` (ou `-- "Garavelo"` pra 1
+  filial). Só reaproveita `executarSomenteUlissesApi()` já exportada de
+  `mercurio.js` — sem duplicar lógica nenhuma. Como não depende de
+  supervisão humana, é candidato natural a uma Tarefa Agendada do
+  Windows na máquina de confiança, restaurando parte do "automático" que
+  o GitHub Actions não consegue mais entregar pra este domínio.
+- **Novo protocolo customizado `abrirulissesapi://`** (mesmo mecanismo
+  de `abrirulisses://`, ver seção própria abaixo) registrado em
+  `HKCU\Software\Classes\abrirulissesapi`, apontando pra
+  `C:\Scrapper\scraper\Sincronizar Ulisses API.bat` (`npm run ulisses-api-local`,
+  todas as filiais). O botão "Sincronizar via API do Ulisses agora" (aba
+  Importar → "Sincronização Automática") deixou de invocar a Edge
+  Function/GitHub Actions — agora é um link simples `<a href="abrirulissesapi://rodar">`,
+  igual "Importar Ulisses (abre no seu PC)". `dispararUlissesApiAgora()`/
+  `botoesDispararUlissesApi()`/todo o JS de disparo+poll criado antes
+  nesta mesma sessão foi REMOVIDO (`js/importador.js`) — sem sentido
+  manter um caminho morto que só falharia sempre. `renderizarStatusSincronizacaoScraper()`
+  voltou a ter só 2 parâmetros (o 3º, criado só pra esse botão, também
+  foi removido).
+- **Testado ao vivo, com sucesso, direto de `C:\Scrapper`** (IP
+  residencial): `node sincronizar-ulisses-api-local.mjs "Garavelo"` — 0
+  bloqueio Cloudflare, catálogo sincronizado (9 eventos atualizados),
+  1300 leads importados via `csvInscricoes`, 21 leads auto-vinculados a
+  eventos a partir do histórico. Confirma que a API funciona perfeitamente
+  bem — só nunca pode ser chamada a partir de um IP de datacenter.
+- **Lição pro projeto**: "não é navegação de browser" nunca é garantia
+  suficiente de que um Cloudflare vai deixar passar — WAFs modernos
+  também bloqueiam por reputação de IP/ASN, independente do tipo de
+  chamada. Qualquer integração nova com `acropolebrasil.com.br` (ou
+  qualquer subdomínio dele) precisa ser testada de verdade a partir do
+  AMBIENTE REAL onde vai rodar (aqui, GitHub Actions) antes de assumir
+  que "funciona" — testar só localmente (`C:\Scrapper`) não basta.
 
 ### Origem dos vínculos evento_leads — 'ulisses' vs 'crm' (2026-09-21)
 

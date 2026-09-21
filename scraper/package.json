@@ -12,6 +12,7 @@
     "capturar-eventos-centralizados": "node --env-file-if-exists=.env capturar-eventos-centralizados.js",
     "corrigir-datas-inscricao-publica": "node --env-file-if-exists=.env corrigir-datas-inscricao-publica.js",
     "testar-ulisses-api": "node --env-file-if-exists=.env testar-ulisses-api.js",
+    "ulisses-api-local": "node sincronizar-ulisses-api-local.mjs",
     "run": "node run.js"
   },
   "dependencies": {

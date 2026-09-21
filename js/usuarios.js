@@ -194,8 +194,40 @@ async function criarUsuarioCrm() {
     await carregarUsuariosCrm();
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+// Bug real relatado pelo usuário (2026-09-21): o ícone de "Tarefas" não
+// aparecia pro admin, MESMO com `modulos` já atualizado no banco
+// (confirmado consultando direto) — porque `modulos`/`eh_admin`/
+// `equipe_id` só eram gravados no localStorage NO MOMENTO DO LOGIN
+// (`tentarAcesso()`, js/acesso.js); liberar um módulo novo pra uma conta
+// que já estava logada só aparecia depois de deslogar/logar de novo.
+// Corrigido: a cada carregamento da página com sessão já salva, busca de
+// novo o registro ATUAL do usuário e atualiza o localStorage ANTES de
+// aplicar as permissões — self-heal automático, sem precisar relogar.
+// Best-effort: se a busca falhar (rede fora, etc.), mantém a sessão salva
+// como estava em vez de travar o boot da página. Se a conta foi
+// desativada enquanto a sessão estava aberta, desloga na hora.
+async function reavaliarPermissoesUsuarioLogado() {
+    const usuario = usuarioLogado();
+    if (!usuario || !usuario.id) return;
+    try {
+        const { data, error } = await window.supabaseClient
+            .from('usuarios_crm')
+            .select('id, nome, modulos, eh_admin, ativo, equipe_id, equipes(nome)')
+            .eq('id', usuario.id)
+            .maybeSingle();
+        if (error || !data) return;
+        if (!data.ativo) { sairDoCrm(); return; }
+        localStorage.setItem(CHAVE_USUARIO_LOGADO, JSON.stringify({
+            id: data.id, nome: data.nome, modulos: data.modulos || [], ehAdmin: !!data.eh_admin,
+            equipeId: data.equipe_id || null, equipeNome: (data.equipes && data.equipes.nome) || null,
+        }));
+    } catch { /* best-effort — mantém a sessão salva como estava */ }
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
     // Só aplica de cara se já tiver login salvo — se não tiver, quem
     // aplica é tentarAcesso() (js/acesso.js) depois do login.
-    if (typeof usuarioLogado === 'function' && usuarioLogado()) aplicarPermissoesModulosUsuario();
+    if (typeof usuarioLogado !== 'function' || !usuarioLogado()) return;
+    await reavaliarPermissoesUsuarioLogado();
+    aplicarPermissoesModulosUsuario();
 });

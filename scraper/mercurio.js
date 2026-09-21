@@ -26,6 +26,7 @@ import { importarNoCrm } from './importar-no-crm.js';
 import { sincronizarEventosUlissesApi, sincronizarInscricoesFilialViaApi, resolverFilialIdUlisses } from './importar-ulisses-api.js';
 import { filiaisAtivas as filiaisAtivasUlisses } from './ulisses-api.js';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const URL_LOGIN = 'https://mercurio.oinabn.com.br/';
 const URL_FUNCOES = 'https://mercurio.oinabn.com.br/ger_frame.php';
@@ -1648,11 +1649,30 @@ async function verificarRodadaJaEmAndamento() {
 // sempre) é aberta. Acionado via `SOMENTE_ULISSES_API=true` (env var —
 // ver .github/workflows/scraper.yml + supabase/functions/scraper-disparar),
 // nunca pelo cron diário (que sempre quer a rodada completa).
-async function executarSomenteUlissesApi() {
+export async function executarSomenteUlissesApi() {
     let browser;
     let pageCrm;
     let algumaFalha = false;
     try {
+        // GRAVÍSSIMO, confirmado por 2 testes reais (2026-09-21): esta
+        // função NUNCA funciona rodando no GitHub Actions —
+        // api.acropolebrasil.com.br está atrás do MESMO Cloudflare que já
+        // bloqueava login por navegador, e o bloqueio também pega uma
+        // chamada HTTPS pura com token Bearer válido (não é só "não
+        // navegar com um browser real" que escapa dele, como se assumia
+        // antes). Resposta real: `GET /facade/filiaisAtivas -> 403 ...
+        // "Just a moment..."` — a página de desafio do Cloudflare, no
+        // lugar do JSON esperado. Falha RÁPIDO e CLARO em vez de deixar a
+        // chamada real acontecer e devolver um erro HTML confuso — esta
+        // sincronização só funciona a partir de uma máquina de confiança
+        // (IP residencial), ver scraper/sincronizar-ulisses-api-local.mjs.
+        if (process.env.GITHUB_ACTIONS === 'true') {
+            const msg = 'api.acropolebrasil.com.br bloqueia chamadas vindas do GitHub Actions (Cloudflare, confirmado 2026-09-21 — mesmo bloqueio do login por navegador, mesmo sendo uma chamada HTTPS pura com token). Rode "npm run ulisses-api-local" na máquina de confiança em vez de disparar isto pelo GitHub Actions.';
+            console.error(`[ulisses-api] ${msg}`);
+            await registrarStatusSincronizacao('ulisses', 'GLOBAL', false, msg);
+            return;
+        }
+
         const rodadaAtiva = await verificarRodadaJaEmAndamento();
         if (rodadaAtiva) {
             const msg = `Já existe uma rodada em andamento (filial "${rodadaAtiva.filial}", etapa "${rodadaAtiva.etapa}") — abortando esta rodada "só Ulisses via API" pra não pisar na tela de Importar do CRM ao mesmo tempo que outra sessão. Tente de novo depois que a outra terminar.`;
@@ -1829,13 +1849,34 @@ async function main() {
         // Best-effort: falha aqui não impede o resto da rodada do
         // Mercúrio nem a importação de Inscrições por CSV manual de
         // sempre continuar funcionando.
+        // GRAVÍSSIMO, confirmado por 2 testes reais (2026-09-21): esta
+        // chamada NUNCA funciona rodando aqui (GitHub Actions) —
+        // api.acropolebrasil.com.br está atrás do MESMO Cloudflare que já
+        // bloqueava o login por navegador, e o bloqueio TAMBÉM pega uma
+        // chamada HTTPS pura com token Bearer válido (não escapa dele só
+        // por "não ser navegação de browser", como se assumia antes ao
+        // integrar isto na rodada automática). Resposta real recebida:
+        // `GET /facade/filiaisAtivas -> 403 ... "Just a moment..."` — nem
+        // chega a virar JSON. Nem tenta mais (evita gastar tempo/gerar um
+        // erro confuso todo dia à toa) — pulado sozinho e SINALIZADO no
+        // status final (`ulissesApiPulado`), pra nunca mais reportar "OK"
+        // quando na real não sincronizou nada. Roda de verdade a partir de
+        // `npm run ulisses-api-local` (ou dentro de `ulisses-local.js`),
+        // na máquina de confiança — ver CLAUDE.md.
         let filiaisUlissesApi = null;
-        try {
-            filiaisUlissesApi = await filiaisAtivasUlisses();
-            const resumoEventosUlisses = await sincronizarEventosUlissesApi();
-            console.log('[ulisses-api] Catálogo de eventos sincronizado:', resumoEventosUlisses);
-        } catch (e) {
-            console.error('[ulisses-api] Falha ao sincronizar catálogo de eventos via API (não impede o resto da rodada):', e.message);
+        let ulissesApiPulado = false;
+        if (process.env.GITHUB_ACTIONS === 'true') {
+            ulissesApiPulado = true;
+            console.warn('[ulisses-api] Pulado (GitHub Actions é bloqueado pelo Cloudflare pra este domínio) — rode "npm run ulisses-api-local" na máquina de confiança.');
+        } else {
+            try {
+                filiaisUlissesApi = await filiaisAtivasUlisses();
+                const resumoEventosUlisses = await sincronizarEventosUlissesApi();
+                console.log('[ulisses-api] Catálogo de eventos sincronizado:', resumoEventosUlisses);
+            } catch (e) {
+                ulissesApiPulado = true;
+                console.error('[ulisses-api] Falha ao sincronizar catálogo de eventos via API (não impede o resto da rodada):', e.message);
+            }
         }
 
         let algumaFalha = false;
@@ -1993,9 +2034,17 @@ async function main() {
 
         const sufixoFiltro = filtro ? ` (filtro: "${filtro}")` : '';
         const sufixoModo = modoCompleto ? ' [MODO COMPLETO]' : '';
+        // Ulisses via API SEMPRE pulado aqui (GitHub Actions é bloqueado
+        // pelo Cloudflare pra esse domínio, ver comentário acima) — a
+        // mensagem final não pode mais dizer "Inscrições do Ulisses via
+        // API ... OK" incondicionalmente (bug real: dizia isso mesmo
+        // quando a chamada tinha silenciosamente falhado/sido pulada).
+        const sufixoUlissesApi = ulissesApiPulado
+            ? ' [Ulisses via API: pulado aqui — roda "npm run ulisses-api-local" na máquina de confiança]'
+            : ' + Inscrições do Ulisses via API (já sincronizados no CRM)';
         await registrarStatusSincronizacao('mercurio', null, !algumaFalha, algumaFalha
-            ? `Login OK, mas 1+ exportação (Ativos/Inativos, Aniversariantes ou Inscrições do Ulisses via API) falhou — ver logs e prints do workflow.${sufixoFiltro}${sufixoModo}`
-            : `Login + exportação de Ativos/Inativos + Aniversariantes + Inscrições do Ulisses via API (já sincronizados no CRM) OK para ${cadastros.length} filial(is)${sufixoFiltro}${sufixoModo} — ${totalRecuperadosGeral} recuperação(ões) detectada(s), ${totalEnderecosGeral} endereço(s) atualizado(s).`);
+            ? `Login OK, mas 1+ exportação (Ativos/Inativos ou Aniversariantes) falhou — ver logs e prints do workflow.${sufixoFiltro}${sufixoModo}${sufixoUlissesApi}`
+            : `Login + exportação de Ativos/Inativos + Aniversariantes${sufixoUlissesApi} OK para ${cadastros.length} filial(is)${sufixoFiltro}${sufixoModo} — ${totalRecuperadosGeral} recuperação(ões) detectada(s), ${totalEnderecosGeral} endereço(s) atualizado(s).`);
 
         // Roda sempre, mesmo se alguma filial falhou acima — o lembrete de
         // rodar o Ulisses importa MAIS ainda quando algo deu errado.
@@ -2041,4 +2090,10 @@ async function tratarCancelamento(sinal) {
 process.on('SIGINT', () => tratarCancelamento('SIGINT'));
 process.on('SIGTERM', () => tratarCancelamento('SIGTERM'));
 
-main();
+// Guarda (mesmo padrão de scraper/ulisses.js) — sem isso, importar
+// `executarSomenteUlissesApi` de outro script (ver
+// scraper/sincronizar-ulisses-api-local.mjs) também dispararia esta
+// main() completa do Mercúrio por cima, só por efeito colateral do import.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+    main();
+}

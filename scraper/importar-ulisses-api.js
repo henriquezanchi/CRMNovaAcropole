@@ -5,12 +5,24 @@
 // centralizadamente pra toda a região de Goiânia — ver CLAUDE.md).
 //
 // Por que via API e não Playwright (scraper/ulisses.js/ulisses-local.js):
-// o bloqueio de sempre era o Cloudflare barrando qualquer NAVEGAÇÃO
-// automatizada vinda de IP de datacenter — mas a API é só uma chamada
-// HTTPS autenticada (OAuth2 Client Credentials), sem navegador nenhum, e
-// não passa por esse Cloudflare. Isso é o que finalmente permite rodar
-// Ulisses dentro do MESMO job do GitHub Actions que já roda o Mercúrio
-// sozinho, sem precisar de login manual.
+// é bem mais simples/confiável que pilotar a tela do Ulisses (sem
+// depender de seletor/HTML frágil), e cobre Inscrições+catálogo de
+// eventos sem precisar de login manual nenhum.
+//
+// CORREÇÃO GRAVE (2026-09-21): a premissa original aqui era "a API é só
+// uma chamada HTTPS autenticada, sem navegador, então não passa pelo
+// Cloudflare que bloqueia IP de datacenter" — **isso estava ERRADO**,
+// confirmado por 2 disparos reais via GitHub Actions, 2 bloqueios
+// idênticos (`GET /facade/filiaisAtivas -> 403 ... "Just a moment..."`,
+// a mesma página de desafio do Cloudflare, mesmo com Bearer token
+// válido). `api.acropolebrasil.com.br` também bloqueia por reputação de
+// IP/ASN (datacenter/cloud), não só por detectar navegação sem JS. Por
+// isso este módulo (embora continue funcionando perfeitamente bem)
+// NUNCA deve ser chamado de dentro do GitHub Actions — só da máquina de
+// confiança, via `scraper/ulisses-local.js` (de carona, junto com o
+// comparecimento) ou `scraper/sincronizar-ulisses-api-local.mjs`
+// (dedicado, headless, sem login nenhum). Ver CLAUDE.md, seção
+// "CORREÇÃO GRAVE... a API do Ulisses TAMBÉM é bloqueada".
 //
 // LIMITAÇÃO REAL, confirmada testando ao vivo (2026-09-18): o endpoint
 // que traria comparecimento de verdade (`GET /facade/emails/{eventoId}`)
