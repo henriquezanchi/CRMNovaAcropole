@@ -1509,12 +1509,29 @@ async function vincularEventoLeadsAutomaticamente(filial, leads) {
 
         // Busca o que já existe pra esses evento_id (todos de uma vez, não
         // 1 query por vínculo) — decide inserir vs. atualizar por vínculo.
-        const { data: existentesData, error: erroExistentes } = await window.supabaseClient
-            .from('evento_leads')
-            .select('id, evento_id, pessoaIdentificador, origem, resposta_convite')
-            .in('evento_id', [...eventoIdsEnvolvidos]);
-        if (erroExistentes) { logImport('Aviso: não foi possível verificar vínculos já existentes — ' + erroExistentes.message, 'warn'); return; }
-        const existentePorChave = new Map((existentesData || []).map(e => [`${e.evento_id}:${e["pessoaIdentificador"]}`, e]));
+        // PAGINADO (1000 em 1000): o PostgREST trunca em 1000 linhas por
+        // padrão, mesmo pedindo mais — um evento só (ex: uma campanha
+        // grande de convite em massa) já pode ter 500+ vínculos, e a
+        // soma de vários eventos do lote facilmente passa de 1000. Bug
+        // real confirmado em produção (2026-09-21, Setor Oeste): sem
+        // paginação, 4 vínculos 'crm' antigos de um evento com 496
+        // linhas nunca apareciam no resultado (cortados pelo limite),
+        // então o código os tratava como "novo" e o upsert com
+        // `ignoreDuplicates` simplesmente os pulava — nunca eram
+        // promovidos pra 'ulisses', SEM erro nenhum aparecer.
+        const existentesData = [];
+        const TAM_PAGINA_EXISTENTES = 1000;
+        for (let de = 0; ; de += TAM_PAGINA_EXISTENTES) {
+            const { data: pagina, error: erroExistentes } = await window.supabaseClient
+                .from('evento_leads')
+                .select('id, evento_id, pessoaIdentificador, origem, resposta_convite')
+                .in('evento_id', [...eventoIdsEnvolvidos])
+                .range(de, de + TAM_PAGINA_EXISTENTES - 1);
+            if (erroExistentes) { logImport('Aviso: não foi possível verificar vínculos já existentes — ' + erroExistentes.message, 'warn'); return; }
+            existentesData.push(...(pagina || []));
+            if (!pagina || pagina.length < TAM_PAGINA_EXISTENTES) break;
+        }
+        const existentePorChave = new Map(existentesData.map(e => [`${e.evento_id}:${e["pessoaIdentificador"]}`, e]));
 
         const paraInserir = [];
         const paraAtualizar = []; // {id, patch}
