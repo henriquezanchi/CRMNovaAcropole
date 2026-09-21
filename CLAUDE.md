@@ -4774,9 +4774,22 @@ precisar mexer em nada do lado do agendamento/Edge Functions.
     de nome dinâmico (não é uma lista fixa de 4 IDs hardcoded) — busca
     entre TODAS as filiais do sistema deles (140+, nacional) por núcleo
     distintivo batendo com `labelBotaoLandingPage`. Isso significa que
-    uma filial nova (e.g. se "Goiânia II" um dia bater o nome certo, ou
-    uma 6ª filial for criada) entra automaticamente, sem precisar editar
-    código — só não escolhe se a busca for ambígua (0 ou 2+ candidatos).
+    uma filial nova entra automaticamente, sem precisar editar código —
+    só não escolhe se a busca for ambígua (0 ou 2+ candidatos).
+    **Bug real, achado pelo usuário perguntando por que "Goiânia II"
+    nunca sincronizava (2026-09-21)**: o núcleo distintivo do NOSSO nome
+    ("Goiânia II") sobra `"II"` (numeral romano); o núcleo do rótulo do
+    Ulisses (`labelBotaoLandingPage = "Goiânia - Goiania 2"`, filialId
+    65) sobra `"2"` (numeral arábico) — nunca batem por igualdade nem
+    substring, então essa filial ficava pra sempre sem correspondência,
+    mesmo com o `filialId` certo já mapeado e documentado (ver tabela
+    acima). Corrigido com `MAPEAMENTO_FILIAL_ID_CONHECIDO` — um mapa de
+    exceções explícitas (checado ANTES do algoritmo genérico, pelo nome
+    EXATO da nossa filial), só pra correspondências já confirmadas contra
+    a API que o algoritmo nunca resolveria sozinho (mesmo espírito de
+    `FILIAL_ID_SETOR_UNIVERSITARIO`, hardcoded por bom motivo). Testado
+    ao vivo: `sincronizar-ulisses-api-local.mjs -- "Goiânia II"` importou
+    865 leads com sucesso, sem o aviso de "sem correspondência".
 - **Encadeamento em `scraper/mercurio.js` `main()`**: `sincronizarEventosUlissesApi()`
   roda 1x, ANTES do loop de filiais (Setor Universitário "abastece"
   várias filiais de uma vez, então tem que existir antes de qualquer

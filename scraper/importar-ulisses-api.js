@@ -78,12 +78,30 @@ function nucleoDistintivoFilialApi(nome) {
     return normalizarTextoFilialApi(nome).replace(/\b(GOIANIA|GOIAS|NOVA ACROPOLE|MT|GO)\b/g, '').replace(/\s+/g, ' ').trim();
 }
 
+// Correspondências CONHECIDAS que a comparação por núcleo distintivo
+// (abaixo) nunca resolve sozinha — descoberto 2026-09-21 (usuário
+// perguntou por que "Goiânia II" nunca sincroniza via API): o núcleo do
+// nosso lado sobra "II" (numeral romano), o do lado do Ulisses sobra "2"
+// (numeral arábico — `labelBotaoLandingPage` = "Goiânia - Goiania 2"),
+// e "II"/"2" nunca batem por igualdade nem substring. Confirmado contra
+// a API na hora: `filialId=65` é o ÚNICO candidato existente pra essa
+// filial, sem ambiguidade nenhuma — só não seria achado pelo algoritmo
+// genérico. Checado pelo NOME EXATO da nossa filial (não normalizado),
+// ANTES do algoritmo — só resolve este caso pontual já confirmado,
+// nunca "adivinha" uma correspondência nova.
+const MAPEAMENTO_FILIAL_ID_CONHECIDO = {
+    'Goiânia II': 65,
+};
+
 // Acha o filialId do Ulisses pra 1 filial nossa, comparando o núcleo
 // distintivo do nome contra `labelBotaoLandingPage` de TODAS as filiais
 // do sistema deles (`filiaisAtivas()`, 140+ filiais nacionais). Não
 // escolhe se houver ambiguidade (0 ou 2+ candidatos) — melhor não
 // sincronizar do que sincronizar a filial errada.
 function resolverFilialIdUlisses(nomeFilialCrm, filiaisUlisses) {
+    if (Object.prototype.hasOwnProperty.call(MAPEAMENTO_FILIAL_ID_CONHECIDO, nomeFilialCrm)) {
+        return MAPEAMENTO_FILIAL_ID_CONHECIDO[nomeFilialCrm];
+    }
     const alvo = nucleoDistintivoFilialApi(nomeFilialCrm);
     if (!alvo) return null;
     const candidatos = filiaisUlisses.filter(f => {
