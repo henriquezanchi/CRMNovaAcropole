@@ -1519,6 +1519,14 @@ async function vincularEventoLeadsAutomaticamente(filial, leads) {
         // então o código os tratava como "novo" e o upsert com
         // `ignoreDuplicates` simplesmente os pulava — nunca eram
         // promovidos pra 'ulisses', SEM erro nenhum aparecer.
+        // `.order('id')` é OBRIGATÓRIO pra paginação por `.range()` dar
+        // certo — sem isso, a ordem entre uma página e outra não é
+        // garantida (mesma lição já documentada no projeto pra
+        // carregarLeads()/etc.), e algumas linhas podem nunca aparecer
+        // em NENHUMA página. Foi exatamente essa falta que impediu o fix
+        // acima de funcionar na 1ª tentativa (2026-09-21) — paginação
+        // "às cegas" sem ordenação, achando que só faltava dividir em
+        // páginas.
         const existentesData = [];
         const TAM_PAGINA_EXISTENTES = 1000;
         for (let de = 0; ; de += TAM_PAGINA_EXISTENTES) {
@@ -1526,6 +1534,7 @@ async function vincularEventoLeadsAutomaticamente(filial, leads) {
                 .from('evento_leads')
                 .select('id, evento_id, pessoaIdentificador, origem, resposta_convite')
                 .in('evento_id', [...eventoIdsEnvolvidos])
+                .order('id', { ascending: true })
                 .range(de, de + TAM_PAGINA_EXISTENTES - 1);
             if (erroExistentes) { logImport('Aviso: não foi possível verificar vínculos já existentes — ' + erroExistentes.message, 'warn'); return; }
             existentesData.push(...(pagina || []));
@@ -2011,7 +2020,8 @@ async function confirmarEnviarImportacao() {
     }
 
     logImport(`Importação concluída! ${enviados} leads enviados para "${resultadoImportacao.filial}".`, 'ok');
-    if (label) label.innerText = 'Concluído!';
+    // NÃO marca "Concluído!" aqui ainda — ver bug real abaixo.
+    if (label) label.innerText = `${enviados} enviados — vinculando eventos...`;
 
     if (typeof registrarLogAtividade === 'function') {
         registrarLogAtividade('importacao', {
@@ -2035,6 +2045,24 @@ async function confirmarEnviarImportacao() {
     if (typeof detectarLeadsATratar === 'function') {
         await detectarLeadsATratar(resultadoImportacao.filial, logImport);
     }
+
+    // Bug real GRAVÍSSIMO, achado pelo usuário (2026-09-21, Setor Oeste —
+    // "esse pessoa já estava inscrito antes", 4 vínculos reais nunca
+    // promovidos de 'crm' pra 'ulisses'): o scraper (importar-no-crm.js)
+    // pilota esta tela e espera `#importProgressLabel` virar "Concluído!"
+    // como sinal de "terminou, pode seguir pro próximo passo" — mas esse
+    // texto era gravado ANTES de vincularEventoLeadsAutomaticamente()/
+    // detectarLeadsATratar() rodarem (só depois do upsert de leads). O
+    // scraper via "Concluído!", seguia adiante (fechava o browser no fim
+    // do script), e isso DERRUBAVA a página no meio da promoção
+    // 'crm'->'ulisses' — que roda 1 UPDATE por vez, sequencial, e pode
+    // levar segundos num evento com centenas de convidados. Quem estava
+    // mais adiante na fila nunca era promovido, SEM erro nenhum (a
+    // conexão simplesmente morre com a página). Corrigido: "Concluído!"
+    // só é marcado AGORA, depois de TUDO (vincular + leads a tratar) já
+    // ter terminado de verdade — o scraper só segue quando isso for
+    // genuinamente verdade.
+    if (label) label.innerText = 'Concluído!';
 
     // Se a filial importada é a que está aberta agora, recarrega o Kanban
     if (typeof filialAtual !== 'undefined' && resultadoImportacao.filial === filialAtual && typeof carregarLeads === 'function') {

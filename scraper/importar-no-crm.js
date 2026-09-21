@@ -130,7 +130,14 @@ export async function importarNoCrm(page, filial, { caminhoAtivos, caminhoInativ
     await btnConfirmar.waitFor({ timeout: 120000 });
     await btnConfirmar.click();
 
-    const textoFinal = await esperarTexto(page, '#importProgressLabel', /Concluído!|Erro/, 180000);
+    // Timeout alargado (2026-09-21, era 180000): "Concluído!" agora só
+    // aparece depois de vincularEventoLeadsAutomaticamente()/
+    // detectarLeadsATratar() também terminarem (ver bug real corrigido em
+    // js/importador.js — fechar a página antes disso derrubava promoções
+    // 'crm'->'ulisses' no meio do caminho, sem erro nenhum), não só depois
+    // do upload dos leads — filiais grandes (Jardim América, 2700+ leads)
+    // precisam de mais folga.
+    const textoFinal = await esperarTexto(page, '#importProgressLabel', /Concluído!|Erro/, 300000);
     const logCompleto = await page.locator('#importLog').innerText().catch(() => '');
 
     if (/Erro/.test(textoFinal)) {
