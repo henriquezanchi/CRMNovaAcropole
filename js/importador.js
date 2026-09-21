@@ -1444,14 +1444,34 @@ function renderizarPreviaImportacao(resultado) {
 // VÍNCULO AUTOMÁTICO evento_leads (Agenda) A PARTIR DO HISTÓRICO
 // ==========================================
 // Cruza historico_eventos de cada lead importado contra a tabela `eventos`
-// da mesma filial (nome normalizado + mesma data) e cria a linha em
-// `evento_leads` sozinho, com resposta_convite='confirmado' — registrar-se
-// no Ulisses é um sinal de intenção real, mais forte que um convite
-// "pendente" que ainda não foi respondido. `ignoreDuplicates: true` no
-// upsert garante que isso NUNCA sobrescreve uma linha que o time já
-// editou na mão (ex: marcou "recusado" depois de ligar) — só CRIA a
-// linha quando ela ainda não existe. Best-effort: erro aqui nunca deve
-// travar o resto da importação (mesma filosofia de classificar-temas).
+// da mesma filial (nome normalizado + mesma data) e cria/ATUALIZA a linha
+// em `evento_leads` — registrar-se no Ulisses é um sinal de intenção
+// real, mais forte que um convite "pendente" que ainda não foi
+// respondido. Best-effort: erro aqui nunca deve travar o resto da
+// importação (mesma filosofia de classificar-temas).
+//
+// Bug real GRAVE, achado pelo usuário (2026-09-21, filial Setor Oeste —
+// "esse pessoa já estava inscrito antes", conferido contra a Recepção do
+// Ulisses de verdade: 12 pré-inscritos reais, só 8 apareciam como
+// origem='ulisses' no CRM): a versão anterior fazia só um
+// `upsert(..., {ignoreDuplicates: true})` — se um lead já tinha um
+// vínculo `origem='crm'` (convite manual/em massa via wa.me, criado
+// ANTES de ele se inscrever de verdade), o `ignoreDuplicates` pulava a
+// linha inteira, e ela NUNCA era promovida pra `origem='ulisses'` — a
+// pessoa continuava contada como "só convite nosso" pra sempre, mesmo
+// depois de se inscrever de verdade. Confirmado com os 4 casos reais
+// exatos (Setor Oeste, evento 418): convidados por wa.me em 2026-09-17,
+// inscritos de verdade no Ulisses depois, ficaram travados em
+// `origem='crm'` até este fix.
+// Corrigido separando em 2 caminhos: quem NÃO tem vínculo ainda é
+// inserido normal (`origem='ulisses', resposta_convite='confirmado'`);
+// quem JÁ tem vínculo com `origem='crm'` é ATUALIZADO pra `origem='ulisses'`
+// — a inscrição real é um fato objetivo, independente de quem criou o
+// convite — mas só sobrescreve `resposta_convite` se ainda estiver no
+// padrão `'pendente'` do convite (nunca sobrescreve `'confirmado'`/
+// `'recusado'` que o time já tenha registrado à mão depois de uma
+// ligação real — preserva o julgamento humano). Vínculo que já é
+// `origem='ulisses'` não é tocado (já está correto).
 async function vincularEventoLeadsAutomaticamente(filial, leads) {
     try {
         const { data: eventosFilial, error: erroEventos } = await window.supabaseClient
@@ -1470,6 +1490,7 @@ async function vincularEventoLeadsAutomaticamente(filial, leads) {
 
         const vinculos = [];
         const jaAdicionado = new Set(); // evita duplicar dentro do mesmo lote (unique de evento_id+pessoa)
+        const eventoIdsEnvolvidos = new Set();
         leads.forEach(lead => {
             (Array.isArray(lead.historico_eventos) ? lead.historico_eventos : []).forEach(ev => {
                 const m = String(ev.data || '').match(/^(\d{2})\/(\d{2})\/(\d{4})/);
@@ -1480,24 +1501,56 @@ async function vincularEventoLeadsAutomaticamente(filial, leads) {
                 const chaveUnica = `${eventoId}:${lead.pessoaIdentificador}`;
                 if (jaAdicionado.has(chaveUnica)) return;
                 jaAdicionado.add(chaveUnica);
-                vinculos.push({ evento_id: eventoId, pessoaIdentificador: lead.pessoaIdentificador, resposta_convite: 'confirmado', origem: 'ulisses' });
+                eventoIdsEnvolvidos.add(eventoId);
+                vinculos.push({ evento_id: eventoId, pessoaIdentificador: String(lead.pessoaIdentificador) });
             });
         });
         if (vinculos.length === 0) return;
 
+        // Busca o que já existe pra esses evento_id (todos de uma vez, não
+        // 1 query por vínculo) — decide inserir vs. atualizar por vínculo.
+        const { data: existentesData, error: erroExistentes } = await window.supabaseClient
+            .from('evento_leads')
+            .select('id, evento_id, pessoaIdentificador, origem, resposta_convite')
+            .in('evento_id', [...eventoIdsEnvolvidos]);
+        if (erroExistentes) { logImport('Aviso: não foi possível verificar vínculos já existentes — ' + erroExistentes.message, 'warn'); return; }
+        const existentePorChave = new Map((existentesData || []).map(e => [`${e.evento_id}:${e["pessoaIdentificador"]}`, e]));
+
+        const paraInserir = [];
+        const paraAtualizar = []; // {id, patch}
+        vinculos.forEach(v => {
+            const chave = `${v.evento_id}:${v.pessoaIdentificador}`;
+            const existente = existentePorChave.get(chave);
+            if (!existente) {
+                paraInserir.push({ ...v, resposta_convite: 'confirmado', origem: 'ulisses' });
+            } else if (existente.origem !== 'ulisses') {
+                const patch = { origem: 'ulisses', atualizado_em: new Date().toISOString() };
+                if (existente.resposta_convite === 'pendente') patch.resposta_convite = 'confirmado';
+                paraAtualizar.push({ id: existente.id, patch });
+            }
+            // existente.origem === 'ulisses' -> já correto, não faz nada
+        });
+
         const TAMANHO_LOTE = 500;
-        let criados = 0;
-        for (let i = 0; i < vinculos.length; i += TAMANHO_LOTE) {
-            const lote = vinculos.slice(i, i + TAMANHO_LOTE);
+        let criados = 0, promovidos = 0;
+        for (let i = 0; i < paraInserir.length; i += TAMANHO_LOTE) {
+            const lote = paraInserir.slice(i, i + TAMANHO_LOTE);
             const { data, error } = await window.supabaseClient
                 .from('evento_leads')
-                .upsert(lote, { onConflict: 'evento_id,pessoaIdentificador', ignoreDuplicates: true })
+                .insert(lote)
                 .select('id');
             if (error) { logImport('Aviso: não foi possível vincular automaticamente inscritos aos eventos da Agenda — ' + error.message, 'warn'); return; }
             criados += (data || []).length;
         }
-        if (criados > 0) {
-            logImport(`${criados} lead(s) vinculado(s) automaticamente a evento(s) da Agenda a partir do histórico (Ulisses) — visível no modal de Participantes.`, 'ok');
+        // Atualização em lote não dá pra fazer 1 request só (cada linha
+        // pode ter um patch de resposta_convite diferente) — mesmo padrão
+        // já usado em aplicarTagEmMassa()/marcarContatoWhatsAppLoteEnviado().
+        for (const { id, patch } of paraAtualizar) {
+            const { error } = await window.supabaseClient.from('evento_leads').update(patch).eq('id', id);
+            if (!error) promovidos++;
+        }
+        if (criados > 0 || promovidos > 0) {
+            logImport(`${criados} lead(s) vinculado(s) e ${promovidos} convite(s) nosso(s) promovido(s) a inscrição real, a partir do histórico (Ulisses) — visível no modal de Participantes.`, 'ok');
         }
     } catch (e) {
         logImport('Aviso: falha inesperada ao vincular eventos da Agenda automaticamente — ' + (e.message || e), 'warn');
