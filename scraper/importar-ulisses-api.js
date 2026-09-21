@@ -238,6 +238,7 @@ export async function sincronizarEventosUlissesApi() {
             // (ulisses.js), pra reaproveitar uma linha já criada pelo
             // scraper Playwright antigo com um nome ligeiramente diferente
             // (espaço a mais, capitalização, etc.) em vez de duplicar.
+            let corrigirData = false;
             if (!existente) {
                 const { data: candidatosMesmaData } = await supabaseAdmin
                     .from('eventos').select('id, hora, capacidade, imagem_url, ingresso, descricao, tipo, link_inscricao, nome')
@@ -249,10 +250,48 @@ export async function sincronizarEventosUlissesApi() {
                 }) || null;
             }
 
+            // 2º fallback: mesmo nome, FILIAL, mas DATA DIFERENTE, sem
+            // nenhum candidato na data certa — pensado pra corrigir uma
+            // linha antiga já com data ERRADA (bug histórico "data
+            // juntada do ciclo inteiro", ver corrigir-datas-inscricao-
+            // publica.js/CLAUDE.md), em vez de criar uma linha duplicada
+            // com a data certa e deixar a errada órfã com convites/
+            // inscrições já vinculados. Restrito a candidatos AINDA NÃO
+            // PASSADOS (data >= hoje) — eventos passados são
+            // legitimamente múltiplos (cada ciclo antigo é uma linha
+            // própria, ex: "Aula Experimental" repete todo mês), então
+            // corrigir a data de um passado destruiria histórico real.
+            // Só resolve com EXATAMENTE 1 candidato (mesma cautela de
+            // sempre contra ambiguidade) — achado em produção (2026-09-21,
+            // Goiânia II): "Novas turmas..." tinha uma linha futura com
+            // data errada (14/10) e nunca foi corrigida, só duplicada
+            // (08/10), fragmentando os convites já vinculados na linha
+            // antiga.
+            if (!existente) {
+                const hojeISO = dataBrasilia(agora);
+                const { data: candidatosMesmoNome } = await supabaseAdmin
+                    .from('eventos').select('id, hora, capacidade, imagem_url, ingresso, descricao, tipo, link_inscricao, nome, data')
+                    .eq('filial', filialCrmNome).gte('data', hojeISO);
+                const normNome = normalizarNomeUlisses(nome);
+                const candidatosBatendo = (candidatosMesmoNome || []).filter(c => {
+                    const d = distanciaLevenshteinUlisses(normalizarNomeUlisses(c.nome), normNome);
+                    return d <= Math.max(4, Math.round(normNome.length * 0.15));
+                });
+                if (candidatosBatendo.length === 1) {
+                    existente = candidatosBatendo[0];
+                    corrigirData = existente.data !== data;
+                }
+            }
+
             if (existente) {
                 // Nunca sobrescreve com null um campo que já tinha valor —
                 // mesmo princípio de sincronizarCatalogoEventosNoCrm().
-                await supabaseAdmin.from('eventos').update({
+                // `data`/`hora` SÓ entram no payload quando vieram do
+                // 2º fallback (`corrigirData`) — a API é autoridade sobre
+                // esse dado quando encontramos a linha errada de propósito;
+                // no caminho normal (match exato ou fuzzy na mesma data),
+                // a data já bate, então nunca precisa ser tocada.
+                const patch = {
                     hora: hora || existente.hora,
                     capacidade: capacidade ?? existente.capacidade,
                     imagem_url: imagemUrl || existente.imagem_url,
@@ -260,7 +299,12 @@ export async function sincronizarEventosUlissesApi() {
                     link_inscricao: linkInscricao || existente.link_inscricao,
                     tipo: existente.tipo || tipo,
                     ativo: true,
-                }).eq('id', existente.id);
+                };
+                if (corrigirData) {
+                    patch.data = data;
+                    console.log(`[ulisses-api] Corrigindo data de "${nome}" (${filialCrmNome}, evento id ${existente.id}): ${existente.data} -> ${data}.`);
+                }
+                await supabaseAdmin.from('eventos').update(patch).eq('id', existente.id);
                 atualizados++;
             } else {
                 await supabaseAdmin.from('eventos').insert({

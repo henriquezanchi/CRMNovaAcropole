@@ -4964,6 +4964,65 @@ filial — não pelo cron).
   AMBIENTE REAL onde vai rodar (aqui, GitHub Actions) antes de assumir
   que "funciona" — testar só localmente (`C:\Scrapper`) não basta.
 
+#### Bug real: evento duplicado quando a data antiga estava ERRADA (2026-09-21)
+
+Achado pelo usuário comparando 3 números diferentes pra "Novas turmas do
+Curso de Filosofia para Viver" em Goiânia II — o card mostrava "0
+inscritos no Ulisses" com data 14/10/2026, enquanto outra filial (mesmo
+evento) já tinha inscritos reais numa data diferente (08/10). Causa:
+`sincronizarEventosUlissesApi()` casava evento existente só por
+`filial+nome+data` EXATOS (ou nome parecido, mas só dentro da MESMA
+data) — se uma linha antiga já existia com uma data ERRADA (resíduo do
+bug histórico "data juntada do ciclo inteiro", ver
+`corrigir-datas-inscricao-publica.js` acima), a API (que sempre traz a
+data certa) nunca encontrava essa linha pra corrigir, e criava uma
+**segunda linha duplicada** com a data certa — a antiga ficava órfã,
+ainda com os convites/CRM já vinculados a ela, e o card certo (com
+inscrições reais) e o card errado (com os convites) pareciam 2 eventos
+diferentes.
+
+**Confirmado em produção**: id 656 (Goiânia II, "Novas turmas...", data
+ERRADA 14/10, 11 vínculos `origem='crm'`) e id 736 (mesma filial/nome,
+data CERTA 08/10, criada pela sincronização, 11 vínculos
+`origem='ulisses'`) — **10 dos 11 `pessoaIdentificador` eram EXATAMENTE
+os mesmos nos dois** (confirmando ser a mesma pessoa/mesmo evento,
+convidada por nós E de fato inscrita no Ulisses).
+
+**Corrigido em 2 partes**:
+1. **Código** (`sincronizarEventosUlissesApi()`, `importar-ulisses-api.js`):
+   novo 2º fallback — quando não acha por data exata nem por nome
+   parecido na mesma data, procura por nome parecido na MESMA FILIAL
+   entre eventos AINDA NÃO PASSADOS (`data >= hoje`), independente da
+   data. Só resolve com EXATAMENTE 1 candidato (mesma cautela de sempre).
+   Encontrando, **corrige a `data` da linha existente** (a API é
+   autoridade) em vez de criar uma nova — restrito a eventos futuros de
+   propósito: eventos passados legitimamente têm várias linhas com o
+   mesmo nome (cada ciclo antigo é uma ocorrência própria, ex: "Aula
+   Experimental" repete todo mês), corrigir a data de um passado
+   destruiria histórico real.
+2. **Dado já duplicado em produção** — mesclado manualmente (SQL direto):
+   os 10 vínculos em comum foram promovidos pra `origem='ulisses'` na
+   linha 656 (mantida, por ser a mais antiga), o 11º vínculo (só existia
+   na 736) foi movido pra 656, a linha 656 recebeu os campos corretos da
+   736 (data 08/10, capacidade 200, imagem, link de inscrição), e a linha
+   736 foi apagada. **Varredura em toda a base** (todas as filiais,
+   evento com `data >= hoje`) confirmou que este era o ÚNICO caso desse
+   tipo — não precisou de mais nenhuma limpeza.
+   Testado ao vivo depois do fix: rodando a sincronização de novo pra
+   Goiânia II, o evento já correto foi só ATUALIZADO (0 criados, 14
+   atualizados) — nenhuma duplicata nova.
+
+**Correção da minha própria conta errada (mesma conversa)**: eu tinha
+reportado "42 inscritos" pra "Aula Experimental" em Setor Oeste — errado,
+porque minha consulta de diagnóstico agrupou por `nome` sem also agrupar
+por `id`/`data`, somando TODOS os 11 ciclos históricos daquele nome
+(2025-01 a 2026-10) numa conta só. O card do CRM sempre mostrou o número
+certo do evento específico (ATUAL, 01/10/2026): **8 inscritos no
+Ulisses** — que bate, com uma pequena defasagem esperada (a Recepção do
+Ulisses mostrava 12 pré-inscritos na hora que o usuário conferiu,
+~1h depois da sincronização; gente nova se inscreve o tempo todo, o
+número só fica tão atual quanto a última vez que a sincronização rodou).
+
 ### Origem dos vínculos evento_leads — 'ulisses' vs 'crm' (2026-09-21)
 
 Pedido URGENTE do usuário, com 2 sintomas reais relatados: (1) "não sei
