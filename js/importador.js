@@ -1531,13 +1531,21 @@ async function vincularEventoLeadsAutomaticamente(filial, leads) {
             // existente.origem === 'ulisses' -> já correto, não faz nada
         });
 
+        // upsert com ignoreDuplicates (não insert puro) — rede de segurança
+        // contra 2 leads do MESMO lote acabarem apontando pro mesmo
+        // pessoaIdentificador final depois do redirecionamento de ID
+        // sintético (ver "Bug real #2"/"#3" no CLAUDE.md, seção do
+        // Importador) — sem isso, 1 colisão de chave única derrubava o
+        // LOTE INTEIRO (inclusive as promoções 'crm'->'ulisses' abaixo,
+        // que são uma operação separada), confirmado em produção
+        // (2026-09-21, Setor Oeste).
         const TAMANHO_LOTE = 500;
         let criados = 0, promovidos = 0;
         for (let i = 0; i < paraInserir.length; i += TAMANHO_LOTE) {
             const lote = paraInserir.slice(i, i + TAMANHO_LOTE);
             const { data, error } = await window.supabaseClient
                 .from('evento_leads')
-                .insert(lote)
+                .upsert(lote, { onConflict: 'evento_id,pessoaIdentificador', ignoreDuplicates: true })
                 .select('id');
             if (error) { logImport('Aviso: não foi possível vincular automaticamente inscritos aos eventos da Agenda — ' + error.message, 'warn'); return; }
             criados += (data || []).length;
