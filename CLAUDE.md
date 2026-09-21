@@ -288,6 +288,12 @@ migracao_tarefas.sql              → tabelas tarefas + tarefa_leads (N:N — 1 
                                      vários leads, status de conclusão por lead dentro da
                                      tarefa) — ver seção "Tarefas e Equipes"; JÁ RODADA nesta
                                      sessão via `supabase db query --linked`
+migracao_evento_leads_origem.sql  → coluna origem ('ulisses'/'crm') em evento_leads —
+                                     distingue inscrição REAL (casada a partir do Ulisses)
+                                     de pendência/convite criado por nós no CRM; ver seção
+                                     "Origem dos vínculos evento_leads"; JÁ RODADA nesta
+                                     sessão via `supabase db query --linked` (+ backfill
+                                     rodado à parte, script descartável)
 ```
 
 ## Banco de dados (Supabase)
@@ -4844,6 +4850,161 @@ precisar mexer em nada do lado do agendamento/Edge Functions.
   vai continuar precisando deles, pela limitação #1 acima. `npm run
   ulisses-local` continua sendo o caminho pra isso (rodar manualmente
   quando quiser comparecimento atualizado).
+
+#### Botão dedicado "Sincronizar via API do Ulisses agora" (2026-09-21)
+
+Pedido do usuário: o "Rodar Mercúrio Agora" já dispara a sincronização do
+Ulisses via API (ver acima), mas só de carona numa rodada COMPLETA do
+Mercúrio (login, Ativos/Inativos de cada filial, Turmas...) — pesado
+demais só pra "atualizar os eventos agora". Agora existe um caminho
+dedicado, bem mais rápido, que pula o Mercúrio por completo:
+
+- **`executarSomenteUlissesApi()`** (`scraper/mercurio.js`) — branch NOVO
+  no topo de `main()`, acionado por `SOMENTE_ULISSES_API=true` (env var):
+  sai ANTES de ler qualquer credencial do Mercúrio. Abre só `pageCrm`
+  (pilota a tela de Importar do CRM publicado — mesma função de sempre,
+  `sincronizarInscricoesFilialViaApi()`), nunca a `page` do Mercúrio
+  (sem `httpCredentials`, sem login nenhum nele). Chama
+  `sincronizarEventosUlissesApi()` 1x (catálogo, todas as filiais +
+  Setor Universitário) e, por filial (respeitando o mesmo filtro
+  `FILTRO_FILIAL`/núcleo distintivo de sempre), `sincronizarInscricoesFilialViaApi()`.
+  Reaproveita `verificarRodadaJaEmAndamento()` (mesmo lock de
+  `scraper_progresso`) pra nunca pisar numa rodada completa do Mercúrio
+  já em andamento na MESMA tela de Importar.
+  - **Status registrado como `sistema='ulisses'`** (não um valor novo)
+    — de propósito: "última rodada do Ulisses" no CRM passa a refletir
+    tanto um login manual (`ulisses-local.js`) quanto esta sincronização
+    via API, e as duas são igualmente "dado real atualizado". Evita
+    precisar alargar a constraint de `status_sincronizacao_automatica.sistema`.
+- **Workflow** (`.github/workflows/scraper.yml`): novo input
+  `somente_ulisses_api` (string `'true'`/vazio), repassado como env
+  `SOMENTE_ULISSES_API` pro MESMO passo `node mercurio.js` (é o mesmo
+  script, só ramifica no topo) — continua na mesma `concurrency: {group:
+  scraper-mercurio, cancel-in-progress: true}`, então um disparo cancela
+  qualquer rodada anterior (completa OU só-Ulisses) da mesma forma segura
+  de sempre.
+- **Edge Function `scraper-disparar`** (redeployada) — aceita
+  `{filial, somenteUlissesApi: true}` no corpo, repassa
+  `inputs.somente_ulisses_api: "true"` pro `workflow_dispatch`.
+- **CRM**: novo botão "Sincronizar via API do Ulisses agora"
+  (`dispararUlissesApiAgora()`, `js/importador.js`) dentro do modal
+  "Sincronização Automática" (aba Importar), abaixo do bloco de eventos/
+  Inscrições — usa o MESMO `<select>` de filial do botão do Mercúrio.
+  Acompanhamento próprio (poll de 10s, timeout de 5min — bem mais curto
+  que o do Mercúrio, 20min, já que esta rodada não visita o site do
+  Mercúrio nem faz login manual em nada). `renderizarStatusSincronizacaoScraper()`
+  ganhou um 3º parâmetro (`mensagemExtraUlisses`) pra mostrar o spinner
+  de "rodando" no bloco do Ulisses (antes só o do Mercúrio tinha essa
+  mensagem inline).
+- **A tela "Login Automático"/"Sincronização Automática" (aba Importar)
+  ganhou um texto atualizado**: deixou claro que Eventos+Inscrições já
+  são automáticos (5h + este botão) e só Comparecimento continua exigindo
+  o Chromium local (`abrirulisses://rodar`) — o texto antigo ainda dizia
+  "o Ulisses continua manual de propósito", que ficou incorreto depois da
+  liberação da API.
+
+### Origem dos vínculos evento_leads — 'ulisses' vs 'crm' (2026-09-21)
+
+Pedido URGENTE do usuário, com 2 sintomas reais relatados: (1) "não sei
+quem de fato se inscreveu no Ulisses, e quem faz parte da abordagem que
+estou fazendo mas ainda não se inscreveu — no Setor Oeste, o CRM indica
+500 inscritos na Aula Experimental, mas isso não reflete o Ulisses"; (2)
+"entrei em contato com uma série de leads fortes pra convidar pra Aula
+Experimental/Abertura de Turma que, na verdade, já estavam inscritos — a
+gaveta do lead não indica se essa informação veio do Ulisses ou se
+CRIAMOS essa pendência pra ela".
+
+**Causa raiz**: `evento_leads` é escrita por vários caminhos diferentes,
+misturando 2 categorias sem distinção nenhuma — (a) vínculo REAL, casado
+a partir de dado do Ulisses (`vincularEventoLeadsAutomaticamente()` em
+`js/importador.js`, casando por `historico_eventos`; e
+`sincronizarComparecimentoNoCrm()` em `scraper/ulisses.js`, casando por
+telefone/e-mail contra a Recepção) — e (b) pendência/convite criado por
+NÓS (convite manual na gaveta, vínculo manual no modal de Participantes,
+convite em massa via wa.me) — a pessoa ainda não necessariamente se
+inscreveu de verdade. `carregarResumoParticipantes()`/o card da Agenda
+somavam os dois juntos em "N leads vinculados". **Confirmado em produção,
+consultando o banco antes do fix**: o evento "Aula Experimental do Curso
+de Filosofia para Viver" em Setor Oeste tinha 5 inscritos reais no
+Ulisses e **496** vínculos criados por nós (convite em massa via wa.me,
+quase certamente) — o "500 inscritos" relatado pelo usuário batia quase
+exato com esse total, confirmando a causa.
+
+- **`evento_leads.origem`** (`migracao_evento_leads_origem.sql`, `text
+  not null default 'crm' check (origem in ('ulisses','crm'))`) — toda
+  escrita nova já marca a origem certa:
+  - `origem: 'ulisses'` — `vincularEventoLeadsAutomaticamente()`
+    (`js/importador.js`) e `sincronizarComparecimentoNoCrm()`
+    (`scraper/ulisses.js`).
+  - `origem: 'crm'` (== default) — convite manual na gaveta
+    (`confirmarConvidarEventoNaGaveta()`), vínculo manual no modal de
+    Participantes (`adicionarParticipante()`), convite em massa via
+    wa.me (`gerarLinksConviteLote()`, `js/whatsapp.js`) — todos em
+    `js/eventos.js` exceto o último.
+  - **Backfill retroativo** rodado contra produção (script descartável,
+    não faz parte do projeto): reaplica a MESMA lógica de
+    `vincularEventoLeadsAutomaticamente()` (nome normalizado + data)
+    contra o `historico_eventos` atual de cada lead já vinculado — quem
+    bate vira `'ulisses'`, o resto fica `'crm'` (já era o default).
+    Resultado real: de 8975 vínculos existentes, **4880 confirmados como
+    'ulisses'**, **3931 relabelados como 'crm'** (pendências nossas que
+    estavam contadas como inscrição real).
+- **`carregarResumoParticipantes()`** (`js/eventos.js`) — agora also
+  soma `inscritosUlisses`/`convidadosCrm` por evento (mais os campos que
+  já existiam). O card da Agenda (`renderizarListaEventos()`) mostra os
+  dois separados: "N inscrito(s) no Ulisses" (verde, `.part-inscrito-ulisses`)
+  e "N convidado(s) pelo CRM" (cinza neutro, `.part-convidado-crm`) — a
+  antiga linha genérica "N leads vinculados" foi removida (ambígua
+  demais, era exatamente a fonte da confusão).
+- **Badge de origem em todo lugar que lista um vínculo**: modal de
+  Participantes (`renderizarListaParticipantes()`) e, principalmente, a
+  gaveta "Eventos (Convites)" do lead (`renderizarEventosDoLead()` — é
+  a tela do print que o usuário mandou) — cada linha agora mostra
+  "Inscrito no Ulisses" (badge verde, ✓✓) ou "Convite do CRM" (badge
+  cinza, relógio, title explicando "ainda NÃO é inscrição confirmada no
+  Ulisses").
+- **"Inscrever no Ulisses" (manual, assistido)** — pedido do usuário na
+  mesma leva: "quero integrar a possibilidade de nós mesmos fazermos a
+  inscrição do lead no evento, se ele confirmar interesse através do
+  WhatsApp. O SDR pede a inscrição através de um botão, capta nome/
+  e-mail/telefone, e faz a inscrição manualmente no site do evento".
+  - **Por que é assistido, não automático**: a API oficial do Ulisses
+    (ver seção acima, 63 rotas mapeadas) **não tem nenhum endpoint pra
+    CRIAR uma inscrição** — só leitura + marcar comparecimento.
+    Automatizar o preenchimento do formulário público
+    (`inscricao.acropolebrasil.com.br`) via Playwright exigiria adivinhar
+    os nomes dos campos sem NUNCA ter visto o HTML real desse form —
+    contra o princípio deste projeto de nunca escrever seletor "no
+    chute" (mesma régua aplicada em toda a revisão do scraper do
+    Mercúrio/Ulisses). Por isso o caminho é assistido: o CRM capta e
+    mostra os 3 dados, abre o site oficial numa aba nova
+    (`evento.link_inscricao`), e o SDR mesmo preenche e confirma lá.
+  - **Botão "Inscrever no Ulisses"** (`abrirModalInscreverEvento()`,
+    `js/eventos.js`), ao lado de "Convidar" no cabeçalho da gaveta
+    "Eventos (Convites)" — abre `#modalInscreverEvento`: `<select>` de
+    evento (qualquer evento ainda ativo da filial, MESMO já vinculado
+    como `'crm'` — é justamente o caso de uso principal, "upgradar" uma
+    pendência nossa pra inscrição real), pré-seleciona o evento já
+    vinculado como `'crm'` mais próximo se houver, nome/e-mail/telefone
+    pré-preenchidos a partir do lead (editáveis), botão "Copiar dados"
+    (clipboard) e um link "Abrir site de inscrição" (o próprio
+    `evento.link_inscricao` — aviso se o evento não tiver esse campo
+    preenchido na Agenda).
+  - **`confirmarInscricaoManualEvento()`** — só depois de um `confirm()`
+    explícito ("já foi feita de verdade no site"), faz um `upsert` em
+    `evento_leads` com `origem:'ulisses', resposta_convite:'confirmado'`
+    — **de propósito sobrescreve** um vínculo `'crm'` já existente pra
+    aquele evento+lead (é o upgrade pretendido, não um bug). Grava
+    `log_atividade` (`acao='inscricao_manual_ulisses'`).
+- **Testado ao vivo contra produção** (Playwright, cópia local do CRM,
+  Supabase real, filial Goiânia - Setor Oeste): o card da "Aula
+  Experimental" mostrou corretamente "5 inscritos no Ulisses" / "496
+  convidados pelo CRM" (bate com a consulta direta no banco); a gaveta de
+  um lead com vínculo `'crm'` mostrou o badge "Convite do CRM"; o modal
+  "Inscrever no Ulisses" abriu com nome pré-preenchido e o link de
+  inscrição resolvendo pra `inscricao.acropolebrasil.com.br/?eventoId=...`
+  corretamente — fechado sem confirmar (evita gravar dado de teste em
+  produção).
 
 ### Lembrete de importação do Ulisses (WhatsApp pro admin)
 

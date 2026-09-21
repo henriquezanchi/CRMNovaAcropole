@@ -67,7 +67,12 @@ async function carregarEventos() {
 }
 
 function resumoParticipantesVazio() {
-    return { total: 0, confirmados: 0, recusados: 0, pendentes: 0, compareceram: 0, matriculados: 0, naoCompareceuConfirmados: 0 };
+    // inscritosUlisses/convidadosCrm — pedido do usuário (2026-09-21):
+    // distinguir quem de fato JÁ SE INSCREVEU no Ulisses (origem='ulisses')
+    // de quem é só uma pendência/convite criado por nós (origem='crm'),
+    // já que os dois eram somados juntos em "N leads vinculados" e isso
+    // confundiu SDRs ligando pra gente que já estava inscrita de verdade.
+    return { total: 0, confirmados: 0, recusados: 0, pendentes: 0, compareceram: 0, matriculados: 0, naoCompareceuConfirmados: 0, inscritosUlisses: 0, convidadosCrm: 0 };
 }
 
 // Uma única query pra todos os eventos da filial (não 1 por card) — só a
@@ -113,7 +118,7 @@ async function carregarResumoParticipantes(eventos) {
 
     const { data, error } = await window.supabaseClient
         .from(NOME_TABELA_EVENTO_LEADS)
-        .select('evento_id, resposta_convite, compareceu, matriculado')
+        .select('evento_id, resposta_convite, compareceu, matriculado, origem')
         .in('evento_id', idsParaConsulta);
 
     if (error) {
@@ -134,6 +139,8 @@ async function carregarResumoParticipantes(eventos) {
         // Confirmou presença mas não compareceu — o time precisa entrar em
         // contato de novo (ver moverLeadsParaRecontato() abaixo).
         if (row.resposta_convite === 'confirmado' && row.compareceu === false) r.naoCompareceuConfirmados++;
+        if (row.origem === 'ulisses') r.inscritosUlisses++;
+        else r.convidadosCrm++;
     });
 
     idsNormais.forEach(id => {
@@ -365,7 +372,8 @@ function renderizarListaEventos() {
                     ${ev.descricao ? `<div class="evento-descricao">${escapeHTML(ev.descricao)}</div>` : ''}
                     ${resumo && resumo.total > 0 ? `
                         <div class="evento-participantes-resumo">
-                            <i class="fa-solid fa-users"></i> ${resumo.total} lead${resumo.total === 1 ? '' : 's'} vinculado${resumo.total === 1 ? '' : 's'}
+                            <i class="fa-solid fa-check-double" title="Inscrição real, confirmada pelo Ulisses"></i> <span class="part-inscrito-ulisses">${resumo.inscritosUlisses} inscrito${resumo.inscritosUlisses === 1 ? '' : 's'} no Ulisses</span>
+                            ${resumo.convidadosCrm ? ` <span class="part-convidado-crm" title="Convite/pendência criada por nós — ainda NÃO é inscrição confirmada no Ulisses"><i class="fa-solid fa-clock"></i> ${resumo.convidadosCrm} convidado${resumo.convidadosCrm === 1 ? '' : 's'} pelo CRM</span>` : ''}
                             ${resumo.confirmados ? ` <span class="part-confirmado">${resumo.confirmados} confirmado${resumo.confirmados === 1 ? '' : 's'}</span>` : ''}
                             ${resumo.recusados ? ` <span class="part-recusado">${resumo.recusados} recusado${resumo.recusados === 1 ? '' : 's'}</span>` : ''}
                             ${resumo.pendentes ? ` <span class="part-pendente">${resumo.pendentes} pendente${resumo.pendentes === 1 ? '' : 's'}</span>` : ''}
@@ -726,6 +734,9 @@ function renderizarListaParticipantes() {
                 <div class="participante-info">
                     <div class="participante-nome">${lead ? `<a href="javascript:void(0)" onclick="abrirResultadoBuscaGlobal('${p["pessoaIdentificador"]}')">${escapeHTML(nome)}</a>` : escapeHTML(nome)}</div>
                     ${telefone ? `<div class="participante-telefone"><i class="fa-solid fa-phone"></i> ${escapeHTML(telefone)}</div>` : ''}
+                    ${p.origem === 'ulisses'
+                        ? `<span class="tag part-inscrito-ulisses" title="Inscrição real, confirmada pelo Ulisses"><i class="fa-solid fa-check-double"></i> Inscrito no Ulisses</span>`
+                        : `<span class="tag part-convidado-crm" title="Convite/pendência criada por nós — a pessoa ainda NÃO se inscreveu de verdade no Ulisses"><i class="fa-solid fa-clock"></i> Convite do CRM</span>`}
                 </div>
                 <select class="participante-resposta" onchange="atualizarRespostaParticipante(${p.id}, this.value)">
                     <option value="pendente" ${p.resposta_convite === 'pendente' ? 'selected' : ''}>Pendente</option>
@@ -931,9 +942,11 @@ async function buscarLeadParaParticipante() {
 async function adicionarParticipante(pessoaId) {
     if (!eventoParticipantesId) return;
 
+    // origem:'crm' — vínculo criado por NÓS aqui no modal de Participantes,
+    // não é uma inscrição real confirmada no Ulisses (ver migracao_evento_leads_origem.sql).
     const { error } = await window.supabaseClient
         .from(NOME_TABELA_EVENTO_LEADS)
-        .insert({ evento_id: eventoParticipantesId, "pessoaIdentificador": pessoaId });
+        .insert({ evento_id: eventoParticipantesId, "pessoaIdentificador": pessoaId, origem: 'crm' });
 
     if (error) { alert('Erro ao adicionar participante: ' + error.message); return; }
 
@@ -1132,6 +1145,9 @@ function renderizarEventosDoLead() {
             <div class="drawer-evento-item">
                 <div class="drawer-evento-item-info">
                     ${ehFuturo ? '<span class="tag tag-jornada" style="margin-right:4px;" title="Ainda vai acontecer"><i class="fa-solid fa-calendar-day"></i> Futuro</span>' : ''}
+                    ${el.origem === 'ulisses'
+                        ? '<span class="tag part-inscrito-ulisses" style="margin-right:4px;" title="Inscrição real, confirmada pelo Ulisses"><i class="fa-solid fa-check-double"></i> Inscrito no Ulisses</span>'
+                        : '<span class="tag part-convidado-crm" style="margin-right:4px;" title="Convite/pendência criada por NÓS aqui no CRM — a pessoa ainda NÃO se inscreveu de verdade no Ulisses"><i class="fa-solid fa-clock"></i> Convite do CRM</span>'}
                     ${nomeHtml}
                     ${data ? `<span style="color:#94a3b8;"> — ${escapeHTML(data)}</span>` : ''}
                 </div>
@@ -1237,14 +1253,146 @@ function fecharFormConvidarEventoNaGaveta() {
     if (form) form.style.display = 'none';
 }
 
+// ==========================================
+// INSCREVER NO ULISSES (manual, assistido) — pedido do usuário (2026-09-21):
+// "quero integrar a possibilidade de nós mesmos fazermos a inscrição do
+// lead no evento, se ele confirmar interesse através de conversa no
+// WhatsApp. Ao SDR pedir a inscrição (através de algum botão) no crm, ele
+// capta o nome completo, e-mail e telefone, e faz a inscrição manualmente
+// no site do evento".
+//
+// A API oficial do Ulisses (ver CLAUDE.md) não tem NENHUM endpoint pra
+// CRIAR uma inscrição — só leitura (csvInscricoes/participantes) e
+// marcar comparecimento. Automatizar o preenchimento do formulário
+// público de inscrição (Playwright) exigiria adivinhar os nomes dos
+// campos sem nunca ter visto o HTML real desse formulário — contra o
+// princípio deste projeto de nunca escrever um seletor "no chute" (ver
+// CLAUDE.md, seção do scraper). Por isso o caminho aqui é ASSISTIDO: o
+// CRM capta/mostra os 3 dados, abre o site oficial numa aba nova, e o
+// SDR mesmo preenche e confirma lá — ao voltar aqui e confirmar, o
+// vínculo em evento_leads vira origem='ulisses' (inscrição REAL), não
+// mais uma pendência nossa.
+// ==========================================
+let inscreverEventoIdSelecionado = null;
+
+async function abrirModalInscreverEvento() {
+    if (!pessoaIdGavetaEventos) return;
+    const lead = (typeof leadsAtuais !== 'undefined') ? leadsAtuais.find(l => String(l.pessoaIdentificador) === String(pessoaIdGavetaEventos)) : null;
+    if (!lead) { alert('Não achei os dados deste lead — reabra a gaveta e tente de novo.'); return; }
+
+    if (typeof carregarEventos === 'function') await carregarEventos();
+
+    const hojeISO = new Date().toISOString().slice(0, 10);
+    const select = document.getElementById('inscreverEventoSelect');
+    // Mostra qualquer evento ainda ativo, mesmo já vinculado (origem='crm')
+    // — é justamente o caso de uso principal: "upgradar" um convite nosso
+    // pendente pra uma inscrição real, depois de confirmar com o lead.
+    const disponiveis = eventosAtuais
+        .filter(ev => dataEfetivaLimite(ev) >= hojeISO)
+        .slice()
+        .sort((a, b) => (a.data + (a.hora || '')).localeCompare(b.data + (b.hora || '')));
+
+    if (disponiveis.length === 0) {
+        select.innerHTML = '<option value="">Nenhum evento ativo nesta filial</option>';
+    } else {
+        // Pré-seleciona o evento já vinculado (pendência nossa) mais
+        // próximo, se houver algum — poupa 1 clique no caso mais comum.
+        const jaVinculadoCrm = eventosDoLeadAtual.find(el => el.origem !== 'ulisses' && disponiveis.some(d => d.id === el.evento_id));
+        select.innerHTML = disponiveis.map(ev => `<option value="${ev.id}" ${jaVinculadoCrm && jaVinculadoCrm.evento_id === ev.id ? 'selected' : ''}>${escapeHTML(ev.nome)} — ${formatarDataEvento(ev.data)}</option>`).join('');
+    }
+    select.onchange = atualizarLinkInscreverEvento;
+
+    document.getElementById('inscreverEventoNome').value = lead.pessoaNome || '';
+    document.getElementById('inscreverEventoEmail').value = lead.pessoaEmail || '';
+    const telefone = [lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero].filter(Boolean).join(' ');
+    document.getElementById('inscreverEventoTelefone').value = telefone;
+
+    atualizarLinkInscreverEvento();
+
+    document.getElementById('modalInscreverEvento').classList.add('open');
+    document.getElementById('overlayModalInscreverEvento').classList.add('active');
+}
+
+function atualizarLinkInscreverEvento() {
+    const select = document.getElementById('inscreverEventoSelect');
+    const link = document.getElementById('inscreverEventoLinkSite');
+    const aviso = document.getElementById('inscreverEventoSemLink');
+    const eventoId = select ? Number(select.value) : null;
+    const ev = eventoId ? eventosAtuais.find(e => e.id === eventoId) : null;
+    if (ev && ev.link_inscricao) {
+        link.href = ev.link_inscricao;
+        link.style.pointerEvents = '';
+        link.style.opacity = '1';
+        aviso.style.display = 'none';
+    } else {
+        link.href = '#';
+        link.style.pointerEvents = 'none';
+        link.style.opacity = '0.5';
+        aviso.style.display = ev ? 'block' : 'none';
+    }
+}
+
+function fecharModalInscreverEvento() {
+    document.getElementById('modalInscreverEvento').classList.remove('open');
+    document.getElementById('overlayModalInscreverEvento').classList.remove('active');
+}
+
+async function copiarDadosInscreverEvento() {
+    const nome = document.getElementById('inscreverEventoNome').value.trim();
+    const email = document.getElementById('inscreverEventoEmail').value.trim();
+    const telefone = document.getElementById('inscreverEventoTelefone').value.trim();
+    const texto = `Nome: ${nome}\nE-mail: ${email}\nTelefone: ${telefone}`;
+    try {
+        await navigator.clipboard.writeText(texto);
+        alert('Dados copiados — cole no formulário do site do evento.');
+    } catch {
+        alert('Não consegui copiar automaticamente. Dados pra colar à mão:\n\n' + texto);
+    }
+}
+
+async function confirmarInscricaoManualEvento() {
+    const select = document.getElementById('inscreverEventoSelect');
+    const eventoId = select ? Number(select.value) : null;
+    if (!eventoId || !pessoaIdGavetaEventos) { fecharModalInscreverEvento(); return; }
+    const ev = eventosAtuais.find(e => e.id === eventoId);
+
+    if (!confirm(`Confirma que a inscrição de "${document.getElementById('inscreverEventoNome').value}" já foi feita de verdade no site do Ulisses, pro evento "${ev ? ev.nome : eventoId}"?`)) return;
+
+    // upsert (não insert) — se já existia um vínculo 'crm' (convite
+    // pendente) pra este evento+lead, esta ação INTENCIONALMENTE o
+    // sobrescreve pra origem='ulisses'/confirmado (é exatamente o
+    // "upgrade" de pendência pra inscrição real que este botão existe
+    // pra fazer).
+    const { error } = await window.supabaseClient
+        .from(NOME_TABELA_EVENTO_LEADS)
+        .upsert({ evento_id: eventoId, "pessoaIdentificador": pessoaIdGavetaEventos, origem: 'ulisses', resposta_convite: 'confirmado', atualizado_em: new Date().toISOString() }, { onConflict: 'evento_id,pessoaIdentificador' });
+
+    if (error) { alert('Erro ao registrar a inscrição: ' + error.message); return; }
+
+    if (typeof registrarLogAtividade === 'function') {
+        registrarLogAtividade('inscricao_manual_ulisses', {
+            pessoaIds: [pessoaIdGavetaEventos],
+            detalhes: { evento: ev ? ev.nome : String(eventoId) },
+            filial: (typeof filialAtual !== 'undefined') ? filialAtual : null,
+        });
+    }
+
+    fecharModalInscreverEvento();
+    await carregarEventosDoLead(pessoaIdGavetaEventos);
+    await carregarResumoParticipantes(eventosAtuais);
+    renderizarListaEventos();
+}
+
 async function confirmarConvidarEventoNaGaveta() {
     const select = document.getElementById('drawer-eventos-select');
     const eventoId = select ? Number(select.value) : null;
     if (!eventoId || !pessoaIdGavetaEventos) { fecharFormConvidarEventoNaGaveta(); return; }
 
+    // origem:'crm' — convite feito por nós na gaveta, ainda não é uma
+    // inscrição confirmada no Ulisses (ver migracao_evento_leads_origem.sql).
     const { error } = await window.supabaseClient
         .from(NOME_TABELA_EVENTO_LEADS)
-        .insert({ evento_id: eventoId, "pessoaIdentificador": pessoaIdGavetaEventos });
+        .insert({ evento_id: eventoId, "pessoaIdentificador": pessoaIdGavetaEventos, origem: 'crm' });
 
     if (error) { alert('Erro ao convidar pro evento: ' + error.message); return; }
 

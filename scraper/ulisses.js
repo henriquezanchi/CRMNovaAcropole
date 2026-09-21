@@ -815,7 +815,7 @@ export async function sincronizarComparecimentoNoCrm(filial) {
 
     const novos = vinculosUnicos
         .filter(v => !jaExiste.has(`${v.evento_id}|||${v.pessoaIdentificador}`))
-        .map(v => ({ evento_id: v.evento_id, pessoaIdentificador: v.pessoaIdentificador, resposta_convite: v.futuro ? 'pendente' : 'confirmado', compareceu: v.compareceu }));
+        .map(v => ({ evento_id: v.evento_id, pessoaIdentificador: v.pessoaIdentificador, resposta_convite: v.futuro ? 'pendente' : 'confirmado', compareceu: v.compareceu, origem: 'ulisses' }));
     const paraAtualizar = vinculosUnicos.filter(v => jaExiste.has(`${v.evento_id}|||${v.pessoaIdentificador}`));
 
     let novosGravados = 0;

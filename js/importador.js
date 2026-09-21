@@ -494,7 +494,7 @@ function fecharSincronizacaoScraper() {
 // JUNTO das informações daquele sistema (não os 2 empilhados no fim da
 // tela) — por isso 2 containers separados, um logo abaixo do botão do
 // Mercúrio e outro logo abaixo do botão do Ulisses, em vez de 1 só.
-async function renderizarStatusSincronizacaoScraper(mensagemExtraMercurio, mostrarCancelar) {
+async function renderizarStatusSincronizacaoScraper(mensagemExtraMercurio, mostrarCancelar, mensagemExtraUlisses) {
     const containerMercurio = document.getElementById('sincronizacaoScraperStatusMercurio');
     const containerUlisses = document.getElementById('sincronizacaoScraperStatusUlisses');
     if (!containerMercurio || !containerUlisses) return;
@@ -538,7 +538,10 @@ async function renderizarStatusSincronizacaoScraper(mensagemExtraMercurio, mostr
         </p>` : ''}
         ${formatarLinha('Mercúrio (última rodada)', ultimoMercurio)}
     `;
-    containerUlisses.innerHTML = formatarLinha('Ulisses (última rodada manual)', ultimoUlisses);
+    containerUlisses.innerHTML = `
+        ${mensagemExtraUlisses ? `<p style="font-size:12px; color:var(--na-green-dark); margin-bottom:10px;"><i class="fa-solid fa-circle-notch fa-spin"></i> ${escapeHTML(mensagemExtraUlisses)}</p>` : ''}
+        ${formatarLinha('Ulisses (última rodada — manual OU via API)', ultimoUlisses)}
+    `;
 }
 
 // Bug real achado nesta sessão: existem AGORA 2 botões "Rodar Mercúrio
@@ -696,6 +699,89 @@ function restaurarAcompanhamentoMercurioSeHouver() {
     iniciarAcompanhamentoMercurio(salvo.timestampAntes, salvo.inicioPoll, salvo.filial || null);
 }
 document.addEventListener('DOMContentLoaded', restaurarAcompanhamentoMercurioSeHouver);
+
+// ==========================================
+// SINCRONIZAÇÃO — SÓ O ULISSES VIA API (2026-09-21, pedido do usuário)
+// ==========================================
+// Botão separado do "Rodar Mercúrio Agora": aquele já inclui o Ulisses de
+// carona (ver sincronizarEventosUlissesApi()/sincronizarInscricoesFilialViaApi()
+// dentro de scraper/mercurio.js), mas só depois de uma rodada COMPLETA do
+// Mercúrio (login, Ativos/Inativos de cada filial, Turmas...) — pesado
+// demais só pra "atualizar os eventos agora". Este dispara o MESMO
+// workflow/script, só que com `somenteUlissesApi: true` (ver
+// executarSomenteUlissesApi() em mercurio.js) — pula o Mercúrio por
+// completo, só sincroniza catálogo de eventos + Inscrições via API
+// oficial (rápido, sem Cloudflare, sem login manual).
+// Reaproveita o MESMO `status_sincronizacao_automatica` (sistema='ulisses')
+// já usado por ulisses-local.js — "última rodada" passa a refletir tanto
+// um login manual quanto esta sincronização via API, o que é correto: as
+// duas atualizam dado real do Ulisses no CRM.
+let disparoUlissesApiEmAndamento = false;
+function botoesDispararUlissesApi() {
+    return [...document.querySelectorAll('.btn-disparar-ulisses-api')];
+}
+function atualizarBotoesDispararUlissesApi(disabled, html) {
+    botoesDispararUlissesApi().forEach(b => { b.disabled = disabled; if (html) b.innerHTML = html; });
+}
+
+async function dispararUlissesApiAgora(filial = null) {
+    if (disparoUlissesApiEmAndamento) {
+        alert('Já tem uma sincronização do Ulisses via API em andamento — acompanhe abaixo antes de disparar de novo.');
+        return;
+    }
+    disparoUlissesApiEmAndamento = true;
+    atualizarBotoesDispararUlissesApi(true, '<i class="fa-solid fa-circle-notch fa-spin"></i> Disparando...');
+
+    const { data: antes } = await window.supabaseClient
+        .from('status_sincronizacao_automatica')
+        .select('executado_em')
+        .eq('sistema', 'ulisses')
+        .order('executado_em', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+    const timestampAntes = antes ? antes.executado_em : null;
+
+    const { data, error } = await window.supabaseClient.functions.invoke('scraper-disparar', { body: { filial: filial || '', somenteUlissesApi: true } });
+
+    if (error || (data && data.ok === false)) {
+        const motivo = (data && data.detalhe) || (error && error.message) || 'erro desconhecido';
+        alert('Não consegui disparar: ' + motivo);
+        disparoUlissesApiEmAndamento = false;
+        atualizarBotoesDispararUlissesApi(false, '<i class="fa-solid fa-cloud-arrow-down"></i> Sincronizar via API do Ulisses agora');
+        return;
+    }
+
+    await renderizarStatusSincronizacaoScraper(undefined, undefined, 'Disparado! Sincronizando eventos/Inscrições do Ulisses via API — costuma ser rápido (poucos minutos, sem login manual).');
+
+    // Timeout mais curto que o do Mercúrio (5min, não 20min) — esta
+    // rodada não visita o site do Mercúrio nem faz login manual em nada,
+    // é só chamadas HTTPS + pilotar a tela de Importar do CRM publicado.
+    const inicioPoll = Date.now();
+    const TIMEOUT_MS = 5 * 60 * 1000;
+    const timer = setInterval(async () => {
+        if (Date.now() - inicioPoll > TIMEOUT_MS) {
+            clearInterval(timer);
+            disparoUlissesApiEmAndamento = false;
+            atualizarBotoesDispararUlissesApi(false, '<i class="fa-solid fa-cloud-arrow-down"></i> Sincronizar via API do Ulisses agora');
+            await renderizarStatusSincronizacaoScraper(undefined, undefined, 'Ainda não vi terminar depois de 5min — confira direto no GitHub Actions, ou só espere e reabra esta tela depois.');
+            return;
+        }
+        const { data: depois } = await window.supabaseClient
+            .from('status_sincronizacao_automatica')
+            .select('executado_em')
+            .eq('sistema', 'ulisses')
+            .order('executado_em', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        const terminou = depois && depois.executado_em && depois.executado_em !== timestampAntes;
+        if (terminou) {
+            clearInterval(timer);
+            disparoUlissesApiEmAndamento = false;
+            atualizarBotoesDispararUlissesApi(false, '<i class="fa-solid fa-cloud-arrow-down"></i> Sincronizar via API do Ulisses agora');
+            await renderizarStatusSincronizacaoScraper();
+        }
+    }, 10000);
+}
 
 // Chave de telefone pra casar registros por número em vez de nome — cobre
 // os casos de erro de digitação no nome entre planilhas diferentes (a
@@ -1471,7 +1557,7 @@ async function vincularEventoLeadsAutomaticamente(filial, leads) {
                 const chaveUnica = `${eventoId}:${lead.pessoaIdentificador}`;
                 if (jaAdicionado.has(chaveUnica)) return;
                 jaAdicionado.add(chaveUnica);
-                vinculos.push({ evento_id: eventoId, pessoaIdentificador: lead.pessoaIdentificador, resposta_convite: 'confirmado' });
+                vinculos.push({ evento_id: eventoId, pessoaIdentificador: lead.pessoaIdentificador, resposta_convite: 'confirmado', origem: 'ulisses' });
             });
         });
         if (vinculos.length === 0) return;

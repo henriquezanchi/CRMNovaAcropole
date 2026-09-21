@@ -1636,7 +1636,90 @@ async function verificarRodadaJaEmAndamento() {
     }
 }
 
+// Modo leve, SÓ Ulisses via API — pedido do usuário (2026-09-21): o botão
+// "Rodar Mercúrio Agora" já dispara a sincronização do Ulisses (eventos +
+// Inscrições, ver sincronizarEventosUlissesApi()/sincronizarInscricoesFilialViaApi()
+// dentro de main() abaixo) mas só de carona numa rodada COMPLETA do
+// Mercúrio (login HTTP+matrícula, exportar Ativos/Inativos de cada
+// filial, Turmas, Aniversariantes...) — pesado demais pra quem só quer
+// "atualizar os eventos do Ulisses agora". Este caminho pula o Mercúrio
+// por completo: não loga nele, não abre `page` nenhuma pra ele — só
+// `pageCrm` (pilota a tela de Importar do CRM publicado, mesma função de
+// sempre) é aberta. Acionado via `SOMENTE_ULISSES_API=true` (env var —
+// ver .github/workflows/scraper.yml + supabase/functions/scraper-disparar),
+// nunca pelo cron diário (que sempre quer a rodada completa).
+async function executarSomenteUlissesApi() {
+    let browser;
+    let pageCrm;
+    let algumaFalha = false;
+    try {
+        const rodadaAtiva = await verificarRodadaJaEmAndamento();
+        if (rodadaAtiva) {
+            const msg = `Já existe uma rodada em andamento (filial "${rodadaAtiva.filial}", etapa "${rodadaAtiva.etapa}") — abortando esta rodada "só Ulisses via API" pra não pisar na tela de Importar do CRM ao mesmo tempo que outra sessão. Tente de novo depois que a outra terminar.`;
+            console.error(`[ulisses-api] ${msg}`);
+            await registrarStatusSincronizacao('ulisses', 'GLOBAL', false, msg);
+            return;
+        }
+
+        browser = await chromium.launch();
+        pageCrm = await (await browser.newContext()).newPage();
+
+        const filtro = (process.argv.slice(2).filter(a => a !== '--')[0]) || process.env.FILTRO_FILIAL || null;
+        const filtroNucleo = filtro ? nucleoDistintivoFilial(filtro) : null;
+
+        const { data: filiaisCrmTodas, error: erroFiliais } = await supabaseAdmin.from('filiais').select('nome').eq('ativo', true);
+        if (erroFiliais) throw new Error('Erro ao buscar filiais do CRM: ' + erroFiliais.message);
+        const filiaisCrm = filtroNucleo
+            ? (filiaisCrmTodas || []).filter(f => {
+                const nucleoF = nucleoDistintivoFilial(f.nome);
+                return nucleoF && (nucleoF.includes(filtroNucleo) || filtroNucleo.includes(nucleoF));
+            })
+            : (filiaisCrmTodas || []);
+        if (filiaisCrm.length === 0) throw new Error(`Nenhuma filial do CRM bate com o filtro "${filtro}".`);
+        console.log(`[ulisses-api] ${filiaisCrm.length} filial(is): ${filiaisCrm.map(f => f.nome).join(', ')}`);
+
+        const filiaisUlissesApi = await filiaisAtivasUlisses();
+        const resumoEventos = await sincronizarEventosUlissesApi();
+        console.log('[ulisses-api] Catálogo de eventos sincronizado:', resumoEventos);
+
+        for (const { nome: filialCrm } of filiaisCrm) {
+            const filialIdUlisses = resolverFilialIdUlisses(filialCrm, filiaisUlissesApi);
+            if (!filialIdUlisses) {
+                console.warn(`[ulisses-api] Filial "${filialCrm}" sem correspondência no sistema do Ulisses — pulando.`);
+                continue;
+            }
+            try {
+                const log = await sincronizarInscricoesFilialViaApi(pageCrm, filialCrm, filialIdUlisses);
+                console.log(`[ulisses-api] Inscrições importadas — ${filialCrm}: ${log.slice(-500)}`);
+            } catch (e) {
+                algumaFalha = true;
+                console.error(`[ulisses-api] Falha ao importar Inscrições de "${filialCrm}":`, e.message);
+                fs.mkdirSync('debug', { recursive: true });
+                await pageCrm.screenshot({ path: `debug/ulisses-api-somente-${filialCrm.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
+            }
+        }
+
+        const sufixoFiltro = filtro ? ` (filtro: "${filtro}")` : '';
+        await registrarStatusSincronizacao('ulisses', null, !algumaFalha, algumaFalha
+            ? `Catálogo de eventos sincronizado, mas 1+ importação de Inscrições falhou${sufixoFiltro} — ver logs/prints do workflow.`
+            : `Catálogo de eventos + Inscrições sincronizados via API oficial para ${filiaisCrm.length} filial(is)${sufixoFiltro} — sem passar pelo Mercúrio.`);
+    } catch (e) {
+        console.error('[ulisses-api] Falha:', e.message);
+        await registrarStatusSincronizacao('ulisses', null, false, e.message);
+        process.exitCode = 1;
+    } finally {
+        if (browser) await browser.close();
+    }
+}
+
 async function main() {
+    // SOMENTE_ULISSES_API — ver comentário de executarSomenteUlissesApi()
+    // acima. Sai ANTES de tocar em qualquer credencial/login do Mercúrio.
+    if (process.env.SOMENTE_ULISSES_API === 'true') {
+        await executarSomenteUlissesApi();
+        return;
+    }
+
     let browser;
     let page;
     let pageCrm; // aba/contexto SEPARADO pro CRM publicado (sem httpCredentials do Mercúrio) — usado só quando alguma turma tem matrícula recente

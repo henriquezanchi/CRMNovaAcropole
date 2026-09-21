@@ -489,6 +489,16 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .evento-participantes-resumo .part-compareceu { color: var(--na-green-dark); font-weight: 600; }
 .evento-participantes-resumo .part-matriculado { color: #b45309; font-weight: 700; }
 .evento-participantes-resumo .part-nao-compareceu { color: #991b1b; font-weight: 600; }
+/* Origem do vínculo (evento_leads.origem) — distingue inscrição REAL no
+   Ulisses de uma pendência/convite criado por nós no CRM (pedido do
+   usuário 2026-09-21: "não sei quem de fato se inscreveu no Ulisses, e
+   quem faz parte da abordagem mas ainda não se inscreveu"). Usado tanto
+   dentro do resumo do card (texto colorido) quanto como badge (.tag) na
+   gaveta do lead e no modal de Participantes. */
+.evento-participantes-resumo .part-inscrito-ulisses { color: #047857; font-weight: 700; }
+.evento-participantes-resumo .part-convidado-crm { color: #64748b; font-weight: 600; }
+.tag.part-inscrito-ulisses { background: #d1fae5; color: #047857; }
+.tag.part-convidado-crm { background: #e2e8f0; color: #475569; }
 
 /* Modal: Participantes do Evento (evento_leads) */
 #modalParticipantesEvento { width: 640px; }

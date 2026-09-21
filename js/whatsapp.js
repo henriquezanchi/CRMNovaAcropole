@@ -1004,7 +1004,7 @@ async function gerarLinksConviteLote() {
         const texto = montarTextoConviteEvento(lead, evento, textoBase);
         const link = `https://wa.me/${numeroWaMe}?text=${encodeURIComponent(texto)}`;
         linhas.push({ id, nome: lead.pessoaNome || 'Sem nome', link });
-        vinculos.push({ evento_id: eventoId, pessoaIdentificador: lead.pessoaIdentificador });
+        vinculos.push({ evento_id: eventoId, pessoaIdentificador: lead.pessoaIdentificador, origem: 'crm' });
     });
 
     // Já registra o convite em evento_leads (resposta_convite default

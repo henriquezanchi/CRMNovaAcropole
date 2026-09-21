@@ -15,6 +15,10 @@ on:
         description: 'Rodar só 1 filial (trecho do nome, ex: "Garavelo") — vazio roda todas'
         required: false
         default: ''
+      somente_ulisses_api:
+        description: 'true = pula o Mercúrio inteiro, só sincroniza eventos/Inscrições do Ulisses via API (rápido)'
+        required: false
+        default: ''
   # O `schedule:` do GitHub Actions foi REMOVIDO daqui de propósito
   # (2026-09-10) — comprovadamente pouco confiável no plano gratuito: 2
   # dias seguidos com ~4h40 de atraso, e um dia em que simplesmente não
@@ -76,9 +80,10 @@ jobs:
       - name: Instalar navegador (Chromium)
         run: npx playwright install --with-deps chromium
 
-      - name: Mercúrio — login + exportar Ativos e Inativos
+      - name: Mercúrio (ou só Ulisses via API, ver input somente_ulisses_api)
         env:
           FILTRO_FILIAL: ${{ github.event.inputs.filial }}
+          SOMENTE_ULISSES_API: ${{ github.event.inputs.somente_ulisses_api }}
         run: node mercurio.js
         continue-on-error: true
 
