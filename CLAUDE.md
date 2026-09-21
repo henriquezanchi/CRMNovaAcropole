@@ -4802,20 +4802,59 @@ precisar mexer em nada do lado do agendamento/Edge Functions.
   que já roda dentro de `confirmarEnviarImportacao()` (ver seção do
   Importador) já casa e cria os `evento_leads` sozinho — nenhum código
   novo precisou lidar com isso.
-- **LIMITAÇÃO REAL #1, confirmada testando ao vivo — comparecimento NÃO
-  vem pela API**: o endpoint que traria isso (`GET /facade/emails/{eventoId}`,
-  bem mais rico que `participantesEvento`, com telefone/e-mail/
-  `compareceu` por pessoa) devolve **500 Internal Server Error** pro
-  nosso client M2M: `"Cannot invoke Claim.asString() because
-  emailClaim is null"` — um bug do lado deles: esse endpoint espera um
-  JWT de USUÁRIO humano (com claim de e-mail), que client_credentials
-  nunca tem. `GET /facade/email/{id}` (detalhe de 1 pessoa) funciona
-  normal via M2M e devolve telefone/e-mail, mas SEM o array
-  `emailEventos`/`compareceu`. Ou seja: **via API dá pra sincronizar
-  quem se INSCREVEU (Inscrições, automático desde hoje), mas não quem de
-  fato COMPARECEU** — isso continua exigindo `npm run ulisses-local`
-  (Playwright, tela Recepção) até a Acrópole Brasil corrigir esse bug do
-  lado deles (não é algo que dê pra contornar daqui).
+- **LIMITAÇÃO REAL #1, comparecimento NÃO vem pela API — investigado A
+  FUNDO de novo (2026-09-21, pedido do usuário: "é que não é possível,
+  ou é que não temos acesso?")** — resposta: **é um BUG real e específico
+  do lado deles, não falta de permissão** (diferente do caso do Setor
+  Oeste, que ERA só permissão e o Célio resolveu na hora). Investigação
+  completa, ponto a ponto:
+  - `GET /facade/emails/{eventoId}` (o endpoint que devolveria, por
+    evento, cada pessoa com seu array `emailEventos[]` — cada item tendo
+    `id` = o `emailEventoId` e o campo `compareceu`) continua dando
+    **500 Internal Server Error**: `"Cannot invoke Claim.asString()
+    because emailClaim is null"` — reproduzido de novo com token
+    totalmente fresco, erro idêntico ao de antes. É um `NullPointerException`
+    de verdade (não 401/403) — o código deles tenta ler uma claim
+    "e-mail" que só existe num JWT de USUÁRIO humano (login normal),
+    nunca presente num token client_credentials (M2M).
+  - **Achado novo**: `GET /facade/emailEvento/{id}` (rota nunca testada
+    antes — achada relendo o Swagger completo de novo) **FUNCIONA
+    normalmente via M2M**, sem crash nenhum — testado com IDs reais
+    (100, 1000) e devolveu o registro completo, **incluindo o campo
+    `compareceu`**. Ou seja: o DADO em si não está bloqueado — dá pra
+    ler o comparecimento de um registro específico, se você já souber o
+    `emailEventoId` certo.
+  - **O problema real é a FALTA DE UM CAMINHO LEGÍTIMO pra descobrir
+    esse ID** pros participantes de UM evento nosso: `participantesEvento()`
+    só devolve `pessoaId`/`pessoaNome` (schema `EmailDTO`, confirmado no
+    Swagger — não tem o campo); `emailPorId()` devolve o perfil da
+    pessoa mas sem o array `emailEventos`. O ÚNICO endpoint desenhado
+    pra fazer essa ponte (evento → lista de `emailEventoId` dos
+    inscritos) é justamente o `/facade/emails/{eventoId}` que quebra.
+  - **Testado e descartado**: `GET /facade/csv/{filialId}` (rota
+    parecida, nunca testada antes) existe mas é só um export de
+    marketing (nome/e-mail/telefone pra e-mail em massa) — sem
+    `emailEventoId` nenhum, não ajuda.
+  - **Por que não força a barra tentando adivinhar o ID por tentativa
+    (brute-force)**: os IDs de `emailEvento` são sequenciais e GLOBAIS —
+    o mesmo contador vale pra TODAS as filiais do Brasil, desde sempre
+    (o ID 1000 testado devolveu um registro de 2020, de uma pessoa e
+    evento completamente aleatórios). Pra achar os IDs de um evento de
+    2026 seria preciso varrer uma faixa enorme e desconhecida de
+    números, e cada tentativa "acha" um registro de OUTRA pessoa/filial
+    sem relação nenhuma com a nossa — isso seria efetivamente escanear
+    dado de terceiros fora do nosso escopo de autorização, não uma
+    consulta legítima. Não fiz isso.
+  - **Conclusão pro usuário**: comparecimento continua exigindo
+    `npm run ulisses-local` (Playwright, tela Recepção) — mas agora com
+    diagnóstico preciso o bastante pra levar ao Célio como um bug de
+    verdade (não um pedido vago de "mais acesso"): *"`GET
+    /facade/emails/{eventoId}` quebra com NullPointerException pra
+    token M2M (emailClaim null) — dá pra tratar esse caso, ou expor um
+    jeito de listar `emailEventoId` por evento sem depender desse
+    endpoint?"*. Diferente da permissão do Setor Oeste (resolvida na
+    hora), isso é uma correção de CÓDIGO do lado deles, não só uma
+    configuração — pode levar mais tempo, ou nunca ser priorizado.
 - **LIMITAÇÃO REAL #2, item 1 RESOLVIDO (2026-09-21)** — `filialId=132`
   (Goiânia - Setor Oeste) dava 403 em qualquer endpoint que dependesse de
   "listar a partir dessa filial" (`listarTodosEventos`/`csvInscricoes`/
