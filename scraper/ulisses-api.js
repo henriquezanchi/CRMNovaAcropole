@@ -5,16 +5,22 @@
 // oficial do Ulisses" pro histórico completo (conversa com o Célio,
 // endpoints mapeados no Swagger, status de autorização).
 //
-// ESTADO ATUAL (2026-09-18): LIBERADO pela Acrópole Brasil (Célio). Todos
-// os endpoints protegidos funcionam — COM UMA EXCEÇÃO confirmada testando
-// ao vivo: `filialId=132` (Goiânia - Setor Oeste) devolve 403 ("Este
-// usuário não tem permissão de acesso à esta filial") em qualquer
-// endpoint protegido, enquanto as outras filiais (15/14/44/16/65) e os
-// endpoints públicos funcionam normal — parece um esquecimento na
-// autorização por filial do lado deles, não um bug daqui. Todo código que
-// itera filiais precisa isolar essa falha por filial (mesmo princípio já
-// usado em `mercurio.js`/`ulisses.js` — 1 filial falhar não trava as
-// outras), nunca travar o job inteiro por causa disso. Ver
+// ESTADO ATUAL (2026-09-21): LIBERADO pela Acrópole Brasil (Célio),
+// TODAS as filiais — inclusive `filialId=132` (Goiânia - Setor Oeste),
+// que devolvia 403 ("Este usuário não tem permissão de acesso à esta
+// filial") até o Célio ajustar essa autorização especificamente pra ela
+// (confirmado testando ao vivo, 2 tentativas com 403 seguidas de uma
+// terceira já OK, minutos depois). Ainda assim, todo código que itera
+// filiais deve continuar isolando falha por filial (mesmo princípio já
+// usado em `mercurio.js`/`ulisses.js`) — não custa nada e protege contra
+// uma futura filial nova com o mesmo tipo de esquecimento de permissão.
+// **Rodando de dentro do GitHub Actions, NADA disto funciona** — ver
+// CLAUDE.md, seção "CORREÇÃO GRAVE... a API do Ulisses TAMBÉM é
+// bloqueada": api.acropolebrasil.com.br está atrás do MESMO Cloudflare
+// que bloqueia login por navegador, e o bloqueio pega até uma chamada
+// HTTPS pura com token válido vinda de IP de datacenter. Só funciona da
+// máquina de confiança — `scraper/ulisses-local.js` (de carona) ou
+// `scraper/sincronizar-ulisses-api-local.mjs` (dedicado, headless). Ver
 // `scraper/importar-ulisses-api.js` pra sincronização de verdade
 // (Inscrições/Eventos/Comparecimento) e CLAUDE.md, seção "API oficial do
 // Ulisses", pro histórico completo.

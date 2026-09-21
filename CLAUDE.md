@@ -4816,19 +4816,27 @@ precisar mexer em nada do lado do agendamento/Edge Functions.
   fato COMPARECEU** — isso continua exigindo `npm run ulisses-local`
   (Playwright, tela Recepção) até a Acrópole Brasil corrigir esse bug do
   lado deles (não é algo que dê pra contornar daqui).
-- **LIMITAÇÃO REAL #2, confirmada testando ao vivo — 2 furos**:
-  1. `filialId=132` (Goiânia - Setor Oeste) continua dando 403 em
-     qualquer endpoint que dependa de "listar a partir dessa filial"
-     (`listarTodosEventos`/`csvInscricoes`/`filial`) — as outras filiais
-     funcionam. Isolado por filial (log de aviso, não trava a rodada) —
-     mas, na prática, a maior parte dos dados de Setor Oeste ainda chega
-     de outra forma: quando um evento é listado a partir de OUTRA filial
-     (ex: Setor Universitário) e Setor Oeste também participa dele, o
-     `evento(id)` (público) devolve a entrada de Setor Oeste normalmente
-     dentro de `filiaisEventos` — só o CSV de Inscrições de Setor Oeste
-     mesmo é que fica de fora até o Célio corrigir a permissão dessa
-     filial especificamente.
-  2. `GET /evento/{id}` (público) devolve **400 Bad Request**
+- **LIMITAÇÃO REAL #2, item 1 RESOLVIDO (2026-09-21)** — `filialId=132`
+  (Goiânia - Setor Oeste) dava 403 em qualquer endpoint que dependesse de
+  "listar a partir dessa filial" (`listarTodosEventos`/`csvInscricoes`/
+  `filial`), enquanto as outras filiais sempre funcionaram — mesma
+  mensagem literal da API: `"Este usuário não tem permissão de acesso à
+  esta filial"`. O Célio liberou essa permissão do lado da Acrópole
+  Brasil — confirmado testando ao vivo (2 tentativas antes ainda deram
+  403 com token novo; a 3ª, minutos depois, já veio OK nos 3 endpoints).
+  Rodando `sincronizar-ulisses-api-local.mjs -- "Setor Oeste"` de
+  verdade: **1191 leads importados, catálogo sincronizado, zero 403** —
+  e o número de inscrições REAIS ("Aula Experimental do Curso de
+  Filosofia para Viver") pulou de 5 pra **42** (antes só chegava o que
+  aparecia "de lado" via outra filial que compartilha o mesmo evento;
+  agora o CSV de Inscrições da própria filial é lido direto). Antes desta
+  liberação, a maior parte do dado de Setor Oeste ainda chegava de outra
+  forma: quando um evento é listado a partir de OUTRA filial (ex: Setor
+  Universitário) e Setor Oeste também participa dele, o `evento(id)`
+  (público) sempre devolveu a entrada de Setor Oeste normalmente dentro
+  de `filiaisEventos` — só o CSV de Inscrições PRÓPRIO da filial é que
+  ficava de fora, e agora não fica mais.
+- **LIMITAÇÃO REAL #2, item 2**: `GET /evento/{id}` (público) devolve **400 Bad Request**
      ("Todas as vagas já foram preenchidas.") pra eventos com vagas
      esgotadas — parece intencional do lado deles (o endpoint público é
      pensado pra alimentar a página de inscrição, que não faz sentido
