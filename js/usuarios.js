@@ -10,7 +10,6 @@ const MODULOS_CRM = [
     { id: 'tab-dashboard', label: 'Visão Geral / Dashboard' },
     { id: 'tab-crm', label: 'CRM e Prospecção (Kanban)' },
     { id: 'tab-agenda', label: 'Agenda de Eventos' },
-    { id: 'tab-mapa-turmas', label: 'Mapa de Turmas' },
     { id: 'tab-whatsapp', label: 'WhatsApp Unificado' },
     { id: 'tab-relatorios', label: 'Relatórios' },
     { id: 'tab-leads-tratar', label: 'Leads a Tratar' },

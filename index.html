@@ -36,8 +36,6 @@
            onclick="switchModule('tab-tarefas', 'Tarefas', 'Quem faz o quê, até quando')"></i>
         <i class="fa-solid fa-calendar-days sidebar-icon" data-tab="tab-agenda" title="Agenda de Eventos"
            onclick="switchModule('tab-agenda', 'Agenda de Eventos', 'Atividades e capacidade por filial')"></i>
-        <i class="fa-solid fa-table-cells sidebar-icon" data-tab="tab-mapa-turmas" title="Mapa de Turmas"
-           onclick="switchModule('tab-mapa-turmas', 'Mapa de Turmas', 'Grade semanal por dia e horário — sincronizado do Mercúrio')"></i>
         <i class="fa-brands fa-whatsapp sidebar-icon" data-tab="tab-whatsapp" title="WhatsApp Unificado"
            onclick="switchModule('tab-whatsapp', 'WhatsApp Unificado', 'Caixa de entrada centralizada')"></i>
         <i class="fa-solid fa-chart-simple sidebar-icon" data-tab="tab-relatorios" title="Relatórios"
@@ -96,6 +94,27 @@
         =========================================================== -->
         <div id="tab-dashboard" class="tab-pane">
             <div class="dashboard-content">
+                <!-- ==========================================================
+                     DIAGNÓSTICO DE SAÚDE (IA) (js/visao-geral.js)
+                     Detecta erro de importação/sincronização por regra fixa
+                     (determinística); a IA só escreve o resumo/ação em
+                     português — nunca decide o número/nível. Pedido do
+                     usuário (2026-09-21).
+                =========================================================== -->
+                <div class="agenda-geral-card" id="diagnosticoIaCard">
+                    <div class="agenda-geral-header">
+                        <div><i class="fa-solid fa-stethoscope"></i> Diagnóstico de Saúde (IA)</div>
+                        <div class="agenda-geral-actions">
+                            <button class="btn-toggle" id="btnAnalisarSaudeIA" onclick="analisarSaudeIA()"><i class="fa-solid fa-magnifying-glass-chart"></i> Analisar Agora</button>
+                        </div>
+                    </div>
+                    <div class="activity-card" style="min-height:0;">
+                        <div id="diagnosticoIaLista">
+                            <div style="font-size:12px; color:var(--text-muted);">Carregando último diagnóstico...</div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- ==========================================================
                      AGENDA DO DIA — TODAS AS FILIAIS (js/visao-geral.js)
                      Independente da filial selecionada no topo — junta o que
@@ -321,20 +340,13 @@
                         <label style="font-size:12px; display:flex; align-items:center; gap:5px; white-space:nowrap;">
                             <input type="checkbox" id="tarefasVerTodasFiliais" onchange="carregarTarefas()"> Ver de todas as filiais
                         </label>
+                        <button class="btn-toggle" onclick="gerarRecomendacoesContatoIA()" id="btnRecomendacoesContatoIA" title="A IA escolhe os leads mais prontos para contato AGORA na filial atual e sugere uma abordagem humanizada por lead">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> Recomendações de Contato (IA)
+                        </button>
                         <button class="btn-primary" onclick="abrirNovaTarefa()"><i class="fa-solid fa-plus"></i> Nova Tarefa</button>
                     </div>
                 </div>
                 <div id="listaTarefas" style="margin-top:16px; display:flex; flex-direction:column; gap:10px;"></div>
-            </div>
-        </div>
-
-        <div id="tab-mapa-turmas" class="tab-pane">
-            <div class="agenda-content">
-                <div>
-                    <h3 style="font-size:16px; color:var(--na-green-dark);">Mapa de Turmas</h3>
-                    <p class="report-sub">Grade semanal de turmas desta filial — sincronizada automaticamente pelo scraper do Mercúrio. Células em branco (destacadas) são horários livres pra abrir turma nova.</p>
-                </div>
-                <div id="mapaTurmasGrade" style="margin-top:16px; overflow-x:auto;"></div>
             </div>
         </div>
 
@@ -1524,8 +1536,6 @@
     <script src="js/importar-conversa-whatsapp.js"></script>
     <!-- 3d. Módulo da Agenda de Eventos (atividades/capacidade por filial) -->
     <script src="js/eventos.js"></script>
-    <!-- 3d2. Mapa de Turmas (grade semanal dia x horário, sincronizada do Mercúrio) -->
-    <script src="js/mapa-turmas.js"></script>
     <!-- 3e. Módulo de importar matrícula via texto colado da tela do Mercúrio -->
     <script src="js/matricula-importar.js"></script>
     <!-- 3f. Central de Notificações (sino no topbar) -->

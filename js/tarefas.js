@@ -480,3 +480,153 @@ async function cancelarTarefaAtual() {
     fecharModalTarefa();
     await carregarTarefas();
 }
+
+// ==========================================================
+// RECOMENDAÇÕES DE CONTATO (IA) — pedido do usuário (2026-09-21):
+// "avaliar as melhores tarefas por filial e por SDR, no sentido de
+// converter em matrículas... inteligente em relação ao planejamento de
+// contato, para que o contato em si seja humanizado".
+//
+// QUEM contatar é decidido por regra fixa (mesmo critério 100%
+// determinístico já usado em "50 Leads Prioritários", js/visao-geral.js:
+// proximidade de Abertura de Turma > Lead Forte > Jornada > qtd. de
+// tags), só que escoado à filial ATUAL (não todas de uma vez). A IA
+// (Edge Function `ia-recomendar-contatos`) só escreve, por lead, POR QUE
+// contatar agora e uma sugestão de ABERTURA DE CONVERSA humanizada — sem
+// decidir a lista nem inventar fato que não veio nos sinais.
+//
+// Resultado vira uma Tarefa de verdade (reaproveita 100% o modal/
+// salvarTarefa() já existentes) — a pessoa revisa/edita antes de
+// confirmar, igual qualquer outra tarefa criada à mão.
+// ==========================================================
+
+const LIMITE_RECOMENDACOES_CONTATO_IA = 20;
+
+function _diasParaAberturaTurmaTarefaIA(lead) {
+    const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+    let melhor = Infinity;
+    (Array.isArray(lead.historico_eventos) ? lead.historico_eventos : []).forEach(ev => {
+        if (ev.tipo !== 'Abertura de Turma') return;
+        const m = String(ev.data || '').match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+        if (!m) return;
+        const dataEvento = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+        const dias = Math.round((dataEvento - hoje) / 86400000);
+        if (dias >= 0 && dias < melhor) melhor = dias;
+    });
+    return melhor;
+}
+
+function _rankJornadaTarefaIA(lead) {
+    const tags = parseTags(lead.tags).map(t => t.trim());
+    if (tags.includes('Jornada: Engajado')) return 1;
+    if (tags.includes('Jornada: Interesse Emergente')) return 2;
+    if (tags.includes('Jornada: Descoberta')) return 3;
+    return 9;
+}
+
+// Candidatos + ranking pra 1 filial só — mesma RPC/critério de
+// leads_agenda_geral_prioritarios() (js/visao-geral.js), sem duplicar a
+// função em si (é uma consulta cross-filial, aqui só filtramos o
+// resultado pela filial atual antes de ordenar).
+async function _obterCandidatosContatoIA(filial) {
+    const { data, error } = await window.supabaseClient.rpc('leads_agenda_geral_prioritarios');
+    if (error) throw error;
+    const candidatos = (data || []).filter(l => l.filial === filial && !/matricul/i.test(l.funil_agencia || ''));
+    candidatos.forEach(l => {
+        l._diasAbertura = _diasParaAberturaTurmaTarefaIA(l);
+        l._rankForte = rankLeadForte(l);
+        l._rankJornada = _rankJornadaTarefaIA(l);
+    });
+    candidatos.sort((a, b) => {
+        if (a._diasAbertura !== b._diasAbertura) return a._diasAbertura - b._diasAbertura;
+        if (a._rankForte !== b._rankForte) return a._rankForte - b._rankForte;
+        if (a._rankJornada !== b._rankJornada) return a._rankJornada - b._rankJornada;
+        return contarTags(b) - contarTags(a);
+    });
+    return candidatos.slice(0, LIMITE_RECOMENDACOES_CONTATO_IA);
+}
+
+// Sinais compactos e 100% factuais por lead — é EXATAMENTE o que a IA
+// recebe, então nunca inclui nada que não possamos provar (ver prompt em
+// supabase/functions/ia-recomendar-contatos/index.ts).
+function _sinaisContatoIA(lead) {
+    const sinais = {};
+    if (lead._diasAbertura !== Infinity) sinais.dias_para_abertura_de_turma_inscrita = lead._diasAbertura;
+    if (lead._rankForte < 99) sinais.lead_forte_nivel = lead._rankForte;
+    if (lead._rankJornada < 9) sinais.estagio_jornada = ['Engajado', 'Interesse Emergente', 'Descoberta'][lead._rankJornada - 1];
+    const tagsInteresse = parseTags(lead.tags).map(t => t.trim())
+        .filter(t => typeof identificarFamiliaTag === 'function' && identificarFamiliaTag(t) === 'Interesses / Origem');
+    if (tagsInteresse.length > 0) sinais.tags_de_interesse = tagsInteresse;
+    return sinais;
+}
+
+async function gerarRecomendacoesContatoIA() {
+    if (typeof filialAtual === 'undefined' || !filialAtual) { alert('Escolha uma filial primeiro.'); return; }
+    const btn = document.getElementById('btnRecomendacoesContatoIA');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Analisando leads...'; }
+    try {
+        const candidatos = await _obterCandidatosContatoIA(filialAtual);
+        if (candidatos.length === 0) {
+            alert(`Nenhum lead prioritário identificado agora em "${filialAtual}" (ninguém com Abertura de Turma futura, Lead Forte ou Jornada ativa fora de Matriculados).`);
+            return;
+        }
+
+        const leadsParaIA = candidatos.map(l => ({
+            pessoaIdentificador: String(l.pessoaIdentificador),
+            nome: l.pessoaNome || 'Lead sem nome',
+            sinais: _sinaisContatoIA(l),
+        }));
+
+        const { data, error } = await window.supabaseClient.functions.invoke('ia-recomendar-contatos', { body: { leads: leadsParaIA } });
+        if (error || !data || data.ok === false) {
+            alert('Falha ao gerar recomendações com IA: ' + (error?.message || data?.erro || 'erro desconhecido'));
+            return;
+        }
+
+        const porId = new Map((data.recomendacoes || []).map(r => [String(r.pessoaIdentificador), r]));
+
+        // Preenche abordagem_sugerida de quem AINDA está vazio — nunca
+        // sobrescreve um "Como Abordar" já escrito à mão (mesmo princípio
+        // de preservação usado em todo o resto do app).
+        const idsParaChecarAbordagem = candidatos.map(l => String(l.pessoaIdentificador));
+        const { data: existentes } = await window.supabaseClient
+            .from(NOME_TABELA)
+            .select('pessoaIdentificador, abordagem_sugerida')
+            .in('pessoaIdentificador', idsParaChecarAbordagem);
+        const semAbordagem = new Set((existentes || []).filter(l => !l.abordagem_sugerida || !l.abordagem_sugerida.trim()).map(l => String(l.pessoaIdentificador)));
+
+        let preenchidos = 0;
+        for (const id of semAbordagem) {
+            const rec = porId.get(id);
+            if (!rec || !rec.abordagem) continue;
+            const { error: erroUpdate } = await window.supabaseClient.from(NOME_TABELA)
+                .update({ abordagem_sugerida: rec.abordagem }).eq('pessoaIdentificador', id);
+            if (!erroUpdate) preenchidos++;
+        }
+
+        if (typeof registrarLogAtividade === 'function') {
+            registrarLogAtividade('recomendacao_contato_ia', {
+                filial: filialAtual,
+                pessoaIds: candidatos.map(l => l.pessoaIdentificador),
+                detalhes: { totalLeads: candidatos.length, abordagensPreenchidas: preenchidos },
+            });
+        }
+
+        // Abre a tarefa já pronta pra revisão — reaproveita 100% o modal e
+        // o salvarTarefa() já existentes (Nova Tarefa), só pré-preenchidos.
+        await abrirNovaTarefa();
+        const hoje = new Date().toLocaleDateString('pt-BR');
+        document.getElementById('tarefaTitulo').value = `Contatos Prioritários (IA) — ${hoje}`;
+        document.getElementById('tarefaDescricao').value = 'Gerado por IA a partir dos leads mais prontos para contato agora. Motivos:\n'
+            + candidatos.map((l, i) => `${i + 1}) ${l.pessoaNome || 'Lead sem nome'} — ${(porId.get(String(l.pessoaIdentificador)) || {}).motivo || 'lead prioritário'}`).join('\n');
+        tarefaLeadsSelecionados = candidatos.map(l => ({
+            pessoaIdentificador: String(l.pessoaIdentificador), pessoaNome: l.pessoaNome || 'Lead sem nome',
+            concluida: false, jaExistia: false,
+        }));
+        renderizarListaLeadsTarefaModal();
+    } catch (e) {
+        alert('Erro inesperado ao gerar recomendações: ' + (e.message || e));
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Recomendações de Contato (IA)'; }
+    }
+}

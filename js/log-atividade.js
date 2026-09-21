@@ -78,6 +78,7 @@ const ROTULOS_ACAO_LOG = {
     recuperacao_detectada_scraper: 'Detectou reingresso/recuperação (scraper Mercúrio)',
     convite_whatsapp_link: 'Contato via WhatsApp (link pessoal)',
     inscricao_manual_ulisses: 'Inscreveu manualmente no site do Ulisses',
+    recomendacao_contato_ia: 'Gerou recomendações de contato (IA)',
 };
 
 // Mostra até esse nº de nomes por entrada antes de resumir em "e mais N" —
@@ -172,6 +173,8 @@ function formatarDetalhesLog(l, mapaNomes) {
             return `contatou ${nomes || '(sem lead identificado)'} via WhatsApp (${escapeHTML(d.canal || 'link pessoal')}) sobre <strong>${escapeHTML(d.evento || '?')}</strong>`;
         case 'inscricao_manual_ulisses':
             return `inscreveu ${nomes || '(sem lead identificado)'} manualmente no site do Ulisses, pro evento <strong>${escapeHTML(d.evento || '?')}</strong>`;
+        case 'recomendacao_contato_ia':
+            return `gerou recomendações de contato (IA) para ${nomes || `${d.totalLeads || 0} lead(s)`}${d.abordagensPreenchidas ? ` — ${d.abordagensPreenchidas} "Como Abordar" preenchido(s)` : ''}`;
         // Usa d.nome DIRETO (não `nomes`/resolverNomesLeadsLog) — o lead já
         // foi apagado de leads_inscricoes quando este log é lido depois,
         // então a resolução por pessoa_ids nunca acharia nada.

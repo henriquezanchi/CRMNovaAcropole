@@ -1226,9 +1226,10 @@ async function processarFichaAluno(page, linkNome, { verificarHistorico, verific
 // Varre TODAS as turmas da filial (menu "Turmas", uni_esctur.php) — entra
 // em cada uma e faz 3 coisas:
 // (1) grava dia/horário/início de TODA turma em `turmas`
-//     (migracao_turmas.sql), base do "Mapa de Turmas" no CRM
-//     (js/mapa-turmas.js) — só dia/horário são gravados lá, "início" é
-//     usado só aqui dentro pra decidir quem investigar (item 2);
+//     (migracao_turmas.sql) — sem tela própria no CRM hoje (removida
+//     2026-09-21), gravado de carona pra já existir se um dia fizer
+//     falta; "início" é usado só aqui dentro pra decidir quem
+//     investigar (item 2);
 // (2) lê a tabela de alunos (Matr./Nome/Origem/Ingresso/Fone): quem
 //     ingressou no MÊS CORRENTE é colado na tela "Importar Matrícula" do
 //     CRM publicado (marco 3 — scraper/importar-matricula-no-crm.js,
@@ -1732,6 +1733,30 @@ export async function executarSomenteUlissesApi() {
     }
 }
 
+// "Diagnóstico de Saúde (IA)" — pedido do usuário (2026-09-21): "quero
+// que ela avalie a situação dos leads das filiais e perceba se há algum
+// erro de importação ou de sincronização antes de eu esbarrar nos
+// problemas". Roda 1x, ao final de toda rodada diária (mesmo raciocínio
+// de verificarLembreteImportacaoUlisses() acima: importa MAIS ainda
+// rodar quando algo já falhou nesta rodada). A detecção em si é
+// determinística (contagens/limiares fixos dentro da Edge Function
+// `ia-diagnostico-saude`) — a IA só escreve o resumo/ação em português.
+// Best-effort: erro aqui nunca derruba o resto do job.
+async function executarDiagnosticoSaudeIA() {
+    try {
+        const { data: resultado, error } = await supabaseAdmin.functions.invoke('ia-diagnostico-saude', {});
+        if (error || (resultado && resultado.ok === false)) {
+            console.warn('[diagnostico-ia] Falha ao gerar diagnóstico de saúde:', error?.message || JSON.stringify(resultado));
+        } else {
+            const nivelMaisAlto = (resultado?.relatorio || []).some(r => r.nivel === 'urgente') ? 'urgente'
+                : (resultado?.relatorio || []).some(r => r.nivel === 'atencao') ? 'atenção' : 'ok';
+            console.log(`[diagnostico-ia] Diagnóstico de saúde gerado (${(resultado?.relatorio || []).length} item(ns), nível mais alto: ${nivelMaisAlto}).`);
+        }
+    } catch (e) {
+        console.warn('[diagnostico-ia] Erro inesperado (não interrompe o job):', e.message);
+    }
+}
+
 async function main() {
     // SOMENTE_ULISSES_API — ver comentário de executarSomenteUlissesApi()
     // acima. Sai ANTES de tocar em qualquer credencial/login do Mercúrio.
@@ -2049,6 +2074,7 @@ async function main() {
         // Roda sempre, mesmo se alguma filial falhou acima — o lembrete de
         // rodar o Ulisses importa MAIS ainda quando algo deu errado.
         await verificarLembreteImportacaoUlisses();
+        await executarDiagnosticoSaudeIA();
     } catch (e) {
         console.error('[mercurio] Falha:', e.message);
         try {

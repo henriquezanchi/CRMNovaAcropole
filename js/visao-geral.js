@@ -13,11 +13,103 @@
 // se a filial está selecionada ou não."
 
 async function atualizarAgendaGeral() {
+    carregarDiagnosticosIaRecentes();
     carregarAgendaGeralAniversariantes();
     carregarAgendaGeralLeadsPrioritarios();
     carregarAgendaGeralWhatsapp();
     carregarAgendaGeralEventosRecentes();
     carregarAgendaGeralCalendarioEventos();
+}
+
+// ---------------------------------------------------------
+// 0. Diagnóstico de Saúde (IA) — pedido do usuário (2026-09-21): "avaliar
+// a situação dos leads das filiais e perceber se há algum erro de
+// importação ou de sincronização antes de eu esbarrar nos problemas".
+// A DETECÇÃO é 100% determinística, calculada na Edge Function
+// `ia-diagnostico-saude` (contagens/limiares fixos) — a IA só escreve o
+// resumo/ação em português a partir dos sinais já calculados, nunca
+// decide o nível de severidade. Ver CLAUDE.md, seção própria.
+// ---------------------------------------------------------
+const CLASSE_NIVEL_DIAGNOSTICO_IA = { ok: 'tag-ativo', atencao: 'tag-warning', urgente: 'tag-error' };
+const ICONE_NIVEL_DIAGNOSTICO_IA = { ok: 'fa-circle-check', atencao: 'fa-triangle-exclamation', urgente: 'fa-circle-exclamation' };
+
+function _htmlItemDiagnosticoIa(item) {
+    const classe = CLASSE_NIVEL_DIAGNOSTICO_IA[item.nivel] || 'tag-warning';
+    const icone = ICONE_NIVEL_DIAGNOSTICO_IA[item.nivel] || 'fa-circle-info';
+    const quando = item.criado_em ? new Date(item.criado_em).toLocaleString('pt-BR') : '';
+    return `
+        <div class="diagnostico-ia-item">
+            <span class="tag ${classe}" style="flex:none;"><i class="fa-solid ${icone}"></i> ${escapeHTML(item.filial || 'Geral')}</span>
+            <div style="flex:1; min-width:0;">
+                <div style="font-size:12.5px; color:var(--text-dark);">${escapeHTML(item.resumo || '')}</div>
+                ${item.acao_sugerida ? `<div style="font-size:11.5px; color:var(--na-green-dark); margin-top:2px;"><i class="fa-solid fa-arrow-turn-up" style="transform:rotate(90deg);"></i> ${escapeHTML(item.acao_sugerida)}</div>` : ''}
+                <div class="activity-time">${escapeHTML(quando)}</div>
+            </div>
+        </div>`;
+}
+
+function _renderizarDiagnosticosIa(itens) {
+    const container = document.getElementById('diagnosticoIaLista');
+    if (!container) return;
+    if (!itens || itens.length === 0) {
+        container.innerHTML = '<div style="font-size:12px; color:var(--text-muted);">Nenhum diagnóstico ainda — clique em "Analisar Agora".</div>';
+        return;
+    }
+    // "ok" sempre por último (é o caso "nada a ver aqui"); o resto por
+    // severidade (urgente primeiro).
+    const ordemNivel = { urgente: 0, atencao: 1, ok: 2 };
+    const ordenados = [...itens].sort((a, b) => (ordemNivel[a.nivel] ?? 9) - (ordemNivel[b.nivel] ?? 9));
+    container.innerHTML = ordenados.map(_htmlItemDiagnosticoIa).join('');
+}
+
+// Mostra o diagnóstico mais recente já gravado (sem chamar a IA de novo)
+// — é o que já rodou sozinho no fim da rodada diária do Mercúrio, ou a
+// última vez que alguém clicou "Analisar Agora".
+async function carregarDiagnosticosIaRecentes() {
+    const container = document.getElementById('diagnosticoIaLista');
+    if (!container) return;
+    const desde = new Date(Date.now() - 36 * 3600 * 1000).toISOString(); // última rodada esperada, com folga
+    const { data, error } = await window.supabaseClient
+        .from('diagnosticos_ia')
+        .select('filial, nivel, resumo, acao_sugerida, criado_em')
+        .gte('criado_em', desde)
+        .order('criado_em', { ascending: false })
+        .limit(50);
+    if (error) {
+        container.innerHTML = '<div style="font-size:11px; color:var(--text-muted);">Indisponível (rode migracao_diagnosticos_ia.sql).</div>';
+        return;
+    }
+    // Só a rodada MAIS RECENTE (todos os itens gravados na mesma chamada,
+    // então basta olhar o timestamp mais recente e pegar tudo bem próximo
+    // dele — a function grava todos os itens de uma rodada em sequência).
+    if (!data || data.length === 0) { _renderizarDiagnosticosIa([]); return; }
+    const maisRecente = new Date(data[0].criado_em).getTime();
+    const daRodadaAtual = data.filter(d => Math.abs(new Date(d.criado_em).getTime() - maisRecente) < 5 * 60 * 1000);
+    _renderizarDiagnosticosIa(daRodadaAtual);
+}
+
+let _analiseSaudeIaEmAndamento = false;
+
+async function analisarSaudeIA() {
+    if (_analiseSaudeIaEmAndamento) return;
+    _analiseSaudeIaEmAndamento = true;
+    const btn = document.getElementById('btnAnalisarSaudeIA');
+    const container = document.getElementById('diagnosticoIaLista');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Analisando...'; }
+    if (container) container.innerHTML = '<div style="font-size:12px; color:var(--text-muted);">Analisando sincronização e importações de todas as filiais...</div>';
+    try {
+        const { data, error } = await window.supabaseClient.functions.invoke('ia-diagnostico-saude', {});
+        if (error || !data || data.ok === false) {
+            if (container) container.innerHTML = `<div style="font-size:12px; color:var(--text-muted);">Falha ao analisar — ${escapeHTML(error?.message || data?.erro || 'erro desconhecido')}.</div>`;
+            return;
+        }
+        _renderizarDiagnosticosIa(data.relatorio || []);
+    } catch (e) {
+        if (container) container.innerHTML = `<div style="font-size:12px; color:var(--text-muted);">Falha ao analisar — ${escapeHTML(e.message || String(e))}.</div>`;
+    } finally {
+        _analiseSaudeIaEmAndamento = false;
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-magnifying-glass-chart"></i> Analisar Agora'; }
+    }
 }
 
 // ---------------------------------------------------------

@@ -33,8 +33,6 @@ js/app.js            → toda a lógica do Kanban/CRM (esse é o arquivo princip
 js/importador.js     → módulo separado: importação das 3 planilhas → Supabase
 js/whatsapp.js       → módulo separado: integração real com WhatsApp (Meta Cloud API)
 js/eventos.js        → módulo separado: Agenda de Eventos (cadastro manual, por filial)
-js/mapa-turmas.js    → módulo separado: Mapa de Turmas (grade semanal dia x horário por
-                        filial, só leitura — alimentada pelo scraper do Mercúrio)
 js/leads-a-tratar.js → módulo separado: "Leads a Tratar" (duplicados por telefone/nome + sem telefone)
 js/matricula-importar.js → módulo separado: importar matrícula via texto colado da tela do
                         Mercúrio (lista avulsa OU tela de Turma completa, com Dia/Horário) —
@@ -75,6 +73,13 @@ supabase/functions/whatsapp-importar-conversa/ → Edge Function: grava em lote 
 supabase/functions/resumo-semanal-chefe/ → Edge Function: monta e manda pro chefe de filial o
                                      resumo agregado da semana (log_atividade dos últimos 7
                                      dias) — ver seção "Resumo Semanal pro Chefe"
+supabase/functions/ia-diagnostico-saude/ → Edge Function: detecta erro de importação/
+                                     sincronização por regra fixa e usa a Anthropic API só
+                                     pra ESCREVER o resumo/ação em português — ver seção
+                                     "Diagnóstico de Saúde (IA) e Recomendações de Contato (IA)"
+supabase/functions/ia-recomendar-contatos/ → Edge Function: recebe leads já priorizados por
+                                     regra fixa (js/tarefas.js) e escreve, por lead, motivo +
+                                     sugestão de abordagem humanizada — mesma seção acima
 migracao_filiais.sql              → já rodada (cria tabela filiais + coluna filial)
 migracao_historico_eventos.sql    → já rodada (coluna historico_eventos + constraint UNIQUE)
 migracao_whatsapp.sql             → tabela mensagens_whatsapp + view vw_wpp_conversas
@@ -192,10 +197,11 @@ migracao_filial_whatsapp_chefe.sql → coluna whatsapp_chefe_numero em filiais �
                                      responsável, destinatário do aviso de
                                      aniversário de aluno Ativo e do resumo de lead
                                      sob demanda; rodar manualmente
-migracao_turmas.sql               → tabela turmas (nome/dia/horário por filial) —
-                                     base do Mapa de Turmas, sincronizada
-                                     automaticamente pelo scraper do Mercúrio; rodar
-                                     manualmente
+migracao_turmas.sql               → tabela turmas (nome/dia/horário por filial),
+                                     sincronizada automaticamente pelo scraper do
+                                     Mercúrio (sem tela própria no CRM desde
+                                     2026-09-21, ver seção "Mapa de Turmas —
+                                     REMOVIDO"); rodar manualmente
 migracao_filial_valor_mensalidade.sql → coluna valor_mensalidade em filiais — base do
                                      cálculo de receita/comissão de SDR no relatório
                                      "Matrículas por Mês"; rodar manualmente
@@ -294,6 +300,12 @@ migracao_evento_leads_origem.sql  → coluna origem ('ulisses'/'crm') em evento_
                                      "Origem dos vínculos evento_leads"; JÁ RODADA nesta
                                      sessão via `supabase db query --linked` (+ backfill
                                      rodado à parte, script descartável)
+migracao_diagnosticos_ia.sql      → tabela diagnosticos_ia (log do "Diagnóstico de Saúde
+                                     (IA)") + RPCs contagem_status_mercurio_por_filial()/
+                                     eventos_proximos_sem_inscricao_ulisses(); ver seção
+                                     "Diagnóstico de Saúde (IA) e Recomendações de Contato
+                                     (IA)"; JÁ RODADA nesta sessão via
+                                     `supabase db query --linked`
 ```
 
 ## Banco de dados (Supabase)
@@ -2504,6 +2516,147 @@ quais os leads foram contatados, e qual o resultado de cada contato".
   (`mensagens_whatsapp.corpo_texto`) pra um resumo por IA de "como foi
   cada contato" (positivo/negativo/objeção) — hoje o resumo é só
   factual (mudou de coluna, ganhou/perdeu tag).
+
+## Diagnóstico de Saúde (IA) e Recomendações de Contato (IA)
+
+Pedido do usuário (2026-09-21): "quero que ela avalie a situação dos
+leads das filiais e perceba se há algum erro de importação ou de
+sincronização antes de eu esbarrar nos problemas... quero que ela avalie
+as melhores tarefas por filial e por SDR, no sentido de converter em
+matrículas. Quero que seja 'inteligente' em relação ao planejamento de
+contato, para que o contato em si seja humanizado".
+
+**Princípio de design, o mesmo já seguido em todo o resto do projeto**
+("nunca inventar/chutar sem evidência real"): em NENHUM dos dois recursos
+a IA decide um número, um nível de severidade, ou QUEM contatar — isso é
+sempre calculado por regra fixa (contagens/limiares em SQL/JS, ou o
+mesmo ranking 100% determinístico já usado em "50 Leads Prioritários",
+ver seção "Agenda do Dia"). A Anthropic API é usada só pra ESCREVER, em
+português natural, o texto a partir dos sinais/da lista já decidida —
+nunca pra inventar fato que não veio no payload. O prompt de cada
+function reforça essa regra explicitamente.
+
+### 1. Diagnóstico de Saúde (IA)
+
+Card novo no topo da aba Visão Geral/Dashboard, ACIMA de "Agenda do Dia —
+Todas as Filiais" (`#diagnosticoIaCard`, `js/visao-geral.js`).
+
+- **Detecção (determinística)**, feita dentro da Edge Function
+  `ia-diagnostico-saude` (`supabase/functions/ia-diagnostico-saude/`):
+  - **Sincronização**: dias desde a última tentativa/último sucesso de
+    `mercurio`/`ulisses` em `status_sincronizacao_automatica` — `urgente`
+    se a última tentativa falhou E o último sucesso foi há 2+ dias;
+    `atencao` se não tenta há 3+ dias.
+  - **Mercúrio nunca importou pra esta filial**: `total_leads >= 100` E
+    `total_ativo_inativo == 0` (RPC `contagem_status_mercurio_por_filial()`,
+    `migracao_diagnosticos_ia.sql` — mesmo cast jsonb de
+    `leads_ativos_inativos_da_filial()`) → `urgente`. O limiar de 100
+    evita falso-positivo numa filial nova/pequena que legitimamente ainda
+    não passou pelo Mercúrio.
+  - **Duplicados em alta**: `leads_a_tratar` com 150+ grupos pendentes
+    numa filial → `atencao` (pode ser sintoma de um bug de importação
+    criando duplicata em vez de casar com lead existente — mesma classe
+    dos "Bug real #2/#3/#4/#5" já documentados na seção do Importador).
+  - **Importação antiga**: última entrada `log_atividade.acao='importacao'`
+    daquela filial há 14+ dias → `atencao`.
+  - **Evento próximo sem inscrição via Ulisses**: evento ativo nos
+    próximos 10 dias com ZERO `evento_leads.origem='ulisses'` (RPC
+    `eventos_proximos_sem_inscricao_ulisses()`) → `atencao`.
+  - Sem NENHUM problema: 1 registro `nivel='ok'`, sem chamar a IA (economiza
+    a chamada quando não há nada a relatar).
+- **Escrita (IA)**: só quando há 1+ problema, a function manda os sinais
+  brutos (nunca o texto) pra Claude Haiku, pedindo, por item, `resumo`
+  (1-2 frases, interpretando os números) e `acao_sugerida` (1 frase,
+  referenciando um recurso que JÁ EXISTE no CRM, ex: "abra Sincronização
+  Automática e rode o Mercúrio pra esta filial"). O `nivel`/`filial` da
+  IA são sempre IGNORADOS — só o texto é aproveitado, sempre re-anexado
+  ao sinal original antes de gravar. **Se a chamada à IA falhar por
+  qualquer motivo** (rede, crédito, resposta malformada), cai num
+  `resumo` genérico ("a IA não respondeu, ver sinais brutos") — a
+  detecção (a parte que importa) nunca é bloqueada pela IA.
+- **Tabela `diagnosticos_ia`** (`migracao_diagnosticos_ia.sql`) — log
+  append-only de cada rodada (histórico, tipo `log_atividade`), com
+  `sinais` jsonb guardando os NÚMEROS reais que geraram o diagnóstico
+  (auditoria: "de onde veio isso?").
+- **2 gatilhos**: botão "Analisar Agora" (`analisarSaudeIA()`, sob
+  demanda) e automaticamente 1x/dia, como ÚLTIMA etapa de
+  `scraper/mercurio.js` `main()` (`executarDiagnosticoSaudeIA()`, best-
+  effort, via `supabaseAdmin.functions.invoke(...)` — mesmo padrão já
+  usado pra `whatsapp-notificar-chefe-filial`/`lembrete-scraper`) — assim
+  o diagnóstico já está pronto quando o usuário abre o CRM de manhã, sem
+  precisar clicar em nada.
+- O painel (`carregarDiagnosticosIaRecentes()`) mostra a rodada mais
+  recente já gravada (sem chamar a IA de novo só pra exibir), ordenada
+  por severidade (urgente > atenção > ok).
+
+### 2. Recomendações de Contato (IA)
+
+Botão "Recomendações de Contato (IA)" na aba Tarefas (`js/tarefas.js`),
+ao lado de "Nova Tarefa" — escopado à FILIAL ATUAL (diferente do
+Diagnóstico de Saúde, que é cross-filial).
+
+- **QUEM contatar (determinístico)**: `_obterCandidatosContatoIA()`
+  reaproveita a MESMA RPC e o MESMO critério de ranking já usados em "50
+  Leads Prioritários" (`leads_agenda_geral_prioritarios()` +
+  proximidade de Abertura de Turma > Lead Forte > Jornada > qtd. de
+  tags, ver seção "Agenda do Dia") — só filtrado pra 1 filial e capado
+  em 20 leads (`LIMITE_RECOMENDACOES_CONTATO_IA`). Não existe atribuição
+  de lead a um SDR específico no banco hoje — "por SDR" é resolvido
+  deixando o usuário escolher o responsável (pessoa OU equipe) no
+  próprio modal de Tarefa, igual qualquer outra tarefa criada à mão.
+- **COMO abordar (IA, "humanizado")**: os sinais 100% factuais de cada
+  lead (dias até a Abertura de Turma inscrita, nível de Lead Forte,
+  estágio da Jornada, tags da família "Interesses / Origem") vão pra
+  Edge Function `ia-recomendar-contatos` (`supabase/functions/ia-recomendar-contatos/`,
+  **sem nenhuma consulta ao banco** — só recebe o que o frontend já
+  calculou, mesmo padrão de `classificar-temas`), que devolve, por lead,
+  `motivo` (por que agora) e `abordagem` (sugestão de mensagem de
+  abertura curta, calorosa, NUNCA insistente/vendedora na primeira
+  frase — pedido explícito do usuário, "humanizado"). O prompt proíbe
+  explicitamente inventar evento/data/fato que não veio nos sinais.
+- **O que acontece ao gerar**: (1) preenche `abordagem_sugerida` de quem
+  ainda está VAZIO (nunca sobrescreve um "Como Abordar" já escrito à
+  mão — mesmo princípio de preservação de todo o resto do app); (2) abre
+  o modal de "Nova Tarefa" JÁ existente (`abrirNovaTarefa()`), pré-
+  preenchido com título/descrição (a descrição lista o motivo de cada
+  lead, já que `tarefa_leads` não tem campo de nota por lead) e os leads
+  já selecionados — a pessoa revisa/edita/escolhe o responsável e clica
+  "Salvar" normalmente, exatamente como qualquer tarefa manual. Se
+  cancelar, a tarefa não é criada (mas o `abordagem_sugerida` já escrito,
+  sendo só um preenchimento de campo vazio, fica — não é destrutivo).
+  Log em `log_atividade` (`acao='recomendacao_contato_ia'`).
+
+### Limitação real, confirmada em produção (2026-09-21)
+
+**A conta Anthropic usada pelo projeto está sem crédito** — confirmado
+testando as 2 functions direto (`curl`): `"Your credit balance is too
+low to access the Anthropic API. Please go to Plans & Billing to
+upgrade or purchase credits."`. Isso bloqueia a ESCRITA em linguagem
+natural das duas features (e também `classificar-temas`, que usa a
+MESMA chave) — mas a DETECÇÃO/ranking determinístico dos dois recursos
+continua funcionando 100% (testado: `ia-diagnostico-saude` detectou
+corretamente 2 filiais com duplicados em alta, com os números certos;
+só o texto ficou no fallback genérico). **Ação do usuário**: adicionar
+crédito em https://console.anthropic.com (Plans & Billing) — nenhuma
+mudança de código resolve isso.
+
+**Achado incidental nesta mesma investigação — 3 Edge Functions
+documentadas como "já deployadas" estavam AUSENTES em produção**
+(`npx supabase functions list` não trazia `classificar-temas`,
+`lembrete-scraper`, nem `whatsapp-notificar-chefe-filial` — o código-
+fonte continuava intacto em `supabase/functions/`, só nunca tinha sido
+(re)enviado ao projeto, ou foi perdido numa reconfiguração anterior do
+projeto Supabase). Isso explica silenciosamente: eventos importados sem
+`tema` (Importador cai no aviso "best-effort" sem dizer o motivo real),
+o aviso de aniversário de aluno Ativo pro chefe de filial nunca chegando,
+e o lembrete semanal/de evento próximo do Ulisses pro admin também nunca
+chegando — tudo com erro `404 NOT_FOUND`, engolido pelos `catch`
+best-effort de cada chamador (por design, pra nunca travar o resto do
+job) e por isso nunca visível em lugar nenhum. **Corrigido**: as 3 foram
+redeployadas nesta sessão (`npx supabase functions deploy <nome>`) —
+nenhuma mudança de código, só reenviar o que já existia. Vale conferir
+de vez em quando com `npx supabase functions list` se alguma function
+"desaparece" de novo depois de uma reconfiguração do projeto.
 
 ## Central de Notificações (`js/notificacoes.js`)
 
@@ -5288,30 +5441,19 @@ fallback pro padrão), igual `whatsapp-send`.
   (`SERVICE_ROLE_KEY`) — mantém verificação de JWT padrão, os dois já
   mandam um Bearer válido.
 
-## Mapa de Turmas (`js/mapa-turmas.js`, aba nova)
+## Mapa de Turmas — REMOVIDO da interface (2026-09-21)
 
-Grade semanal (dia x horário) de turmas por filial, só leitura — sem
-cadastro manual de propósito, é um espelho do Mercúrio. Fonte: tabela
-`turmas` (`migracao_turmas.sql`, `filial`+`nome` único), sincronizada
-automaticamente por `processarTurmas()` (`scraper/mercurio.js` —
-renomeada de `processarMatriculasRecentesTurmas()`, ver seção "Scraper
-Ulisses/Mercúrio — reformulação do Mercúrio") — a mesma varredura que já
-visita cada turma procurando matrícula recente agora TAMBÉM grava
-dia/horário de TODA turma visitada ali (upsert), tenha matrícula nova ou
-não.
-
-- Colunas = dias da semana que têm pelo menos 1 turma, na ordem
-  Segunda→Domingo; linhas = todo horário distinto observado (ordena
-  certo como string "HH:MM"). Célula vazia = "horário livre", destacada
-  em verde — é o objetivo principal da tela (achar espaço pra abrir
-  turma nova).
-- **Bug real corrigido num teste visual**: a normalização de dia da
-  semana removia acento (`normalizarDiaSemana()`) mas a lista de
-  referência (`ORDEM_DIAS_SEMANA`) continuava acentuada — "Terça" nunca
-  batia e caía fora de ordem, no fim da grade. Corrigido removendo a
-  normalização de acento (o Mercúrio já manda "TERÇA"/"SÁBADO"
-  corretamente acentuados; comparar acentuado-com-acentuado é mais
-  confiável que uma normalização pela metade).
+Existiu como aba própria (`js/mapa-turmas.js`, grade semanal dia x
+horário por filial) — removida a pedido do usuário ("por enquanto não
+vai servir pra nada e só polui a tela"). A tabela `turmas`
+(`migracao_turmas.sql`) e a escrita nela dentro de `processarTurmas()`
+(`scraper/mercurio.js`) **continuam existindo** — é um upsert best-effort
+de baixo custo, feito de carona na mesma varredura que já visita cada
+turma por outros motivos (matrícula/reingresso/telefone), sem nenhum
+código extra dedicado a ela. Se uma tela de grade fizer sentido de novo
+no futuro, o dado já vai estar acumulado — só reconstruir a aba de
+leitura (`js/mapa-turmas.js` pode ser recuperado do histórico do git,
+commit anterior a 2026-09-21).
 
 ## Matrículas por Mês — agora com receita e comissão de SDR
 

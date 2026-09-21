@@ -2417,7 +2417,6 @@ const ICONES_MODULO = {
     'tab-dashboard': 'fa-solid fa-chart-line',
     'tab-crm': 'fa-solid fa-users-viewfinder',
     'tab-agenda': 'fa-solid fa-calendar-days',
-    'tab-mapa-turmas': 'fa-solid fa-table-cells',
     'tab-whatsapp': 'fa-brands fa-whatsapp',
     'tab-relatorios': 'fa-solid fa-chart-simple',
     'tab-leads-tratar': 'fa-solid fa-clone',
@@ -2451,7 +2450,6 @@ function switchModule(tabId, title, subtitle) {
     }
     if (tabId === 'tab-relatorios') atualizarRelatorios();
     if (tabId === 'tab-agenda' && typeof carregarEventos === 'function') carregarEventos();
-    if (tabId === 'tab-mapa-turmas' && typeof carregarMapaTurmas === 'function') carregarMapaTurmas();
     if (tabId === 'tab-leads-tratar' && typeof carregarLeadsATratar === 'function') carregarLeadsATratar();
     if (tabId === 'tab-leads-tratar' && typeof carregarConversasImportadasATratar === 'function') carregarConversasImportadasATratar();
     if (tabId === 'tab-whatsapp') {
