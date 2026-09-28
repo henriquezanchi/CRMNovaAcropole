@@ -962,13 +962,33 @@ function encontrarColunaAbordagem() {
     return col ? col.key : null;
 }
 
+// Bug real (2026-09-28, achado logo depois do bloqueio geral da API cair —
+// só aí os erros POR NÚMERO puderam finalmente aparecer): um número local
+// de 8 dígitos começando com 2/3/4/5 é SEMPRE telefone FIXO no plano de
+// numeração da Anatel — nunca foi celular, nunca teve/vai ter WhatsApp.
+// Mesma regra usada em `montarNumeroE164()` (supabase/functions/_shared/telefone.ts,
+// que trata o mesmo bug do lado do envio real via API) — aqui é a versão
+// client-side, usada pelos 2 fluxos de convite em massa (link wa.me e API).
+function numeroPareceFixo(ddd, numero) {
+    const numeroLimpo = String(numero || '').replace(/\D/g, '');
+    return numeroLimpo.length === 8 && !/^[6-9]/.test(numeroLimpo);
+}
+
 // Só dígitos de DDI+DDD+número — formato exigido pelo link wa.me (sem
 // espaço, traço ou "+"). Assume Brasil (55), já que é o único país
-// atendido hoje.
+// atendido hoje. Número de 8 dígitos que PARECE celular (prefixo 6-9,
+// só esqueceu o 9º dígito) ganha o "9" na frente — mesma completude já
+// aplicada no envio real via API (montarNumeroE164()); fixo (2-5) nunca
+// ganha, e é rejeitado ANTES de gerar um link que a pessoa ia clicar e
+// só descobrir depois, no WhatsApp Web, que o número não existe.
 function telefoneParaWaMe(lead) {
     const ddd = String(lead.pessoaTelefoneDDD || '').replace(/\D/g, '');
-    const numero = String(lead.pessoaTelefoneNumero || '').replace(/\D/g, '');
+    let numero = String(lead.pessoaTelefoneNumero || '').replace(/\D/g, '');
     if (!ddd || !numero) return null;
+    if (numero.length === 8) {
+        if (numeroPareceFixo(ddd, numero)) return null;
+        numero = '9' + numero;
+    }
     return `55${ddd}${numero}`;
 }
 
@@ -1020,7 +1040,7 @@ async function gerarLinksConviteLote() {
     }
 
     const avisoSemTelefone = semTelefone > 0
-        ? `<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-triangle-exclamation"></i> ${semTelefone} lead(s) sem telefone cadastrado foram ignorados.</p>`
+        ? `<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-triangle-exclamation"></i> ${semTelefone} lead(s) sem telefone válido pra WhatsApp (sem número cadastrado, ou telefone fixo) foram ignorados.</p>`
         : '';
 
     document.getElementById('conviteLoteResultado').innerHTML = `
@@ -1281,6 +1301,11 @@ function gerarPreviaConviteApiLote() {
         const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(id));
         if (!lead) return;
         if (!lead.pessoaTelefoneDDD || !lead.pessoaTelefoneNumero) { semTelefone++; return; }
+        // Número de 8 dígitos começando com 2-5 é telefone FIXO (Anatel) —
+        // nunca teve WhatsApp, nunca vale a pena gastar uma chamada de API
+        // que vai só voltar "Message Undeliverable" (bug real achado
+        // 2026-09-28, ver montarNumeroE164() no backend).
+        if (numeroPareceFixo(lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero)) { semTelefone++; return; }
 
         const params = tpl.variaveis.map((v, i) => v.chave === null
             ? (valoresManuais[i] || '')
@@ -1292,7 +1317,7 @@ function gerarPreviaConviteApiLote() {
     conviteApiPreviaAtual = { templateIndice: Number(selectTemplate.value) || 0, linhas };
 
     const avisoSemTelefone = semTelefone > 0
-        ? `<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-triangle-exclamation"></i> ${semTelefone} lead(s) sem telefone cadastrado foram ignorados.</p>`
+        ? `<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-triangle-exclamation"></i> ${semTelefone} lead(s) sem telefone válido pra WhatsApp (sem número cadastrado, ou telefone fixo) foram ignorados.</p>`
         : '';
 
     document.getElementById('conviteApiEscolha').style.display = 'none';

@@ -5787,6 +5787,64 @@ seção própria abaixo). **Ainda não testado**: envio de imagem (`tipo:
 `whatsapp-send`/secrets diferentes o suficiente pra valer confirmar na
 próxima vez que rodarem de verdade.
 
+**Bug real GRAVE, achado NA HORA (2026-09-28) — só apareceu porque o
+bloqueio acima finalmente caiu**: 2 envios reais de aniversário pela
+gaveta do lead falharam com um erro NOVO, nunca visto antes —
+`{"code":131026,"message":"Message undeliverable"}` — bem diferente de
+"API access blocked" (esse é POR NÚMERO, não da conta toda). Os 2 casos
+(Eduardo Menezes Ferreira, Lorranny Cardoso) tinham o telefone cadastrado
+com **8 dígitos começando com "3"** (`32510156`, `32995562`, DDD 62).
+**Causa raiz**: `montarNumeroE164()` (`supabase/functions/_shared/telefone.ts`)
+tratava QUALQUER telefone de 8 dígitos como "celular esquecendo o 9º
+dígito" e completava com um "9" na frente — mas um número local de 8
+dígitos começando com **2/3/4/5** é, pelo plano de numeração da Anatel,
+**SEMPRE telefone FIXO** (nunca foi celular, nunca precisou/vai ganhar o
+9º dígito) — só números começando com 6/7/8/9 eram celular no formato
+antigo de 8 dígitos. "Completar" um fixo com "9" produz um número de
+celular que **não existe**, e é isso que a Meta rejeita como "Message
+Undeliverable" — ela processa a chamada normalmente (prova de que a API
+está liberada, não é o bloqueio de conta de novo), só não consegue
+entregar num número que nunca existiu. **Nunca tinha aparecido antes**
+porque, com a API bloqueada geral, TODO envio falhava direto com "API
+access blocked" — o erro específico por número nunca tinha chance de
+aparecer.
+- **Levantamento no banco confirmou que não são só 2 casos isolados**:
+  **755 leads** (738 só em Goiânia - Jardim América, 10 no Garavelo, 3
+  em Barra do Garças/MT, 3 na Goiânia II, 1 no Setor Oeste) têm telefone
+  de 8 dígitos começando com 2/3/4/5 — provavelmente TODOS são fixo, sem
+  WhatsApp real, e cada tentativa de envio pra eles (individual OU em
+  massa) ia gastar uma chamada de API só pra falhar, com um erro que não
+  deixa óbvio que o problema é o número.
+- **Corrigido em 3 lugares** (mesma regra, `/^[6-9]/` no 1º dígito de um
+  número de 8 dígitos decide se completa com "9" ou devolve `null`/
+  "sem WhatsApp"):
+  1. `montarNumeroE164()` (`supabase/functions/_shared/telefone.ts`) —
+     usada por `whatsapp-send` (envio individual E pelo novo "Convidar
+     via API" em massa, que chama a mesma function por lead) e
+     `whatsapp-importar-conversa`. Redeployadas as 2 functions.
+  2. `numeroPareceFixo()`/`telefoneParaWaMe()` (`js/whatsapp.js`) — o
+     link wa.me também nunca deveria ser gerado pra um fixo (a pessoa só
+     ia descobrir depois, clicando, que o WhatsApp Web não reconhece o
+     número); de quebra, `telefoneParaWaMe()` passou a completar
+     corretamente com "9" um 8-dígitos que É celular de verdade
+     (6-9) — antes ela nunca completava nada, nem pro caso legítimo.
+  3. `gerarPreviaConviteApiLote()` (`js/whatsapp.js`, "Convidar via API"
+     em massa) — mesma checagem antes de montar a lista de envio, pra
+     contar como "sem telefone válido" em vez de gastar uma chamada.
+- **Testado ao vivo, ponta a ponta**: reenviando pro lead do Eduardo
+  (mesmo `pessoaIdentificador`) depois do redeploy — antes: tentava
+  enviar e voltava "Message undeliverable"; depois: `{"ok":false,
+  "erro":"lead_sem_telefone"}` direto, sem gastar chamada nenhuma na
+  Graph API.
+- **Decisão em aberto, não construída ainda**: os 755 leads continuam
+  com o telefone cadastrado (a correção só impede tentativa de WhatsApp
+  futura, não apaga nem marca nada retroativamente) — não usei "Telefone
+  Inválido" pra eles porque o número provavelmente ESTÁ certo, só não é
+  WhatsApp (apagar perderia um contato válido pra LIGAÇÃO). Se fizer
+  sentido, uma tag nova tipo `"Só Ligação (Telefone Fixo)"` marcando
+  esses 755 automaticamente seria o próximo passo natural — não construída
+  por decisão de escopo, fica pra o usuário decidir se quer.
+
 ## Importar Conversa de WhatsApp (feita fora do CRM)
 
 Enquanto a API do Meta está bloqueada (seção acima), o time continua
