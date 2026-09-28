@@ -3887,6 +3887,11 @@ function abrirGaveta(id, opcoes = {}) {
     }
 
     if (typeof chatDrawer !== 'undefined') chatDrawer.abrir(id, opcoes.templateWhatsapp || null);
+    // Abrir a conversa pela gaveta também conta como "leu" pra fins do
+    // indicador de não-lida do WhatsApp Unificado (js/whatsapp.js) — sem
+    // isso, um lead falado só por aqui continuaria aparecendo "não lido"
+    // na aba WhatsApp.
+    if (typeof marcarConversaLidaWpp === 'function') marcarConversaLidaWpp(id);
     document.getElementById('leadDrawer').classList.add('open');
     document.getElementById('overlay').classList.add('active');
 }

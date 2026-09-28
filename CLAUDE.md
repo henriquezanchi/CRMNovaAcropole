@@ -5690,20 +5690,111 @@ não-http e delega pro Windows.
   clique de ponta a ponta (abrir os Chromiums de verdade) não foi testado
   por mim** — precisa ser validado pelo usuário na primeira vez que usar.
 
-## WhatsApp Unificado — de qual filial é cada conversa?
+## WhatsApp Unificado — de verdade cross-filial (2026-09-28)
 
-Conversas **identificadas** já eram implicitamente da filial atual
-(`filialAtual`, mesmo filtro do resto do app) — agora cada uma também
-mostra um selo com o nome da filial, pra não depender só do seletor do
-topbar. Conversas **NÃO identificadas** (webhook não achou nenhum lead
-com aquele telefone) **não têm filial nenhuma pra mostrar** — o
-`filial` da mensagem fica `null` nesse caso (confirmado no código do
-webhook, `supabase/functions/whatsapp-webhook/index.ts`), e isso é
-inerente a ter só 1 número de WhatsApp compartilhado por todas as
-filiais hoje (não dá pra saber de qual escola veio antes de vincular a
-um lead). Adicionada uma nota explicando isso na seção "Não
-identificados" da lista de conversas, pra não dar a falsa impressão de
-que elas pertencem à filial selecionada no momento.
+Pedido do usuário: "eu quero que tenha exatamente isso, um whatsapp
+unificado para todas as filiais, mas que identifique qual filial
+pertence cada lead, e que possa filtrar por filiais". **Bug real
+corrigido**: apesar do nome "Unificado", a aba sempre filtrou por
+`filialAtual` por baixo dos panos (`renderizarContatosWpp()`,
+`.eq('filial', filialAtual)`) — nunca foi de verdade cross-filial, só
+mostrava a conversa da filial escolhida no topo, igual o resto do app.
+
+- **Agora é SEMPRE todas as filiais por padrão** — a query de conversas
+  (`vw_wpp_conversas`) não filtra mais por `filialAtual`. Um
+  `<select id="wppFiltroFilialSelect">` novo (topo da lista de contatos,
+  `index.html`) deixa restringir a 1 filial quando fizer sentido
+  ("Todas as filiais" = padrão), populado a partir de `filiaisDisponiveis`
+  (`popularFiltroFilialWpp()`).
+- **Selo de filial por conversa** já existia no card da lista; agora
+  também aparece no CABEÇALHO do chat aberto (`abrirChatWpp()`).
+- **"Iniciar nova conversa" (buscar por nome) agora busca em TODA a
+  base** (respeitando o filtro de filial escolhido, se houver) — antes
+  só buscava dentro de `leadsAtuais` (escopado à filial atual), então só
+  dava pra "começar" conversa com quem já estava paginado na filial
+  selecionada; agora dá pra achar QUALQUER lead do sistema.
+- **Bug real de fundo, também corrigido**: `abrirChatWpp(leadId)` só
+  lia `leadsAtuais.find(...)` (escopado à filial) — abrir a conversa de
+  um lead de OUTRA filial deixava `lead` undefined, quebrando o
+  cabeçalho E as variáveis `nome`/`filial` dos templates
+  (`preencherValorAutomatico()` também lê de `leadsAtuais`). Corrigido
+  buscando do banco e MESCLANDO em `leadsAtuais` quando o lead ainda não
+  estiver carregado — mesmo padrão já usado por
+  `abrirResultadoBuscaGlobal()` (`js/app.js`) pra Agenda do
+  Dia/notificações cross-filial.
+  - **Trade-off aceito, herdado do mesmo padrão**: `renderizarCards()`
+    não filtra `leadsAtuais` por `filialAtual` ("sem pré-filtro global",
+    comentário no próprio código) — então um lead de OUTRA filial,
+    aberto pelo WhatsApp Unificado, pode aparecer momentaneamente como
+    card avulso no Kanban da filial atual, até a próxima troca de
+    filial (que reseta `leadsAtuais` do zero). Isso já era um risco
+    aceito pra Agenda do Dia/notificações (baixa frequência); com o
+    WhatsApp agora abrindo leads cross-filial com muito mais frequência,
+    fica mais visível — não corrigido aqui de propósito (mudar o filtro
+    de `renderizarCards()` é uma decisão maior, fora do pedido
+    específico desta rodada); se incomodar na prática, avaliar depois.
+- **Variável "filial" dos templates tinha o MESMO bug de fundo**
+  (pedido do usuário, item 1 da mesma leva): `preencherValorAutomatico('filial')`
+  sempre usava `filialAtual` (o seletor do topo), nunca a filial do
+  PRÓPRIO lead — um SDR olhando "Todas as filiais" e respondendo um lead
+  de Barra do Garças mandava "...da Nova Acrópole do Jardim América" (a
+  última filial selecionada no topbar, não a do lead). Corrigido — agora
+  sempre usa `lead.filial` (extraído pra `nomeFilialComPreposicao()`,
+  reaproveitada também em `montarTextoConviteEvento()`, que tinha o
+  MESMO bug pro convite de evento avulso/em massa).
+- **Indicador de "não lida"** (pedido do usuário, "máximo de
+  funcionalidades iguais ao WhatsApp real"): client-side, por navegador
+  (`localStorage`, `crm_na_wpp_ultima_leitura` — sem tabela nova) — nome
+  em negrito forte + bolinha verde quando a última mensagem é de ENTRADA
+  e mais nova que a última vez que ESTE navegador abriu aquela conversa
+  (marcada como lida ao abrir pela aba WhatsApp OU pela gaveta do lead).
+- **Separador de dia** ("Hoje"/"Ontem"/data completa) entre grupos de
+  mensagens no chat, igual o WhatsApp real (`rotuloDataSeparadorWpp()`).
+- **Não construído nesta rodada, decisão em aberto**: anexar/enviar foto
+  ou documento arbitrário do computador do SDR pelo chat exigiria
+  Supabase Storage (hoje o envio de imagem só existe via `imagemUrl`
+  cadastrada no evento — "Convite Compartilhável"/"Nova Turma" — a Meta
+  busca a imagem por LINK, nunca por upload direto). Adicionar Storage é
+  uma decisão de infraestrutura própria (contraria o "sem servidor
+  próprio de aplicação" documentado no topo deste arquivo), então não
+  foi feita sem confirmar com o usuário. Também fora de escopo, sem
+  pedido explícito: emoji picker de verdade (o ícone já existe na UI, só
+  não abre nada), reações a mensagens, encaminhar mensagem, apagar/
+  editar mensagem enviada, indicador de "digitando...", chamada de voz/
+  vídeo, conversas em grupo — nenhum desses tem equivalente na Meta
+  Cloud API hoje (ou exigiria trabalho bem maior, fora do que foi
+  pedido).
+
+Conversas **NÃO identificadas** (webhook não achou nenhum lead com
+aquele telefone) **não têm filial nenhuma pra mostrar** — o `filial` da
+mensagem fica `null` nesse caso (confirmado no código do webhook,
+`supabase/functions/whatsapp-webhook/index.ts`), e isso é inerente a ter
+só 1 número de WhatsApp compartilhado por todas as filiais hoje (não dá
+pra saber de qual escola veio antes de vincular a um lead) — continuam
+fora do filtro de filial (mostradas sempre, "de qualquer filial").
+
+## Mover pra "Em Abordagem" ao enviar QUALQUER mensagem (2026-09-28)
+
+Pedido do usuário: "depois que eu mandar uma mensagem para um lead, ele
+deve ser movido para outra coluna (em abordagem, por exemplo). Leads que
+tem conversa no whatsapp não devem ficar em leads frios."
+
+- **`moverParaAbordagemAposEnvio(leadId)`** (`js/whatsapp.js`) — só move
+  quem ainda está na PRIMEIRA coluna do funil (`columnsConfig[0].key`,
+  a "fria"/nunca trabalhada); nunca puxa de volta um lead que já avançou
+  (Matriculado, Perdido etc.) só porque mandamos uma mensagem pra ele.
+  Busca o `funil_agencia` ATUAL direto no banco (não em `leadsAtuais`) —
+  o lead pode ser de outra filial (ver seção acima) e nem estar
+  carregado ali. Reaproveita `moverLeadsParaColuna()` já existente —
+  ganha de graça a barra de "Desfazer", `funil_agencia_atualizado_em`
+  (SLA visual) e a sincronização com Tarefas.
+- **Chamada depois de TODO envio real que saiu com sucesso**: texto
+  livre e template (chat individual — aba unificada e gaveta), foto
+  ("Convite Compartilhável"/"Nova Turma"), e os 2 disparos em massa
+  ("Convidar (Link)" — ao marcar "já enviei este" — e "Convidar (API)").
+  `marcarContatoWhatsAppLoteEnviado()` (link) foi simplificada pra usar
+  esta mesma função em vez de mover incondicionalmente — mesma regra em
+  todo lugar agora, não só nesse ponto de entrada.
 
 ## Bloqueio da API do WhatsApp (Meta) — investigado 2026-09-07
 

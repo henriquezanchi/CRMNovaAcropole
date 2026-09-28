@@ -106,8 +106,28 @@ const TEMPLATES_WHATSAPP = [
     },
 ];
 
+// Devolve "do Jardim América"/"de Barra do Garças" pra uma filial
+// específica (não a selecionada no topo) — extraída pra reuso, ver bug
+// real abaixo.
+function nomeFilialComPreposicao(nomeFilial) {
+    const f = (typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : []).find(x => x.nome === nomeFilial);
+    if (f && f.nome_com_preposicao) return f.nome_com_preposicao;
+    // Sem preposição configurada em "Gerenciar Filiais" — "de {nome}"
+    // é uma aproximação razoável na maioria dos casos, mas editável.
+    return nomeFilial ? `de ${nomeFilial}` : '';
+}
+
 // Valor pré-preenchido pra uma variável de template, conforme sua chave —
 // sempre EDITÁVEL depois (o SDR pode corrigir/trocar antes de enviar).
+//
+// Bug real (2026-09-28, pedido do usuário): a variável "filial" sempre
+// usava `filialAtual` (a filial escolhida no seletor do topo) — errado
+// desde que o WhatsApp Unificado passou a mostrar/permitir conversar com
+// leads de QUALQUER filial (ver seção "Aba unificada" abaixo): um SDR
+// vendo "Todas as filiais" e respondendo um lead de Barra do Garças
+// mandava "...da Nova Acrópole do Jardim América" (a filial errada, só
+// porque era a última selecionada no topbar). Corrigido pra sempre usar
+// a filial DO PRÓPRIO LEAD (`lead.filial`), nunca a do seletor.
 function preencherValorAutomatico(chave, leadId) {
     if (chave === 'nome') {
         const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
@@ -117,11 +137,8 @@ function preencherValorAutomatico(chave, leadId) {
         return obterNomeAtendente() || '';
     }
     if (chave === 'filial') {
-        const f = (typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : []).find(x => x.nome === filialAtual);
-        if (f && f.nome_com_preposicao) return f.nome_com_preposicao;
-        // Sem preposição configurada em "Gerenciar Filiais" — "de {nome}"
-        // é uma aproximação razoável na maioria dos casos, mas editável.
-        return filialAtual ? `de ${filialAtual}` : '';
+        const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
+        return nomeFilialComPreposicao(lead ? lead.filial : filialAtual);
     }
     return '';
 }
@@ -135,6 +152,18 @@ let canalListaWpp = null;
 function formatarHoraWpp(iso) {
     if (!iso) return '';
     return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+
+// "HOJE"/"ONTEM"/"28 de setembro de 2026" — mesmo texto do separador de
+// dia do WhatsApp real, usado por renderizarMensagens() (criarChatController).
+function rotuloDataSeparadorWpp(iso) {
+    const data = new Date(iso);
+    const diaMsg = new Date(data); diaMsg.setHours(0, 0, 0, 0);
+    const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+    const ontem = new Date(hoje); ontem.setDate(ontem.getDate() - 1);
+    if (diaMsg.getTime() === hoje.getTime()) return 'Hoje';
+    if (diaMsg.getTime() === ontem.getTime()) return 'Ontem';
+    return data.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
 }
 
 function janelaAberta(mensagens) {
@@ -234,6 +263,9 @@ function criarChatController({ messagesId, inputAreaId }) {
 
     const el = (id) => document.getElementById(id);
 
+    // "Fidelidade ao WhatsApp real" (pedido do usuário, 2026-09-28) — o
+    // real separa o dia entre grupos de mensagens com um "pill" central
+    // ("HOJE"/"ONTEM"/data). Calculado aqui, não guardado — é só leitura.
     function renderizarMensagens() {
         const container = el(messagesId);
         if (!container) return;
@@ -241,7 +273,17 @@ function criarChatController({ messagesId, inputAreaId }) {
             container.innerHTML = '<div style="text-align:center; font-size:11px; color:#64748b; margin-top:20px;">Nenhuma mensagem ainda. Envie a primeira abaixo.</div>';
             return;
         }
-        container.innerHTML = mensagens.map(htmlMensagemWpp).join('');
+        let html = '';
+        let ultimoDia = null;
+        mensagens.forEach(m => {
+            const diaAtual = new Date(m.criado_em).toDateString();
+            if (diaAtual !== ultimoDia) {
+                html += `<div class="wpp-date-divider"><span>${escapeHTML(rotuloDataSeparadorWpp(m.criado_em))}</span></div>`;
+                ultimoDia = diaAtual;
+            }
+            html += htmlMensagemWpp(m);
+        });
+        container.innerHTML = html;
         container.scrollTop = container.scrollHeight;
     }
 
@@ -297,6 +339,9 @@ function criarChatController({ messagesId, inputAreaId }) {
                 return;
             }
             await recarregarHistorico();
+            // Pedido do usuário: mandar mensagem já tira o lead de uma
+            // coluna fria (ver moverParaAbordagemAposEnvio()).
+            moverParaAbordagemAposEnvio(leadId).catch(e => console.warn('Erro ao mover lead pra Abordagem após envio:', e.message));
         });
     }
 
@@ -350,6 +395,7 @@ function criarChatController({ messagesId, inputAreaId }) {
             return;
         }
         await recarregarHistorico();
+        moverParaAbordagemAposEnvio(leadId).catch(e => console.warn('Erro ao mover lead pra Abordagem após envio:', e.message));
     }
 
     async function recarregarHistorico() {
@@ -609,6 +655,7 @@ async function confirmarConviteComFoto() {
         return;
     }
     await chatDrawer.abrir(currentLeadId); // recarrega o chat pra já mostrar a foto enviada
+    moverParaAbordagemAposEnvio(currentLeadId).catch(e => console.warn('Erro ao mover lead pra Abordagem após envio:', e.message));
 }
 
 // "Nova Turma" (botão próprio na gaveta, só pra Ativos — ver
@@ -673,6 +720,7 @@ async function enviarConviteAberturaTurmaFilial() {
         return;
     }
     await chatDrawer.abrir(currentLeadId); // recarrega o chat pra já mostrar a foto enviada
+    moverParaAbordagemAposEnvio(currentLeadId).catch(e => console.warn('Erro ao mover lead pra Abordagem após envio:', e.message));
 }
 
 // Monta o texto final do convite pra QUALQUER lead + evento — extraído de
@@ -723,7 +771,7 @@ function montarTextoConviteEvento(lead, evento, templateCustom) {
     return (templateCustom || (ehAtivo ? CONVITE_EVENTO_ATIVO : CONVITE_EVENTO_NAO_ALUNO))
         .replaceAll('{nome}', primeiroNome)
         .replaceAll('{atendente}', atendente || 'a equipe da Nova Acrópole')
-        .replaceAll('{filial}', (typeof preencherValorAutomatico === 'function' ? preencherValorAutomatico('filial') : '') || filialAtual || '')
+        .replaceAll('{filial}', nomeFilialComPreposicao(lead.filial))
         .replaceAll('{evento}', evento.nome)
         .replaceAll('{quando}', quando)
         .replaceAll('{interesses}', fraseInteresses)
@@ -962,6 +1010,33 @@ function encontrarColunaAbordagem() {
     return col ? col.key : null;
 }
 
+// Pedido do usuário (2026-09-28): "depois que eu mandar uma mensagem para
+// um lead, ele deve ser movido para outra coluna (em abordagem)... leads
+// que tem conversa no whatsapp não devem ficar em leads frios". Chamada
+// depois de QUALQUER envio de verdade que tenha saído (chat individual —
+// texto ou template —, convite em massa via link OU via API) — nunca
+// puxa de volta um lead que já avançou (Matriculado, Perdido etc.), só
+// tira quem ainda está preso na PRIMEIRA coluna do funil (a "fria", nunca
+// trabalhada — mandar mensagem já é, por definição, ter trabalhado o
+// lead). Busca o `funil_agencia` ATUAL direto no banco, não em
+// `leadsAtuais` — o lead pode ser de OUTRA filial (WhatsApp Unificado
+// agora é cross-filial) e nem estar carregado ali.
+async function moverParaAbordagemAposEnvio(leadId) {
+    if (typeof columnsConfig === 'undefined' || columnsConfig.length === 0) return;
+    const colunaFria = columnsConfig[0].key;
+    const colunaAbordagem = encontrarColunaAbordagem();
+    if (!colunaAbordagem || colunaAbordagem === colunaFria) return;
+
+    const { data: lead } = await window.supabaseClient
+        .from(typeof NOME_TABELA !== 'undefined' ? NOME_TABELA : 'leads_inscricoes')
+        .select('funil_agencia')
+        .eq('pessoaIdentificador', leadId)
+        .maybeSingle();
+    if (!lead || lead.funil_agencia !== colunaFria) return;
+
+    await moverLeadsParaColuna([leadId], colunaAbordagem);
+}
+
 // Bug real (2026-09-28, achado logo depois do bloqueio geral da API cair —
 // só aí os erros POR NÚMERO puderam finalmente aparecer): um número local
 // de 8 dígitos começando com 2/3/4/5 é SEMPRE telefone FIXO no plano de
@@ -1173,12 +1248,9 @@ async function marcarContatoWhatsAppLoteEnviado(pessoaId, marcado) {
         });
     }
 
-    const colunaAbordagem = typeof encontrarColunaAbordagem === 'function' ? encontrarColunaAbordagem() : null;
-    if (colunaAbordagem) {
-        await moverLeadsParaColuna([pessoaId], colunaAbordagem);
-    } else {
-        console.warn('Nenhuma coluna de Abordagem encontrada (crie uma coluna do Kanban com "Abordagem" no nome) — lead não foi movido automaticamente.');
-    }
+    // Só move quem ainda está na coluna fria (ver moverParaAbordagemAposEnvio())
+    // — nunca puxa de volta um lead que já avançou pra uma coluna mais adiante.
+    await moverParaAbordagemAposEnvio(pessoaId);
 }
 
 // ==========================================================
@@ -1409,6 +1481,10 @@ async function confirmarEnviarConviteApiLote() {
         });
     }
 
+    // Pedido do usuário: mandar mensagem já tira o lead de uma coluna
+    // fria — só quem ainda estava lá, nunca puxa de volta quem já avançou.
+    await Promise.all(sucesso.map(r => moverParaAbordagemAposEnvio(r.pessoaIdentificador)));
+
     resultadoEl.innerHTML = `
         <p style="font-size:13px; margin-bottom:8px;"><strong>${sucesso.length} enviado(s)</strong>${falha.length > 0 ? `, <strong style="color:#991b1b;">${falha.length} falhou(aram)</strong>` : ''}.</p>
         <div style="max-height:280px; overflow-y:auto; border:1px solid var(--border-color); border-radius:6px; padding:6px; margin-bottom:12px;">
@@ -1426,6 +1502,16 @@ async function confirmarEnviarConviteApiLote() {
 // ==========================================================
 // Aba unificada — lista de conversas
 // ==========================================================
+// Pedido do usuário (2026-09-28): "eu quero que tenha exatamente isso, um
+// whatsapp unificado para todas as filiais, mas que identifique qual
+// filial pertence cada lead, e que possa filtrar por filiais". Antes,
+// essa aba filtrava por `filialAtual` por baixo dos panos — nem era
+// unificada de verdade, só mostrava a conversa da filial selecionada no
+// topo (a mesma raiz do bug da variável "filial" corrigido acima). Agora
+// é SEMPRE todas as filiais por padrão, com um filtro OPCIONAL
+// (`#wppFiltroFilialSelect`) pra restringir a 1 quando fizer sentido.
+let wppFiltroFilial = '';
+
 function iniciarEscutaGlobalWpp() {
     if (canalListaWpp) return;
     canalListaWpp = window.supabaseClient
@@ -1440,20 +1526,54 @@ function iniciarEscutaGlobalWpp() {
         .subscribe();
 }
 
+function popularFiltroFilialWpp() {
+    const select = document.getElementById('wppFiltroFilialSelect');
+    if (!select || select.dataset.populado === '1') return;
+    const lista = (typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : []);
+    if (lista.length === 0) return; // ainda não carregou — tenta de novo na próxima renderização
+    select.innerHTML = '<option value="">Todas as filiais</option>'
+        + lista.map(f => `<option value="${escapeHTML(f.nome)}">${escapeHTML(f.nome)}</option>`).join('');
+    select.dataset.populado = '1';
+}
+
+// "Não lida" — client-side, por navegador (localStorage), sem tabela
+// nova: última vez que ESTE navegador abriu a conversa de cada lead.
+// Mensagem de ENTRADA mais nova que isso = negrito + bolinha verde,
+// mesmo sinal visual do WhatsApp real. Marcada como lida ao abrir o chat
+// (marcarConversaLidaWpp()).
+const CHAVE_WPP_ULTIMA_LEITURA = 'crm_na_wpp_ultima_leitura';
+function obterUltimasLeiturasWpp() {
+    try { return JSON.parse(localStorage.getItem(CHAVE_WPP_ULTIMA_LEITURA)) || {}; } catch { return {}; }
+}
+function marcarConversaLidaWpp(leadId) {
+    try {
+        const mapa = obterUltimasLeiturasWpp();
+        mapa[String(leadId)] = new Date().toISOString();
+        localStorage.setItem(CHAVE_WPP_ULTIMA_LEITURA, JSON.stringify(mapa));
+    } catch { /* localStorage indisponível (aba privada etc.) — só perde o indicador, nunca quebra a tela */ }
+}
+function conversaNaoLidaWpp(conversa) {
+    if (!conversa || conversa.ultima_direcao !== 'entrada') return false;
+    const ultimaLeitura = obterUltimasLeiturasWpp()[String(conversa.pessoaIdentificador)];
+    return !ultimaLeitura || new Date(conversa.ultima_mensagem_em) > new Date(ultimaLeitura);
+}
+
 function htmlContatoWpp(lead, conversa) {
     const id = lead.pessoaIdentificador;
     const ativo = String(id) === String(wppContatoAtivoId) ? 'active' : '';
+    const naoLida = conversaNaoLidaWpp(conversa);
     const preview = conversa
         ? `${conversa.ultima_direcao === 'saida' ? 'Você: ' : ''}${(conversa.ultimo_texto || '').slice(0, 40)}`
         : 'Toque para iniciar conversa';
     return `
-        <div class="wpp-contact-item ${ativo}" onclick="abrirChatWpp('${id}')">
+        <div class="wpp-contact-item ${ativo} ${naoLida ? 'nao-lida' : ''}" onclick="abrirChatWpp('${id}')">
             <div class="wpp-contact-avatar"><i class="fa-solid fa-user"></i></div>
-            <div class="wpp-contact-info">
+            <div class="wpp-contact-info" style="flex:1;">
                 <div class="wpp-contact-name">${escapeHTML(lead.pessoaNome || 'Sem nome')}</div>
                 <div class="wpp-contact-phone">${escapeHTML(preview)}</div>
                 ${lead.filial ? `<div style="font-size:9px; color:var(--text-muted);"><i class="fa-solid fa-building"></i> ${escapeHTML(lead.filial)}</div>` : ''}
             </div>
+            ${naoLida ? '<div class="wpp-contact-nao-lida-dot"></div>' : ''}
         </div>
     `;
 }
@@ -1475,15 +1595,20 @@ async function renderizarContatosWpp(filtro = '') {
     const lista = document.getElementById('wppContactList');
     if (!lista) return;
     iniciarEscutaGlobalWpp();
+    popularFiltroFilialWpp();
+
+    const selectFilial = document.getElementById('wppFiltroFilialSelect');
+    wppFiltroFilial = selectFilial ? selectFilial.value : '';
 
     const termo = (filtro || '').trim().toLowerCase();
 
-    const { data: conversas } = await window.supabaseClient
+    let queryConversas = window.supabaseClient
         .from('vw_wpp_conversas')
         .select('*')
-        .eq('filial', filialAtual)
         .order('ultima_mensagem_em', { ascending: false })
         .limit(200);
+    if (wppFiltroFilial) queryConversas = queryConversas.eq('filial', wppFiltroFilial);
+    const { data: conversas } = await queryConversas;
     const conversasValidas = conversas || [];
     const idsComConversa = new Set(conversasValidas.map(c => String(c.pessoaIdentificador)));
 
@@ -1502,13 +1627,23 @@ async function renderizarContatosWpp(filtro = '') {
         .filter(c => c.lead)
         .filter(c => !termo || (c.lead.pessoaNome || '').toLowerCase().includes(termo));
 
+    // "Iniciar nova conversa" — busca em TODA a base (respeitando o
+    // filtro de filial escolhido, se houver), não só nos leads já
+    // paginados pro navegador da filial atual (`leadsAtuais`) — pedido
+    // implícito da unificação: dá pra começar uma conversa com QUALQUER
+    // lead do sistema, de qualquer filial.
     let novosContatos = [];
     if (termo) {
-        novosContatos = leadsAtuais
-            .filter(l => !idsComConversa.has(String(l.pessoaIdentificador)))
-            .filter(l => (l.pessoaNome || '').toLowerCase().includes(termo))
-            .filter(l => l.pessoaTelefoneNumero)
-            .slice(0, 15);
+        let queryNovos = window.supabaseClient
+            .from('leads_inscricoes')
+            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, filial')
+            .is('lixeira_em', null)
+            .ilike('pessoaNome', `%${termo}%`)
+            .not('pessoaTelefoneNumero', 'is', null)
+            .limit(15);
+        if (wppFiltroFilial) queryNovos = queryNovos.eq('filial', wppFiltroFilial);
+        const { data: candidatos } = await queryNovos;
+        novosContatos = (candidatos || []).filter(l => !idsComConversa.has(String(l.pessoaIdentificador)));
     }
 
     let naoIdentUnicos = [];
@@ -1554,9 +1689,31 @@ function filtrarContatosWpp(valor) {
     renderizarContatosWpp(valor);
 }
 
+// Bug real (2026-09-28): antes só olhava `leadsAtuais` (escopado à filial
+// selecionada no topo) — abrir a conversa de um lead de OUTRA filial (a
+// unificação de verdade pede isso) deixava `lead` undefined, quebrando o
+// cabeçalho E a variável "filial"/"nome" dos templates (preencherValorAutomatico()
+// também lê de `leadsAtuais`). Corrigido buscando do banco e MESCLANDO em
+// `leadsAtuais` (mesmo padrão já usado por abrirResultadoBuscaGlobal(),
+// js/app.js) quando o lead ainda não estiver carregado — depois disso,
+// todo o resto do app (gaveta, templates, etc.) já enxerga esse lead
+// normalmente, de qualquer filial.
 async function abrirChatWpp(leadId) {
     wppContatoAtivoId = leadId;
-    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
+    marcarConversaLidaWpp(leadId);
+
+    let lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
+    if (!lead) {
+        const { data, error } = await window.supabaseClient
+            .from(typeof NOME_TABELA !== 'undefined' ? NOME_TABELA : 'leads_inscricoes')
+            .select('*')
+            .eq('pessoaIdentificador', leadId)
+            .maybeSingle();
+        if (!error && data) {
+            leadsAtuais = [...leadsAtuais, data];
+            lead = data;
+        }
+    }
 
     const searchEl = document.getElementById('wppSearch');
     renderizarContatosWpp(searchEl ? searchEl.value : '');
@@ -1567,7 +1724,7 @@ async function abrirChatWpp(leadId) {
             <div style="width: 36px; height: 36px; background: #cbd5e1; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; color: white;"><i class="fa-solid fa-user"></i></div>
             <div>
                 <div style="font-size: 13px; font-weight: 600;">${escapeHTML(lead.pessoaNome || 'Sem nome')}</div>
-                <div style="font-size: 11px; color: var(--na-green); display:flex; align-items:center; gap:4px;"><i class="fa-brands fa-whatsapp"></i> ${escapeHTML(lead.pessoaTelefoneDDD || '')} ${escapeHTML(lead.pessoaTelefoneNumero || '')}</div>
+                <div style="font-size: 11px; color: var(--na-green); display:flex; align-items:center; gap:4px;"><i class="fa-brands fa-whatsapp"></i> ${escapeHTML(lead.pessoaTelefoneDDD || '')} ${escapeHTML(lead.pessoaTelefoneNumero || '')}${lead.filial ? ` · <i class="fa-solid fa-building"></i> ${escapeHTML(lead.filial)}` : ''}</div>
             </div>
         `;
     }
