@@ -1316,6 +1316,7 @@ async function abrirModalInscreverEvento() {
 function atualizarLinkInscreverEvento() {
     const select = document.getElementById('inscreverEventoSelect');
     const link = document.getElementById('inscreverEventoLinkSite');
+    const linkAssistido = document.getElementById('inscreverEventoLinkAssistido');
     const aviso = document.getElementById('inscreverEventoSemLink');
     const eventoId = select ? Number(select.value) : null;
     const ev = eventoId ? eventosAtuais.find(e => e.id === eventoId) : null;
@@ -1324,11 +1325,24 @@ function atualizarLinkInscreverEvento() {
         link.style.pointerEvents = '';
         link.style.opacity = '1';
         aviso.style.display = 'none';
+        // Protocolo customizado abririnscricao:// (mesmo mecanismo do
+        // abrirulisses:// já registrado no Windows, ver CLAUDE.md "'Botão'
+        // de acionar o Ulisses") — aciona scraper/abrir-inscricao-assistida.js
+        // numa máquina de confiança, que abre um Chromium visível DIRETO
+        // na página do evento, sem precisar de seletor nenhum (só
+        // navegação — o preenchimento automático dos campos depende de
+        // ainda confirmarmos o HTML real do formulário, ver CLAUDE.md).
+        if (linkAssistido) {
+            linkAssistido.href = 'abririnscricao://rodar?url=' + encodeURIComponent(ev.link_inscricao);
+            linkAssistido.style.pointerEvents = '';
+            linkAssistido.style.opacity = '1';
+        }
     } else {
         link.href = '#';
         link.style.pointerEvents = 'none';
         link.style.opacity = '0.5';
         aviso.style.display = ev ? 'block' : 'none';
+        if (linkAssistido) { linkAssistido.href = '#'; linkAssistido.style.pointerEvents = 'none'; linkAssistido.style.opacity = '0.5'; }
     }
 }
 

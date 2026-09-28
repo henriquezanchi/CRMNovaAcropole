@@ -5849,6 +5849,63 @@ automatizados). Backend/cofre não foram tocados — credencial de Ulisses
 já salva antes continua existindo e servindo de dica, só não dá mais
 pra SALVAR uma nova pela tela.
 
+## Inscrição assistida no Ulisses — Etapa 1 (2026-09-28)
+
+Pedido do usuário, reunião com a Ediliene: "podemos retomar a ideia de
+que o próprio crm fará as inscrições conforme a solicitação da pessoa?
+Nem que eu tenha que acionar um botão manualmente, para abrir o
+navegador e a partir daí o crm começar a preencher os dados". Dividido
+em 2 etapas, porque a Etapa 2 depende de algo que só o usuário pode
+providenciar.
+
+- **Bloqueio real, sem solução ainda**: nunca vimos o HTML real do
+  FORMULÁRIO de inscrição público (`inscricao.acropolebrasil.com.br`) —
+  só a tela de "selecione a unidade", por print. Sem isso, escrever
+  seletor pra autofill seria "no chute", contra o princípio deste
+  projeto. **Próximo passo do usuário**: na próxima vez que abrir a
+  página pública de inscrição de um evento com vaga aberta, abrir o
+  DevTools no formulário de dados pessoais (não só a tela de unidade) e
+  mandar o HTML (`Inspecionar` → `Copy outerHTML` do `<form>`).
+- **Etapa 1, construída agora (não depende do HTML)**: botão novo
+  **"Abrir e Preparar Inscrição (neste computador)"** no modal
+  `#modalInscreverEvento` (`js/eventos.js`, ao lado de "Abrir site de
+  inscrição") — copia os 3 dados pra área de transferência (reaproveita
+  `copiarDadosInscreverEvento()` já existente) E aciona o protocolo
+  customizado `abririnscricao://rodar?url=<link_inscricao codificado>`,
+  MESMO mecanismo já usado por `abrirulisses://`/`abrirulissesapi://`
+  (ver seção "'Botão' de acionar o Ulisses" abaixo) — registrado
+  apontando DIRETO pro `node.exe`, sem `cmd.exe`/`.bat` no meio (mesma
+  lição já aprendida: um shell no meio corrompe a querystring
+  codificada).
+  - `scraper/abrir-inscricao-assistida.js` (novo, também copiado pra
+    `C:\Scrapper\scraper\`, a máquina de confiança onde o Playwright de
+    verdade está instalado — `G:\` é um drive de rede, não roda
+    Playwright de forma confiável): abre um Chromium VISÍVEL
+    (`headless: false`) e só NAVEGA até a URL — zero seletor, então zero
+    risco. Nunca fecha o browser sozinho (o SDR trabalha nessa janela
+    até terminar de colar os dados e confirmar no site).
+  - **Registro no Registro do Windows** (`HKCU\Software\Classes\abririnscricao`),
+    feito nesta sessão:
+    ```
+    (Default) = "URL:Abrir Inscricao Assistida"
+    "URL Protocol" = ""
+    \shell\open\command\(Default) = "C:\Program Files\nodejs\node.exe" "C:\Scrapper\scraper\abrir-inscricao-assistida.js" "%1"
+    ```
+  - **Testado ao vivo, de ponta a ponta**: disparado
+    `abririnscricao://rodar?url=...` (URL real de um evento,
+    "Bushido, o código de honra dos samurais") via `Start-Process` do
+    PowerShell — confirmado por `Get-Process` que um `node.exe` novo e
+    um cluster de `chrome.exe` novos apareceram no exato segundo do
+    disparo; a janela abriu na página certa. Processo de teste encerrado
+    depois (não era um uso real).
+  - **Limitação, igual às outras do mesmo mecanismo**: só funciona nesta
+    máquina (`C:\Scrapper`), onde o protocolo foi registrado.
+- **Etapa 2 (autofill de verdade dos campos)**: NÃO construída ainda —
+  trava até o HTML real do formulário chegar. Quando chegar, o mesmo
+  script ganha os seletores reais — mas **nunca vai clicar no botão
+  final de enviar sozinho**, só preenche e para, pro SDR conferir e
+  confirmar manualmente (mesma cautela de `scraper/importar-no-crm.js`).
+
 ## "Botão" de acionar o Ulisses — de decisão final a botão de verdade (2026-09-10)
 
 **Histórico**: um botão comum no CRM publicado não consegue abrir uma

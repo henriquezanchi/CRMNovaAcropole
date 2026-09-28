@@ -13,6 +13,7 @@
     "corrigir-datas-inscricao-publica": "node --env-file-if-exists=.env corrigir-datas-inscricao-publica.js",
     "testar-ulisses-api": "node --env-file-if-exists=.env testar-ulisses-api.js",
     "ulisses-api-local": "node sincronizar-ulisses-api-local.mjs",
+    "abrir-inscricao-assistida": "node abrir-inscricao-assistida.js",
     "run": "node run.js"
   },
   "dependencies": {

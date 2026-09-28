@@ -1180,10 +1180,11 @@
             <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Telefone</label>
             <input type="text" id="inscreverEventoTelefone" style="width:100%; padding:8px; margin-bottom:12px; box-sizing:border-box;">
 
-            <div style="display:flex; gap:8px; margin-bottom:12px;">
+            <div style="display:flex; gap:8px; margin-bottom:8px;">
                 <button type="button" class="btn-secondary" style="flex:1;" onclick="copiarDadosInscreverEvento()"><i class="fa-solid fa-copy"></i> Copiar dados</button>
                 <a id="inscreverEventoLinkSite" href="#" target="_blank" rel="noopener" class="btn-secondary" style="flex:1; text-align:center; text-decoration:none; box-sizing:border-box;"><i class="fa-solid fa-arrow-up-right-from-square"></i> Abrir site de inscrição</a>
             </div>
+            <a id="inscreverEventoLinkAssistido" href="#" class="btn-secondary" style="display:block; text-align:center; text-decoration:none; box-sizing:border-box; margin-bottom:12px;" onclick="copiarDadosInscreverEvento()" title="Copia os dados E abre o Chromium direto na página do evento, na sua máquina de confiança — só funciona neste computador"><i class="fa-solid fa-desktop"></i> Abrir e Preparar Inscrição (neste computador)</a>
             <div id="inscreverEventoSemLink" style="display:none; font-size:11px; color:#b45309; margin-bottom:8px;"><i class="fa-solid fa-triangle-exclamation"></i> Este evento não tem um Link de Inscrição cadastrado — cadastre em "Gerenciar Eventos" ou procure no site institucional da filial.</div>
         </div>
         <div class="modal-footer">
