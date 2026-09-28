@@ -27,13 +27,15 @@ Deno.serve(async (req) => {
 
     let corpoReq: {
         pessoaIdentificador?: string;
-        tipo?: "texto" | "template" | "imagem";
+        tipo?: "texto" | "template" | "imagem" | "documento";
         texto?: string;
         templateNome?: string;
         templateIdioma?: string;
         templateParams?: string[];
         templatePreview?: string;
         imagemUrl?: string;
+        documentoUrl?: string;
+        nomeArquivo?: string;
         caption?: string;
         atendenteNome?: string;
     };
@@ -43,11 +45,12 @@ Deno.serve(async (req) => {
         return json({ ok: false, erro: "json_invalido" }, 400);
     }
 
-    const { pessoaIdentificador, tipo, texto, templateNome, templateIdioma, templateParams, templatePreview, imagemUrl, caption, atendenteNome } = corpoReq;
+    const { pessoaIdentificador, tipo, texto, templateNome, templateIdioma, templateParams, templatePreview, imagemUrl, documentoUrl, nomeArquivo, caption, atendenteNome } = corpoReq;
     if (!pessoaIdentificador || !tipo) return json({ ok: false, erro: "parametros_faltando" }, 400);
     if (tipo === "texto" && !texto?.trim()) return json({ ok: false, erro: "texto_vazio" }, 400);
     if (tipo === "template" && !templateNome) return json({ ok: false, erro: "template_nome_faltando" }, 400);
     if (tipo === "imagem" && !imagemUrl?.trim()) return json({ ok: false, erro: "imagem_url_faltando" }, 400);
+    if (tipo === "documento" && !documentoUrl?.trim()) return json({ ok: false, erro: "documento_url_faltando" }, 400);
 
     // Busca telefone/filial do lead no servidor — não confia no que vier do front.
     const { data: lead, error: erroLead } = await supabaseAdmin
@@ -107,6 +110,20 @@ Deno.serve(async (req) => {
             type: "image",
             image: caption ? { link: imagemUrl, caption } : { link: imagemUrl },
         }
+        : tipo === "documento"
+        ? {
+            // Mesmo raciocínio do tipo "imagem" — "link", não upload de
+            // mídia; a própria Meta busca o arquivo nessa URL. Usado pelo
+            // anexo livre do compose bar (enviarComAnexo(), js/whatsapp.js),
+            // que sobe o arquivo pro Supabase Storage (bucket
+            // `whatsapp-midia`, público) antes de chamar esta function.
+            messaging_product: "whatsapp",
+            to: numeroE164,
+            type: "document",
+            document: caption
+                ? { link: documentoUrl, filename: nomeArquivo, caption }
+                : { link: documentoUrl, filename: nomeArquivo },
+        }
         : {
             messaging_product: "whatsapp",
             to: numeroE164,
@@ -114,12 +131,17 @@ Deno.serve(async (req) => {
             text: { body: texto },
         };
 
-    const corpoTexto = tipo === "template" ? (templatePreview || `[Template: ${templateNome}]`) : tipo === "imagem" ? (caption || "[Imagem]") : texto;
-    // Guarda a URL da imagem junto do payload bruto — a resposta da Graph
-    // API não devolve a URL de volta, e o chat da gaveta precisa dela pra
-    // RENDERIZAR a imagem de verdade (não só a legenda). Ver htmlMensagemWpp()
-    // em js/whatsapp.js.
-    const payloadExtra = tipo === "imagem" ? { imagem_url: imagemUrl } : {};
+    const corpoTexto = tipo === "template" ? (templatePreview || `[Template: ${templateNome}]`)
+        : tipo === "imagem" ? (caption || "[Imagem]")
+        : tipo === "documento" ? (caption || `[Documento: ${nomeArquivo || "arquivo"}]`)
+        : texto;
+    // Guarda a URL/nome junto do payload bruto — a resposta da Graph API
+    // não devolve isso de volta, e o chat precisa pra RENDERIZAR a
+    // imagem/o cartão de documento de verdade (não só a legenda). Ver
+    // htmlMensagemWpp() em js/whatsapp.js.
+    const payloadExtra = tipo === "imagem" ? { imagem_url: imagemUrl }
+        : tipo === "documento" ? { documento_url: documentoUrl, nome_arquivo: nomeArquivo }
+        : {};
 
     let respGraph: Response;
     let respJson: any;

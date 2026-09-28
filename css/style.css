@@ -372,9 +372,22 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .drawer-chat { display: flex; flex-direction: column; background: #efeae2; position: relative; padding: 0 !important; flex: 1; }
 .chat-header { background: #f0f2f5; padding: 12px 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border-color); }
 .chat-messages { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
-.chat-input-area { background: #f0f2f5; padding: 12px 20px; display: flex; gap: 10px; align-items: center; border-top: 1px solid var(--border-color); }
+/* Virou coluna (2026-09-28) pra caber a prévia de anexo (.wpp-anexo-preview)
+   ACIMA da linha de ícones/input/botão — essa linha em si continua um flex
+   row de sempre, só que agora dentro de um wrapper próprio (.chat-input-row),
+   já que .chat-input-area passou a ter mais de 1 filho possível. */
+.chat-input-area { background: #f0f2f5; padding: 12px 20px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border-color); }
+.chat-input-row { display: flex; gap: 10px; align-items: center; }
 .chat-input { flex: 1; padding: 10px 16px; border: none; border-radius: 21px; font-size: 13px; outline: none; background: white; box-shadow: 0 1px 1px rgba(0,0,0,0.06); }
 .btn-send { background: var(--na-green); color: white; border: none; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+/* Prévia do anexo escolhido (foto ou documento), antes de enviar —
+   pedido do usuário ("máximo de funcionalidades iguais ao WhatsApp
+   real"): no WhatsApp real, escolher uma mídia mostra ela ANTES de
+   mandar, com a legenda editável embaixo (aqui, a própria caixa de
+   texto já existente vira a legenda). */
+.wpp-anexo-preview { display: flex; align-items: center; gap: 8px; background: white; border-radius: 8px; padding: 6px 10px; font-size: 12px; box-shadow: 0 1px 1px rgba(0,0,0,0.06); }
+.wpp-anexo-preview img { max-height: 56px; border-radius: 6px; display: block; }
+.wpp-anexo-preview .remover { margin-left: auto; cursor: pointer; color: #991b1b; flex-shrink: 0; }
 
 /* Mensagens de WhatsApp — status de entrega e falha de envio */
 .msg-status { font-size: 9px; opacity: 0.7; margin-left: 2px; }

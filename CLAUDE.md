@@ -306,6 +306,12 @@ migracao_diagnosticos_ia.sql      → tabela diagnosticos_ia (log do "Diagnósti
                                      "Diagnóstico de Saúde (IA) e Recomendações de Contato
                                      (IA)"; JÁ RODADA nesta sessão via
                                      `supabase db query --linked`
+migracao_storage_whatsapp_midia.sql → bucket de Supabase Storage `whatsapp-midia` (público)
+                                     + policy — anexo livre de foto/documento no chat do
+                                     WhatsApp (enviarComAnexo(), js/whatsapp.js); 1ª vez que
+                                     o projeto usa Storage; ver seção "WhatsApp Unificado —
+                                     de verdade cross-filial"; JÁ RODADA nesta sessão via
+                                     `supabase db query --linked`
 ```
 
 ## Banco de dados (Supabase)
@@ -5750,20 +5756,49 @@ mostrava a conversa da filial escolhida no topo, igual o resto do app.
   (marcada como lida ao abrir pela aba WhatsApp OU pela gaveta do lead).
 - **Separador de dia** ("Hoje"/"Ontem"/data completa) entre grupos de
   mensagens no chat, igual o WhatsApp real (`rotuloDataSeparadorWpp()`).
-- **Não construído nesta rodada, decisão em aberto**: anexar/enviar foto
-  ou documento arbitrário do computador do SDR pelo chat exigiria
-  Supabase Storage (hoje o envio de imagem só existe via `imagemUrl`
-  cadastrada no evento — "Convite Compartilhável"/"Nova Turma" — a Meta
-  busca a imagem por LINK, nunca por upload direto). Adicionar Storage é
-  uma decisão de infraestrutura própria (contraria o "sem servidor
-  próprio de aplicação" documentado no topo deste arquivo), então não
-  foi feita sem confirmar com o usuário. Também fora de escopo, sem
-  pedido explícito: emoji picker de verdade (o ícone já existe na UI, só
-  não abre nada), reações a mensagens, encaminhar mensagem, apagar/
-  editar mensagem enviada, indicador de "digitando...", chamada de voz/
-  vídeo, conversas em grupo — nenhum desses tem equivalente na Meta
-  Cloud API hoje (ou exigiria trabalho bem maior, fora do que foi
-  pedido).
+- **Anexar foto/documento do computador — construído (2026-09-28), depois
+  de confirmar com o usuário que valia habilitar Storage**: 1ª vez que o
+  projeto usa Supabase Storage (`migracao_storage_whatsapp_midia.sql` —
+  bucket `whatsapp-midia`, **público** de propósito, mesmo motivo de
+  `eventos.imagem_url` já ser uma URL pública: `whatsapp-send` só passa
+  `{link: url}` pra Graph API, a própria Meta busca o arquivo — sem o
+  bucket público, ela não conseguiria). RLS do bucket segue o MESMO
+  padrão de acesso público do resto do projeto (`using(true) with
+  check(true)`, ver comentário na migração).
+  - **Ícone de clipe** (📎) no compose bar (`renderizarAreaInput()`,
+    dentro de `criarChatController()` — vale pra aba unificada E pra
+    gaveta do lead, os dois reaproveitam o mesmo controller) abre um
+    `<input type="file">` (`image/*,.pdf,.doc,.docx,.xls,.xlsx`).
+    Escolher um arquivo mostra uma PRÉVIA acima da caixa de texto
+    (`.wpp-anexo-preview` — miniatura se for imagem, ícone + nome se for
+    documento, com "x" pra cancelar) — igual o WhatsApp real, a legenda
+    é a MESMA caixa de texto já existente; só ao clicar
+    enviar/Enter é que sobe pro Storage e manda de verdade
+    (`enviarComAnexo()`).
+  - **`whatsapp-send` ganhou o tipo `"documento"`** (`document`/
+    `filename`/`caption` pra Graph API — `mensagens_whatsapp.tipo` já
+    aceitava esse valor desde a migração original, `documento` já
+    estava no `check` da coluna, só nunca tinha sido usado). Tipo
+    `"imagem"` (já existia, "Convite Compartilhável") ganhou de carona a
+    possibilidade de vir de um anexo livre, não só de `evento.imagem_url`.
+  - **`htmlMensagemWpp()`** ganhou a renderização de `tipo==='documento'`
+    — um cartão clicável (ícone + nome do arquivo, abre em nova aba),
+    igual ao card de documento do WhatsApp real.
+  - **Testado ao vivo, ponta a ponta** (não só a UI — a cadeia completa:
+    upload real pro bucket via REST com `apikey`+`Authorization` — o
+    supabase-js do navegador já manda os dois automaticamente, mesmo
+    padrão de toda outra chamada `.from()` do projeto —, confirmado que
+    o arquivo fica público de verdade (`GET` no `publicUrl` devolveu
+    200, `image/png`), e envio real de imagem E de documento pro lead de
+    teste do usuário, ambos com `wa_message_id` real de volta). Arquivos
+    de teste apagados do bucket depois.
+- **Também fora de escopo, sem pedido explícito**: emoji picker de
+  verdade (o ícone já existe na UI, só não abre nada), reações a
+  mensagens, encaminhar mensagem, apagar/editar mensagem enviada,
+  indicador de "digitando...", gravar/enviar áudio (voice notes),
+  chamada de voz/vídeo, conversas em grupo — nenhum desses tem
+  equivalente simples na Meta Cloud API hoje (ou exigiria trabalho bem
+  maior, fora do que foi pedido).
 
 Conversas **NÃO identificadas** (webhook não achou nenhum lead com
 aquele telefone) **não têm filial nenhuma pra mostrar** — o `filial` da

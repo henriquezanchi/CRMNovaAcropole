@@ -216,12 +216,22 @@ function htmlMensagemWpp(m) {
     const badgeImportada = m.importado_manualmente
         ? ' <i class="fa-solid fa-file-import" title="Importada de uma conversa feita fora do CRM" style="opacity:.6; font-size:10px;"></i>'
         : '';
-    // Mensagem de imagem (Convite Compartilhável, ver confirmarConviteComFoto())
-    // — a URL não vem de volta na resposta da Meta, foi guardada em
-    // payload_bruto.imagem_url na hora do envio (ver whatsapp-send).
+    // Mensagem de imagem (Convite Compartilhável/"Nova Turma", ou anexo
+    // livre do compose bar, ver enviarComAnexo()) — a URL não vem de
+    // volta na resposta da Meta, foi guardada em payload_bruto na hora
+    // do envio (ver whatsapp-send).
     const imagemUrl = m.tipo === 'imagem' ? (m.payload_bruto && m.payload_bruto.imagem_url) : null;
+    // Mensagem de documento (anexo livre — PDF/Word/Excel etc., ver
+    // enviarComAnexo()) — mesmo raciocínio, mas sem preview de imagem:
+    // um cartão clicável com ícone + nome do arquivo, igual o WhatsApp real.
+    const documento = m.tipo === 'documento' ? (m.payload_bruto || {}) : null;
     const corpoHTML = imagemUrl
         ? `<img src="${escapeHTML(imagemUrl)}" alt="Imagem" style="max-width:100%; border-radius:6px; display:block; margin-bottom:${m.corpo_texto ? '4px' : '0'};">${m.corpo_texto ? textoComQuebrasDeLinha(m.corpo_texto) : ''}`
+        : documento
+        ? `<a href="${escapeHTML(documento.documento_url || '#')}" target="_blank" rel="noopener" style="display:flex; align-items:center; gap:8px; padding:8px; background:rgba(0,0,0,0.04); border-radius:8px; text-decoration:none; color:inherit; margin-bottom:${m.corpo_texto ? '4px' : '0'};">
+            <i class="fa-solid fa-file-arrow-down" style="font-size:22px; color:var(--na-green-dark);"></i>
+            <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; font-size:12px;">${escapeHTML(documento.nome_arquivo || 'Documento')}</span>
+          </a>${m.corpo_texto ? textoComQuebrasDeLinha(m.corpo_texto) : ''}`
         : textoComQuebrasDeLinha(m.corpo_texto);
     // Nome do usuário logado (js/usuarios.js) que enviou esta mensagem —
     // pedido do usuário ("no whatsapp precisa aparecer o nome do usuário
@@ -260,6 +270,7 @@ function criarChatController({ messagesId, inputAreaId }) {
     let leadId = null;
     let mensagens = [];
     let canal = null;
+    let anexoPendente = null; // { file, tipo: 'imagem'|'documento' } — ver selecionarAnexo()
 
     const el = (id) => document.getElementById(id);
 
@@ -352,24 +363,74 @@ function criarChatController({ messagesId, inputAreaId }) {
         ligarHandlersTemplate(container);
     }
 
+    // Anexar foto/documento (pedido do usuário, 2026-09-28: "máximo de
+    // funcionalidades iguais ao WhatsApp real") — igual o WhatsApp de
+    // verdade, escolher um arquivo mostra uma PRÉVIA antes de enviar (a
+    // caixa de texto já existente vira a legenda); só clicando
+    // enviar/Enter é que sobe pro Supabase Storage (bucket
+    // `whatsapp-midia`, público — ver migracao_storage_whatsapp_midia.sql)
+    // e manda de verdade via `whatsapp-send`. Some sozinho ao mudar de
+    // conversa (não persiste entre leads).
+    function selecionarAnexo(file) {
+        anexoPendente = { file, tipo: file.type.startsWith('image/') ? 'imagem' : 'documento' };
+        atualizarPreviewAnexo();
+    }
+    function removerAnexo() {
+        anexoPendente = null;
+        atualizarPreviewAnexo();
+    }
+    function atualizarPreviewAnexo() {
+        const container = el(inputAreaId);
+        const previewEl = container ? container.querySelector('.wpp-anexo-preview') : null;
+        if (!previewEl) return;
+        if (!anexoPendente) { previewEl.style.display = 'none'; previewEl.innerHTML = ''; return; }
+        previewEl.style.display = 'flex';
+        const nomeArquivo = anexoPendente.file.name;
+        const miniatura = anexoPendente.tipo === 'imagem'
+            ? `<img src="${URL.createObjectURL(anexoPendente.file)}" alt="">`
+            : `<i class="fa-solid fa-file-lines" style="font-size:22px; color:var(--text-muted); flex-shrink:0;"></i>`;
+        previewEl.innerHTML = `${miniatura}<span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(nomeArquivo)}</span><i class="fa-solid fa-xmark remover"></i>`;
+        previewEl.querySelector('.remover').addEventListener('click', removerAnexo);
+    }
+
     function renderizarAreaInput() {
         const container = el(inputAreaId);
         if (!container) return;
+        anexoPendente = null; // troca de conversa (recarregarHistorico() chama isto de novo) nunca deveria manter um anexo pendente de OUTRO lead
 
         if (janelaAberta(mensagens)) {
             container.innerHTML = `
-                <button type="button" style="background: none; border: none; font-size: 20px; color: var(--text-muted); cursor: pointer;"><i class="fa-regular fa-face-smile"></i></button>
-                <input type="text" class="chat-input" placeholder="Digite uma mensagem...">
-                <button type="button" class="btn-send"><i class="fa-solid fa-paper-plane"></i></button>
+                <div class="wpp-anexo-preview" style="display:none;"></div>
+                <div class="chat-input-row">
+                    <button type="button" class="btn-anexo-toggle" style="background: none; border: none; font-size: 18px; color: var(--text-muted); cursor: pointer;" title="Anexar foto ou documento"><i class="fa-solid fa-paperclip"></i></button>
+                    <input type="file" class="wpp-anexo-input" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" hidden>
+                    <button type="button" style="background: none; border: none; font-size: 20px; color: var(--text-muted); cursor: pointer;"><i class="fa-regular fa-face-smile"></i></button>
+                    <input type="text" class="chat-input" placeholder="Digite uma mensagem...">
+                    <button type="button" class="btn-send"><i class="fa-solid fa-paper-plane"></i></button>
+                </div>
             `;
             const input = container.querySelector('.chat-input');
             const botao = container.querySelector('.btn-send');
-            const disparar = () => enviarTexto(input);
+            const anexoBtn = container.querySelector('.btn-anexo-toggle');
+            const anexoInput = container.querySelector('.wpp-anexo-input');
+            const disparar = () => enviarMensagem(input);
             botao.addEventListener('click', disparar);
             input.addEventListener('keydown', (e) => { if (e.key === 'Enter') disparar(); });
+            anexoBtn.addEventListener('click', () => anexoInput.click());
+            anexoInput.addEventListener('change', () => {
+                if (anexoInput.files[0]) selecionarAnexo(anexoInput.files[0]);
+                anexoInput.value = ''; // permite escolher o MESMO arquivo de novo depois de remover
+            });
         } else {
             renderizarAreaInputTemplate();
         }
+    }
+
+    // Decide entre texto livre e anexo (foto/documento, legenda = o texto
+    // digitado) — ponto único chamado pelo botão de enviar/Enter.
+    async function enviarMensagem(input) {
+        if (anexoPendente) { await enviarComAnexo(input); return; }
+        await enviarTexto(input);
     }
 
     async function enviarTexto(input) {
@@ -396,6 +457,51 @@ function criarChatController({ messagesId, inputAreaId }) {
         }
         await recarregarHistorico();
         moverParaAbordagemAposEnvio(leadId).catch(e => console.warn('Erro ao mover lead pra Abordagem após envio:', e.message));
+    }
+
+    async function enviarComAnexo(input) {
+        if (!leadId || !anexoPendente) return;
+        const anexo = anexoPendente;
+        const legenda = input.value.trim();
+        input.value = '';
+        input.disabled = true;
+        anexoPendente = null;
+        atualizarPreviewAnexo();
+
+        try {
+            const nomeSeguro = anexo.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+            const caminho = `${leadId}/${Date.now()}-${nomeSeguro}`;
+            const { error: erroUpload } = await window.supabaseClient.storage
+                .from('whatsapp-midia')
+                .upload(caminho, anexo.file, { contentType: anexo.file.type || 'application/octet-stream' });
+            if (erroUpload) { alert('Erro ao subir o arquivo: ' + erroUpload.message); input.disabled = false; return; }
+
+            const { data: urlData } = window.supabaseClient.storage.from('whatsapp-midia').getPublicUrl(caminho);
+            const url = urlData.publicUrl;
+
+            const body = anexo.tipo === 'imagem'
+                ? { pessoaIdentificador: leadId, tipo: 'imagem', imagemUrl: url, caption: legenda || undefined, atendenteNome: obterNomeAtendente() }
+                : { pessoaIdentificador: leadId, tipo: 'documento', documentoUrl: url, nomeArquivo: anexo.file.name, caption: legenda || undefined, atendenteNome: obterNomeAtendente() };
+
+            const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', { body });
+            input.disabled = false;
+            if (error) { alert('Erro ao enviar anexo: ' + error.message); return; }
+            if (!data.ok) {
+                if (data.erro === 'janela_fechada') {
+                    alert('Essa conversa está fora da janela de 24h — anexo só funciona dentro da janela, igual texto livre.');
+                    renderizarAreaInputTemplate();
+                } else {
+                    console.error('Erro ao enviar anexo (WhatsApp):', data.detalhe || data.erro);
+                    alert('Não foi possível enviar: ' + mensagemErroWpp(data));
+                }
+                return;
+            }
+            await recarregarHistorico();
+            moverParaAbordagemAposEnvio(leadId).catch(e => console.warn('Erro ao mover lead pra Abordagem após envio:', e.message));
+        } catch (e) {
+            input.disabled = false;
+            alert('Erro inesperado ao enviar anexo: ' + (e.message || e));
+        }
     }
 
     async function recarregarHistorico() {
