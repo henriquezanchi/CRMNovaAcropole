@@ -62,27 +62,31 @@ function mapearStatusMeta(status: string): string {
 
 // Bug real relatado pelo usuário (2026-09-28): "testei responder à
 // mensagem que recebi do API pelo meu número pessoal, e caiu num lugar
-// chamado 'não identificado'". A causa exata do episódio específico não
-// pôde ser reconstruída (o registro no banco, quando investigado, já
-// estava corretamente vinculado — sinal de que foi um estado
-// TRANSITÓRIO no momento exato do webhook, não um erro permanente nos
-// dados), mas a investigação achou uma lacuna real e concreta na
-// lógica de match: leads na LIXEIRA (`lixeira_em` preenchido — soft-
-// delete, ver "Lixeira de Leads" no CLAUDE.md) continuavam contando
-// como candidatos aqui. Se um lead ativo E um lead já jogado na lixeira
-// compartilham o mesmo telefone (histórico de teste reaproveitando
-// números, ou coincidência real), a busca encontrava os DOIS e
-// desistia por "ambíguo" — mesmo a lixeira sendo, por definição, gente
-// que já saiu do fluxo ativo. Excluída da contagem: reduz falsos
-// "não identificado" sem nunca arriscar adivinhar errado (nunca
-// flexibiliza pra escolher entre 2+ leads ATIVOS — isso continua
-// exigindo vínculo manual, de propósito).
+// chamado 'não identificado'" — e "continua jogando as respostas em
+// não identificados" numa 2ª rodada, com um caso real (IANNY GRASIELLY
+// SILVA, lead 900000012, telefone 62 981255060, respondendo "já sou
+// membro há 3 anos e meio"). A causa raiz de verdade, achada consultando
+// o banco direto: esta função buscava TODOS os leads com o mesmo DDD
+// (sem `.in()`/filtro por número na query) e filtrava os candidatos em
+// JAVASCRIPT depois — mas o PostgREST corta em 1000 linhas por padrão
+// (mesmo limite silencioso já documentado em vários outros lugares do
+// projeto, ver "Aniversariantes"/"Ativos-Inativos" no CLAUDE.md), e só o
+// DDD 62 tem quase 13 MIL leads. Sem `.order()`/paginação, a linha certa
+// simplesmente podia nunca chegar a ser buscada — o lead da Ianny nunca
+// aparecia nos 1000 primeiros devolvidos. Corrigido empurrando o filtro
+// por NÚMERO pra dentro da própria query (`.in('pessoaTelefoneNumero',
+// candidatos)`) — like isso, o Postgres já devolve só as poucas linhas
+// que interessam, nunca esbarra no limite de 1000. A exclusão de leads
+// na LIXEIRA (`lixeira_em`, achada numa investigação anterior) continua
+// valendo, e nunca flexibiliza a escolha entre 2+ leads ATIVOS ambíguos
+// (isso continua exigindo vínculo manual, de propósito).
 async function buscarLeadsPorTelefone(ddd: string, candidatos: string[]) {
     if (!ddd || candidatos.length === 0) return [];
     const { data } = await supabaseAdmin
         .from(NOME_TABELA_LEADS)
         .select('pessoaIdentificador, filial, pessoaTelefoneNumero')
         .eq('pessoaTelefoneDDD', ddd)
+        .in('pessoaTelefoneNumero', candidatos)
         .is('lixeira_em', null);
     if (!data) return [];
     const candidatosSet = new Set(candidatos);

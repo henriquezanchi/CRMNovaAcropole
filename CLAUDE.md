@@ -6002,6 +6002,40 @@ pela lógica e pelo teste manual acima, está correto.
 - **Redeployada**: `whatsapp-webhook` (só a query, sem mudança de
   comportamento pra ninguém que já está ativo).
 
+**3ª rodada, CAUSA RAIZ REAL encontrada (2026-09-28, mesmo dia — o usuário
+reportou de novo: "continua jogando as respostas em não identificados",
+com print real de IANNY GRASIELLY SILVA, lead `900000012`, telefone `62
+981255060`, respondendo "já sou membro da escola a três anos e meio")**:
+consultado o banco direto, o telefone dela batia EXATO com o que
+`candidatosNumeroBR()` já gera (variante com o 9º dígito) — não era o
+teórico bug do 9º dígito (já investigado e descartado antes), nem
+ambiguidade, nem lixeira. A causa real: `buscarLeadsPorTelefone()`
+buscava **TODOS** os leads com aquele DDD (`.eq('pessoaTelefoneDDD',
+ddd)`, sem filtrar por número na própria query) e só filtrava os
+candidatos em JAVASCRIPT depois de a resposta chegar — mas o PostgREST
+corta em **1000 linhas por padrão**, mesmo limite silencioso já
+documentado várias vezes neste projeto (Aniversariantes, Ativos/
+Inativos, Leads Prioritários da Agenda do Dia). Confirmado: **só o DDD
+62 tem 12.939 leads** — a linha da Ianny simplesmente podia nunca chegar
+a ser buscada (sem `.order()`/paginação, a ordem física devolvida pelo
+Postgres não é garantida, e claramente ela ficava fora dos primeiros
+1000). Isso significa que esse bug pode ter causado "não identificado"
+pra qualquer resposta real de um lead com DDD 62 desde que a base
+cresceu além de 1000 leads naquele DDD — não é um caso isolado.
+**Corrigido de vez**: adicionado `.in('pessoaTelefoneNumero',
+candidatos)` na própria query — o Postgres já filtra pelo número
+específico do lado do banco, nunca mais varre (nem corre risco de
+truncar) a base inteira daquele DDD. **Varredura completa em produção**
+(SQL direto, sem o limite de 1000 do PostgREST, reproduzindo a mesma
+lógica de `separarFromMeta()`/`candidatosNumeroBR()` em SQL puro):
+confirmado que a Ianny era o **ÚNICO** caso real afetado ainda pendente
+(o outro "não identificado" que sobrava, telefone `16465894168`, é o
+número de onboarding do próprio WhatsApp, "Continue setting up your
+account" — não é DDI 55, não é lead nenhum, 0 matches mesmo depois da
+correção, esperado). As 2 mensagens da Ianny (ids 147/148) foram
+vinculadas manualmente ao lead certo depois de confirmado o match único.
+Redeployada de novo.
+
 ## Reações com emoji nas mensagens (2026-09-28)
 
 Pedido do usuário: "quero poder 'reagir' às mensagens com emojis, como
