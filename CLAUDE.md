@@ -6331,6 +6331,68 @@ visual de que aquele lead já tinha sido contatado antes.
   geral (que teria que decidir ONDE mostrar isso em cada card — fora do
   pedido específico desta rodada).
 
+## Convidar (Janela Aberta) — pedido urgente, 2026-09-28
+
+Pedido do usuário, urgente, no mesmo dia da reunião com a Ediliene:
+"quero uma opção agora, urgente, para convidar as pessoas que estão com
+a janela aberta (agora mesmo) para a abertura de turma que acontecerá
+na semana que vem (tem que ser personalizado por filial)".
+
+- **Diferença central em relação a "Convidar (API)"**: aquele SEMPRE
+  usa um template aprovado (funciona fora da janela de 24h, mas o texto
+  é fixo). Aqui é **texto livre**, porque a pessoa acabou de mandar
+  mensagem — a janela já está aberta, não precisa de template. "Personalizado
+  por filial" é resolvido de graça reaproveitando
+  `montarTextoConviteEvento()` (já usa `lead.filial`, não `filialAtual`).
+- **Botão "Convidar (Janela Aberta)"** — sempre visível no topo da lista
+  de contatos do WhatsApp Unificado (`index.html`, abaixo do filtro de
+  filial) — `iniciarConviteJanelaAberta()` (`js/whatsapp.js`), modal
+  `#modalConviteJanelaAberta`.
+- **Fluxo**: (1) busca `vw_wpp_conversas` com `ultima_direcao='entrada'`
+  em QUALQUER filial, filtra quem ainda tem `horasRestantes > 0`; (2)
+  busca a Abertura de Turma mais próxima **de cada filial** (`eventos`,
+  `tipo='Abertura de Turma'`, `ativo=true`, `data >= hoje`, 1 por
+  filial — cada unidade pode ter sua própria data); (3) mescla leads
+  faltantes em `leadsAtuais` (mesmo padrão de
+  `abrirResultadoBuscaGlobal()`); (4) quem não tem Abertura de Turma
+  cadastrada pra SUA filial é ignorado (contado num aviso, nunca
+  inventa evento); (5) exclui quem já confirmou presença
+  (`evento_leads.resposta_convite='confirmado'`); (6) mostra a lista
+  completa — nome, filial, evento, horas restantes, e o TEXTO EXATO que
+  vai ser mandado (`<details>` expansível por lead) — com um botão pra
+  **remover individualmente** um candidato da lista antes de enviar
+  (achado testando ao vivo: conversas "abertas" incluem ruído real —
+  respostas automáticas de negócios não relacionados que bateram o
+  mesmo número reciclado — o botão de remover deixa tirar esses casos
+  sem cancelar o lote inteiro); (7) só ao confirmar, envia de verdade em
+  lotes de 5 (`whatsapp-send`, `tipo:'texto'`), vincula `evento_leads`
+  (`origem:'crm'`, `pendente`) e move quem teve sucesso pra "Em
+  Abordagem" (`moverParaAbordagemAposEnvio()`) — mesmo padrão de sempre.
+- **Testado contra dado real**: confirmado que existem 4 filiais com
+  Abertura de Turma cadastrada pra semana que vem (Garavelo 05/10;
+  Jardim América/Setor Oeste/Goiânia II 08/10 — Barra do Garças/MT não
+  tem, seria corretamente ignorada) e 13 conversas com janela aberta no
+  momento do teste (12 em Garavelo, 1 em Jardim América) — todas
+  bateriam certo com o evento certo da própria filial.
+
+## Bug real corrigido: template mostrando "[Template: nome]" ao vivo (2026-09-28)
+
+Relatado pelo usuário com print real (balão mostrando literalmente
+`[Template: contato_inicial]` em vez do texto de verdade do template).
+Causa: `confirmarEnviarConviteApiLote()` ("Convidar em Massa"/API,
+construído antes nesta mesma sessão) sempre mandava
+`templatePreview: "[Template: ${tpl.nome}]"` — um placeholder FIXO,
+nunca o texto de verdade com as variáveis substituídas — enquanto
+`ligarHandlersTemplate()` (envio individual) e `enviarAniversarioRapido()`
+já faziam a substituição `{{1}}`/`{{2}}`... certinho, cada um duplicando
+a mesma lógica separadamente. Corrigido extraindo
+`montarPreviewTemplate(tpl, params)` (`js/whatsapp.js`) — usada agora
+nos 3 lugares, sem duplicar a lógica de novo. **Mensagens antigas já
+enviadas com o placeholder errado não são corrigidas retroativamente**
+(o texto de verdade que a Meta mandou pro lead sempre esteve certo —
+só a cópia exibida no CRM que estava errada — e não guardamos os
+parâmetros do template separadamente pra reconstruir depois).
+
 ## Classificação de Respostas de Convite (IA) — 2026-09-28
 
 Pedido do usuário, reunião com a Ediliene (Jardim América): "tratar as

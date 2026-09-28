@@ -128,6 +128,20 @@ function nomeFilialComPreposicao(nomeFilial) {
 // mandava "...da Nova Acrópole do Jardim América" (a filial errada, só
 // porque era a última selecionada no topbar). Corrigido pra sempre usar
 // a filial DO PRÓPRIO LEAD (`lead.filial`), nunca a do seletor.
+// Substitui {{1}}, {{2}}... pelos valores resolvidos — usado em TODO
+// envio de template pra mostrar o texto de verdade no balão do chat
+// (`corpo_texto`), nunca um placeholder genérico como "[Template: nome]".
+// Bug real corrigido (2026-09-28): "Convidar em Massa" (API) mandava o
+// placeholder cru pro `whatsapp-send` em vez de montar o preview de
+// verdade — só ESTE ponto tinha esse bug, o envio individual e o de
+// aniversário já montavam certo (duplicando a mesma lógica em 3
+// lugares); extraído aqui pra não duplicar de novo.
+function montarPreviewTemplate(tpl, params) {
+    let preview = tpl.corpoAprovado || tpl.label;
+    (params || []).forEach((valor, i) => { preview = preview.split(`{{${i + 1}}}`).join(valor); });
+    return preview;
+}
+
 function preencherValorAutomatico(chave, leadId) {
     if (chave === 'nome') {
         const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
@@ -479,8 +493,7 @@ function criarChatController({ messagesId, inputAreaId }) {
             const params = [...varsEl.querySelectorAll('.wpp-template-var')].map(i => i.value.trim());
             if (tpl.variaveis?.length && params.some(p => !p)) { alert('Preencha todas as variáveis do modelo.'); return; }
 
-            let preview = tpl.corpoAprovado || tpl.label;
-            params.forEach((valor, i) => { preview = preview.split(`{{${i + 1}}}`).join(valor); });
+            const preview = montarPreviewTemplate(tpl, params);
 
             botao.disabled = true;
             const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
@@ -748,8 +761,7 @@ async function enviarAniversarioRapido(leadId, nomeLead, filialLead, botaoEl) {
         const atendente = obterNomeAtendente() || '';
         const filial = nomeFilialComPreposicao(filialLead);
         const params = [nome, atendente, filial];
-        let preview = tpl.corpoAprovado;
-        params.forEach((v, i) => { preview = preview.split(`{{${i + 1}}}`).join(v); });
+        const preview = montarPreviewTemplate(tpl, params);
 
         const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
             body: { pessoaIdentificador: leadId, tipo: 'template', templateNome: tpl.nome, templateIdioma: tpl.idioma || 'pt_BR', templateParams: params, templatePreview: preview, atendenteNome: atendente }
@@ -1838,7 +1850,7 @@ async function confirmarEnviarConviteApiLote() {
                         templateNome: tpl.nome,
                         templateIdioma: tpl.idioma || 'pt_BR',
                         templateParams: l.params,
-                        templatePreview: `[Template: ${tpl.nome}]`,
+                        templatePreview: montarPreviewTemplate(tpl, l.params),
                         atendenteNome: (typeof obterNomeAtendente === 'function' ? obterNomeAtendente() : '') || '',
                     },
                 });
@@ -1889,6 +1901,219 @@ async function confirmarEnviarConviteApiLote() {
         </div>
         <button class="btn-secondary" onclick="fecharModalConviteLoteApi()">Fechar</button>
     `;
+}
+
+// ==========================================================
+// Convidar (Janela Aberta) — pedido URGENTE do usuário (2026-09-28):
+// "quero uma opção agora, urgente, para convidar as pessoas que estão
+// com a janela aberta (agora mesmo) para a abertura de turma que
+// acontecerá na semana que vem (tem que ser personalizado por filial)".
+//
+// Diferente de "Convidar (API)" (sempre template aprovado, funciona
+// mesmo fora da janela), aqui é TEXTO LIVRE — a pessoa acabou de
+// mandar mensagem, a janela já está aberta, não precisa de template.
+// "Personalizado por filial" já é resolvido de graça por
+// `montarTextoConviteEvento()` (usa `lead.filial`, não `filialAtual` —
+// bug já corrigido antes nesta sessão), buscando a Abertura de Turma
+// mais próxima CADASTRADA PRA CADA FILIAL especificamente (cada unidade
+// pode ter uma data diferente).
+// ==========================================================
+let conviteJanelaAbertaCandidatos = [];
+
+async function carregarProximaAberturaTurmaPorFilial() {
+    const hojeISO = new Date().toISOString().slice(0, 10);
+    const { data, error } = await window.supabaseClient
+        .from('eventos')
+        .select('id, nome, filial, data, hora, link_inscricao, data_limite_inscricao')
+        .eq('tipo', 'Abertura de Turma')
+        .eq('ativo', true)
+        .gte('data', hojeISO)
+        .order('data', { ascending: true });
+    if (error) return new Map();
+    const porFilial = new Map();
+    (data || []).forEach(ev => { if (!porFilial.has(ev.filial)) porFilial.set(ev.filial, ev); });
+    return porFilial;
+}
+
+async function iniciarConviteJanelaAberta() {
+    const modal = document.getElementById('modalConviteJanelaAberta');
+    const overlay = document.getElementById('overlayModalConviteJanelaAberta');
+    const corpoEl = document.getElementById('conviteJanelaAbertaCorpo');
+    if (corpoEl) corpoEl.innerHTML = '<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Buscando conversas com janela aberta...</p>';
+    if (modal) modal.classList.add('open');
+    if (overlay) overlay.classList.add('active');
+
+    // 1) TODA conversa (qualquer filial) cuja última mensagem foi do
+    // lead e a janela de 24h ainda não fechou.
+    const { data: conversas, error: erroConversas } = await window.supabaseClient
+        .from('vw_wpp_conversas')
+        .select('"pessoaIdentificador", ultima_mensagem_em, ultima_direcao, filial');
+    if (erroConversas) { if (corpoEl) corpoEl.innerHTML = '<p style="color:#b91c1c; font-size:12px;">Erro ao buscar conversas.</p>'; return; }
+
+    const agora = Date.now();
+    const abertas = (conversas || [])
+        .filter(c => c.ultima_direcao === 'entrada')
+        .map(c => ({ ...c, horasRestantes: 24 - (agora - new Date(c.ultima_mensagem_em).getTime()) / 3600000 }))
+        .filter(c => c.horasRestantes > 0);
+
+    if (abertas.length === 0) {
+        if (corpoEl) corpoEl.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Nenhuma conversa com janela aberta agora.</p>';
+        conviteJanelaAbertaCandidatos = [];
+        return;
+    }
+
+    // 2) Próxima Abertura de Turma de CADA filial envolvida.
+    const eventosPorFilial = await carregarProximaAberturaTurmaPorFilial();
+
+    // 3) Garante que os leads estão em leadsAtuais (mesmo padrão de
+    // abrirResultadoBuscaGlobal()) pra montarTextoConviteEvento() ler
+    // tags/nome/filial mesmo de leads de OUTRAS filiais.
+    const idsFaltando = abertas.map(c => String(c.pessoaIdentificador)).filter(id => !leadsAtuais.some(l => String(l.pessoaIdentificador) === id));
+    if (idsFaltando.length > 0) {
+        const { data: leadsFaltando } = await window.supabaseClient.from(NOME_TABELA).select('*').in('pessoaIdentificador', idsFaltando);
+        if (leadsFaltando && leadsFaltando.length > 0) leadsAtuais = [...leadsAtuais, ...leadsFaltando];
+    }
+
+    // 4) Monta candidatos — só quem tem Abertura de Turma futura
+    // cadastrada pra sua PRÓPRIA filial.
+    const candidatos = [];
+    let semEventoNaFilial = 0;
+    abertas.forEach(c => {
+        const evento = eventosPorFilial.get(c.filial);
+        if (!evento) { semEventoNaFilial++; return; }
+        const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(c.pessoaIdentificador));
+        if (!lead) return;
+        candidatos.push({
+            pessoaIdentificador: c.pessoaIdentificador,
+            nome: lead.pessoaNome || 'Sem nome',
+            filial: c.filial,
+            evento,
+            horasRestantes: c.horasRestantes,
+            texto: montarTextoConviteEvento(lead, evento),
+        });
+    });
+
+    // 5) Exclui quem já confirmou presença na Abertura de Turma da
+    // própria filial — não convidar de novo quem já vai.
+    if (candidatos.length > 0) {
+        const eventoIds = [...new Set(candidatos.map(c => c.evento.id))];
+        const { data: jaConfirmados } = await window.supabaseClient
+            .from('evento_leads')
+            .select('"pessoaIdentificador", evento_id')
+            .in('evento_id', eventoIds)
+            .eq('resposta_convite', 'confirmado');
+        const setConfirmados = new Set((jaConfirmados || []).map(r => `${r.evento_id}:${r.pessoaIdentificador}`));
+        conviteJanelaAbertaCandidatos = candidatos.filter(c => !setConfirmados.has(`${c.evento.id}:${c.pessoaIdentificador}`));
+    } else {
+        conviteJanelaAbertaCandidatos = [];
+    }
+
+    renderizarPreviaConviteJanelaAberta(semEventoNaFilial, abertas.length);
+}
+
+function renderizarPreviaConviteJanelaAberta(semEventoNaFilial, totalAbertas) {
+    const corpoEl = document.getElementById('conviteJanelaAbertaCorpo');
+    if (!corpoEl) return;
+
+    const avisoSemEvento = semEventoNaFilial > 0
+        ? `<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-triangle-exclamation"></i> ${semEventoNaFilial} conversa(s) com janela aberta ignorada(s) — a filial deles não tem uma Abertura de Turma futura cadastrada na Agenda.</p>`
+        : '';
+
+    if (conviteJanelaAbertaCandidatos.length === 0) {
+        corpoEl.innerHTML = `${avisoSemEvento}<p style="font-size:12px; color:var(--text-muted);">Nenhum candidato pra convidar agora (de ${totalAbertas} conversa(s) com janela aberta).</p><button class="btn-secondary" onclick="fecharModalConviteJanelaAberta()">Fechar</button>`;
+        return;
+    }
+
+    corpoEl.innerHTML = `
+        ${avisoSemEvento}
+        <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">Vai enviar de verdade pra <strong>${conviteJanelaAbertaCandidatos.length}</strong> lead(s), cada um com o texto personalizado da Abertura de Turma da própria filial:</p>
+        <div style="max-height:280px; overflow-y:auto; border:1px solid var(--border-color); border-radius:6px; padding:6px; margin-bottom:12px;">
+            ${conviteJanelaAbertaCandidatos.map((c, i) => `
+                <div style="display:flex; align-items:flex-start; gap:6px; margin-bottom:4px;">
+                    <details style="flex:1;">
+                        <summary style="font-size:12px; cursor:pointer;">
+                            <strong>${escapeHTML(c.nome)}</strong> · ${escapeHTML(c.filial)} · ${escapeHTML(c.evento.nome)}
+                            <span style="color:var(--text-muted);">(${Math.round(c.horasRestantes)}h restantes na janela)</span>
+                        </summary>
+                        <div style="font-size:11.5px; white-space:pre-line; background:#f8fafc; padding:6px; border-radius:6px; margin-top:4px;">${escapeHTML(c.texto)}</div>
+                    </details>
+                    <button class="icon-btn danger" title="Remover este da lista (ex: número reciclado, não é o lead de verdade)" onclick="removerCandidatoConviteJanelaAberta(${i})"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+            `).join('')}
+        </div>
+        <div style="display:flex; gap:8px;">
+            <button class="btn-secondary" onclick="fecharModalConviteJanelaAberta()">Cancelar</button>
+            <button class="btn-primary" style="flex:1;" onclick="confirmarConviteJanelaAberta()"><i class="fa-solid fa-paper-plane"></i> Enviar Agora pra ${conviteJanelaAbertaCandidatos.length}</button>
+        </div>
+    `;
+}
+
+function removerCandidatoConviteJanelaAberta(indice) {
+    conviteJanelaAbertaCandidatos.splice(indice, 1);
+    renderizarPreviaConviteJanelaAberta(0, conviteJanelaAbertaCandidatos.length);
+}
+
+async function confirmarConviteJanelaAberta() {
+    const candidatos = conviteJanelaAbertaCandidatos;
+    if (candidatos.length === 0) return;
+    if (!confirm(`Confirma o envio de verdade pra ${candidatos.length} lead(s) agora? Essa ação não pode ser desfeita.`)) return;
+
+    const corpoEl = document.getElementById('conviteJanelaAbertaCorpo');
+    if (corpoEl) corpoEl.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Enviando...</p>';
+
+    const resultados = [];
+    const TAMANHO_LOTE = 5;
+    for (let i = 0; i < candidatos.length; i += TAMANHO_LOTE) {
+        const lote = candidatos.slice(i, i + TAMANHO_LOTE);
+        const respostas = await Promise.all(lote.map(async (c) => {
+            try {
+                const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
+                    body: { pessoaIdentificador: c.pessoaIdentificador, tipo: 'texto', texto: c.texto, atendenteNome: (typeof obterNomeAtendente === 'function' ? obterNomeAtendente() : '') || '' },
+                });
+                if (error || !data || data.ok === false) return { ...c, ok: false, erro: (data && data.detalhe && data.detalhe.message) || data?.erro || error?.message || 'erro desconhecido' };
+                return { ...c, ok: true };
+            } catch (e) {
+                return { ...c, ok: false, erro: String(e.message || e) };
+            }
+        }));
+        resultados.push(...respostas);
+        if (corpoEl) corpoEl.innerHTML = `<p style="font-size:12px; color:var(--text-muted);">Enviando... (${resultados.length}/${candidatos.length})</p>`;
+    }
+
+    const sucesso = resultados.filter(r => r.ok);
+    const falha = resultados.filter(r => !r.ok);
+
+    if (sucesso.length > 0) {
+        await window.supabaseClient.from('evento_leads').upsert(
+            sucesso.map(r => ({ evento_id: r.evento.id, pessoaIdentificador: r.pessoaIdentificador, origem: 'crm', resposta_convite: 'pendente' })),
+            { onConflict: 'evento_id,pessoaIdentificador', ignoreDuplicates: true }
+        );
+        if (typeof registrarLogAtividade === 'function') {
+            registrarLogAtividade('convite_janela_aberta', { pessoaIds: sucesso.map(r => r.pessoaIdentificador), detalhes: { enviados: sucesso.length, falhas: falha.length } });
+        }
+        await Promise.all(sucesso.map(r => moverParaAbordagemAposEnvio(r.pessoaIdentificador)));
+    }
+
+    const corpoElFinal = document.getElementById('conviteJanelaAbertaCorpo');
+    if (corpoElFinal) {
+        corpoElFinal.innerHTML = `
+            <p style="font-size:13px; margin-bottom:8px;"><strong>${sucesso.length} enviado(s)</strong>${falha.length > 0 ? `, <strong style="color:#991b1b;">${falha.length} falhou(aram)</strong>` : ''}.</p>
+            <div style="max-height:280px; overflow-y:auto; border:1px solid var(--border-color); border-radius:6px; padding:6px; margin-bottom:12px;">
+                ${resultados.map(r => `
+                    <div style="display:flex; justify-content:space-between; gap:8px; padding:5px 6px; font-size:12px; border-bottom:1px dashed var(--border-color);">
+                        <span>${escapeHTML(r.nome)}</span>
+                        <span style="color:${r.ok ? 'var(--na-green-dark)' : '#991b1b'}; text-align:right;">${r.ok ? '<i class="fa-solid fa-check"></i> Enviado' : `<i class="fa-solid fa-xmark"></i> ${escapeHTML(String(r.erro))}`}</span>
+                    </div>
+                `).join('')}
+            </div>
+            <button class="btn-secondary" onclick="fecharModalConviteJanelaAberta()">Fechar</button>
+        `;
+    }
+}
+
+function fecharModalConviteJanelaAberta() {
+    document.getElementById('modalConviteJanelaAberta').classList.remove('open');
+    document.getElementById('overlayModalConviteJanelaAberta').classList.remove('active');
 }
 
 // ==========================================================

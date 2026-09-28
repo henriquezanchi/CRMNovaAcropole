@@ -369,9 +369,10 @@
                         <button class="btn-toggle" onclick="abrirImportarConversasLote()" title="Importar várias conversas de uma vez (.zip exportados do WhatsApp)"><i class="fa-solid fa-file-zipper"></i></button>
                     </div>
                     <div style="padding:0 10px 8px;">
-                        <select id="wppFiltroFilialSelect" onchange="filtrarContatosWpp(document.getElementById('wppSearch').value)" style="width:100%; padding:6px 8px; font-size:12px;" title="Caixa de entrada unificada por padrão — filtre por uma filial se quiser ver só as conversas dela">
+                        <select id="wppFiltroFilialSelect" onchange="filtrarContatosWpp(document.getElementById('wppSearch').value)" style="width:100%; padding:6px 8px; font-size:12px; margin-bottom:6px;" title="Caixa de entrada unificada por padrão — filtre por uma filial se quiser ver só as conversas dela">
                             <option value="">Todas as filiais</option>
                         </select>
+                        <button class="btn-toggle" style="width:100%; font-size:11px; padding:6px;" onclick="iniciarConviteJanelaAberta()" title="Manda um convite pra próxima Abertura de Turma da própria filial de cada lead com conversa aberta agora"><i class="fa-solid fa-bolt"></i> Convidar (Janela Aberta)</button>
                     </div>
                     <div class="wpp-contact-list" id="wppContactList"></div>
                 </div>
@@ -1152,6 +1153,27 @@
             </div>
             <div id="conviteApiPrevia" style="display:none;"></div>
             <div id="conviteApiResultado" style="display:none;"></div>
+        </div>
+    </div>
+
+    <!-- Modal: Convidar quem tem a janela de 24h aberta AGORA pra próxima
+         Abertura de Turma da PRÓPRIA filial de cada um — pedido urgente do
+         usuário (2026-09-28). Manda TEXTO LIVRE (não template — a janela já
+         está aberta, não precisa de aprovação da Meta), personalizado por
+         filial via montarTextoConviteEvento() (js/whatsapp.js). -->
+    <div class="overlay" id="overlayModalConviteJanelaAberta" onclick="fecharModalConviteJanelaAberta()"></div>
+    <div class="modal" id="modalConviteJanelaAberta">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-bolt"></i> Convidar quem tem conversa aberta agora</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharModalConviteJanelaAberta()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
+                Manda um convite personalizado (texto livre, dentro da janela de 24h — não precisa de template aprovado)
+                pra próxima <strong>Abertura de Turma da própria filial</strong> de cada lead, pra QUALQUER conversa —
+                de qualquer filial — cuja última mensagem foi do lead e ainda não passou de 24h.
+            </p>
+            <div id="conviteJanelaAbertaCorpo"></div>
         </div>
     </div>
 
