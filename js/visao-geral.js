@@ -17,6 +17,7 @@ async function atualizarAgendaGeral() {
     carregarAgendaGeralAniversariantes();
     carregarAgendaGeralLeadsPrioritarios();
     carregarAgendaGeralWhatsapp();
+    carregarAgendaGeralRespostasConvite();
     carregarAgendaGeralEventosRecentes();
     carregarAgendaGeralCalendarioEventos();
 }
@@ -232,6 +233,120 @@ async function carregarAgendaGeralAniversariantes() {
                 <i class="fa-brands fa-whatsapp"></i> Enviar
             </button>
         </div>`).join('');
+}
+
+// ---------------------------------------------------------
+// 1.5. Respostas de Convite pra Revisar — pedido do usuário (2026-09-28,
+// reunião com a Ediliene): "tratar as respostas... de forma a reagrupar
+// conforme a resposta, e disparar mensagens específicas para cada grupo
+// de respostas". A CLASSIFICAÇÃO (categoria + texto sugerido) já foi
+// feita pela Edge Function `classificar-resposta-convite` (cron a cada
+// 15 min, ver migracao_classificacao_respostas_convite.sql) — este
+// painel só lista o que está `status='pendente'` pra um humano revisar.
+// Decisão confirmada com o usuário: NUNCA envia sozinho — o SDR revisa o
+// texto (editável) e clica "Enviar" pra disparar de verdade.
+// ---------------------------------------------------------
+const ROTULO_CATEGORIA_CONVITE = {
+    confirmou: 'Confirmou',
+    nao_pode_ir: 'Não Pode Ir',
+    pediu_informacao: 'Pediu Informação',
+    sem_interesse: 'Sem Interesse',
+    ambiguo: 'Ambíguo',
+};
+const CLASSE_CATEGORIA_CONVITE = {
+    confirmou: 'tag-convite-confirmou',
+    nao_pode_ir: 'tag-convite-neutro',
+    pediu_informacao: 'tag-convite-info',
+    sem_interesse: 'tag-convite-negativo',
+    ambiguo: 'tag-convite-neutro',
+};
+
+async function carregarAgendaGeralRespostasConvite() {
+    const container = document.getElementById('agendaGeralRespostasConvite');
+    if (!container) return;
+    container.innerHTML = '<div style="font-size:12px; color:var(--text-muted);">Carregando...</div>';
+
+    const { data, error } = await window.supabaseClient
+        .from('classificacoes_resposta_convite')
+        .select('id, "pessoaIdentificador", evento_id, categoria, sugestao_resposta, criado_em')
+        .eq('status', 'pendente')
+        .order('criado_em', { ascending: false })
+        .limit(50);
+
+    if (error) {
+        container.innerHTML = '<div style="font-size:11px; color:var(--text-muted);">Indisponível (rode migracao_classificacao_respostas_convite.sql).</div>';
+        return;
+    }
+    if (!data || data.length === 0) {
+        container.innerHTML = '<div style="font-size:12px; color:var(--text-muted);">Nenhuma resposta pendente de revisão.</div>';
+        return;
+    }
+
+    // Nome/filial de cada lead + nome do evento — buscados em lote (não 1
+    // query por linha).
+    const idsLead = [...new Set(data.map(c => c.pessoaIdentificador))];
+    const idsEvento = [...new Set(data.map(c => c.evento_id).filter(Boolean))];
+    const [leadsResp, eventosResp] = await Promise.all([
+        window.supabaseClient.from('leads_inscricoes').select('pessoaIdentificador, pessoaNome, filial').in('pessoaIdentificador', idsLead),
+        idsEvento.length > 0 ? window.supabaseClient.from('eventos').select('id, nome').in('id', idsEvento) : Promise.resolve({ data: [] }),
+    ]);
+    const mapaLeads = new Map((leadsResp.data || []).map(l => [String(l.pessoaIdentificador), l]));
+    const mapaEventos = new Map((eventosResp.data || []).map(e => [e.id, e.nome]));
+
+    container.innerHTML = data.map(c => {
+        const lead = mapaLeads.get(String(c.pessoaIdentificador));
+        const rotulo = ROTULO_CATEGORIA_CONVITE[c.categoria] || c.categoria;
+        const classe = CLASSE_CATEGORIA_CONVITE[c.categoria] || 'tag-info';
+        const nomeEvento = c.evento_id ? (mapaEventos.get(c.evento_id) || '') : '';
+        const temSugestao = !!(c.sugestao_resposta && c.sugestao_resposta.trim());
+        return `
+            <div class="activity-item" style="cursor:pointer; align-items:flex-start;" onclick="abrirResultadoBuscaGlobal('${c.pessoaIdentificador}')">
+                <div class="activity-dot"></div>
+                <div style="flex:1; min-width:0;">
+                    <div><strong>${escapeHTML((lead && lead.pessoaNome) || 'Lead')}</strong> <span class="tag ${classe}" style="font-size:10px;">${escapeHTML(rotulo)}</span></div>
+                    <div class="activity-time">${escapeHTML((lead && lead.filial) || '')}${nomeEvento ? ' · ' + escapeHTML(nomeEvento) : ''}</div>
+                    ${temSugestao ? `
+                        <textarea id="convitesRespostaTexto-${c.id}" onclick="event.stopPropagation()" style="width:100%; margin-top:6px; font-size:12px; padding:6px; box-sizing:border-box; min-height:50px; border:1px solid var(--border-color); border-radius:6px;">${escapeHTML(c.sugestao_resposta)}</textarea>
+                        <div style="display:flex; gap:6px; margin-top:4px;">
+                            <button class="btn-toggle" style="font-size:11px; padding:4px 8px;" onclick="event.stopPropagation(); enviarSugestaoRespostaConvite(${c.id}, '${c.pessoaIdentificador}', this)"><i class="fa-brands fa-whatsapp"></i> Enviar</button>
+                            <button class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="event.stopPropagation(); descartarSugestaoRespostaConvite(${c.id}, this)">Descartar</button>
+                        </div>` : `
+                        <div style="display:flex; gap:6px; margin-top:4px;">
+                            <button class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="event.stopPropagation(); descartarSugestaoRespostaConvite(${c.id}, this)">Marcar como revisado</button>
+                        </div>`}
+                </div>
+            </div>`;
+    }).join('');
+}
+
+// Só ENVIA quando o SDR clica aqui (decisão confirmada com o usuário) —
+// texto vem do `<textarea>` (editável antes de enviar), sempre dentro da
+// janela de 24h (é resposta a uma mensagem que a pessoa acabou de mandar).
+async function enviarSugestaoRespostaConvite(classificacaoId, pessoaIdentificador, botaoEl) {
+    const textarea = document.getElementById(`convitesRespostaTexto-${classificacaoId}`);
+    const texto = textarea ? textarea.value.trim() : '';
+    if (!texto) { alert('O texto está vazio.'); return; }
+
+    const item = botaoEl.closest('.activity-item');
+    if (botaoEl) { botaoEl.disabled = true; botaoEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
+
+    const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
+        body: { pessoaIdentificador, tipo: 'texto', texto, atendenteNome: typeof obterNomeAtendente === 'function' ? obterNomeAtendente() : '' }
+    });
+    if (error || !data || data.ok === false) {
+        alert('Não foi possível enviar: ' + (typeof mensagemErroWpp === 'function' ? mensagemErroWpp(data || { erro: error?.message }) : (error?.message || data?.erro)));
+        if (botaoEl) { botaoEl.disabled = false; botaoEl.innerHTML = '<i class="fa-brands fa-whatsapp"></i> Enviar'; }
+        return;
+    }
+
+    await window.supabaseClient.from('classificacoes_resposta_convite').update({ status: 'enviada' }).eq('id', classificacaoId);
+    if (item) item.remove();
+}
+
+async function descartarSugestaoRespostaConvite(classificacaoId, botaoEl) {
+    await window.supabaseClient.from('classificacoes_resposta_convite').update({ status: 'descartada' }).eq('id', classificacaoId);
+    const item = botaoEl.closest('.activity-item');
+    if (item) item.remove();
 }
 
 // ---------------------------------------------------------

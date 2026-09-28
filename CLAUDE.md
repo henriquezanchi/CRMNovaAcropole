@@ -80,6 +80,10 @@ supabase/functions/ia-diagnostico-saude/ → Edge Function: detecta erro de impo
 supabase/functions/ia-recomendar-contatos/ → Edge Function: recebe leads já priorizados por
                                      regra fixa (js/tarefas.js) e escreve, por lead, motivo +
                                      sugestão de abordagem humanizada — mesma seção acima
+supabase/functions/classificar-resposta-convite/ → Edge Function: classifica resposta de
+                                     convite de evento por IA (categoria fixa + texto
+                                     sugerido), chamada por cron; ver seção "Classificação
+                                     de Respostas de Convite (IA)"
 migracao_filiais.sql              → já rodada (cria tabela filiais + coluna filial)
 migracao_historico_eventos.sql    → já rodada (coluna historico_eventos + constraint UNIQUE)
 migracao_whatsapp.sql             → tabela mensagens_whatsapp + view vw_wpp_conversas
@@ -326,6 +330,14 @@ migracao_rpc_leads_por_tag.sql    → função leads_por_tag_filial() — "Convi
                                      segmento/tag, sem precisar selecionar no Kanban antes
                                      (ver seção "Convites em Massa via API"); JÁ RODADA nesta
                                      sessão via `supabase db query --linked`
+migracao_classificacao_respostas_convite.sql → tabela classificacoes_resposta_convite +
+                                     função mensagens_candidatas_classificacao_convite() —
+                                     classificação de resposta de convite por IA (ver seção
+                                     própria); JÁ RODADA nesta sessão via
+                                     `supabase db query --linked`
+migracao_agendamento_classificacao_respostas.sql → cron job que roda
+                                     classificar-resposta-convite a cada 15 min; JÁ RODADA
+                                     nesta sessão via `supabase db query --linked`
 ```
 
 ## Banco de dados (Supabase)
@@ -2709,6 +2721,17 @@ corretamente 2 filiais com duplicados em alta, com os números certos;
 só o texto ficou no fallback genérico). **Ação do usuário**: adicionar
 crédito em https://console.anthropic.com (Plans & Billing) — nenhuma
 mudança de código resolve isso.
+
+**Ainda sem crédito em 2026-09-28** — reconfirmado testando
+`classificar-resposta-convite` (ver seção "Classificação de Respostas de
+Convite") direto contra produção: mesmo erro exato
+(`"Your credit balance is too low..."`), e por isso 100% das
+classificações de teste saíram `"ambiguo"` (o fallback seguro da
+function quando a IA não responde) — não é um bug da function nova, é a
+MESMA limitação de sempre, confirmada de novo. Enquanto o crédito não for
+adicionado, a classificação de respostas de convite vai continuar
+sempre caindo em "Ambíguo" — a detecção/query de candidatos (100%
+determinística) já está correta e testada, só falta a escrita da IA.
 
 **Achado incidental nesta mesma investigação — 3 Edge Functions
 documentadas como "já deployadas" estavam AUSENTES em produção**
@@ -6250,6 +6273,93 @@ visual de que aquele lead já tinha sido contatado antes.
   relatório de resultado por lote no momento do envio) nem o Kanban
   geral (que teria que decidir ONDE mostrar isso em cada card — fora do
   pedido específico desta rodada).
+
+## Classificação de Respostas de Convite (IA) — 2026-09-28
+
+Pedido do usuário, reunião com a Ediliene (Jardim América): "tratar as
+respostas dessas pessoas de maneira muito inteligente e muito dinâmica,
+de forma a reagrupar conforme a resposta, e disparar mensagens
+específicas para cada grupo de respostas (alguns exemplos: 'infelizmente
+não posso ir nesse evento', e respondemos com informações sobre os
+próximos eventos)".
+
+**Mesmo princípio de sempre** (`ia-diagnostico-saude`/`ia-recomendar-contatos`/
+`classificar-temas`): a IA NUNCA decide quem entra na lista — a DETECÇÃO
+de "quem tem resposta pendente pra classificar" é 100% regra fixa em
+SQL. A IA só escolhe entre um conjunto FIXO e pequeno de categorias e
+escreve o texto de acompanhamento. **Decisão confirmada com o usuário**
+antes de construir: quando uma resposta é classificada, o CRM prepara a
+tag certa E o texto sugerido, mas só ENVIA quando o SDR clicar "Enviar"
+— nunca dispara sozinho.
+
+- **`mensagens_candidatas_classificacao_convite(p_limite)`**
+  (`migracao_classificacao_respostas_convite.sql`) — RPC que junta
+  mensagem de ENTRADA recente (últimas 3h) + um vínculo `evento_leads`
+  ainda `pendente` pra um evento não muito passado (até 3 dias) + ainda
+  sem classificação (`left join ... where id is null`). `distinct on
+  (m.id)` pega só 1 evento por mensagem (o mais recente, se o lead tiver
+  mais de um convite pendente ao mesmo tempo).
+- **Categorias fixas**: `confirmou`, `nao_pode_ir`, `pediu_informacao`,
+  `sem_interesse`, `ambiguo` (fallback seguro sempre que a IA não
+  responder num formato válido, ou a chamada falhar por qualquer
+  motivo — nunca trava a rotina, nunca inventa categoria fora da lista).
+- **Nova tabela `classificacoes_resposta_convite`** — `pessoaIdentificador`,
+  `evento_id`, `mensagem_origem_id` (`unique` — protege contra
+  duplicar se 2 execuções do cron se sobrepuserem), `categoria`,
+  `sugestao_resposta`, `status` (`pendente`/`enviada`/`descartada`).
+  RLS pública de sempre.
+- **Nova Edge Function `classificar-resposta-convite`** — chamada por
+  **cron** (`migracao_agendamento_classificacao_respostas.sql`, a cada
+  15 min, mesmo padrão `pg_cron`/`net.http_post` de
+  `migracao_agendamento_resumo_semanal.sql`), **NUNCA pelo
+  whatsapp-webhook** (não queremos arriscar atrasar o `200 OK` pra Meta
+  com uma chamada de IA de 1-3s no caminho crítico do webhook). Pra cada
+  mensagem candidata: monta um prompt com a mensagem + nome/data do
+  evento + a lista fixa de categorias, valida a categoria devolvida
+  contra o enum (categoria inválida ou JSON malformado → `ambiguo`, sem
+  sugestão), grava a linha, aplica a tag `"Convite: <categoria>"` no
+  lead (**substituindo** qualquer `"Convite: X"` anterior — nunca
+  acumula categoria velha se a pessoa responder de novo e mudar de
+  ideia), e atualiza `evento_leads.resposta_convite` quando a categoria
+  mapeia claramente (`confirmou`→`confirmado`,
+  `nao_pode_ir`/`sem_interesse`→`recusado`; `pediu_informacao`/`ambiguo`
+  deixa `pendente`, precisa de humano).
+  - **Modo de diagnóstico** (`?debug=1` no POST): classifica só 3
+    candidatas e devolve o texto BRUTO da IA (ou o erro exato) sem
+    gravar nada no banco — foi assim que a causa da 1ª rodada de teste
+    (100% "ambiguo") foi identificada na hora: sem crédito na Anthropic
+    (ver seção "Limitação real" acima), não um bug de parsing.
+- **Família de tag nova "Convite"** (`FAMILIAS_TAG`, `js/app.js`) — cor
+  por categoria, não uma cor só pra família inteira: verde
+  (`tag-convite-confirmou`), âmbar (`tag-convite-info`), vermelho
+  (`tag-convite-negativo`), cinza (`tag-convite-neutro`, "Não Pode
+  Ir"/"Ambíguo").
+- **Painel "Respostas de Convite pra Revisar"** — novo card full-width
+  na Agenda do Dia (`carregarAgendaGeralRespostasConvite()`,
+  `js/visao-geral.js`, mesmo padrão de "Aniversariantes de Hoje"): lista
+  `classificacoes_resposta_convite` com `status='pendente'`, nome +
+  filial + evento + badge de categoria + `<textarea>` EDITÁVEL com a
+  sugestão (quando existe) + botão "Enviar" (`enviarSugestaoRespostaConvite()`,
+  chama `whatsapp-send` de verdade com o texto do textarea — sempre
+  dentro da janela de 24h, é resposta a uma mensagem que a pessoa acabou
+  de mandar) + "Descartar"/"Marcar como revisado"
+  (`descartarSugestaoRespostaConvite()`, só muda `status`).
+- **Central de Notificações, gatilho 8** —
+  `verificarNotificacoesRespostasConvite()` (`js/notificacoes.js`): poll
+  de 10 min, avisa quando aparece uma classificação nova `pendente`.
+  Dedup por `id` em `localStorage` (mesmo padrão do gatilho 5).
+- **Testado ao vivo**: a RPC de candidatas devolveu mensagens reais
+  (incluindo ruído esperado — respostas automáticas de negócios não
+  relacionados, números reciclados; isso nunca causa dano, só vira
+  `"ambiguo"`, que exige revisão humana por design). O modo `?debug=1`
+  confirmou a causa raiz do 100% "ambiguo" (falta de crédito Anthropic,
+  não um bug). O painel foi validado inserindo uma linha descartável
+  direto no banco e conferindo as 3 queries que ele faz (classificação +
+  nome/filial do lead + nome do evento) — bateram certo; a linha de
+  teste foi apagada depois. **Fluxo de clique real (Enviar/Descartar)
+  não foi testado numa UI de verdade** (sem Playwright neste ambiente) —
+  validar na próxima vez que uma classificação de verdade aparecer (uma
+  vez que o crédito Anthropic for adicionado).
 
 ## Timer regressivo de 24h — "não deixar a conversa esfriar" (2026-09-28)
 

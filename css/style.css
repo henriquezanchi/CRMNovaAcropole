@@ -327,6 +327,13 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .tag-nivel { background: #f5f3ff; color: #6d28d9; border: 1px solid #ddd6fe; }
 /* Trilha de Interesse / Estágio da Jornada (sistema de follow-up) */
 .tag-jornada { background: #ecfeff; color: #0e7490; border: 1px solid #a5f3fc; }
+/* "Convite: X" — classificação automática da resposta a um convite de
+   evento (2026-09-28) — cada categoria tem cor própria pra reconhecer de
+   longe qual grupo de resposta é aquele. */
+.tag-convite-confirmou { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
+.tag-convite-info { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+.tag-convite-negativo { background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; }
+.tag-convite-neutro { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
 /* Famílias de tags sugeridas pro SDR (TAGS_SUGERIDAS em js/app.js) — a
    classificação por cor é por PADRÃO de texto (classeVisualTag em
    js/app.js), então cobre também tags customizadas parecidas, não só as

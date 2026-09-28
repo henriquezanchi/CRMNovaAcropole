@@ -460,6 +460,55 @@ async function verificarNotificacoesJanelaFechando() {
 }
 
 // ==========================================
+// GATILHO 8: Resposta de convite classificada, pronta pra revisar
+// (pedido do usuário, 2026-09-28, reunião com a Ediliene): a classificação
+// em si (categoria + texto sugerido) é feita pela Edge Function
+// `classificar-resposta-convite` (cron a cada 15 min) — este gatilho só
+// avisa que apareceu uma linha nova `status='pendente'` pra revisar no
+// painel "Respostas de Convite pra Revisar" (Agenda do Dia). GLOBAL
+// (todas as filiais), dedup por `id` persistido em localStorage (mesmo
+// padrão do gatilho 5).
+// ==========================================
+const CHAVE_LS_RESPOSTAS_CONVITE_NOTIFICADAS = 'crm_na_respostas_convite_notificadas';
+function carregarRespostasConviteJaNotificadas() {
+    try {
+        const arr = JSON.parse(localStorage.getItem(CHAVE_LS_RESPOSTAS_CONVITE_NOTIFICADAS) || '[]');
+        return new Set(Array.isArray(arr) ? arr : []);
+    } catch { return new Set(); }
+}
+function salvarRespostasConviteJaNotificadas(set) {
+    try { localStorage.setItem(CHAVE_LS_RESPOSTAS_CONVITE_NOTIFICADAS, JSON.stringify([...set].slice(-200))); } catch { /* ignora */ }
+}
+let respostasConviteJaNotificadas = carregarRespostasConviteJaNotificadas();
+
+async function verificarNotificacoesRespostasConvite() {
+    if (typeof window.supabaseClient === 'undefined') return;
+    const { data, error } = await window.supabaseClient
+        .from('classificacoes_resposta_convite')
+        .select('id, "pessoaIdentificador", categoria')
+        .eq('status', 'pendente')
+        .order('criado_em', { ascending: false })
+        .limit(20);
+    if (error || !data) return; // migração não rodada ainda, ou tabela vazia — fica em silêncio
+
+    const rotulos = { confirmou: 'Confirmou', nao_pode_ir: 'Não Pode Ir', pediu_informacao: 'Pediu Informação', sem_interesse: 'Sem Interesse', ambiguo: 'Ambíguo' };
+    data.forEach(c => {
+        const chave = String(c.id);
+        if (respostasConviteJaNotificadas.has(chave)) return;
+        respostasConviteJaNotificadas.add(chave);
+        salvarRespostasConviteJaNotificadas(respostasConviteJaNotificadas);
+
+        const leadConhecido = (typeof leadsAtuais !== 'undefined' ? leadsAtuais : []).find(l => String(l.pessoaIdentificador) === String(c.pessoaIdentificador));
+        adicionarNotificacao({
+            icone: 'fa-solid fa-comments',
+            titulo: 'Resposta de convite classificada',
+            mensagem: `${(leadConhecido && leadConhecido.pessoaNome) || 'Um lead'} — "${rotulos[c.categoria] || c.categoria}". Revise no painel "Respostas de Convite pra Revisar" (Agenda do Dia).`,
+            aoClicar: () => { if (typeof switchModule === 'function') switchModule('tab-dashboard', 'Visão Geral', 'Dashboard e indicadores'); },
+        });
+    });
+}
+
+// ==========================================
 // TROCA DE FILIAL — reseta os gatilhos que dependem de qual filial está
 // ativa (baseline de Lead Forte, eventos já notificados, canal do WhatsApp).
 // Chamada de dentro de carregarLeads() (js/app.js) sempre que resetar=true
@@ -486,3 +535,8 @@ setInterval(() => { if (typeof verificarNotificacoesSincronizacao === 'function'
 // filial, é GLOBAL — não entra em iniciarNotificacoesParaFilial()).
 verificarNotificacoesJanelaFechando();
 setInterval(() => { if (typeof verificarNotificacoesJanelaFechando === 'function') verificarNotificacoesJanelaFechando(); }, 10 * 60 * 1000);
+// Respostas de convite classificadas — poll de 10 min (o cron que
+// classifica roda a cada 15 min, então 10 min garante ver o resultado
+// novo pouco depois de cada rodada) + 1 checagem imediata ao carregar.
+verificarNotificacoesRespostasConvite();
+setInterval(() => { if (typeof verificarNotificacoesRespostasConvite === 'function') verificarNotificacoesRespostasConvite(); }, 10 * 60 * 1000);

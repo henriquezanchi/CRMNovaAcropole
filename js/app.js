@@ -3632,6 +3632,22 @@ const FAMILIAS_TAG = [
     // histórico de eventos + config de trilhas_tipo_evento (sistema de
     // follow-up). Cor própria pra distinguir de tag customizada comum.
     { label: 'Jornada', testar: t => /^(Trilha|Jornada): /i.test(t), classe: () => 'tag-jornada' },
+    // "Convite: X" — classificação automática da resposta a um convite de
+    // evento (pedido do usuário 2026-09-28, reunião com a Ediliene — ver
+    // Edge Function classificar-resposta-convite). Cor varia por
+    // categoria (verde = confirmou, âmbar = pediu info, vermelho = sem
+    // interesse, cinza = não pode ir/ambíguo) — mais informativo que uma
+    // cor única pra família inteira.
+    {
+        label: 'Convite',
+        testar: t => /^Convite: /i.test(t),
+        classe: t => {
+            if (/Confirmou$/i.test(t)) return 'tag-convite-confirmou';
+            if (/Pediu Informação$/i.test(t)) return 'tag-convite-info';
+            if (/Sem Interesse$/i.test(t)) return 'tag-convite-negativo';
+            return 'tag-convite-neutro'; // Não Pode Ir / Ambíguo
+        },
+    },
     { label: 'Cadastro', testar: t => /^(Sem (Telefone|E-mail)|Conferir Telefone)$/i.test(t), classe: () => 'tag-warning' },
     { label: 'Engajamento / SDR', testar: t => /(n[ãa]o atende|caixa postal|n[ãa]o responde|inv[áa]lido|no-?show)/i.test(t), classe: () => 'tag-error' },
     { label: 'Objeções', testar: t => /^objeç[ãa]o/i.test(t), classe: () => 'tag-warning' },
