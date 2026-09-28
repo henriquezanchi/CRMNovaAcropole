@@ -243,7 +243,9 @@ migracao_agendamento_resumo_semanal.sql → cron job que dispara o resumo semana
 migracao_rpc_aniversariantes.sql  → função aniversariantes_por_mes() — filtra por mês/filial
                                      direto no banco, corrige truncamento silencioso do limite
                                      de 1000 linhas do PostgREST (ver seção "Agenda do Dia");
-                                     JÁ RODADA nesta sessão via `supabase db query --linked`
+                                     ganhou como_prefere_ser_chamado 2026-09-28 (nome do botão
+                                     "Enviar" de aniversário); JÁ RODADA nesta sessão via
+                                     `supabase db query --linked`
 migracao_lead_cidade_uf.sql       → colunas cidade/uf/telefone_alternativo em leads_inscricoes —
                                      capturadas pelo scraper do Mercúrio na tela ENDEREÇOS da
                                      ficha do aluno, só no Modo Completo (ver seção "Scraper
@@ -316,6 +318,10 @@ migracao_whatsapp_reacoes.sql     → coluna reacoes (jsonb) em mensagens_whatsa
                                      com emoji a uma mensagem, igual o WhatsApp real; ver
                                      seção "Reações com emoji nas mensagens"; JÁ RODADA
                                      nesta sessão via `supabase db query --linked`
+migracao_leads_a_tratar_tags.sql  → coluna pessoa_tags (snapshot) em leads_a_tratar — mostra
+                                     as tags de cada membro no card do grupo, antes de
+                                     mesclar (ver seção "Leads a Tratar"); JÁ RODADA nesta
+                                     sessão via `supabase db query --linked`
 ```
 
 ## Banco de dados (Supabase)
@@ -2458,6 +2464,21 @@ de 3 minutos que o resto do Dashboard já tem).
      disparar o clique do item (que abre a gaveta). Depois de enviar,
      tira o lead de uma coluna fria (`moverParaAbordagemAposEnvio()`, ver
      seção própria abaixo).
+     - **Bug real corrigido (2026-09-28, mesmo dia)**: o `{nome}` mandado
+       pro template `aniversario` vinha do `pessoaNome` CRU (geralmente
+       TUDO EM CAIXA ALTA, vindo da planilha) — "com cara de copiado e
+       colado", pedido do usuário — em vez de passar pela MESMA política
+       já usada em qualquer outro `{nome}` automático do app
+       (`nomeParaChamar()`/`primeiroNomeFormatado()`, `js/app.js`: nome
+       de preferência se tiver, senão só o primeiro nome, Title Case).
+       Corrigido nos 2 pontos que montam o botão "Enviar"
+       (`carregarAgendaGeralAniversariantes()` em `js/visao-geral.js`,
+       `atualizarAniversariantes()` em `js/app.js`) — a EXIBIÇÃO na lista
+       continua mostrando o nome completo (útil pro SDR identificar quem
+       é quem), só o valor mandado pro WhatsApp mudou. Exigiu adicionar
+       `como_prefere_ser_chamado` ao retorno de `aniversariantes_por_mes()`
+       (`migracao_rpc_aniversariantes.sql`, recriada — precisou
+       `drop function` antes por mudar o tipo de retorno).
 2. **50 Leads Prioritários pra Contatar, no TOTAL** (não 50 por filial —
    uma lista ÚNICA "quem ligar primeiro hoje" cruzando todas as unidades).
    Critério, em ordem: (1) tem uma inscrição FUTURA numa Abertura de
@@ -3017,6 +3038,39 @@ critérios, em ordem de confiança:
   persiste entre sessões de propósito — é só pra reduzir poluição visual
   durante a revisão, não uma preferência duradoura tipo a gaveta de
   colunas do Kanban.
+- **Tags de cada membro visíveis no card do grupo (2026-09-28)** — pedido
+  do usuário depois de reunião com a Ediliene (Jardim América): "as
+  pessoas duplicadas ficam com problemas nas tags... isso dificulta o
+  contato mais assertivo". Antes só dava pra ver a CONTAGEM de tags
+  depois de já ter aberto "Mesclar"; agora `renderizarCardGrupoLeadsATratar()`
+  mostra as tags de cada membro direto no card (badges pequenos,
+  `classeVisualTag()`) — dá pra notar de cara que 2 "duplicados" têm
+  tags divergentes (ex: um "Ativo", outro "Lead Forte 1") antes de
+  decidir mesclar. Snapshot gravado na própria varredura
+  (`leads_a_tratar.pessoa_tags`, `migracao_leads_a_tratar_tags.sql`) —
+  mesmo espírito de `pessoa_nome`/`pessoa_telefone`/`pessoa_email`, que
+  já são snapshot, não consulta em tempo real.
+- **Duplicado CROSS-FILIAL não é coberto por esta tela — achado real
+  (2026-09-28)**: `detectarLeadsATratar()` roda sempre escopada a 1
+  filial (`.eq('filial', filial)`) — nunca detecta a MESMA pessoa
+  cadastrada em 2 filiais diferentes com o mesmo telefone. Achado
+  investigando um "não identificado" real: "GIORGIA TOMITAO MARIO"
+  (`108424`, Goiânia II) e "GIORGIA TOMITÃO MÁRIO" (`901000090`, Jardim
+  América) são a MESMA pessoa, mesmo telefone (`62 981626080`) — o
+  webhook do WhatsApp encontrou os DOIS e corretamente recusou adivinhar
+  (mesma regra de sempre: nunca escolhe entre 2+ leads ATIVOS ambíguos),
+  então a mensagem dela ficou em "Não Identificados" esperando vínculo
+  manual. **Não é um bug do 9º dígito** (os dois cadastros já têm o
+  telefone no formato certo, idêntico) — é uma lacuna de detecção
+  diferente, ainda sem solução construída: duplicado entre filiais
+  nunca aparece em "Leads a Tratar" de nenhuma das duas (cada varredura
+  só olha a própria filial). Não construído nesta rodada (fora do pedido
+  específico) — se acontecer de novo, resolve pela mesma tela "Não
+  Identificados" (botão "Vincular", escolher qual das 2 Giorgias é a
+  certa pra aquela conversa); uma extensão futura óbvia seria
+  `detectarLeadsATratar()` também avisar (não necessariamente mesclar
+  automático — cada filial pode ter contexto próprio legítimo) sobre
+  telefone idêntico encontrado em OUTRA filial.
 
 ## Integração com WhatsApp (Meta Cloud API)
 

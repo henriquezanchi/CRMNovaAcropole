@@ -228,7 +228,7 @@ async function carregarAgendaGeralAniversariantes() {
                 <div><strong>${escapeHTML(l.pessoaNome || 'Lead sem nome')}</strong> 🎂 <strong>hoje!</strong> ${htmlBadgeStatusWpp(statusPorLead.get(String(l.pessoaIdentificador)))}</div>
                 <div class="activity-time">${escapeHTML(l.filial || '')}</div>
             </div>
-            <button class="btn-toggle" style="flex-shrink:0; font-size:11px; padding:4px 8px;" onclick="event.stopPropagation(); enviarAniversarioRapido('${l.pessoaIdentificador}', '${escapeHTML(l.pessoaNome || '').replace(/'/g, "\\'")}', '${escapeHTML(l.filial || '').replace(/'/g, "\\'")}', this)" title="Manda o template de Feliz Aniversário agora, sem abrir a ficha">
+            <button class="btn-toggle" style="flex-shrink:0; font-size:11px; padding:4px 8px;" onclick="event.stopPropagation(); enviarAniversarioRapido('${l.pessoaIdentificador}', '${escapeHTML(nomeParaChamar(l)).replace(/'/g, "\\'")}', '${escapeHTML(l.filial || '').replace(/'/g, "\\'")}', this)" title="Manda o template de Feliz Aniversário agora, sem abrir a ficha">
                 <i class="fa-brands fa-whatsapp"></i> Enviar
             </button>
         </div>`).join('');

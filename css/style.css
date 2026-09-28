@@ -601,10 +601,13 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .duplicado-grupo-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px; }
 .duplicado-grupo-membros { display: flex; flex-direction: column; gap: 6px; }
 .duplicado-membro { display: flex; align-items: center; gap: 8px; padding: 4px; border-radius: 6px; transition: 0.15s; font-size: 12px; }
-.duplicado-membro-clicavel { flex: 1; display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; background: #f8fafc; border-radius: 6px; cursor: pointer; transition: 0.15s; min-width: 0; }
+.duplicado-membro-clicavel { flex: 1; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; padding: 8px 10px; background: #f8fafc; border-radius: 6px; cursor: pointer; transition: 0.15s; min-width: 0; }
 .duplicado-membro-clicavel:hover { background: #eef2f7; }
 .duplicado-membro-nome { font-weight: 600; }
 .duplicado-membro-tel { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+/* Tags de cada membro (pedido do usuário, 2026-09-28) — sempre numa
+   linha própria, abaixo de nome/telefone, pra não competir com eles. */
+.duplicado-membro-tags { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 
 /* Modal de mesclagem (escolher qual lead sobrevive) */
 .mesclar-opcao { display: flex; gap: 10px; align-items: flex-start; padding: 10px; border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 8px; cursor: pointer; transition: 0.15s; }

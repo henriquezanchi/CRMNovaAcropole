@@ -283,7 +283,7 @@ async function detectarLeadsATratar(filial, logFn) {
     while (true) {
         const { data, error } = await window.supabaseClient
             .from(NOME_TABELA)
-            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail')
+            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, tags')
             .eq('filial', filial)
             .order('pessoaIdentificador', { ascending: true })
             .range(offset, offset + passo - 1);
@@ -468,7 +468,8 @@ async function detectarLeadsATratar(filial, logFn) {
                 pessoa_id: String(m.pessoaIdentificador),
                 pessoa_nome: m.pessoaNome || '',
                 pessoa_telefone: [m.pessoaTelefoneDDD, m.pessoaTelefoneNumero].filter(Boolean).join(' '),
-                pessoa_email: m.pessoaEmail || ''
+                pessoa_email: m.pessoaEmail || '',
+                pessoa_tags: m.tags || null
             });
         });
     });
@@ -542,6 +543,20 @@ function toggleSecaoLeadsATratar(criterio) {
     renderizarListaLeadsATratar();
 }
 
+// Tags de cada membro, visíveis ANTES de abrir o modal de mesclagem —
+// pedido do usuário (2026-09-28, depois de reunião com a Ediliene):
+// "as pessoas duplicadas ficam com problemas nas tags... isso dificulta
+// o contato mais assertivo". Sem isso, só dava pra ver a CONTAGEM de
+// tags depois de já ter aberto "Mesclar" (renderizarOpcoesPrincipalMesclagem()).
+// `pessoa_tags` é um snapshot gravado na varredura (migracao_leads_a_tratar_tags.sql)
+// — sem a migração rodada, fica `undefined`/vazio e simplesmente não mostra nada.
+function htmlTagsMembroLeadsATratar(m) {
+    const tags = (typeof parseTags === 'function' ? parseTags(m.pessoa_tags) : []).map(t => t.trim()).filter(Boolean);
+    if (tags.length === 0) return '';
+    const classeTag = typeof classeVisualTag === 'function' ? classeVisualTag : () => '';
+    return `<div class="duplicado-membro-tags">${tags.map(t => `<span class="tag ${classeTag(t)}" style="font-size:10px; padding:2px 7px;">${escapeHTML(t)}</span>`).join('')}</div>`;
+}
+
 function renderizarCardGrupoLeadsATratar(g) {
     const info = CRITERIOS_LEADS_A_TRATAR[g.criterio] || { classe: 'tag-info', icone: 'fa-circle-question' };
     const rotulo = rotuloGrupoLeadsATratar(g);
@@ -570,6 +585,7 @@ function renderizarCardGrupoLeadsATratar(g) {
                                 <i class="fa-solid fa-phone"></i> ${escapeHTML(m.pessoa_telefone || 'Sem telefone')}
                                 ${m.pessoa_email ? ` · <i class="fa-solid fa-envelope"></i> ${escapeHTML(m.pessoa_email)}` : ''}
                             </span>
+                            ${htmlTagsMembroLeadsATratar(m)}
                         </div>
                         ${permiteExclusaoIndividual ? `<button class="icon-btn danger" title="Este não é duplicado — remover só ele deste grupo" onclick="removerMembroDoGrupo('${grupoEscapado}', '${m.pessoa_id}')"><i class="fa-solid fa-user-xmark"></i></button>` : ''}
                     </div>
