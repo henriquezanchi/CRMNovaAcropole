@@ -709,6 +709,19 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .wpp-status-enviado { background: #e2e8f0; color: #64748b; }
 .wpp-status-falhou { background: #fee2e2; color: #b91c1c; }
 
+/* Timer regressivo de 24h na lista de contatos do WhatsApp Unificado
+   (pedido do usuário, 2026-09-28) — só aparece enquanto a conversa está
+   esperando NOSSA resposta (última mensagem foi do lead). */
+.wpp-timer-janela {
+    display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-weight: 700;
+    margin-top: 2px; padding: 1px 6px; border-radius: 8px; width: fit-content;
+}
+.wpp-timer-ok { background: #dcfce7; color: #15803d; }
+.wpp-timer-atencao { background: #fef3c7; color: #92400e; }
+.wpp-timer-critico { background: #fee2e2; color: #b91c1c; animation: wppTimerPulsar 1.5s ease-in-out infinite; }
+.wpp-timer-fechada { background: #e2e8f0; color: #64748b; }
+@keyframes wppTimerPulsar { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+
 /* ==========================================
    ABA: RELATÓRIOS (FUNIL DE CONVERSÃO)
 ========================================== */

@@ -1850,6 +1850,30 @@ function conversaNaoLidaWpp(conversa) {
     return !ultimaLeitura || new Date(conversa.ultima_mensagem_em) > new Date(ultimaLeitura);
 }
 
+// Timer regressivo de 24h (pedido do usuário, 2026-09-28, depois de
+// reunião com a Ediliene, Jardim América): "não podemos deixar esfriar
+// para não fechar a conversa (de acordo com as regras do Meta API, eu
+// posso conversar livremente se a pessoa tiver me mandando uma mensagem
+// nas últimas 24h)". Só aparece quando a ÚLTIMA mensagem da conversa foi
+// do LEAD (`ultima_direcao === 'entrada'`) — é exatamente aí que a janela
+// de 24h está correndo; depois que respondemos, o problema muda de
+// figura (é ele que precisa responder de novo), então o timer some.
+// Reaproveita 100% `vw_wpp_conversas` (já consultada por
+// renderizarContatosWpp()) — nenhuma coluna/tabela nova precisou existir
+// só pra isso.
+function htmlTimerJanelaWpp(conversa) {
+    if (!conversa || conversa.ultima_direcao !== 'entrada') return '';
+    const horasPassadas = (Date.now() - new Date(conversa.ultima_mensagem_em).getTime()) / 3600000;
+    const restante = 24 - horasPassadas;
+    if (restante <= 0) {
+        return `<div class="wpp-timer-janela wpp-timer-fechada" title="Janela de 24h da Meta já fechou — só um modelo aprovado consegue reabrir a conversa"><i class="fa-solid fa-lock"></i> Janela fechada</div>`;
+    }
+    const horas = Math.floor(restante);
+    const minutos = Math.floor((restante - horas) * 60);
+    const classe = restante < 4 ? 'wpp-timer-critico' : restante < 12 ? 'wpp-timer-atencao' : 'wpp-timer-ok';
+    return `<div class="wpp-timer-janela ${classe}" title="Tempo restante antes da janela de 24h da Meta fechar — depois disso só um modelo aprovado reabre a conversa"><i class="fa-solid fa-clock"></i> ${horas}h${String(minutos).padStart(2, '0')} restantes</div>`;
+}
+
 function htmlContatoWpp(lead, conversa) {
     const id = lead.pessoaIdentificador;
     const ativo = String(id) === String(wppContatoAtivoId) ? 'active' : '';
@@ -1864,6 +1888,7 @@ function htmlContatoWpp(lead, conversa) {
                 <div class="wpp-contact-name">${escapeHTML(lead.pessoaNome || 'Sem nome')}</div>
                 <div class="wpp-contact-phone">${escapeHTML(preview)}</div>
                 ${lead.filial ? `<div style="font-size:9px; color:var(--text-muted);"><i class="fa-solid fa-building"></i> ${escapeHTML(lead.filial)}</div>` : ''}
+                ${htmlTimerJanelaWpp(conversa)}
             </div>
             ${naoLida ? '<div class="wpp-contact-nao-lida-dot"></div>' : ''}
         </div>
@@ -2049,3 +2074,17 @@ async function vincularConversaNaoIdentificada(telefoneWhatsapp) {
     const searchEl = document.getElementById('wppSearch');
     renderizarContatosWpp(searchEl ? searchEl.value : '');
 }
+
+// Refresca a lista de contatos a cada 1 min só pro timer de 24h
+// (htmlTimerJanelaWpp()) não ficar visualmente parado — sem isso, o
+// texto só atualizaria quando chegasse mensagem nova ou a pessoa trocasse
+// de aba (mesmo espírito do setInterval de 3 min já usado pro SLA de
+// coluna fria em js/app.js). Só roda de verdade se a aba WhatsApp
+// Unificado estiver aberta na tela.
+setInterval(() => {
+    const tab = document.getElementById('tab-whatsapp');
+    if (tab && tab.classList.contains('active')) {
+        const searchEl = document.getElementById('wppSearch');
+        renderizarContatosWpp(searchEl ? searchEl.value : '');
+    }
+}, 60 * 1000);

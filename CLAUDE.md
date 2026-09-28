@@ -6209,6 +6209,51 @@ visual de que aquele lead já tinha sido contatado antes.
   geral (que teria que decidir ONDE mostrar isso em cada card — fora do
   pedido específico desta rodada).
 
+## Timer regressivo de 24h — "não deixar a conversa esfriar" (2026-09-28)
+
+Pedido do usuário, depois de reunião com a Ediliene (Jardim América):
+"precisamos ter um timer regressivo de 24h em algum lugar... não podemos
+deixar esfriar para não fechar a conversa (de acordo com as regras do
+Meta API, eu posso conversar livremente se a pessoa tiver me mandando
+uma mensagem nas últimas 24h)".
+
+**Decisão de design**: NÃO é uma coluna nova do Kanban. `columnsConfig[0]`
+já tem 2 papéis acoplados à POSIÇÃO (SLA vermelho de coluna fria, e "a
+coluna fria" pros KPIs/`moverParaAbordagemAposEnvio()`) — inserir uma
+coluna de estado transitório ali arriscaria descolar esses cálculos sem
+ninguém perceber, e como colunas são só `localStorage`/por navegador,
+uma coluna "do sistema" nem chegaria em quem já usa o CRM. "Aguardando
+resposta" também não é uma etapa de FUNIL (pode acontecer em qualquer
+coluna) — é um indicador de TEMPO, não uma posição no quadro.
+
+- **`htmlTimerJanelaWpp(conversa)`** (`js/whatsapp.js`) — badge na lista
+  de contatos do WhatsApp Unificado (`htmlContatoWpp()`), reaproveitando
+  100% `vw_wpp_conversas` (mesma view já consultada por
+  `renderizarContatosWpp()` — nenhuma tabela/coluna nova precisou
+  existir). Só aparece quando `ultima_direcao === 'entrada'` (a última
+  mensagem da conversa foi do LEAD — é exatamente aí que a janela está
+  correndo; depois que respondemos, o timer some, o "problema" virou
+  outro). Verde (&gt;12h restantes) / âmbar (4-12h) / vermelho pulsante
+  (&lt;4h) / cinza "Janela fechada" (já passou de 24h). A lista se
+  atualiza a cada 1 min (`setInterval`, só quando a aba WhatsApp está
+  ativa — mesmo espírito do refresh de 3 min já usado pro SLA de coluna
+  fria em `js/app.js`) pra o texto do timer não ficar visualmente parado.
+- **Central de Notificações, gatilho 7** —
+  `verificarNotificacoesJanelaFechando()` (`js/notificacoes.js`): poll de
+  10 min, GLOBAL (todas as filiais, mesmo espírito do gatilho 4 — a
+  janela de 24h não escolhe filial), avisa quando uma conversa esperando
+  nossa resposta está a menos de `HORAS_AVISO_JANELA_FECHANDO` (4h) de
+  fechar. Dedup persistido em `localStorage`
+  (`crm_na_janelas_notificadas`, chave `pessoaId:ultima_mensagem_em`,
+  mesmo padrão do gatilho 5) — nunca repete o aviso pra MESMA mensagem
+  entre reloads; se chegar uma mensagem nova do mesmo lead depois, a
+  chave muda e o aviso pode disparar de novo (correto — é uma conversa
+  "nova" precisando de atenção de novo).
+- **Testado contra dado real**: confirmado via consulta direta que
+  `vw_wpp_conversas` devolve `ultima_mensagem_em`/`ultima_direcao`
+  corretos, e que o cálculo de horas restantes bate (mensagens recém-
+  chegadas mostrando ~24h restantes).
+
 ## Bloqueio da API do WhatsApp (Meta) — investigado 2026-09-07
 
 Toda mensagem de saída desde 2026-09-05 22:21 (e antes, 19:23) falha com

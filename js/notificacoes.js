@@ -400,6 +400,66 @@ async function verificarNotificacoesSincronizacao() {
 }
 
 // ==========================================
+// GATILHO 7: Janela de 24h da Meta perto de fechar (pedido do usuário,
+// 2026-09-28, reunião com a Ediliene): "não podemos deixar esfriar...
+// não podemos deixar de responder pra não fechar a conversa (de acordo
+// com as regras do Meta API, eu posso conversar livremente se a pessoa
+// tiver me mandando uma mensagem nas últimas 24h)". Avisa quando uma
+// conversa ainda esperando NOSSA resposta (última mensagem foi do lead)
+// está a menos de `HORAS_AVISO_JANELA_FECHANDO` de a janela fechar —
+// mesmo limiar "crítico" já usado no badge visual (`htmlTimerJanelaWpp()`,
+// `js/whatsapp.js`). GLOBAL (todas as filiais), mesmo espírito do
+// gatilho 4 — a janela de 24h não escolhe filial. Reaproveita
+// `vw_wpp_conversas` (mesma view já usada pelo WhatsApp Unificado),
+// nenhuma tabela/coluna nova precisou existir só pra isso.
+// ==========================================
+const HORAS_AVISO_JANELA_FECHANDO = 4;
+const CHAVE_LS_JANELAS_NOTIFICADAS = 'crm_na_janelas_notificadas';
+function carregarJanelasJaNotificadas() {
+    try {
+        const arr = JSON.parse(localStorage.getItem(CHAVE_LS_JANELAS_NOTIFICADAS) || '[]');
+        return new Set(Array.isArray(arr) ? arr : []);
+    } catch { return new Set(); }
+}
+function salvarJanelasJaNotificadas(set) {
+    try { localStorage.setItem(CHAVE_LS_JANELAS_NOTIFICADAS, JSON.stringify([...set].slice(-200))); } catch { /* ignora */ }
+}
+let janelasJaNotificadas = carregarJanelasJaNotificadas(); // chave "pessoaId:ultima_mensagem_em" — persiste em localStorage (mesmo padrão do gatilho 5) pra não repetir aviso a cada F5 enquanto a mesma mensagem continua sendo a "última" da conversa.
+
+async function verificarNotificacoesJanelaFechando() {
+    if (typeof window.supabaseClient === 'undefined') return;
+    const { data, error } = await window.supabaseClient
+        .from('vw_wpp_conversas')
+        .select('"pessoaIdentificador", ultima_mensagem_em, filial')
+        .eq('ultima_direcao', 'entrada');
+    if (error || !data) return;
+
+    const agora = Date.now();
+    data.forEach(conversa => {
+        const horasPassadas = (agora - new Date(conversa.ultima_mensagem_em).getTime()) / 3600000;
+        const restante = 24 - horasPassadas;
+        if (restante <= 0 || restante > HORAS_AVISO_JANELA_FECHANDO) return; // já fechou, ou ainda tem tempo de sobra
+
+        const chave = `${conversa.pessoaIdentificador}:${conversa.ultima_mensagem_em}`;
+        if (janelasJaNotificadas.has(chave)) return;
+        janelasJaNotificadas.add(chave);
+        salvarJanelasJaNotificadas(janelasJaNotificadas);
+
+        const leadConhecido = (typeof leadsAtuais !== 'undefined' ? leadsAtuais : []).find(l => String(l.pessoaIdentificador) === String(conversa.pessoaIdentificador));
+        const horasArredondado = Math.max(0, Math.round(restante * 10) / 10);
+        adicionarNotificacao({
+            icone: 'fa-solid fa-hourglass-half',
+            titulo: 'Janela de resposta fechando',
+            mensagem: `${(leadConhecido && leadConhecido.pessoaNome) || 'Um lead'} (${conversa.filial || 'filial desconhecida'}) mandou mensagem há quase 24h e ainda não respondemos — restam ~${horasArredondado}h antes de precisar de um modelo aprovado pra reabrir.`,
+            aoClicar: () => {
+                if (typeof switchModule === 'function') switchModule('tab-whatsapp', 'WhatsApp Unificado', 'Caixa de entrada centralizada');
+                if (typeof abrirChatWpp === 'function') abrirChatWpp(conversa.pessoaIdentificador);
+            },
+        });
+    });
+}
+
+// ==========================================
 // TROCA DE FILIAL — reseta os gatilhos que dependem de qual filial está
 // ativa (baseline de Lead Forte, eventos já notificados, canal do WhatsApp).
 // Chamada de dentro de carregarLeads() (js/app.js) sempre que resetar=true
@@ -420,3 +480,9 @@ setInterval(() => { if (typeof verificarNotificacoesLembretes === 'function') ve
 // Sincronização automática muda bem mais devagar (job diário, na melhor
 // das hipóteses) — poll mais espaçado.
 setInterval(() => { if (typeof verificarNotificacoesSincronizacao === 'function') verificarNotificacoesSincronizacao(); }, 30 * 60 * 1000);
+// Janela de 24h fechando — poll de 10 min (mais frequente que os outros,
+// já que "faltam menos de 4h" é uma janela de tempo real curta) + 1
+// checagem imediata ao carregar a página (não depende de troca de
+// filial, é GLOBAL — não entra em iniciarNotificacoesParaFilial()).
+verificarNotificacoesJanelaFechando();
+setInterval(() => { if (typeof verificarNotificacoesJanelaFechando === 'function') verificarNotificacoesJanelaFechando(); }, 10 * 60 * 1000);
