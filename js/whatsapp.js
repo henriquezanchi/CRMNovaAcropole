@@ -1566,11 +1566,75 @@ async function marcarContatoWhatsAppLoteEnviado(pessoaId, marcado) {
 let conviteApiEventoAtual = null;
 let conviteApiPreviaAtual = { templateIndice: 0, linhas: [] };
 
-async function iniciarConviteApiEmMassa() {
-    if (typeof cardsSelecionados === 'undefined' || cardsSelecionados.size === 0) {
-        alert('Selecione 1 ou mais leads no Kanban antes (checkbox no canto de cada card).');
-        return;
+// Seleção "por segmento" (2026-09-28, pedido do usuário depois de
+// reunião com a Ediliene: "enviar mensagens mais abertas para um número
+// muito grande de pessoas" — não escala selecionar checkbox por checkbox
+// num Kanban paginado). Busca TODA a filial que tem a tag escolhida
+// direto no banco (RPC leads_por_tag_filial(), migracao_rpc_leads_por_tag.sql),
+// não só quem já está carregado em leadsAtuais.
+let conviteApiModoSelecao = 'kanban';
+let conviteApiSegmentoLeads = [];
+
+// Tags mais úteis pra uma campanha de convite — sistema (sempre existem)
+// + catálogo customizado (TAGS_SUGERIDAS, já carregado globalmente).
+function popularTagsConviteApiSegmento() {
+    const select = document.getElementById('conviteApiTagSelect');
+    if (!select) return;
+    const tagsSistema = ['Lead Forte 1', 'Lead Forte 2', 'Lead Forte 3', 'Jornada: Descoberta', 'Jornada: Interesse Emergente', 'Jornada: Engajado', 'Ativo', 'Inativo'];
+    const catalogo = typeof TAGS_SUGERIDAS !== 'undefined' ? TAGS_SUGERIDAS : [];
+    const todas = [...new Set([...tagsSistema, ...catalogo])];
+    select.innerHTML = todas.map(t => `<option value="${escapeHTML(t)}">${escapeHTML(t)}</option>`).join('');
+}
+
+function atualizarModoSelecaoConviteApi() {
+    const modoEl = document.querySelector('input[name="conviteApiModoSelecao"]:checked');
+    conviteApiModoSelecao = modoEl ? modoEl.value : 'kanban';
+    const area = document.getElementById('conviteApiSegmentoArea');
+    if (area) area.style.display = conviteApiModoSelecao === 'segmento' ? 'block' : 'none';
+}
+
+// Busca paginada (1000 em 1000, mesmo padrão de sempre — o PostgREST
+// corta em 1000 mesmo dentro de uma função) por TODA a filial atual com
+// a tag escolhida. Mescla os leads encontrados em `leadsAtuais` (mesmo
+// padrão de `abrirResultadoBuscaGlobal()`) pra `preencherValorAutomatico()`
+// conseguir resolver nome/filial de cada um sem precisar duplicar essa
+// lógica aqui.
+async function buscarLeadsPorSegmentoConviteApi() {
+    const tagSelect = document.getElementById('conviteApiTagSelect');
+    const resultadoEl = document.getElementById('conviteApiSegmentoResultado');
+    const tag = tagSelect ? tagSelect.value : '';
+    if (!tag || !filialAtual) return;
+    if (resultadoEl) resultadoEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Buscando...';
+
+    const encontrados = [];
+    let offset = 0;
+    const passo = 1000;
+    while (true) {
+        const { data, error } = await window.supabaseClient.rpc('leads_por_tag_filial', { p_filial: filialAtual, p_tag: tag, p_limite: passo, p_offset: offset });
+        if (error) { if (resultadoEl) resultadoEl.innerHTML = `<span style="color:#b91c1c;">Erro ao buscar: ${escapeHTML(error.message)}</span>`; return; }
+        encontrados.push(...(data || []));
+        if (!data || data.length < passo) break;
+        offset += passo;
     }
+
+    conviteApiSegmentoLeads = encontrados;
+    const idsJaEmLeadsAtuais = new Set(leadsAtuais.map(l => String(l.pessoaIdentificador)));
+    const novos = encontrados.filter(l => !idsJaEmLeadsAtuais.has(String(l.pessoaIdentificador)));
+    if (novos.length > 0) leadsAtuais = [...leadsAtuais, ...novos];
+
+    if (resultadoEl) {
+        resultadoEl.innerHTML = encontrados.length > 0
+            ? `<i class="fa-solid fa-users"></i> ${encontrados.length} lead(s) encontrado(s) com a tag "${escapeHTML(tag)}" em ${escapeHTML(filialAtual)}.`
+            : `Nenhum lead com essa tag em ${escapeHTML(filialAtual)}.`;
+    }
+}
+
+async function iniciarConviteApiEmMassa() {
+    const temSelecaoKanban = typeof cardsSelecionados !== 'undefined' && cardsSelecionados.size > 0;
+    // Sem seleção no Kanban, já abre direto no modo "buscar por tag" —
+    // não bloqueia mais o recurso a "primeiro selecione no Kanban".
+    conviteApiModoSelecao = temSelecaoKanban ? 'kanban' : 'segmento';
+    conviteApiSegmentoLeads = [];
 
     if (typeof carregarEventos === 'function') await carregarEventos();
 
@@ -1591,6 +1655,17 @@ async function iniciarConviteApiEmMassa() {
         selectTemplate.innerHTML = TEMPLATES_WHATSAPP.map((t, i) => `<option value="${i}">${escapeHTML(t.label)}</option>`).join('');
     }
     atualizarTemplateConviteApi();
+
+    const contagemKanbanEl = document.getElementById('conviteApiContagemKanban');
+    if (contagemKanbanEl) contagemKanbanEl.textContent = String(typeof cardsSelecionados !== 'undefined' ? cardsSelecionados.size : 0);
+    const radioKanban = document.querySelector('input[name="conviteApiModoSelecao"][value="kanban"]');
+    const radioSegmento = document.querySelector('input[name="conviteApiModoSelecao"][value="segmento"]');
+    if (radioKanban) radioKanban.checked = conviteApiModoSelecao === 'kanban';
+    if (radioSegmento) radioSegmento.checked = conviteApiModoSelecao === 'segmento';
+    popularTagsConviteApiSegmento();
+    atualizarModoSelecaoConviteApi();
+    const resultadoSegmentoEl = document.getElementById('conviteApiSegmentoResultado');
+    if (resultadoSegmentoEl) resultadoSegmentoEl.innerHTML = '';
 
     document.getElementById('conviteApiEscolha').style.display = 'block';
     document.getElementById('conviteApiPrevia').style.display = 'none';
@@ -1640,7 +1715,7 @@ function atualizarTemplateConviteApi() {
 // quem aperta "Enviar" de fato é a pessoa), aqui o clique final já
 // dispara a automação, então a revisão prévia + confirm() explícito no
 // passo seguinte importam mais.
-function gerarPreviaConviteApiLote() {
+async function gerarPreviaConviteApiLote() {
     const selectTemplate = document.getElementById('conviteApiTemplateSelect');
     const tpl = TEMPLATES_WHATSAPP[Number(selectTemplate.value) || 0];
     if (!tpl) return;
@@ -1657,11 +1732,32 @@ function gerarPreviaConviteApiLote() {
         }
     });
 
-    const ids = Array.from(cardsSelecionados);
+    // Fonte da lista de candidatos — "Kanban" (seleção manual de sempre)
+    // ou "segmento" (busca por tag em toda a filial,
+    // buscarLeadsPorSegmentoConviteApi(), pedido do usuário 2026-09-28).
+    const ids = conviteApiModoSelecao === 'segmento'
+        ? conviteApiSegmentoLeads.map(l => String(l.pessoaIdentificador))
+        : Array.from(cardsSelecionados);
+
+    // Quem já confirmou presença nesse evento não precisa ser convidado
+    // de novo — só verificado quando um evento foi escolhido.
+    let idsJaConfirmados = new Set();
+    if (eventoId && ids.length > 0) {
+        const { data: jaConfirmados } = await window.supabaseClient
+            .from('evento_leads')
+            .select('pessoaIdentificador')
+            .eq('evento_id', eventoId)
+            .eq('resposta_convite', 'confirmado')
+            .in('pessoaIdentificador', ids);
+        idsJaConfirmados = new Set((jaConfirmados || []).map(r => String(r.pessoaIdentificador)));
+    }
+
     const linhas = [];
     let semTelefone = 0;
+    let jaConfirmadosIgnorados = 0;
 
     ids.forEach(id => {
+        if (idsJaConfirmados.has(String(id))) { jaConfirmadosIgnorados++; return; }
         const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(id));
         if (!lead) return;
         if (!lead.pessoaTelefoneDDD || !lead.pessoaTelefoneNumero) { semTelefone++; return; }
@@ -1683,12 +1779,16 @@ function gerarPreviaConviteApiLote() {
     const avisoSemTelefone = semTelefone > 0
         ? `<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-triangle-exclamation"></i> ${semTelefone} lead(s) sem telefone válido pra WhatsApp (sem número cadastrado, ou telefone fixo) foram ignorados.</p>`
         : '';
+    const avisoJaConfirmados = jaConfirmadosIgnorados > 0
+        ? `<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-circle-check"></i> ${jaConfirmadosIgnorados} lead(s) já confirmados nesse evento foram ignorados (não precisam de convite de novo).</p>`
+        : '';
 
     document.getElementById('conviteApiEscolha').style.display = 'none';
     const previaEl = document.getElementById('conviteApiPrevia');
     previaEl.style.display = 'block';
     previaEl.innerHTML = `
         ${avisoSemTelefone}
+        ${avisoJaConfirmados}
         <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">Vai enviar <strong>"${escapeHTML(tpl.label)}"</strong> pra ${linhas.length} lead(s) de verdade, pela API. Confira os nomes antes de confirmar:</p>
         <div style="max-height:220px; overflow-y:auto; border:1px solid var(--border-color); border-radius:6px; padding:6px; margin-bottom:12px;">
             ${linhas.map(l => `<div style="font-size:12px; padding:4px 6px;">${escapeHTML(l.nome)}</div>`).join('') || '<p style="font-size:12px; color:var(--text-muted); padding:6px;">Nenhum lead com telefone entre os selecionados.</p>'}

@@ -264,6 +264,9 @@
                     <button class="btn-toggle" onclick="abrirLixeira()" title="Leads jogados fora ficam aqui por 30 dias antes de sumir de vez">
                         <i class="fa-solid fa-trash"></i> Lixeira<span id="lixeiraContagemBadge"></span>
                     </button>
+                    <button class="btn-toggle" onclick="iniciarConviteApiEmMassa()" title="Convidar um número grande de pessoas por tag/segmento, sem precisar selecionar no Kanban antes — envia de verdade, via API, com template aprovado">
+                        <i class="fa-solid fa-paper-plane"></i> Convidar em Massa
+                    </button>
                     <button class="btn-add-tag" onclick="limparFiltros()"><i class="fa-solid fa-xmark"></i> Limpar Tudo</button>
                 </div>
             </div>
@@ -1113,7 +1116,18 @@
                     <i class="fa-solid fa-circle-check"></i> API da Meta liberada (confirmado em 2026-09-28, ver CLAUDE.md "Bloqueio da API do WhatsApp") — os envios abaixo já saem de verdade.
                 </div>
 
-                <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Evento (opcional — só pra registrar o convite em "Follow-up de Eventos")</label>
+                <label style="font-size:12px; font-weight:600; display:block; margin-bottom:6px;">Quem vai receber</label>
+                <div style="display:flex; gap:16px; font-size:12px; margin-bottom:10px;">
+                    <label style="display:flex; align-items:center; gap:5px; cursor:pointer;"><input type="radio" name="conviteApiModoSelecao" value="kanban" checked onchange="atualizarModoSelecaoConviteApi()"> Selecionados no Kanban (<span id="conviteApiContagemKanban">0</span>)</label>
+                    <label style="display:flex; align-items:center; gap:5px; cursor:pointer;"><input type="radio" name="conviteApiModoSelecao" value="segmento" onchange="atualizarModoSelecaoConviteApi()"> Buscar por tag (toda a filial)</label>
+                </div>
+                <div id="conviteApiSegmentoArea" style="display:none; margin-bottom:10px;">
+                    <select id="conviteApiTagSelect" style="width:100%; padding:8px; margin-bottom:6px; box-sizing:border-box;"></select>
+                    <button type="button" class="btn-secondary" style="width:100%;" onclick="buscarLeadsPorSegmentoConviteApi()"><i class="fa-solid fa-magnifying-glass"></i> Buscar leads com essa tag</button>
+                    <div id="conviteApiSegmentoResultado" style="font-size:12px; color:var(--text-muted); margin-top:6px;"></div>
+                </div>
+
+                <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Evento (opcional — só pra registrar o convite em "Follow-up de Eventos", e excluir quem já confirmou)</label>
                 <select id="conviteApiEventoSelect" style="width:100%; padding:8px; margin-bottom:12px; box-sizing:border-box;"><option value="">(sem evento vinculado)</option></select>
 
                 <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Template aprovado</label>

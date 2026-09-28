@@ -322,6 +322,10 @@ migracao_leads_a_tratar_tags.sql  → coluna pessoa_tags (snapshot) em leads_a_t
                                      as tags de cada membro no card do grupo, antes de
                                      mesclar (ver seção "Leads a Tratar"); JÁ RODADA nesta
                                      sessão via `supabase db query --linked`
+migracao_rpc_leads_por_tag.sql    → função leads_por_tag_filial() — "Convidar em Massa" por
+                                     segmento/tag, sem precisar selecionar no Kanban antes
+                                     (ver seção "Convites em Massa via API"); JÁ RODADA nesta
+                                     sessão via `supabase db query --linked`
 ```
 
 ## Banco de dados (Supabase)
@@ -3565,6 +3569,44 @@ Botão **"Convidar (API)"** na barra de seleção em massa do Kanban
 (`#bulkActionBar`, ao lado de "Convidar (Link)") —
 `iniciarConviteApiEmMassa()`/`confirmarEnviarConviteApiLote()`
 (`js/whatsapp.js`), modal `#modalConviteLoteApi` (`index.html`).
+
+**Seleção "por segmento" (2026-09-28, reunião com a Ediliene, Jardim
+América)**: "precisamos criar uma sistemática... para enviar mensagens
+mais abertas para um número muito grande de pessoas" — a versão
+original só operava sobre `cardsSelecionados` (checkbox do Kanban já
+paginado/carregado), inviável pra "toda a filial que tem tal perfil".
+- Novo botão **"Convidar em Massa"** sempre visível no topo da aba CRM
+  (não só dentro de `#bulkActionBar`) — chama a MESMA
+  `iniciarConviteApiEmMassa()`, que agora detecta se há seleção no
+  Kanban e escolhe o modo certo automaticamente (`conviteApiModoSelecao`,
+  `'kanban'` ou `'segmento'`) — 2 rádios no topo do modal deixam trocar
+  manualmente também.
+- Modo "segmento": `<select>` de tag (tags de sistema mais úteis pra
+  campanha — Lead Forte 1/2/3, Jornada: X, Ativo/Inativo — + catálogo
+  `TAGS_SUGERIDAS`) + botão "Buscar leads com essa tag" →
+  `buscarLeadsPorSegmentoConviteApi()` chama a nova RPC
+  `leads_por_tag_filial(p_filial, p_tag, p_limite, p_offset)`
+  (`migracao_rpc_leads_por_tag.sql`, mesmo padrão de cast jsonb já usado
+  em `leads_ativos_inativos_da_filial()`), paginada 1000-a-1000
+  (mesmo limite de sempre do PostgREST) até esgotar TODA a filial —
+  não só o que já estava carregado no navegador. Os leads encontrados
+  são mesclados em `leadsAtuais` (mesmo padrão de
+  `abrirResultadoBuscaGlobal()`) pra `preencherValorAutomatico()`
+  conseguir resolver nome/filial sem duplicar essa lógica.
+- **Exclui automaticamente quem já confirmou presença no evento
+  escolhido** — `gerarPreviaConviteApiLote()` (agora `async`) consulta
+  `evento_leads` (`resposta_convite='confirmado'`) pros ids candidatos
+  antes de montar a lista final; quem já vai não recebe convite de novo
+  (contado num aviso próprio na prévia).
+- Resto do pipeline (resolução de variáveis por lead, envio em lotes de
+  5, gravação de `evento_leads`/`log_atividade`, mover pra Abordagem) é
+  100% reaproveitado sem nenhuma mudança — a única diferença é DE ONDE
+  vem a lista de `ids` antes de tudo isso rodar.
+- **Testado**: a RPC `leads_por_tag_filial()` foi testada ao vivo contra
+  produção (Jardim América, tag "Lead Forte 1") e devolveu os leads
+  certos. O fluxo completo pela UI (trocar de rádio, buscar, revisar,
+  enviar) não foi clicado de verdade nesta sessão (sem Playwright
+  disponível) — validar na próxima vez que for usado de verdade.
 
 - **Diferença central em relação a "Convidar (Link)" (wa.me)**: aquele é
   tecnicamente idêntico a mandar na mão (zero automação, quem aperta
