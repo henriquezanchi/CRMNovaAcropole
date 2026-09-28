@@ -3455,23 +3455,26 @@ Botão **"Convidar (API)"** na barra de seleção em massa do Kanban
   `gerarLinksConviteLote()`) só é criado pra quem o envio de fato SAIU
   (nunca gera um "convidado" fantasma pra quem a Meta rejeitou). Log em
   `log_atividade` (`acao='convite_whatsapp_api_lote'`).
-- **Aviso fixo no topo da tela** (`#conviteApiAvisoBloqueio`) lembrando
-  que a última verificação real (2026-09-28, ver seção "Bloqueio da API
-  do WhatsApp") confirmou que a Meta continua bloqueando — os envios daqui
-  vão falhar até isso mudar, mas a automação já está pronta, sem
-  precisar de nenhuma mudança de código quando a Meta liberar.
+- **Aviso fixo no topo da tela** (`#conviteApiAvisoBloqueio`) — chegou a
+  avisar que a API estava bloqueada; atualizado em 2026-09-28 pra
+  confirmar que foi LIBERADA (ver seção "Bloqueio da API do WhatsApp" —
+  RESOLVIDO no mesmo dia, depois do usuário confirmar a conta de
+  desenvolvedor na Meta).
 - **Testado**: a chamada de rede em si (`whatsapp-send`, mesmo formato
   exato de payload que este botão manda — `templateNome`/`templateIdioma`/
   `templateParams`/`templatePreview`/`atendenteNome`) foi confirmada
   reproduzindo-a via `node -e "fetch(...)"` direto contra a Edge Function
-  de produção, com o lead de teste próprio do usuário (904000019) — devolveu
-  exatamente `{"ok":false,"erro":"erro_meta","detalhe":{"message":"API
-  access blocked.",...}}`, o mesmo formato que o código de tratamento de
-  erro do botão já espera (`data.detalhe.message`). **A tela em si (clicar
-  pelo navegador) não foi testada ao vivo nesta sessão** — não havia
-  Playwright disponível neste ambiente (mesma limitação de sempre do
-  drive `G:\`, ver seção do scraper) — validar clicando de verdade na
-  próxima vez que for usado.
+  de produção, com o lead de teste próprio do usuário (904000019) — 1ª
+  tentativa (API ainda bloqueada) devolveu `{"ok":false,"erro":"erro_meta",
+  "detalhe":{"message":"API access blocked.",...}}` (mesmo formato que o
+  código de tratamento de erro do botão já espera,
+  `data.detalhe.message`); a 2ª tentativa, depois da Meta liberar,
+  devolveu `{"ok":true,"wa_message_id":"wamid...."}` — sucesso real,
+  confirmado em `mensagens_whatsapp` (`wa_status='enviado'`). **A tela em
+  si (clicar pelo navegador) não foi testada ao vivo nesta sessão** — não
+  havia Playwright disponível neste ambiente (mesma limitação de sempre
+  do drive `G:\`, ver seção do scraper) — validar clicando de verdade na
+  próxima vez que for usado, agora que os envios já saem de verdade.
 
 ### Setup pendente (só o usuário consegue fazer, fora do código)
 Checklist completo: Business Manager → App tipo "Business" com produto
@@ -5764,6 +5767,25 @@ o usuário precisa concluir esse fluxo de confirmação de identidade
 (reconfirmar telefone/e-mail, documento, ou tentar de novo/por outro
 navegador/pelo app Meta Business Suite se o erro técnico persistir) —
 continua sendo 100% do lado dele, fora do CRM.
+
+**✅ RESOLVIDO, 2026-09-28** — o usuário concluiu o fluxo de confirmação
+de conta de desenvolvedor na Meta (ver bullet acima). Reteste real
+imediatamente depois (mesmo `whatsapp-send`, mesmo lead de teste
+904000019): `{"ok":true,"wa_message_id":"wamid...."}` — **sucesso**,
+confirmado também em `mensagens_whatsapp` (`wa_status='enviado'`, sem
+erro). A API está liberada de novo. Bloqueio durou de 2026-09-05 até
+2026-09-28 (23 dias) — causa raiz real: conta de desenvolvedor suspensa
+por "atividade incomum", não o telefone/documento da verificação de
+empresa (teoria original, nunca confirmada, agora descartada). O
+banner de aviso no modal "Convidar (API)" (`index.html`,
+`#conviteApiAvisoBloqueio`) foi atualizado pra refletir isso — daqui pra
+frente, os templates aprovados podem ser enviados de verdade, tanto
+individualmente (gaveta do lead) quanto em massa ("Convidar (API)", ver
+seção própria abaixo). **Ainda não testado**: envio de imagem (`tipo:
+'imagem'`, "Convite Compartilhável") e o lembrete automático pro admin
+(`lembrete-scraper`) — devem funcionar agora também, mas usam
+`whatsapp-send`/secrets diferentes o suficiente pra valer confirmar na
+próxima vez que rodarem de verdade.
 
 ## Importar Conversa de WhatsApp (feita fora do CRM)
 
