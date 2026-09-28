@@ -5747,6 +5747,24 @@ de código resolve isso. Ver também "Convites em Massa via API (templates
 aprovados)" na seção WhatsApp — construído já pronto pra funcionar no
 instante em que este bloqueio cair.
 
+**CAUSA RAIZ provável encontrada, 2026-09-28 — supera a teoria anterior
+("divergência de telefone/documento na Receita Federal")**: o usuário
+entrou em `developers.facebook.com/apps` e encontrou a tela
+"Confirmação de conta necessária" — *"Notamos uma atividade incomum
+nessa conta desenvolvedor. Conclua as etapas de confirmação para
+recuperar o acesso."* Ou seja: não é o número de WhatsApp nem o app que
+está bloqueado isoladamente — é a **conta de desenvolvedor da Meta**
+(dono do app) que foi suspensa por suspeita de atividade incomum, e é
+essa suspensão que se propaga pra "API access blocked" no app/número.
+Clicar em "Confirmar conta" levou a um 2º erro — *"Ocorreu um erro: Há
+um problema técnico com esse recurso. Estamos trabalhando para
+corrigi-lo."* — que parece ser uma instabilidade do LADO da Meta no
+próprio fluxo de verificação (não algo causado pelo usuário). Ação:
+o usuário precisa concluir esse fluxo de confirmação de identidade
+(reconfirmar telefone/e-mail, documento, ou tentar de novo/por outro
+navegador/pelo app Meta Business Suite se o erro técnico persistir) —
+continua sendo 100% do lado dele, fora do CRM.
+
 ## Importar Conversa de WhatsApp (feita fora do CRM)
 
 Enquanto a API do Meta está bloqueada (seção acima), o time continua
