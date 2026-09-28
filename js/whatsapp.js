@@ -1162,6 +1162,243 @@ async function marcarContatoWhatsAppLoteEnviado(pessoaId, marcado) {
 }
 
 // ==========================================================
+// Convites em massa via API oficial da Meta (templates aprovados) —
+// pedido do usuário (2026-09-28): "disparar convites para eventos em
+// massa via API, conforme os modelos aprovados no meta". Diferente de
+// "Convidar (Link)" (wa.me, zero automação de verdade), isto chama
+// `whatsapp-send` de verdade, 1 vez por lead — só funciona com um
+// TEMPLATE JÁ APROVADO (TEMPLATES_WHATSAPP, texto fixo, NÃO editável
+// aqui — mudar o texto exige nova aprovação na Meta, diferente dos
+// "Modelos de Mensagem" livres usados no link wa.me). Testado ao vivo
+// em 2026-09-28 (curl direto contra whatsapp-send, lead de teste
+// próprio): a API continua bloqueada ("API access blocked", ver
+// CLAUDE.md "Bloqueio da API do WhatsApp") — o botão avisa isso antes
+// de enviar, e cada linha do relatório final mostra o erro REAL da
+// Meta por lead, mas a automação em si já está pronta pra funcionar no
+// instante em que a Meta desbloquear, sem precisar de nenhuma mudança
+// de código.
+// ==========================================================
+
+let conviteApiEventoAtual = null;
+let conviteApiPreviaAtual = { templateIndice: 0, linhas: [] };
+
+async function iniciarConviteApiEmMassa() {
+    if (typeof cardsSelecionados === 'undefined' || cardsSelecionados.size === 0) {
+        alert('Selecione 1 ou mais leads no Kanban antes (checkbox no canto de cada card).');
+        return;
+    }
+
+    if (typeof carregarEventos === 'function') await carregarEventos();
+
+    const hojeISO = new Date().toISOString().slice(0, 10);
+    const lista = (typeof eventosAtuais !== 'undefined' ? eventosAtuais : [])
+        .filter(ev => (typeof dataEfetivaLimite === 'function' ? dataEfetivaLimite(ev) : ev.data) >= hojeISO)
+        .slice()
+        .sort((a, b) => (a.data + (a.hora || '')).localeCompare(b.data + (b.hora || '')));
+
+    const selectEvento = document.getElementById('conviteApiEventoSelect');
+    if (selectEvento) {
+        selectEvento.innerHTML = '<option value="">(sem evento vinculado)</option>'
+            + lista.map(ev => `<option value="${ev.id}">${escapeHTML(ev.nome)} — ${typeof formatarDataEvento === 'function' ? formatarDataEvento(ev.data) : ev.data}</option>`).join('');
+    }
+
+    const selectTemplate = document.getElementById('conviteApiTemplateSelect');
+    if (selectTemplate) {
+        selectTemplate.innerHTML = TEMPLATES_WHATSAPP.map((t, i) => `<option value="${i}">${escapeHTML(t.label)}</option>`).join('');
+    }
+    atualizarTemplateConviteApi();
+
+    document.getElementById('conviteApiEscolha').style.display = 'block';
+    document.getElementById('conviteApiPrevia').style.display = 'none';
+    document.getElementById('conviteApiPrevia').innerHTML = '';
+    document.getElementById('conviteApiResultado').style.display = 'none';
+    document.getElementById('conviteApiResultado').innerHTML = '';
+    document.getElementById('modalConviteLoteApi').classList.add('open');
+    document.getElementById('overlayModalConviteLoteApi').classList.add('active');
+}
+
+function fecharModalConviteLoteApi() {
+    document.getElementById('modalConviteLoteApi').classList.remove('open');
+    document.getElementById('overlayModalConviteLoteApi').classList.remove('active');
+}
+
+// Ao trocar de template: mostra o texto aprovado (fixo, só leitura) e
+// monta 1 campo de texto por variável "manual" (chave: null) — essas
+// valem pra TODOS os selecionados neste envio (ex: "evento/motivo" do
+// template contato_aluno_ativo). Pré-preenche com o nome do evento
+// escolhido, se houver — só um ponto de partida, sempre editável.
+function atualizarTemplateConviteApi() {
+    const selectTemplate = document.getElementById('conviteApiTemplateSelect');
+    const corpoEl = document.getElementById('conviteApiCorpoAprovado');
+    const camposEl = document.getElementById('conviteApiCamposManuais');
+    const avisoIdioma = document.getElementById('conviteApiAvisoIdioma');
+    if (!selectTemplate || !corpoEl || !camposEl) return;
+
+    const tpl = TEMPLATES_WHATSAPP[Number(selectTemplate.value) || 0];
+    if (!tpl) return;
+
+    corpoEl.textContent = tpl.corpoAprovado;
+    if (avisoIdioma) avisoIdioma.style.display = (tpl.idioma && tpl.idioma !== 'pt_BR') ? 'block' : 'none';
+
+    const selectEvento = document.getElementById('conviteApiEventoSelect');
+    const eventoEscolhido = selectEvento ? (typeof eventosAtuais !== 'undefined' ? eventosAtuais : []).find(e => String(e.id) === selectEvento.value) : null;
+
+    const manuais = tpl.variaveis.map((v, i) => ({ ...v, indice: i })).filter(v => v.chave === null);
+    camposEl.innerHTML = manuais.map(v => `
+        <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">${escapeHTML(v.label)}</label>
+        <input type="text" id="conviteApiManual-${v.indice}" style="width:100%; padding:8px; margin-bottom:8px; box-sizing:border-box;" value="${escapeHTML(eventoEscolhido ? eventoEscolhido.nome : '')}">
+    `).join('');
+}
+
+// Constrói a lista final (1 linha por lead selecionado, com os params
+// já resolvidos pra {{1}}, {{2}}...) e mostra pra revisão ANTES de
+// disparar qualquer envio de verdade — diferente do link wa.me (onde
+// quem aperta "Enviar" de fato é a pessoa), aqui o clique final já
+// dispara a automação, então a revisão prévia + confirm() explícito no
+// passo seguinte importam mais.
+function gerarPreviaConviteApiLote() {
+    const selectTemplate = document.getElementById('conviteApiTemplateSelect');
+    const tpl = TEMPLATES_WHATSAPP[Number(selectTemplate.value) || 0];
+    if (!tpl) return;
+
+    const selectEvento = document.getElementById('conviteApiEventoSelect');
+    const eventoId = selectEvento && selectEvento.value ? Number(selectEvento.value) : null;
+    conviteApiEventoAtual = eventoId ? (typeof eventosAtuais !== 'undefined' ? eventosAtuais : []).find(e => e.id === eventoId) : null;
+
+    const valoresManuais = {};
+    tpl.variaveis.forEach((v, i) => {
+        if (v.chave === null) {
+            const input = document.getElementById(`conviteApiManual-${i}`);
+            valoresManuais[i] = input ? input.value.trim() : '';
+        }
+    });
+
+    const ids = Array.from(cardsSelecionados);
+    const linhas = [];
+    let semTelefone = 0;
+
+    ids.forEach(id => {
+        const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(id));
+        if (!lead) return;
+        if (!lead.pessoaTelefoneDDD || !lead.pessoaTelefoneNumero) { semTelefone++; return; }
+
+        const params = tpl.variaveis.map((v, i) => v.chave === null
+            ? (valoresManuais[i] || '')
+            : (preencherValorAutomatico(v.chave, id) || ''));
+
+        linhas.push({ pessoaIdentificador: id, nome: lead.pessoaNome || 'Sem nome', params });
+    });
+
+    conviteApiPreviaAtual = { templateIndice: Number(selectTemplate.value) || 0, linhas };
+
+    const avisoSemTelefone = semTelefone > 0
+        ? `<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-triangle-exclamation"></i> ${semTelefone} lead(s) sem telefone cadastrado foram ignorados.</p>`
+        : '';
+
+    document.getElementById('conviteApiEscolha').style.display = 'none';
+    const previaEl = document.getElementById('conviteApiPrevia');
+    previaEl.style.display = 'block';
+    previaEl.innerHTML = `
+        ${avisoSemTelefone}
+        <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">Vai enviar <strong>"${escapeHTML(tpl.label)}"</strong> pra ${linhas.length} lead(s) de verdade, pela API. Confira os nomes antes de confirmar:</p>
+        <div style="max-height:220px; overflow-y:auto; border:1px solid var(--border-color); border-radius:6px; padding:6px; margin-bottom:12px;">
+            ${linhas.map(l => `<div style="font-size:12px; padding:4px 6px;">${escapeHTML(l.nome)}</div>`).join('') || '<p style="font-size:12px; color:var(--text-muted); padding:6px;">Nenhum lead com telefone entre os selecionados.</p>'}
+        </div>
+        <div style="display:flex; gap:8px;">
+            <button class="btn-secondary" onclick="voltarEscolhaConviteApi()"><i class="fa-solid fa-arrow-left"></i> Voltar</button>
+            <button class="btn-primary" style="flex:1;" onclick="confirmarEnviarConviteApiLote()" ${linhas.length === 0 ? 'disabled' : ''}><i class="fa-solid fa-paper-plane"></i> Enviar Agora (via API)</button>
+        </div>
+    `;
+}
+
+function voltarEscolhaConviteApi() {
+    document.getElementById('conviteApiEscolha').style.display = 'block';
+    document.getElementById('conviteApiPrevia').style.display = 'none';
+}
+
+// Dispara de verdade — 1 chamada whatsapp-send por lead, em lotes
+// pequenos (evita disparar centenas de requisições simultâneas de uma
+// vez). Cada resultado (sucesso ou o erro real da Meta) vira 1 linha do
+// relatório final; sucesso também vincula evento_leads (origem 'crm' —
+// é só um convite, não uma inscrição confirmada no Ulisses, mesmo
+// princípio de gerarLinksConviteLote()) e registra em log_atividade.
+const TAMANHO_LOTE_CONVITE_API = 5;
+
+async function confirmarEnviarConviteApiLote() {
+    const { templateIndice, linhas } = conviteApiPreviaAtual;
+    const tpl = TEMPLATES_WHATSAPP[templateIndice];
+    if (!tpl || linhas.length === 0) return;
+
+    if (!confirm(`Confirma o envio automático de "${tpl.label}" para ${linhas.length} lead(s) agora, via API da Meta? Essa ação não pode ser desfeita.`)) return;
+
+    const previaEl = document.getElementById('conviteApiPrevia');
+    const resultadoEl = document.getElementById('conviteApiResultado');
+    previaEl.style.display = 'none';
+    resultadoEl.style.display = 'block';
+    resultadoEl.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Enviando...</p>';
+
+    const resultados = [];
+    for (let i = 0; i < linhas.length; i += TAMANHO_LOTE_CONVITE_API) {
+        const lote = linhas.slice(i, i + TAMANHO_LOTE_CONVITE_API);
+        const respostas = await Promise.all(lote.map(async (l) => {
+            try {
+                const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
+                    body: {
+                        pessoaIdentificador: l.pessoaIdentificador,
+                        tipo: 'template',
+                        templateNome: tpl.nome,
+                        templateIdioma: tpl.idioma || 'pt_BR',
+                        templateParams: l.params,
+                        templatePreview: `[Template: ${tpl.nome}]`,
+                        atendenteNome: (typeof obterNomeAtendente === 'function' ? obterNomeAtendente() : '') || '',
+                    },
+                });
+                if (error || !data || data.ok === false) {
+                    return { ...l, ok: false, erro: (data && data.detalhe && data.detalhe.message) || error?.message || data?.erro || 'erro desconhecido' };
+                }
+                return { ...l, ok: true };
+            } catch (e) {
+                return { ...l, ok: false, erro: e.message || String(e) };
+            }
+        }));
+        resultados.push(...respostas);
+        resultadoEl.innerHTML = `<p style="font-size:12px; color:var(--text-muted);">Enviando... (${resultados.length}/${linhas.length})</p>`;
+    }
+
+    const sucesso = resultados.filter(r => r.ok);
+    const falha = resultados.filter(r => !r.ok);
+
+    // Vincula evento_leads só pra quem o envio de fato saiu (nunca cria
+    // um "convidado" fantasma pra quem a Meta rejeitou).
+    if (conviteApiEventoAtual && sucesso.length > 0) {
+        const vinculos = sucesso.map(r => ({ evento_id: conviteApiEventoAtual.id, pessoaIdentificador: r.pessoaIdentificador, origem: 'crm' }));
+        await window.supabaseClient
+            .from(typeof NOME_TABELA_EVENTO_LEADS !== 'undefined' ? NOME_TABELA_EVENTO_LEADS : 'evento_leads')
+            .upsert(vinculos, { onConflict: 'evento_id,pessoaIdentificador', ignoreDuplicates: true });
+    }
+
+    if (typeof registrarLogAtividade === 'function' && (sucesso.length > 0 || falha.length > 0)) {
+        registrarLogAtividade('convite_whatsapp_api_lote', {
+            pessoaIds: sucesso.map(r => r.pessoaIdentificador),
+            detalhes: { template: tpl.label, evento: conviteApiEventoAtual ? conviteApiEventoAtual.nome : null, enviados: sucesso.length, falhas: falha.length },
+        });
+    }
+
+    resultadoEl.innerHTML = `
+        <p style="font-size:13px; margin-bottom:8px;"><strong>${sucesso.length} enviado(s)</strong>${falha.length > 0 ? `, <strong style="color:#991b1b;">${falha.length} falhou(aram)</strong>` : ''}.</p>
+        <div style="max-height:280px; overflow-y:auto; border:1px solid var(--border-color); border-radius:6px; padding:6px; margin-bottom:12px;">
+            ${resultados.map(r => `
+                <div style="display:flex; justify-content:space-between; gap:8px; padding:5px 6px; font-size:12px; border-bottom:1px dashed var(--border-color);">
+                    <span>${escapeHTML(r.nome)}</span>
+                    <span style="color:${r.ok ? 'var(--na-green-dark)' : '#991b1b'}; text-align:right;">${r.ok ? '<i class="fa-solid fa-check"></i> Enviado' : `<i class="fa-solid fa-xmark"></i> ${escapeHTML(String(r.erro))}`}</span>
+                </div>
+            `).join('')}
+        </div>
+        <button class="btn-secondary" onclick="fecharModalConviteLoteApi()">Fechar</button>
+    `;
+}
+
+// ==========================================================
 // Aba unificada — lista de conversas
 // ==========================================================
 function iniciarEscutaGlobalWpp() {

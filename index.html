@@ -292,6 +292,7 @@
                 <span style="width:1px; height:20px; background:rgba(255,255,255,0.25);"></span>
                 <button class="btn-secondary" onclick="iniciarMesclagemManual()" title="Mesclar os leads selecionados (2 ou mais) — mesmo sem o sistema ter sugerido"><i class="fa-solid fa-code-merge"></i> Mesclar</button>
                 <button class="btn-secondary" onclick="iniciarConvitesWhatsAppEmMassa()" title="Gera 1 link do WhatsApp Web por lead, já com o convite preenchido — você clica e envia manualmente do seu número pessoal, sem custo e sem risco de bloqueio"><i class="fa-brands fa-whatsapp"></i> Convidar (Link)</button>
+                <button class="btn-secondary" onclick="iniciarConviteApiEmMassa()" title="Envia de verdade, automaticamente, via API oficial da Meta — usa um dos templates já aprovados (funciona fora da janela de 24h, mas exige a API desbloqueada)"><i class="fa-solid fa-paper-plane"></i> Convidar (API)</button>
                 <button class="btn-secondary" onclick="moverSelecionadosParaLixeira()" title="Move pra lixeira — fica lá 30 dias antes de apagar de vez"><i class="fa-solid fa-trash"></i> Lixeira</button>
                 <button class="btn-secondary" onclick="limparSelecao()">Cancelar seleção</button>
             </div>
@@ -1086,6 +1087,48 @@
                 <button class="btn-primary" onclick="gerarLinksConviteLote()"><i class="fa-solid fa-link"></i> Gerar Links</button>
             </div>
             <div id="conviteLoteResultado" style="display:none;"></div>
+        </div>
+    </div>
+
+    <!-- Modal: Convites em massa via API oficial da Meta (templates já aprovados) -->
+    <div class="overlay" id="overlayModalConviteLoteApi" onclick="fecharModalConviteLoteApi()"></div>
+    <div class="modal" id="modalConviteLoteApi">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-paper-plane"></i> Convidar via API (templates aprovados)</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharModalConviteLoteApi()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <div id="conviteApiEscolha">
+                <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
+                    Diferente de "Convidar (Link)", isto ENVIA de verdade e automaticamente, pela API oficial da Meta —
+                    só funciona com um <strong>template já aprovado</strong> (o texto abaixo não é editável; pra mudar,
+                    precisa submeter um template novo pra aprovação na Meta). Funciona mesmo fora da janela de 24h.
+                </p>
+                <div id="conviteApiAvisoBloqueio" style="font-size:12px; background:#fef2f2; color:#991b1b; border:1px solid #fecaca; border-radius:8px; padding:10px; margin-bottom:12px;">
+                    <i class="fa-solid fa-triangle-exclamation"></i> Última verificação real (2026-09-28) confirmou que a API da Meta continua retornando <strong>"API access blocked"</strong> — ver CLAUDE.md, seção "Bloqueio da API do WhatsApp". Os envios abaixo provavelmente vão falhar até a Meta liberar de novo; o botão já fica pronto pra funcionar no instante em que isso mudar.
+                </div>
+
+                <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Evento (opcional — só pra registrar o convite em "Follow-up de Eventos")</label>
+                <select id="conviteApiEventoSelect" style="width:100%; padding:8px; margin-bottom:12px; box-sizing:border-box;"><option value="">(sem evento vinculado)</option></select>
+
+                <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Template aprovado</label>
+                <select id="conviteApiTemplateSelect" style="width:100%; padding:8px; margin-bottom:8px; box-sizing:border-box;" onchange="atualizarTemplateConviteApi()"></select>
+
+                <div id="conviteApiAvisoIdioma" style="display:none; font-size:11px; color:#9a3412; margin-bottom:8px;"><i class="fa-solid fa-language"></i> Este template foi registrado na Meta em outro idioma (não pt_BR) — o envio já leva o código certo automaticamente.</div>
+
+                <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Texto aprovado (não editável — só pra confirmar o que vai ser enviado)</label>
+                <div id="conviteApiCorpoAprovado" style="width:100%; min-height:70px; padding:8px; font-size:12.5px; background:#f8fafc; border:1px solid var(--border-color); border-radius:6px; white-space:pre-line; margin-bottom:10px;"></div>
+
+                <div id="conviteApiCamposManuais" style="margin-bottom:8px;"></div>
+
+                <p style="font-size:11px; color:var(--text-muted); margin-bottom:12px;">
+                    <code>{{1}}</code> em diante são preenchidos automaticamente por lead (nome/atendente/filial) — os campos acima (se houver) valem pra TODOS os selecionados neste envio.
+                </p>
+
+                <button class="btn-primary" onclick="gerarPreviaConviteApiLote()"><i class="fa-solid fa-eye"></i> Revisar antes de enviar</button>
+            </div>
+            <div id="conviteApiPrevia" style="display:none;"></div>
+            <div id="conviteApiResultado" style="display:none;"></div>
         </div>
     </div>
 

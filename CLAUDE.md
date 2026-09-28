@@ -3412,6 +3412,67 @@ risco de o número pessoal ser banido.
   pontos de entrada que existem pra convidar 1 lead (gaveta "Eventos",
   chat da gaveta, e o lote via wa.me).
 
+### Convites em Massa via API (templates aprovados) — 2026-09-28
+
+Pedido do usuário: "crie uma opção dentro do CRM, para disparar convites
+para eventos em massa via API, conforme os modelos aprovados no meta".
+Botão **"Convidar (API)"** na barra de seleção em massa do Kanban
+(`#bulkActionBar`, ao lado de "Convidar (Link)") —
+`iniciarConviteApiEmMassa()`/`confirmarEnviarConviteApiLote()`
+(`js/whatsapp.js`), modal `#modalConviteLoteApi` (`index.html`).
+
+- **Diferença central em relação a "Convidar (Link)" (wa.me)**: aquele é
+  tecnicamente idêntico a mandar na mão (zero automação, quem aperta
+  Enviar é a pessoa) — este ENVIA de verdade, automaticamente, chamando
+  `whatsapp-send` (Edge Function já existente) 1 vez por lead
+  selecionado, usando um dos templates JÁ APROVADOS na Meta
+  (`TEMPLATES_WHATSAPP`, `js/whatsapp.js`) — o texto aprovado é mostrado
+  só como LEITURA (`#conviteApiCorpoAprovado`), nunca editável nesta
+  tela (mudar o texto de um template aprovado exige reenviar pra
+  aprovação na Meta e esperar — não é algo que o CRM resolva).
+- **Fluxo**: escolhe (opcionalmente) um evento — só pra registrar o
+  convite em `evento_leads`/"Follow-up de Eventos", não influencia o
+  texto do template automaticamente exceto pré-preencher os campos
+  "manuais" abaixo — e um template aprovado. Templates com variável
+  `chave: null` (texto livre que não tem fonte automática — ex: "evento/
+  motivo" em `contato_aluno_ativo`, ou "tipo do evento"/"nome do evento"
+  em `contato_ulisses`) ganham 1 campo de texto que vale pra TODOS os
+  selecionados neste envio (pré-preenchido com o nome do evento
+  escolhido, se houver — só um ponto de partida, editável). Demais
+  variáveis (`nome`/`atendente`/`filial`) são resolvidas por lead via a
+  MESMA `preencherValorAutomatico()` já usada no envio individual —
+  nenhuma lógica nova, só reuso. "Revisar antes de enviar" mostra a
+  lista de nomes que vão receber ANTES de qualquer chamada de API
+  acontecer; o botão final pede um `confirm()` explícito (é uma ação
+  real e irreversível, diferente de gerar um link).
+- **Envio em lotes pequenos** (`TAMANHO_LOTE_CONVITE_API = 5`,
+  `Promise.all` por lote) — evita disparar dezenas/centenas de
+  chamadas simultâneas de uma vez à Edge Function/Graph API. Cada
+  resultado (sucesso, ou o erro REAL devolvido pela Meta — nunca um
+  texto genérico) vira 1 linha do relatório final, junto com o nome do
+  lead. Vínculo em `evento_leads` (`origem:'crm'`, `resposta_convite:
+  'pendente'`, `upsert(..., {ignoreDuplicates:true})` — mesmo padrão de
+  `gerarLinksConviteLote()`) só é criado pra quem o envio de fato SAIU
+  (nunca gera um "convidado" fantasma pra quem a Meta rejeitou). Log em
+  `log_atividade` (`acao='convite_whatsapp_api_lote'`).
+- **Aviso fixo no topo da tela** (`#conviteApiAvisoBloqueio`) lembrando
+  que a última verificação real (2026-09-28, ver seção "Bloqueio da API
+  do WhatsApp") confirmou que a Meta continua bloqueando — os envios daqui
+  vão falhar até isso mudar, mas a automação já está pronta, sem
+  precisar de nenhuma mudança de código quando a Meta liberar.
+- **Testado**: a chamada de rede em si (`whatsapp-send`, mesmo formato
+  exato de payload que este botão manda — `templateNome`/`templateIdioma`/
+  `templateParams`/`templatePreview`/`atendenteNome`) foi confirmada
+  reproduzindo-a via `node -e "fetch(...)"` direto contra a Edge Function
+  de produção, com o lead de teste próprio do usuário (904000019) — devolveu
+  exatamente `{"ok":false,"erro":"erro_meta","detalhe":{"message":"API
+  access blocked.",...}}`, o mesmo formato que o código de tratamento de
+  erro do botão já espera (`data.detalhe.message`). **A tela em si (clicar
+  pelo navegador) não foi testada ao vivo nesta sessão** — não havia
+  Playwright disponível neste ambiente (mesma limitação de sempre do
+  drive `G:\`, ver seção do scraper) — validar clicando de verdade na
+  próxima vez que for usado.
+
 ### Setup pendente (só o usuário consegue fazer, fora do código)
 Checklist completo: Business Manager → App tipo "Business" com produto
 WhatsApp → número de teste ou verificado (anotar `phone_number_id` e WABA
@@ -5669,6 +5730,22 @@ funcionava). Investigação (consultando `mensagens_whatsapp` direto):
   lead frio, e o lembrete de importação do Ulisses (seção acima) — ainda
   assim, o código do lembrete foi escrito e já fica pronto pra funcionar
   assim que o bloqueio for resolvido.
+
+**Reverificado em produção, 2026-09-28 (pedido do usuário: "verifique se
+a meta já liberou a API")** — CONTINUA bloqueado. Teste real (não só
+consulta ao histórico): chamada direta a `whatsapp-send` (template
+`resgate_lead_evento`, pro lead de teste próprio do usuário,
+`pessoaIdentificador` 904000019) devolveu exatamente o mesmo erro de
+sempre: `{"code":200,"type":"OAuthException","message":"API access
+blocked.","fbtrace_id":"..."}`. Nenhuma tentativa real de envio constava
+em `mensagens_whatsapp` desde 2026-09-11 (todo contato desde então foi
+via wa.me manual/link pessoal, que não passa por aqui) — por isso foi
+preciso mandar 1 mensagem de teste de verdade pra saber o status atual,
+em vez de só ler o histórico. Ação continua sendo só do usuário (Business
+Manager / WhatsApp Manager da Meta, ver bullets acima) — nenhuma mudança
+de código resolve isso. Ver também "Convites em Massa via API (templates
+aprovados)" na seção WhatsApp — construído já pronto pra funcionar no
+instante em que este bloqueio cair.
 
 ## Importar Conversa de WhatsApp (feita fora do CRM)
 
