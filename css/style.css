@@ -693,6 +693,19 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 }
 .wpp-reacao-opcao:hover, .wpp-reacao-opcao.ativa { background: #f0f2f5; transform: scale(1.15); }
 
+/* Indicador de status de contato nas listas de aniversariantes do
+   Dashboard (pedido do usuário, 2026-09-28) — evita reabordar quem já
+   está em conversa. */
+.wpp-status-badge {
+    display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-weight: 600;
+    padding: 1px 6px; border-radius: 8px; vertical-align: middle;
+}
+.wpp-status-respondeu { background: #dcfce7; color: #15803d; }
+.wpp-status-lido { background: #dbeafe; color: #1d4ed8; }
+.wpp-status-entregue { background: #e2e8f0; color: #475569; }
+.wpp-status-enviado { background: #e2e8f0; color: #64748b; }
+.wpp-status-falhou { background: #fee2e2; color: #b91c1c; }
+
 /* ==========================================
    ABA: RELATÓRIOS (FUNIL DE CONVERSÃO)
 ========================================== */

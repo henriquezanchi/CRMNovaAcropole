@@ -207,6 +207,58 @@ function textoComQuebrasDeLinha(texto) {
     return escapeHTML(texto || '').replace(/\n/g, '<br>');
 }
 
+// ==========================================================
+// Indicador de status de contato (pedido do usuário, 2026-09-28: "ao
+// enviar uma mensagem através de comando no dashboard, deve haver algum
+// indicativo que a mensagem foi enviada... para que eu não volte a
+// entrar em contato com alguém que já entrei") — usado pelas listas de
+// aniversariantes do Dashboard (js/app.js e js/visao-geral.js), que têm
+// o botão "Enviar" rápido, mas serve pra qualquer lista de leads com
+// botão de WhatsApp que precise do mesmo aviso.
+// ==========================================================
+
+// Busca a ÚLTIMA mensagem trocada (qualquer direção/tipo) com cada lead
+// da lista — não só a de aniversário. 1 única query em lote (não 1 por
+// lead) ordenada por mais recente primeiro; a 1ª ocorrência de cada
+// pessoaIdentificador já é a mensagem mais recente dele.
+async function obterStatusWhatsAppRecente(pessoaIds) {
+    const ids = [...new Set((pessoaIds || []).filter(Boolean).map(String))];
+    const mapa = new Map();
+    if (ids.length === 0) return mapa;
+    const { data, error } = await window.supabaseClient
+        .from('mensagens_whatsapp')
+        .select('pessoaIdentificador, direcao, wa_status, criado_em')
+        .in('pessoaIdentificador', ids)
+        .order('criado_em', { ascending: false })
+        .limit(2000);
+    if (error || !data) return mapa;
+    data.forEach(m => {
+        const chave = String(m.pessoaIdentificador);
+        if (!mapa.has(chave)) mapa.set(chave, m);
+    });
+    return mapa;
+}
+
+// "Respondeu" (a última mensagem da conversa foi DELE — sinal mais forte
+// de "já está em contato, não precisa reabordar") ou o status da NOSSA
+// última mensagem (Enviado/Entregue/Lido/Falhou). `status` vem de
+// obterStatusWhatsAppRecente() — undefined = nunca teve conversa, sem
+// badge nenhum (não polui a lista com "nunca contatado").
+function htmlBadgeStatusWpp(status) {
+    if (!status) return '';
+    if (status.direcao === 'entrada') {
+        return `<span class="wpp-status-badge wpp-status-respondeu" title="A última mensagem da conversa foi do próprio lead — já está em contato"><i class="fa-solid fa-reply"></i> Respondeu</span>`;
+    }
+    const porStatus = {
+        falhou: { classe: 'wpp-status-falhou', icone: 'fa-triangle-exclamation', texto: 'Falhou' },
+        lido: { classe: 'wpp-status-lido', icone: 'fa-check-double', texto: 'Lido' },
+        entregue: { classe: 'wpp-status-entregue', icone: 'fa-check-double', texto: 'Entregue' },
+        enviado: { classe: 'wpp-status-enviado', icone: 'fa-check', texto: 'Enviado' },
+    };
+    const info = porStatus[status.wa_status] || porStatus.enviado;
+    return `<span class="wpp-status-badge ${info.classe}" title="Última mensagem nossa: ${info.texto}"><i class="fa-solid ${info.icone}"></i> ${info.texto}</span>`;
+}
+
 // Botão de reagir (só existe pra mensagem com wa_message_id de verdade —
 // falha de envio e conversa importada manualmente não têm um id real da
 // Meta pra reagir em cima) e o badge com a(s) reação(ões) já aplicada(s)

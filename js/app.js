@@ -2805,6 +2805,12 @@ async function atualizarAniversariantes() {
         return;
     }
 
+    // Indicador de status de contato (pedido do usuário, 2026-09-28) — ver
+    // obterStatusWhatsAppRecente()/htmlBadgeStatusWpp() em js/whatsapp.js.
+    const statusPorLeadAniversario = typeof obterStatusWhatsAppRecente === 'function'
+        ? await obterStatusWhatsAppRecente(doMes.map(l => l.pessoaIdentificador))
+        : new Map();
+
     container.innerHTML = doMes.map(l => {
         const ehHoje = l.dia === diaAtual;
         // Botão "Enviar" só pra quem faz aniversário HOJE (pedido do
@@ -2814,11 +2820,12 @@ async function atualizarAniversariantes() {
         const botaoEnviar = ehHoje && typeof enviarAniversarioRapido === 'function'
             ? `<button class="btn-toggle" style="flex-shrink:0; font-size:11px; padding:4px 8px;" onclick="event.stopPropagation(); enviarAniversarioRapido('${l.pessoaIdentificador}', '${escapeHTML(l.pessoaNome || '').replace(/'/g, "\\'")}', '${filialAtual.replace(/'/g, "\\'")}', this)" title="Manda o template de Feliz Aniversário agora, sem abrir a ficha"><i class="fa-brands fa-whatsapp"></i> Enviar</button>`
             : '';
+        const badgeStatus = typeof htmlBadgeStatusWpp === 'function' ? htmlBadgeStatusWpp(statusPorLeadAniversario.get(String(l.pessoaIdentificador))) : '';
         return `
             <div class="activity-item ${ehHoje ? 'activity-item-festiva' : ''}" style="cursor:pointer;" onclick="abrirResultadoBuscaGlobal('${l.pessoaIdentificador}')">
                 <div class="activity-dot ${ehHoje ? 'activity-dot-festiva' : ''}"></div>
                 <div style="flex:1; min-width:0;">
-                    <div><strong>${escapeHTML(l.pessoaNome || 'Lead sem nome')}</strong>${ehHoje ? ' 🎂 <strong>hoje!</strong>' : ''}</div>
+                    <div><strong>${escapeHTML(l.pessoaNome || 'Lead sem nome')}</strong>${ehHoje ? ' 🎂 <strong>hoje!</strong>' : ''} ${badgeStatus}</div>
                     <div class="activity-time">${String(l.dia).padStart(2, '0')}/${String(l.mes).padStart(2, '0')}</div>
                 </div>
                 ${botaoEnviar}

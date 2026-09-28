@@ -762,6 +762,30 @@ mesma regra de confiança total usada pra tags/filiais/eventos.
       reimportação (`ehTagDeSistema()`), já que dependem só de
       `historico_eventos` (que só cresce) — sempre reflete o estado mais
       atual, sem risco de acumular tag antiga/divergente.
+    - **Limpeza pontual — "Lead Forte N"/"Jornada: X" sobrevivendo em
+      quem já é Ativo/Inativo (2026-09-28, pedido do usuário: "faça uma
+      varredura dos ativos e inativos, e remova tags inadequadas como
+      lead forte se é ativo")**: por design, as duas só deveriam existir
+      em quem NÃO é Ativo/Inativo (ver bullets acima) — mas um bug já
+      corrigido nesta mesma sessão em rodadas anteriores ("1ª versão só
+      preservava Ativo/Inativo/Nível e deixava Lead Forte/Jornada livres
+      pra recalcular", ver seção "Importação PARCIAL" no Importador)
+      deixou resíduo em produção: 84 leads (49 Garavelo, 26 Barra do
+      Garças/MT, 5 Setor Oeste, 4 Jardim América) tinham AMBOS —
+      "Ativo"/"Inativo" **e** "Lead Forte 1/2/3" e/ou "Jornada: X" ao
+      mesmo tempo, incoerente com a lógica documentada. Rodada uma
+      varredura pontual (SQL direto, `supabase db query --linked`, não
+      pelo importador — é limpeza de dado já existente, não uma mudança
+      de comportamento futuro) removendo só essas 2 famílias de tag de
+      quem tem `"Ativo"`/`"Inativo"`/os nomes antigos, preservando todo o
+      resto (Nível, Trilha, Sem Telefone/E-mail, etc.) — confirmado por
+      SELECT antes (84 encontrados) e depois (0 restantes) da correção,
+      e uma entrada em `log_atividade` por filial
+      (`acao='limpeza_tags_ativo_inativo'`) com a lista de ids afetados.
+      Um lead recém-recuperado (Ativo de novo) numa reimportação FUTURA
+      já não sofre mais esse problema (bug de origem já corrigido antes
+      desta varredura) — isto foi só o acerto do que já estava
+      contaminado no banco.
     - Alimenta o relatório **"Jornada da Base"** (aba Relatórios,
       `renderizarRelatorioJornadaBase()` em `js/app.js`) — funil visual
       contando quantos leads estão em cada estágio (Descoberta →
@@ -6051,6 +6075,51 @@ nativamente (não precisou de nenhum workaround visual).
   MESMA função `aplicarReacao()` já validada pelo teste acima, então o
   risco residual é baixo; a próxima reação real recebida de um lead
   confirma visualmente.
+
+## Indicador de status de contato nas listas de aniversariantes (2026-09-28)
+
+Pedido do usuário: "ao enviar uma mensagem através de comando no
+dashboard, deve haver algum indicativo que a mensagem foi enviada (se
+foi recebida, respondida, deu erro, etc) para que o follow up seja mais
+realista e eu não volte a entrar em contato com alguém que já entrei."
+
+Os "comandos de enviar" do Dashboard são o botão "Enviar" de
+`enviarAniversarioRapido()` (Agenda do Dia — Todas as Filiais, e
+Aniversariantes do Mês por filial) — antes disso, o único feedback era o
+próprio botão virar "✓ Enviado" na hora, mas isso é só estado de
+MEMÓRIA da renderização atual: recarregar a página (ou a próxima vez que
+a lista é redesenhada) perdia esse sinal por completo, sem nenhuma pista
+visual de que aquele lead já tinha sido contatado antes.
+
+- **`obterStatusWhatsAppRecente(pessoaIds)`** (`js/whatsapp.js`) — 1
+  única query em lote (`.in('pessoaIdentificador', ids)`, ordenada por
+  `criado_em` desc) que busca a ÚLTIMA mensagem de CADA lead da lista,
+  qualquer direção/tipo (não só a de aniversário) — devolve um `Map`
+  `pessoaIdentificador -> {direcao, wa_status, criado_em}`.
+- **`htmlBadgeStatusWpp(status)`** — badge pequeno ao lado do nome:
+  **"Respondeu"** (verde, se a última mensagem da conversa foi do
+  PRÓPRIO lead — o sinal mais forte de "já está em contato, não
+  reabordar") ou o status da NOSSA última mensagem: "Enviado"/
+  "Entregue"/"Lido" (cinza/azul) ou "Falhou" (vermelho, mesma cor de
+  erro já usada em `.msg-status-falhou`). Sem histórico nenhum (nunca
+  contatado), não mostra badge nenhum — evita poluir a lista inteira com
+  "nunca contatado" repetido em todo item.
+- **Ligado nos 2 pontos** que têm o botão "Enviar": `carregarAgendaGeralAniversariantes()`
+  (`js/visao-geral.js`) e `atualizarAniversariantes()` (`js/app.js`) — os
+  dois já buscam a lista de aniversariantes, então só precisaram de mais
+  1 chamada em lote (não 1 query por lead) antes de montar o HTML.
+- **Testado ao vivo contra dado real**: confirmado que a query devolve a
+  mensagem mais recente certa pro lead de teste (904000019, que tinha
+  tanto mensagens de saída quanto de entrada intercaladas) — a última
+  mensagem da conversa era NOSSA e "lido", então o badge mostraria
+  "Lido" (e não "Respondeu"), refletindo corretamente que o lead já leu
+  mas ainda não respondeu DEPOIS dessa mensagem específica.
+- **Limitação aceita, por ora**: só cobre as 2 listas de aniversariantes
+  (onde existe o botão "Enviar" hoje) — não os outros pontos de envio em
+  massa ("Convidar (Link)"/"Convidar (API)", que já têm seu próprio
+  relatório de resultado por lote no momento do envio) nem o Kanban
+  geral (que teria que decidir ONDE mostrar isso em cada card — fora do
+  pedido específico desta rodada).
 
 ## Bloqueio da API do WhatsApp (Meta) — investigado 2026-09-07
 
