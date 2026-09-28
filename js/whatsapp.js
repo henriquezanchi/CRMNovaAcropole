@@ -581,6 +581,47 @@ function criarChatController({ messagesId, inputAreaId }) {
 const chatWpp = criarChatController({ messagesId: 'wppMessages', inputAreaId: 'wppChatInputArea' });
 const chatDrawer = criarChatController({ messagesId: 'drawer-messages', inputAreaId: 'drawerChatInputArea' });
 
+// Pedido do usuário (2026-09-28): "coloque uma opção de 'mandar mensagem
+// de aniversário' para todos os leads que aparecem no dashboard como
+// 'Aniversariantes de Hoje'" — dispara o template "aniversario" DIRETO
+// da lista (sem precisar abrir a gaveta primeiro), usada tanto pelo card
+// cross-filial "Aniversariantes de Hoje" (js/visao-geral.js) quanto pelo
+// card por filial "Aniversariantes do Mês" (js/app.js, só nos itens de
+// HOJE). Recebe nome/filial já prontos (evita 1 query extra — quem chama
+// já tem esses dados da própria lista) e o elemento do botão, pra dar
+// feedback visual (spinner/"Enviado") sem precisar re-renderizar a
+// lista inteira.
+async function enviarAniversarioRapido(leadId, nomeLead, filialLead, botaoEl) {
+    const tpl = TEMPLATES_WHATSAPP.find(t => t.nome === 'aniversario');
+    if (!tpl) { alert('Template "aniversario" ainda não está configurado em TEMPLATES_WHATSAPP (js/whatsapp.js).'); return; }
+
+    const nome = nomeLead || 'esse lead';
+    if (!confirm(`Mandar "Feliz Aniversário" pra ${nome} agora?`)) return;
+
+    if (botaoEl) { botaoEl.disabled = true; botaoEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
+    try {
+        const atendente = obterNomeAtendente() || '';
+        const filial = nomeFilialComPreposicao(filialLead);
+        const params = [nome, atendente, filial];
+        let preview = tpl.corpoAprovado;
+        params.forEach((v, i) => { preview = preview.split(`{{${i + 1}}}`).join(v); });
+
+        const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
+            body: { pessoaIdentificador: leadId, tipo: 'template', templateNome: tpl.nome, templateIdioma: tpl.idioma || 'pt_BR', templateParams: params, templatePreview: preview, atendenteNome: atendente }
+        });
+        if (error || !data || data.ok === false) {
+            alert('Não foi possível enviar: ' + mensagemErroWpp(data || { erro: error?.message }));
+            if (botaoEl) { botaoEl.disabled = false; botaoEl.innerHTML = '<i class="fa-brands fa-whatsapp"></i> Enviar'; }
+            return;
+        }
+        if (botaoEl) botaoEl.innerHTML = '<i class="fa-solid fa-check"></i> Enviado';
+        moverParaAbordagemAposEnvio(leadId).catch(e => console.warn('Erro ao mover lead pra Abordagem após envio:', e.message));
+    } catch (e) {
+        alert('Erro inesperado ao enviar: ' + (e.message || e));
+        if (botaoEl) { botaoEl.disabled = false; botaoEl.innerHTML = '<i class="fa-brands fa-whatsapp"></i> Enviar'; }
+    }
+}
+
 // ==========================================================
 // CONVITE PADRÃO PARA EVENTOS (botão na gaveta do lead)
 // ==========================================================

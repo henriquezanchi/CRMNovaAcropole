@@ -59,12 +59,30 @@ function mapearStatusMeta(status: string): string {
     return "enviado";
 }
 
+// Bug real relatado pelo usuário (2026-09-28): "testei responder à
+// mensagem que recebi do API pelo meu número pessoal, e caiu num lugar
+// chamado 'não identificado'". A causa exata do episódio específico não
+// pôde ser reconstruída (o registro no banco, quando investigado, já
+// estava corretamente vinculado — sinal de que foi um estado
+// TRANSITÓRIO no momento exato do webhook, não um erro permanente nos
+// dados), mas a investigação achou uma lacuna real e concreta na
+// lógica de match: leads na LIXEIRA (`lixeira_em` preenchido — soft-
+// delete, ver "Lixeira de Leads" no CLAUDE.md) continuavam contando
+// como candidatos aqui. Se um lead ativo E um lead já jogado na lixeira
+// compartilham o mesmo telefone (histórico de teste reaproveitando
+// números, ou coincidência real), a busca encontrava os DOIS e
+// desistia por "ambíguo" — mesmo a lixeira sendo, por definição, gente
+// que já saiu do fluxo ativo. Excluída da contagem: reduz falsos
+// "não identificado" sem nunca arriscar adivinhar errado (nunca
+// flexibiliza pra escolher entre 2+ leads ATIVOS — isso continua
+// exigindo vínculo manual, de propósito).
 async function buscarLeadsPorTelefone(ddd: string, candidatos: string[]) {
     if (!ddd || candidatos.length === 0) return [];
     const { data } = await supabaseAdmin
         .from(NOME_TABELA_LEADS)
         .select('pessoaIdentificador, filial, pessoaTelefoneNumero')
-        .eq('pessoaTelefoneDDD', ddd);
+        .eq('pessoaTelefoneDDD', ddd)
+        .is('lixeira_em', null);
     if (!data) return [];
     const candidatosSet = new Set(candidatos);
     return data.filter((l: any) => candidatosSet.has(String(l.pessoaTelefoneNumero || "").replace(/\D/g, "")));

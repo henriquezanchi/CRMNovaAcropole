@@ -2419,6 +2419,17 @@ de 3 minutos que o resto do Dashboard já tem).
    filiais grandes, mesmo sem ter estourado ainda de verdade). Testado ao
    vivo: os 6 aniversariantes reais do dia (antes só 3 apareciam)
    confirmados na tela depois do fix.
+   - **Botão "Enviar" direto na lista** (pedido do usuário, 2026-09-28:
+     "coloque uma opção de 'mandar mensagem de aniversário' para todos
+     os leads que aparecem no dashboard como 'Aniversariantes de
+     Hoje'") — `enviarAniversarioRapido()` (`js/whatsapp.js`, mora lá
+     por ser uma ação de envio, reaproveitada tanto aqui quanto no card
+     por filial "Aniversariantes do Mês" — `js/app.js`, só nos itens de
+     HOJE). Manda o template `aniversario` na hora, sem precisar abrir a
+     gaveta antes — `event.stopPropagation()` no botão pra não também
+     disparar o clique do item (que abre a gaveta). Depois de enviar,
+     tira o lead de uma coluna fria (`moverParaAbordagemAposEnvio()`, ver
+     seção própria abaixo).
 2. **50 Leads Prioritários pra Contatar, no TOTAL** (não 50 por filial —
    uma lista ÚNICA "quem ligar primeiro hoje" cruzando todas as unidades).
    Critério, em ordem: (1) tem uma inscrição FUTURA numa Abertura de
@@ -2701,12 +2712,25 @@ um histórico de auditoria.
      vencidos já na 1ª checagem (é informação limitada, útil ver de cara
      o que precisa de atenção hoje).
   4. **Mensagem de WhatsApp recebida** (`iniciarNotificacoesWhatsAppGlobais()`)
-     — canal Realtime PRÓPRIO (`wpp-notificacoes-{filial}`), diferente do
+     — canal Realtime PRÓPRIO (`wpp-notificacoes-global`), diferente do
      canal que já existe dentro de `criarChatController()`
      (`js/whatsapp.js`), que só escuta enquanto aquele chat específico está
-     aberto. Esse novo canal fica sempre ativo pra filial atual,
-     independente de qual aba/lead está sendo visto — assim uma mensagem
-     de um lead que não está com o chat aberto ainda notifica.
+     aberto. Esse canal fica sempre ativo, independente de qual aba/lead
+     está sendo visto — assim uma mensagem de um lead que não está com o
+     chat aberto ainda notifica.
+     - **Bug real corrigido (2026-09-28, mesma classe do "WhatsApp
+       Unificado nunca foi de verdade unificado")**: apesar do nome
+       "Globais", o canal só escutava `filter: filial=eq.${filialAtual}`
+       — mensagem de outra filial nunca notificava nada. Removido o
+       filtro, agora é global de verdade (qualquer filial).
+     - **Pop-up visível na tela** (pedido do usuário: "coloque um pop up
+       no crm sempre que recebermos uma mensagem pelo whatsapp") —
+       `mostrarPopupWhatsApp()`, canto inferior direito, criado
+       dinamicamente (sem markup no `index.html`), auto-some em 8s ou ao
+       clicar (fora do "x"). Diferente do sino (exige abrir o painel) e
+       da notificação nativa do navegador (só aparece se a permissão já
+       foi concedida antes — nem todo mundo chega a conceder), este
+       SEMPRE aparece, só com o CRM aberto na aba.
   5. **Sincronização automática travada** (`verificarNotificacoesSincronizacao()`)
      — busca própria em `status_sincronizacao_automatica` (ver "Login
      Automático" no Importador); avisa se a tentativa mais recente do
@@ -2756,6 +2780,39 @@ critérios, em ordem de confiança:
 1. **Telefone idêntico** (alta confiança): mesma chave normalizada de
    `normalizarTelefoneParaChave()` (`js/importador.js` — ignora o 9º
    dígito, então "com 9" e "sem 9" caem no mesmo grupo).
+   - **Mesclagem AUTOMÁTICA, sem revisão humana (2026-09-28, pedido do
+     usuário)**: "se o telefone for o mesmo, e o nome também (ou se não
+     coincidir exatamente, se o nome mais curto coincidir com o nome
+     mais longo — é uma abreviação), mescle automaticamente". Regra
+     estrita, deliberadamente MAIS conservadora que a pontuação de "nome
+     parecido" (que é permissiva de propósito, pra sugerir casos pra
+     revisão) — `nomesCompativeisParaAutoMesclagem()`: TODOS os tokens
+     do nome mais curto precisam achar correspondência EXATA (ou
+     abreviação de 1 letra) no nome mais longo, sem pontuação parcial. Um
+     grupo com 3+ membros só é elegível se TODOS os pares forem
+     compatíveis (ex: 2 pessoas de uma família com o mesmo telefone mas
+     nomes diferentes cai de volta pra revisão manual normal, nunca
+     mescla um subconjunto sozinho). Sobrevivente escolhido sem
+     intervenção (`escolherSobreviventeAutoMesclagem()`): prefere ID
+     REAL do Ulisses sobre sintético (ajuda futuras reimportações a
+     casarem certo), depois o nome mais completo (mais caracteres).
+     Reaproveita 100% a MESMA lógica de incorporação da mesclagem manual
+     (`mesclarAutomaticamenteLeads()` — tags/histórico em união, e-mail
+     nunca perdido, vira nota no `resumo_ia` se não for o escolhido) —
+     só sem pedir confirmação nenhuma, e sem UI de conflito (telefone já
+     é o mesmo por definição; e-mail diferente prioriza quem já tiver).
+     Roda dentro de `detectarLeadsATratar()`, ANTES de montar os grupos
+     pra `leads_a_tratar` — um telefone auto-mesclado nunca chega a virar
+     card na tela. **Testado**: a lógica de compatibilidade de nomes foi
+     validada contra 8 casos reais (abreviação de 1 palavra, abreviação
+     de nome completo, nomes diferentes, o caso "LUCAS NUNES ... /
+     LUCAS NUNES LIMA" já documentado como falso-positivo perigoso pra
+     pontuação — aqui corretamente REJEITADO); a mecânica de banco
+     (escolha de sobrevivente real-sobre-sintético, união de tags/
+     eventos/e-mail, delete do duplicado) foi confirmada ponta a ponta
+     contra 2 leads de teste descartáveis direto no Supabase (não usei
+     Playwright/browser pra isso — replicado o mesmo fluxo via chamadas
+     REST diretas, limpo depois).
 2. **E-mail idêntico** (alta confiança, mesmo peso que telefone): só
    entre quem não caiu no critério 1. Duas pessoas raramente compartilham
    o mesmo e-mail, então trata como evidência tão forte quanto telefone
@@ -5825,11 +5882,55 @@ tem conversa no whatsapp não devem ficar em leads frios."
   (SLA visual) e a sincronização com Tarefas.
 - **Chamada depois de TODO envio real que saiu com sucesso**: texto
   livre e template (chat individual — aba unificada e gaveta), foto
-  ("Convite Compartilhável"/"Nova Turma"), e os 2 disparos em massa
-  ("Convidar (Link)" — ao marcar "já enviei este" — e "Convidar (API)").
-  `marcarContatoWhatsAppLoteEnviado()` (link) foi simplificada pra usar
-  esta mesma função em vez de mover incondicionalmente — mesma regra em
-  todo lugar agora, não só nesse ponto de entrada.
+  ("Convite Compartilhável"/"Nova Turma"), o botão rápido "Enviar" de
+  aniversário (`enviarAniversarioRapido()`, ver "Agenda do Dia"/"Contas
+  de Usuário" acima), e os 2 disparos em massa ("Convidar (Link)" — ao
+  marcar "já enviei este" — e "Convidar (API)"). `marcarContatoWhatsAppLoteEnviado()`
+  (link) foi simplificada pra usar esta mesma função em vez de mover
+  incondicionalmente — mesma regra em todo lugar agora, não só nesse
+  ponto de entrada.
+
+## Investigação: reply cai em "Não Identificados" (2026-09-28)
+
+Pedido do usuário: "testei responder à mensagem que recebi do API pelo
+meu número pessoal, e caiu num lugar chamado 'não identificado'. Pq, se
+é uma resposta?"
+
+**Investigação honesta**: consultando `mensagens_whatsapp` direto, a
+mensagem em questão (o "olá" do print) JÁ ESTAVA corretamente vinculada
+ao lead certo (`pessoaIdentificador` preenchido) no momento em que
+investiguei — ou seja, não foi possível reproduzir/confirmar a causa
+EXATA daquele instante específico (o estado "não identificado" visto no
+print foi, aparentemente, transitório). Isso é consistente com
+`buscarLeadsPorTelefone()` (`whatsapp-webhook`) devolver `matches.length
+> 1` (AMBÍGUO — 2+ leads com o mesmo telefone) só naquele momento exato,
+e nunca mais depois.
+
+- **Lacuna real encontrada e corrigida, independente de confirmar a
+  causa exata**: `buscarLeadsPorTelefone()` contava leads na LIXEIRA
+  (`lixeira_em` preenchido — soft-delete, ver "Lixeira de Leads") como
+  candidatos válidos pra casar o telefone. Se um lead ATIVO e um lead já
+  jogado na lixeira compartilham telefone (reaproveitamento de número de
+  teste, ou coincidência real — este projeto tem histórico extenso de
+  duplicados por telefone, ver "Bug real #2 a #6" na seção do
+  Importador), a busca encontrava os DOIS e desistia por ambiguidade —
+  mesmo a lixeira sendo, por definição, gente fora do fluxo ativo.
+  Corrigido: `.is('lixeira_em', null)` adicionado à query. **Nunca**
+  flexibiliza a escolha entre 2+ leads ATIVOS ambíguos (isso continua
+  exigindo vínculo manual, "Vincular" na tela — de propósito, nunca
+  arrisca atribuir uma conversa real à pessoa errada).
+- **Por que não dá pra "auto-corrigir" uma mensagem já presa como não
+  identificada**: mesmo que o item 3 acima (mesclagem automática) reduza
+  duplicados de telefone daqui pra frente, uma mensagem JÁ gravada com
+  `pessoaIdentificador = null` fica assim pra sempre, a menos que
+  alguém clique "Vincular" manualmente — não existe (ainda) um job que
+  reprocesse mensagens antigas não identificadas depois que a causa da
+  ambiguidade for resolvida. Não construído nesta rodada (sem pedido
+  explícito) — ficaria fácil de fazer se algum dia fizer falta: reaplicar
+  `buscarLeadsPorTelefone()` (ou seu equivalente) contra as mensagens
+  `pessoaIdentificador is null` existentes.
+- **Redeployada**: `whatsapp-webhook` (só a query, sem mudança de
+  comportamento pra ninguém que já está ativo).
 
 ## Bloqueio da API do WhatsApp (Meta) — investigado 2026-09-07
 

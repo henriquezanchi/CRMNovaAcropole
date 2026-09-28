@@ -62,6 +62,24 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .scraper-progresso-icone { animation: scraper-progresso-girar 2s linear infinite; }
 @keyframes scraper-progresso-girar { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 #scraperProgressoTexto { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Pop-up de mensagem de WhatsApp recebida (js/notificacoes.js,
+   mostrarPopupWhatsApp()) — pedido do usuário (2026-09-28): aparece
+   SEMPRE, sem depender de abrir o sino nem de permissão de notificação
+   nativa do navegador. */
+#wppPopupContainer { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; max-width: 320px; }
+.wpp-popup-toast {
+    background: white; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+    padding: 12px 14px; cursor: pointer; border-left: 4px solid var(--na-green);
+    display: flex; align-items: flex-start; gap: 8px;
+    animation: wppPopupEntrar 0.25s ease-out;
+}
+@keyframes wppPopupEntrar { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+.wpp-popup-toast-icone { color: var(--na-green); font-size: 16px; margin-top: 2px; flex-shrink: 0; }
+.wpp-popup-toast-corpo { flex: 1; min-width: 0; }
+.wpp-popup-toast-titulo { font-size: 12.5px; font-weight: 700; color: var(--text-dark); }
+.wpp-popup-toast-msg { font-size: 12px; color: var(--text-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.wpp-popup-toast-fechar { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 12px; flex-shrink: 0; }
+
 .notificacoes-wrapper { position: relative; }
 .notificacoes-sino { position: relative; }
 .notificacoes-badge {

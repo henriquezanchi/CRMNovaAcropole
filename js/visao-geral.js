@@ -215,10 +215,13 @@ async function carregarAgendaGeralAniversariantes() {
     container.innerHTML = doDia.map(l => `
         <div class="activity-item activity-item-festiva" style="cursor:pointer;" onclick="abrirResultadoBuscaGlobal('${l.pessoaIdentificador}', 'aniversario')" title="Abre a ficha já com o modelo de Feliz Aniversário selecionado">
             <div class="activity-dot activity-dot-festiva"></div>
-            <div>
+            <div style="flex:1; min-width:0;">
                 <div><strong>${escapeHTML(l.pessoaNome || 'Lead sem nome')}</strong> 🎂 <strong>hoje!</strong></div>
                 <div class="activity-time">${escapeHTML(l.filial || '')}</div>
             </div>
+            <button class="btn-toggle" style="flex-shrink:0; font-size:11px; padding:4px 8px;" onclick="event.stopPropagation(); enviarAniversarioRapido('${l.pessoaIdentificador}', '${escapeHTML(l.pessoaNome || '').replace(/'/g, "\\'")}', '${escapeHTML(l.filial || '').replace(/'/g, "\\'")}', this)" title="Manda o template de Feliz Aniversário agora, sem abrir a ficha">
+                <i class="fa-brands fa-whatsapp"></i> Enviar
+            </button>
         </div>`).join('');
 }
 

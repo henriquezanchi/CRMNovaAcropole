@@ -96,6 +96,142 @@ function cobrirTokens(tokensA, tokensB, frequenciaPalavra) {
     return { acertos, temPalavraRara };
 }
 
+// --- Mesclagem AUTOMÁTICA (sem passar por revisão humana) ---
+// Pedido do usuário (2026-09-28): "se o telefone for o mesmo, e o nome
+// também (ou se não coincidir exatamente, se o nome mais curto coincidir
+// com o nome mais longo — afinal, em alguns casos é uma abreviação),
+// mescle automaticamente". Diferente da pontuação de "nome parecido"
+// (LIMIAR_SCORE_NOME, permissiva de propósito pra sugerir casos que
+// precisam de revisão humana), aqui a régua é bem mais estrita — SÓ
+// telefone idêntico (o critério de mais confiança do app) + TODOS os
+// tokens do nome mais curto encontrados no mais longo (exato ou
+// abreviação de 1 letra, sem "quase bater") — nunca por pontuação
+// parcial. Isso resolve automaticamente o caso clássico de "mesma
+// pessoa, mesmo telefone, só um cadastro tem o nome abreviado ou
+// incompleto" sem arriscar mesclar 2 pessoas diferentes que só
+// coincidentemente compartilham telefone (ex: cônjuges/família — nesse
+// caso os nomes seriam bem diferentes, cai pra revisão manual normal).
+function todosTokensCobertosAutoMesclagem(tokensCurto, tokensLongo) {
+    const usados = new Set();
+    return tokensCurto.every(tc => {
+        for (let i = 0; i < tokensLongo.length; i++) {
+            if (usados.has(i)) continue;
+            const tl = tokensLongo[i];
+            const bate = tc === tl
+                || (tc.length === 1 && tl.length > 1 && tl.startsWith(tc))
+                || (tl.length === 1 && tc.length > 1 && tc.startsWith(tl));
+            if (bate) { usados.add(i); return true; }
+        }
+        return false;
+    });
+}
+
+function nomesCompativeisParaAutoMesclagem(nomeA, nomeB) {
+    const tokensA = tokensSignificativosNome(nomeA);
+    const tokensB = tokensSignificativosNome(nomeB);
+    if (tokensA.length === 0 || tokensB.length === 0) return false;
+    const [curto, longo] = tokensA.length <= tokensB.length ? [tokensA, tokensB] : [tokensB, tokensA];
+    return todosTokensCobertosAutoMesclagem(curto, longo);
+}
+
+// Um grupo (2+ membros com o MESMO telefone) só é elegível pra mesclagem
+// automática se TODOS os pares forem nome-compatíveis entre si — com 3+
+// membros, basta 1 par incompatível (ex: 2 pessoas da família com o
+// mesmo telefone, nomes bem diferentes) pra cair de volta na revisão
+// manual normal, nunca mescla parcialmente um subconjunto sozinho.
+function grupoElegivelParaAutoMesclagem(membros) {
+    for (let i = 0; i < membros.length; i++) {
+        for (let j = i + 1; j < membros.length; j++) {
+            if (!nomesCompativeisParaAutoMesclagem(membros[i].pessoaNome, membros[j].pessoaNome)) return false;
+        }
+    }
+    return true;
+}
+
+// IDs sintéticos (gerados pelo importador quando não há correspondência
+// real no Ulisses — ver js/importador.js, BASE_ID_*) ficam sempre em
+// faixas >= 900000000; um ID real do Ulisses é bem menor. Preferir o ID
+// REAL como sobrevivente ajuda futuras reimportações a continuarem
+// casando com o registro certo.
+function ehIdSinteticoAutoMesclagem(id) {
+    const n = Number(id);
+    return Number.isFinite(n) && n >= 900000000;
+}
+
+function escolherSobreviventeAutoMesclagem(membros) {
+    return [...membros].sort((a, b) => {
+        const aSint = ehIdSinteticoAutoMesclagem(a.pessoaIdentificador);
+        const bSint = ehIdSinteticoAutoMesclagem(b.pessoaIdentificador);
+        if (aSint !== bSint) return aSint ? 1 : -1; // ID real primeiro
+        return (String(b.pessoaNome || '').trim().length) - (String(a.pessoaNome || '').trim().length); // nome mais completo primeiro
+    })[0];
+}
+
+// Mesma incorporação de dados já usada na mesclagem manual
+// (confirmarMesclagem()) — tags e histórico de eventos em UNIÃO, e-mail
+// nunca perdido (quem não for escolhido vira nota no resumo_ia), sem
+// pedir NENHUMA confirmação (é automático). Telefone não entra em
+// conflito aqui — é literalmente o mesmo em todo o grupo, por definição
+// (é o próprio critério de agrupamento).
+async function mesclarAutomaticamenteLeads(membros) {
+    const principal = escolherSobreviventeAutoMesclagem(membros);
+    const outros = membros.filter(m => String(m.pessoaIdentificador) !== String(principal.pessoaIdentificador));
+
+    let tagsFinais = parseTags(principal.tags).map(t => t.trim()).filter(Boolean);
+    outros.forEach(o => parseTags(o.tags).map(t => t.trim()).filter(Boolean).forEach(t => { if (!tagsFinais.includes(t)) tagsFinais.push(t); }));
+
+    let eventosFinais = Array.isArray(principal.historico_eventos) ? [...principal.historico_eventos] : [];
+    const chaveEvento = e => `${e.evento}|${e.data}`;
+    const eventosExistentes = new Set(eventosFinais.map(chaveEvento));
+    outros.forEach(o => (Array.isArray(o.historico_eventos) ? o.historico_eventos : []).forEach(e => {
+        const chave = chaveEvento(e);
+        if (!eventosExistentes.has(chave)) { eventosFinais.push(e); eventosExistentes.add(chave); }
+    }));
+
+    const notasContatoAlternativo = [];
+    let email = principal.pessoaEmail;
+    if (!email) {
+        const comEmail = outros.find(o => o.pessoaEmail);
+        if (comEmail) email = comEmail.pessoaEmail;
+    }
+    [principal, ...outros].forEach(m => {
+        if (m.pessoaEmail && m.pessoaEmail !== email) notasContatoAlternativo.push(`E-mail alternativo (de ${m.pessoaNome}): ${m.pessoaEmail}`);
+    });
+
+    const resumos = [principal.resumo_ia, ...outros.map(o => o.resumo_ia)].map(r => (r || '').trim()).filter(Boolean);
+    if (notasContatoAlternativo.length > 0) resumos.push(notasContatoAlternativo.join('\n'));
+    const resumoFinal = resumos.length > 0 ? Array.from(new Set(resumos)).join('\n---\n') : null;
+
+    if (principal.pessoaTelefoneNumero) tagsFinais = tagsFinais.filter(t => t !== 'Sem Telefone');
+    if (email) tagsFinais = tagsFinais.filter(t => t !== 'Sem E-mail');
+
+    const { error: erroUpdate } = await window.supabaseClient
+        .from(NOME_TABELA)
+        .update({
+            tags: JSON.stringify(tagsFinais),
+            historico_eventos: eventosFinais,
+            eventoNome: eventosFinais.map(e => e.evento).join(' | '),
+            eventoData: eventosFinais.map(e => e.data).join(' | '),
+            pessoaEmail: email || '',
+            resumo_ia: resumoFinal
+        })
+        .eq('pessoaIdentificador', principal.pessoaIdentificador);
+    if (erroUpdate) return { ok: false, erro: erroUpdate.message };
+
+    const idsOutros = outros.map(o => String(o.pessoaIdentificador));
+    const { error: erroDelete } = await window.supabaseClient.from(NOME_TABELA).delete().in('pessoaIdentificador', idsOutros);
+    if (erroDelete) return { ok: false, erro: erroDelete.message };
+
+    if (typeof registrarLogAtividade === 'function') {
+        registrarLogAtividade('mesclar_leads', {
+            pessoaIds: [String(principal.pessoaIdentificador), ...idsOutros],
+            detalhes: { sobrevivente: principal.pessoaNome, apagados: outros.map(o => o.pessoaNome), origem: 'automatica_telefone_nome' }
+        });
+    }
+
+    return { ok: true };
+}
+
 // Bônus por telefone/e-mail PARECIDOS (não idênticos — idênticos já viram
 // grupo próprio, telefone/email, antes de chegar na etapa de nome, então
 // nunca coexistem com esse bônus). Cobre o caso de erro de digitação de
@@ -170,11 +306,45 @@ async function detectarLeadsATratar(filial, logFn) {
         if (!porTelefone.has(chave)) porTelefone.set(chave, []);
         porTelefone.get(chave).push(l);
     });
+    // Pedido do usuário (2026-09-28): telefone idêntico + nome
+    // compatível (exato, ou o mais curto totalmente coberto pelo mais
+    // longo — abreviação) mescla AUTOMATICAMENTE, sem esperar revisão
+    // manual. Só telefone igual (grupos com nome incompatível — ex:
+    // cônjuges no mesmo número) continua caindo na revisão manual normal.
+    const gruposParaAutoMesclar = [];
     porTelefone.forEach((membros, chave) => {
         if (membros.length < 2) return;
-        grupos.push({ grupo: 'tel:' + chave, criterio: 'telefone', membros });
+        if (grupoElegivelParaAutoMesclagem(membros)) {
+            gruposParaAutoMesclar.push(membros);
+        } else {
+            grupos.push({ grupo: 'tel:' + chave, criterio: 'telefone', membros });
+        }
+        // Marcado como "já agrupado" nos dois casos — mesclado ou não,
+        // esse telefone já foi tratado, não deve reaparecer nos critérios
+        // de nome/e-mail abaixo.
         membros.forEach(m => idsJaAgrupados.add(String(m.pessoaIdentificador)));
     });
+
+    let totalAutoMesclados = 0;
+    if (gruposParaAutoMesclar.length > 0) {
+        const idsParaBuscar = gruposParaAutoMesclar.flat().map(m => String(m.pessoaIdentificador));
+        const { data: leadsCompletos, error: erroCompletos } = await window.supabaseClient
+            .from(NOME_TABELA)
+            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, tags, historico_eventos, resumo_ia')
+            .in('pessoaIdentificador', idsParaBuscar);
+        if (erroCompletos) {
+            log('Aviso: não foi possível buscar dados completos pra mesclagem automática — ' + erroCompletos.message, 'warn');
+        } else {
+            const mapaCompletos = new Map((leadsCompletos || []).map(l => [String(l.pessoaIdentificador), l]));
+            for (const membros of gruposParaAutoMesclar) {
+                const completos = membros.map(m => mapaCompletos.get(String(m.pessoaIdentificador))).filter(Boolean);
+                if (completos.length < 2) continue;
+                const resultado = await mesclarAutomaticamenteLeads(completos);
+                if (resultado.ok) totalAutoMesclados++;
+                else log(`Aviso: falha ao mesclar automaticamente ${completos.map(c => c.pessoaNome).join(' / ')} — ${resultado.erro}`, 'warn');
+            }
+        }
+    }
 
     // 3) Critério 2 — E-MAIL idêntico (mesmo peso de confiança que
     //    telefone — duas pessoas raramente compartilham o mesmo e-mail).
@@ -280,8 +450,10 @@ async function detectarLeadsATratar(filial, logFn) {
     //    (os ignorados, filtrados acima, simplesmente não voltam a entrar).
     await window.supabaseClient.from(NOME_TABELA_LEADS_A_TRATAR).delete().eq('filial', filial);
 
+    const complementoAutoMesclados = totalAutoMesclados > 0 ? ` ${totalAutoMesclados} grupo(s) foram mesclados automaticamente (telefone + nome compatível).` : '';
+
     if (gruposParaSalvar.length === 0) {
-        log(grupos.length > 0 ? `Nenhum lead a tratar encontrado (${grupos.length} grupo(s) estavam ignorados).` : 'Nenhum lead a tratar encontrado.', 'ok');
+        log((grupos.length > 0 ? `Nenhum lead a tratar encontrado (${grupos.length} grupo(s) estavam ignorados).` : 'Nenhum lead a tratar encontrado.') + complementoAutoMesclados, 'ok');
         return;
     }
 
@@ -309,7 +481,7 @@ async function detectarLeadsATratar(filial, logFn) {
 
     const contarCriterio = c => gruposParaSalvar.filter(g => g.criterio === c).length;
     const complementoIgnorados = gruposIgnorados.size > 0 ? ` (${gruposIgnorados.size} grupo(s) ignorado(s) não entraram nessa contagem)` : '';
-    log(`${gruposParaSalvar.length} grupo(s)/lead(s) a tratar (${contarCriterio('telefone')} por telefone, ${contarCriterio('email')} por e-mail, ${contarCriterio('nome')} por nome parecido, ${contarCriterio('sem_telefone')} sem telefone)${complementoIgnorados}.`, 'ok');
+    log(`${gruposParaSalvar.length} grupo(s)/lead(s) a tratar (${contarCriterio('telefone')} por telefone, ${contarCriterio('email')} por e-mail, ${contarCriterio('nome')} por nome parecido, ${contarCriterio('sem_telefone')} sem telefone)${complementoIgnorados}.${complementoAutoMesclados}`, 'ok');
 }
 
 // ==========================================

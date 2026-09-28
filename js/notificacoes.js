@@ -228,12 +228,19 @@ async function verificarNotificacoesLembretes() {
 }
 
 // ==========================================
-// GATILHO 4: Mensagem de WhatsApp recebida (global, não só chat aberto)
+// GATILHO 4: Mensagem de WhatsApp recebida (GLOBAL de verdade — 2026-09-28)
 // ==========================================
 // Diferente do canal Realtime já existente em criarChatController()
 // (js/whatsapp.js), que só escuta enquanto aquele chat específico está
-// aberto na gaveta/aba WhatsApp — este é um canal PRÓPRIO, sempre ativo
-// pra filial atual, independente de qual aba/lead está sendo visto.
+// aberto na gaveta/aba WhatsApp — este é um canal PRÓPRIO, sempre ativo,
+// independente de qual aba/lead está sendo visto.
+//
+// Bug real corrigido (mesma classe do "WhatsApp Unificado nunca foi de
+// verdade unificado" — ver CLAUDE.md): apesar do nome "Globais", este
+// canal só escutava mensagens da FILIAL ATUAL (`filter: filial=eq.${filialAtual}`)
+// — uma mensagem de outra filial nunca notificava nada, mesmo com o
+// WhatsApp já sendo cross-filial. Removido o filtro — agora é
+// literalmente global, qualquer filial.
 let canalWppNotificacoesGlobais = null;
 
 function iniciarNotificacoesWhatsAppGlobais() {
@@ -241,11 +248,11 @@ function iniciarNotificacoesWhatsAppGlobais() {
         window.supabaseClient.removeChannel(canalWppNotificacoesGlobais);
         canalWppNotificacoesGlobais = null;
     }
-    if (!filialAtual || typeof window.supabaseClient === 'undefined') return;
+    if (typeof window.supabaseClient === 'undefined') return;
 
     canalWppNotificacoesGlobais = window.supabaseClient
-        .channel(`wpp-notificacoes-${filialAtual}`)
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mensagens_whatsapp', filter: `filial=eq.${filialAtual}` }, (payload) => {
+        .channel('wpp-notificacoes-global')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mensagens_whatsapp' }, (payload) => {
             const msg = payload.new;
             if (msg.direcao !== 'entrada') return;
 
@@ -254,20 +261,67 @@ function iniciarNotificacoesWhatsAppGlobais() {
                 : null;
             const nome = lead ? lead.pessoaNome : (msg.telefone_whatsapp || 'contato não identificado');
 
+            const aoClicar = () => {
+                if (msg.pessoaIdentificador && typeof abrirResultadoBuscaGlobal === 'function') {
+                    abrirResultadoBuscaGlobal(msg.pessoaIdentificador);
+                } else if (typeof switchModule === 'function') {
+                    switchModule('tab-whatsapp', 'WhatsApp Unificado', 'Caixa de entrada centralizada');
+                }
+            };
+
             adicionarNotificacao({
                 icone: 'fa-brands fa-whatsapp',
                 titulo: `Nova mensagem de ${nome}`,
                 mensagem: (msg.corpo_texto || '').slice(0, 100),
-                aoClicar: () => {
-                    if (msg.pessoaIdentificador && typeof abrirResultadoBuscaGlobal === 'function') {
-                        abrirResultadoBuscaGlobal(msg.pessoaIdentificador);
-                    } else if (typeof switchModule === 'function') {
-                        switchModule('tab-whatsapp', 'WhatsApp', 'Conversas em tempo real');
-                    }
-                },
+                aoClicar,
             });
+
+            // Pop-up visível na tela (pedido do usuário: "coloque um pop
+            // up no crm sempre que recebermos uma mensagem pelo
+            // whatsapp") — diferente do sino (exige abrir o painel) e da
+            // notificação nativa do navegador (só aparece se a permissão
+            // já foi concedida antes), este SEMPRE aparece, sem depender
+            // de nada além do CRM estar com a aba aberta.
+            if (typeof mostrarPopupWhatsApp === 'function') {
+                mostrarPopupWhatsApp({ titulo: `Nova mensagem de ${nome}`, mensagem: msg.corpo_texto || '', aoClicar });
+            }
         })
         .subscribe();
+}
+
+// ==========================================
+// Pop-up de mensagem recebida — ver comentário acima. Criado
+// dinamicamente (sem precisar de markup no index.html); auto-some
+// depois de alguns segundos, ou ao clicar em qualquer lugar (menos no
+// "x" de fechar, que só fecha sem abrir a conversa).
+// ==========================================
+function _containerPopupWpp() {
+    let container = document.getElementById('wppPopupContainer');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'wppPopupContainer';
+        document.body.appendChild(container);
+    }
+    return container;
+}
+
+function mostrarPopupWhatsApp({ titulo, mensagem, aoClicar }) {
+    const container = _containerPopupWpp();
+    const popup = document.createElement('div');
+    popup.className = 'wpp-popup-toast';
+    popup.innerHTML = `
+        <i class="fa-brands fa-whatsapp wpp-popup-toast-icone"></i>
+        <div class="wpp-popup-toast-corpo">
+            <div class="wpp-popup-toast-titulo">${escapeHTML(titulo || '')}</div>
+            <div class="wpp-popup-toast-msg">${escapeHTML((mensagem || '').slice(0, 100))}</div>
+        </div>
+        <button type="button" class="wpp-popup-toast-fechar" title="Fechar">✕</button>
+    `;
+    const remover = () => { if (popup.parentNode) popup.parentNode.removeChild(popup); };
+    popup.querySelector('.wpp-popup-toast-fechar').addEventListener('click', (e) => { e.stopPropagation(); remover(); });
+    popup.addEventListener('click', () => { if (typeof aoClicar === 'function') aoClicar(); remover(); });
+    container.appendChild(popup);
+    setTimeout(remover, 8000);
 }
 
 // ==========================================

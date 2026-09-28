@@ -2807,13 +2807,21 @@ async function atualizarAniversariantes() {
 
     container.innerHTML = doMes.map(l => {
         const ehHoje = l.dia === diaAtual;
+        // Botão "Enviar" só pra quem faz aniversário HOJE (pedido do
+        // usuário, 2026-09-28) — manda o template direto da lista, sem
+        // precisar abrir a gaveta primeiro. `enviarAniversarioRapido()`
+        // mora em js/whatsapp.js (carregado antes deste arquivo).
+        const botaoEnviar = ehHoje && typeof enviarAniversarioRapido === 'function'
+            ? `<button class="btn-toggle" style="flex-shrink:0; font-size:11px; padding:4px 8px;" onclick="event.stopPropagation(); enviarAniversarioRapido('${l.pessoaIdentificador}', '${escapeHTML(l.pessoaNome || '').replace(/'/g, "\\'")}', '${filialAtual.replace(/'/g, "\\'")}', this)" title="Manda o template de Feliz Aniversário agora, sem abrir a ficha"><i class="fa-brands fa-whatsapp"></i> Enviar</button>`
+            : '';
         return `
             <div class="activity-item ${ehHoje ? 'activity-item-festiva' : ''}" style="cursor:pointer;" onclick="abrirResultadoBuscaGlobal('${l.pessoaIdentificador}')">
                 <div class="activity-dot ${ehHoje ? 'activity-dot-festiva' : ''}"></div>
-                <div>
+                <div style="flex:1; min-width:0;">
                     <div><strong>${escapeHTML(l.pessoaNome || 'Lead sem nome')}</strong>${ehHoje ? ' 🎂 <strong>hoje!</strong>' : ''}</div>
                     <div class="activity-time">${String(l.dia).padStart(2, '0')}/${String(l.mes).padStart(2, '0')}</div>
                 </div>
+                ${botaoEnviar}
             </div>`;
     }).join('');
 }
