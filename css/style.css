@@ -665,6 +665,34 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .msg-time { font-size: 9px; color: #94a3b8; margin-top: 4px; text-align: right; }
 .msg-atendente { font-size: 9px; color: #16a34a; font-weight: 600; text-align: right; margin-top: 2px; }
 
+/* Reações com emoji (pedido do usuário, 2026-09-28) — botão só aparece no
+   hover do balão (mesmo espírito do menu "..." do WhatsApp real), badge
+   flutua no canto inferior do balão quando alguém já reagiu. */
+.msg-com-reacao { margin-bottom: 12px; }
+.wpp-reagir-btn {
+    position: absolute; top: -12px; background: white; border: 1px solid #e2e8f0; border-radius: 50%;
+    width: 22px; height: 22px; font-size: 11px; color: #64748b; cursor: pointer; display: none;
+    align-items: center; justify-content: center; box-shadow: 0 1px 2px rgba(0,0,0,0.15); padding: 0;
+}
+.msg:hover .wpp-reagir-btn { display: flex; }
+.msg-out .wpp-reagir-btn { left: -8px; }
+.msg-in .wpp-reagir-btn { right: -8px; }
+.wpp-reacao-badge {
+    position: absolute; bottom: -11px; background: white; border-radius: 10px; padding: 1px 5px;
+    font-size: 12px; line-height: 1.3; box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+}
+.msg-out .wpp-reacao-badge { right: 8px; }
+.msg-in .wpp-reacao-badge { left: 8px; }
+.wpp-reacao-picker {
+    display: none; position: fixed; z-index: 3000; background: white; border-radius: 24px;
+    padding: 6px 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); gap: 4px;
+}
+.wpp-reacao-opcao {
+    background: none; border: none; font-size: 20px; padding: 2px 4px; border-radius: 50%; cursor: pointer;
+    line-height: 1;
+}
+.wpp-reacao-opcao:hover, .wpp-reacao-opcao.ativa { background: #f0f2f5; transform: scale(1.15); }
+
 /* ==========================================
    ABA: RELATÓRIOS (FUNIL DE CONVERSÃO)
 ========================================== */

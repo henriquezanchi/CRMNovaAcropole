@@ -7,6 +7,7 @@
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin, NOME_TABELA_LEADS, NOME_TABELA_MENSAGENS } from "../_shared/supabaseAdmin.ts";
 import { montarNumeroE164 } from "../_shared/telefone.ts";
+import { aplicarReacao } from "../_shared/reacoes.ts";
 
 const GRAPH_VERSION = Deno.env.get("WHATSAPP_GRAPH_API_VERSION") ?? "v21.0";
 const TOKEN = Deno.env.get("WHATSAPP_TOKEN")!;
@@ -27,7 +28,7 @@ Deno.serve(async (req) => {
 
     let corpoReq: {
         pessoaIdentificador?: string;
-        tipo?: "texto" | "template" | "imagem" | "documento";
+        tipo?: "texto" | "template" | "imagem" | "documento" | "reacao";
         texto?: string;
         templateNome?: string;
         templateIdioma?: string;
@@ -38,6 +39,8 @@ Deno.serve(async (req) => {
         nomeArquivo?: string;
         caption?: string;
         atendenteNome?: string;
+        mensagemAlvoId?: string;
+        emoji?: string;
     };
     try {
         corpoReq = await req.json();
@@ -45,12 +48,15 @@ Deno.serve(async (req) => {
         return json({ ok: false, erro: "json_invalido" }, 400);
     }
 
-    const { pessoaIdentificador, tipo, texto, templateNome, templateIdioma, templateParams, templatePreview, imagemUrl, documentoUrl, nomeArquivo, caption, atendenteNome } = corpoReq;
+    const { pessoaIdentificador, tipo, texto, templateNome, templateIdioma, templateParams, templatePreview, imagemUrl, documentoUrl, nomeArquivo, caption, atendenteNome, mensagemAlvoId, emoji } = corpoReq;
     if (!pessoaIdentificador || !tipo) return json({ ok: false, erro: "parametros_faltando" }, 400);
     if (tipo === "texto" && !texto?.trim()) return json({ ok: false, erro: "texto_vazio" }, 400);
     if (tipo === "template" && !templateNome) return json({ ok: false, erro: "template_nome_faltando" }, 400);
     if (tipo === "imagem" && !imagemUrl?.trim()) return json({ ok: false, erro: "imagem_url_faltando" }, 400);
     if (tipo === "documento" && !documentoUrl?.trim()) return json({ ok: false, erro: "documento_url_faltando" }, 400);
+    // "reacao" — emoji vazio é válido (remove uma reação já enviada, mesmo
+    // comportamento do WhatsApp real), só o id da mensagem alvo é obrigatório.
+    if (tipo === "reacao" && !mensagemAlvoId?.trim()) return json({ ok: false, erro: "mensagem_alvo_faltando" }, 400);
 
     // Busca telefone/filial do lead no servidor — não confia no que vier do front.
     const { data: lead, error: erroLead } = await supabaseAdmin
@@ -124,6 +130,18 @@ Deno.serve(async (req) => {
                 ? { link: documentoUrl, filename: nomeArquivo, caption }
                 : { link: documentoUrl, filename: nomeArquivo },
         }
+        : tipo === "reacao"
+        ? {
+            // Pedido do usuário (2026-09-28): reagir com emoji igual o
+            // WhatsApp real. `emoji: ""` é o jeito da própria Graph API de
+            // REMOVER uma reação já enviada — nunca cria uma mensagem nova
+            // no chat, só atualiza a reação da mensagem alvo (ver
+            // aplicarReacao() em _shared/reacoes.ts, chamado abaixo).
+            messaging_product: "whatsapp",
+            to: numeroE164,
+            type: "reaction",
+            reaction: { message_id: mensagemAlvoId, emoji: emoji || "" },
+        }
         : {
             messaging_product: "whatsapp",
             to: numeroE164,
@@ -163,21 +181,31 @@ Deno.serve(async (req) => {
         // Meta já mudou detalhes de erro entre versões — checa o texto também.
         const foraDaJanela = codigo === 131047 || /24 hour/i.test(mensagemErro);
 
-        await supabaseAdmin.from(NOME_TABELA_MENSAGENS).insert({
-            pessoaIdentificador,
-            telefone_whatsapp: numeroE164,
-            filial: lead.filial,
-            direcao: "saida",
-            tipo,
-            corpo_texto: corpoTexto,
-            wa_status: "falhou",
-            wa_status_erro: respJson?.error ?? { message: "erro desconhecido" },
-            phone_number_id_meta: phoneNumberId,
-            payload_bruto: { ...respJson, ...payloadExtra },
-            atendente_nome: atendenteNome || null,
-        });
+        // Reação nunca vira uma linha própria em mensagens_whatsapp — só
+        // atualiza a mensagem alvo (e, se a Meta recusou, nem isso).
+        if (tipo !== "reacao") {
+            await supabaseAdmin.from(NOME_TABELA_MENSAGENS).insert({
+                pessoaIdentificador,
+                telefone_whatsapp: numeroE164,
+                filial: lead.filial,
+                direcao: "saida",
+                tipo,
+                corpo_texto: corpoTexto,
+                wa_status: "falhou",
+                wa_status_erro: respJson?.error ?? { message: "erro desconhecido" },
+                phone_number_id_meta: phoneNumberId,
+                payload_bruto: { ...respJson, ...payloadExtra },
+                atendente_nome: atendenteNome || null,
+            });
+        }
 
         return json({ ok: false, erro: foraDaJanela ? "janela_fechada" : "erro_meta", detalhe: respJson?.error }, 200);
+    }
+
+    if (tipo === "reacao") {
+        const resultado = await aplicarReacao(supabaseAdmin, NOME_TABELA_MENSAGENS, mensagemAlvoId, "atendente", emoji);
+        if (!resultado.ok) return json({ ok: false, erro: resultado.erro }, 200);
+        return json({ ok: true });
     }
 
     const waMessageId = respJson.messages?.[0]?.id;

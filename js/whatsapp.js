@@ -207,9 +207,28 @@ function textoComQuebrasDeLinha(texto) {
     return escapeHTML(texto || '').replace(/\n/g, '<br>');
 }
 
+// Botão de reagir (só existe pra mensagem com wa_message_id de verdade —
+// falha de envio e conversa importada manualmente não têm um id real da
+// Meta pra reagir em cima) e o badge com a(s) reação(ões) já aplicada(s)
+// — pedido do usuário (2026-09-28): "quero poder 'reagir' às mensagens
+// com emojis, como numa mensagem normal do whatsapp". Ver
+// abrirSeletorReacaoWpp()/enviarReacaoWpp() mais abaixo.
+function htmlBotaoReagirWpp(m) {
+    if (!m.wa_message_id) return '';
+    const reacaoAtendente = (m.reacoes && m.reacoes.atendente) || '';
+    return `<button type="button" class="wpp-reagir-btn" data-wa-id="${escapeHTML(m.wa_message_id)}" data-reacao-atendente="${escapeHTML(reacaoAtendente)}" title="Reagir"><i class="fa-regular fa-face-smile"></i></button>`;
+}
+function htmlReacoesWpp(m) {
+    if (!m.reacoes) return '';
+    const distintos = [...new Set([m.reacoes.lead, m.reacoes.atendente].filter(Boolean))];
+    if (distintos.length === 0) return '';
+    return `<div class="wpp-reacao-badge">${distintos.map(e => escapeHTML(e)).join('')}</div>`;
+}
+
 function htmlMensagemWpp(m) {
     const classeDirecao = m.direcao === 'saida' ? 'msg-out' : 'msg-in';
     const classeExtra = m.wa_status === 'falhou' ? 'msg-falhou' : '';
+    const classeReacao = (m.reacoes && (m.reacoes.lead || m.reacoes.atendente)) ? 'msg-com-reacao' : '';
     // Mensagem trazida de fora do CRM (js/importar-conversa-whatsapp.js,
     // enquanto a API do WhatsApp está bloqueada) — badge visível pra nunca
     // confundir com uma mensagem de verdade enviada/recebida pela API.
@@ -242,12 +261,69 @@ function htmlMensagemWpp(m) {
         ? `<div class="msg-atendente">${escapeHTML(m.atendente_nome)}</div>`
         : '';
     return `
-        <div class="msg ${classeDirecao} ${classeExtra}">
+        <div class="msg ${classeDirecao} ${classeExtra} ${classeReacao}">
+            ${htmlBotaoReagirWpp(m)}
             ${corpoHTML}
             ${atendenteHTML}
             <div class="msg-time">${badgeImportada}${formatarHoraWpp(m.criado_em)}${m.direcao === 'saida' ? statusIconHTML(m) : ''}</div>
+            ${htmlReacoesWpp(m)}
         </div>
     `;
+}
+
+// ==========================================================
+// Reações (emoji) — mesmo conjunto de reação rápida que o WhatsApp
+// mostra por padrão. Reagir de novo com o MESMO emoji remove a reação
+// (toggle), igual o app real. Um único picker flutuante compartilhado
+// (mesmo padrão de _containerPopupWpp() em notificacoes.js) — reposicionado
+// perto do botão clicado a cada abertura.
+// ==========================================================
+const EMOJIS_REACAO_WPP = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+
+function _containerSeletorReacaoWpp() {
+    let el = document.getElementById('wppReacaoPicker');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'wppReacaoPicker';
+        el.className = 'wpp-reacao-picker';
+        document.body.appendChild(el);
+    }
+    return el;
+}
+
+function fecharSeletorReacaoWpp() {
+    const el = document.getElementById('wppReacaoPicker');
+    if (el) el.style.display = 'none';
+}
+
+function abrirSeletorReacaoWpp(botaoEl, reacaoAtual, aoEscolher) {
+    const picker = _containerSeletorReacaoWpp();
+    picker.innerHTML = EMOJIS_REACAO_WPP.map(e =>
+        `<button type="button" class="wpp-reacao-opcao${e === reacaoAtual ? ' ativa' : ''}" data-emoji="${e}">${e}</button>`
+    ).join('');
+    const rect = botaoEl.getBoundingClientRect();
+    picker.style.display = 'flex';
+    picker.style.top = `${Math.max(8, rect.top - 44)}px`;
+    picker.style.left = `${Math.min(window.innerWidth - 260, Math.max(8, rect.left - 90))}px`;
+    picker.querySelectorAll('.wpp-reacao-opcao').forEach(btn => {
+        btn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            const emoji = btn.dataset.emoji;
+            fecharSeletorReacaoWpp();
+            aoEscolher(emoji === reacaoAtual ? '' : emoji);
+        });
+    });
+    setTimeout(() => document.addEventListener('click', fecharSeletorReacaoWpp, { once: true }), 0);
+}
+
+async function enviarReacaoWpp(leadId, mensagemAlvoId, emoji) {
+    if (!leadId || !mensagemAlvoId) return;
+    const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
+        body: { pessoaIdentificador: leadId, tipo: 'reacao', mensagemAlvoId, emoji, atendenteNome: obterNomeAtendente() }
+    });
+    if (error || !data || data.ok === false) {
+        alert('Não foi possível reagir: ' + mensagemErroWpp(data || { erro: error?.message }));
+    }
 }
 
 async function carregarHistoricoMensagens(pessoaIdentificador) {
@@ -273,6 +349,23 @@ function criarChatController({ messagesId, inputAreaId }) {
     let anexoPendente = null; // { file, tipo: 'imagem'|'documento' } — ver selecionarAnexo()
 
     const el = (id) => document.getElementById(id);
+
+    // Clique delegado no CONTAINER (não nos balões — o innerHTML é
+    // reconstruído a cada renderizarMensagens(), um listener por balão se
+    // perderia) pro botão de reagir. Ligado 1x na criação do controller,
+    // sobrevive a qualquer re-render.
+    const containerMsgsParaReacao = el(messagesId);
+    if (containerMsgsParaReacao) {
+        containerMsgsParaReacao.addEventListener('click', (e) => {
+            const btn = e.target.closest('.wpp-reagir-btn');
+            if (!btn || !leadId) return;
+            e.stopPropagation();
+            const waId = btn.dataset.waId;
+            abrirSeletorReacaoWpp(btn, btn.dataset.reacaoAtendente || '', (emoji) => {
+                enviarReacaoWpp(leadId, waId, emoji);
+            });
+        });
+    }
 
     // "Fidelidade ao WhatsApp real" (pedido do usuário, 2026-09-28) — o
     // real separa o dia entre grupos de mensagens com um "pill" central

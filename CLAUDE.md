@@ -312,6 +312,10 @@ migracao_storage_whatsapp_midia.sql → bucket de Supabase Storage `whatsapp-mid
                                      o projeto usa Storage; ver seção "WhatsApp Unificado —
                                      de verdade cross-filial"; JÁ RODADA nesta sessão via
                                      `supabase db query --linked`
+migracao_whatsapp_reacoes.sql     → coluna reacoes (jsonb) em mensagens_whatsapp — reagir
+                                     com emoji a uma mensagem, igual o WhatsApp real; ver
+                                     seção "Reações com emoji nas mensagens"; JÁ RODADA
+                                     nesta sessão via `supabase db query --linked`
 ```
 
 ## Banco de dados (Supabase)
@@ -5850,8 +5854,9 @@ mostrava a conversa da filial escolhida no topo, igual o resto do app.
     teste do usuário, ambos com `wa_message_id` real de volta). Arquivos
     de teste apagados do bucket depois.
 - **Também fora de escopo, sem pedido explícito**: emoji picker de
-  verdade (o ícone já existe na UI, só não abre nada), reações a
-  mensagens, encaminhar mensagem, apagar/editar mensagem enviada,
+  verdade pra DIGITAR (o ícone já existe na UI, só não abre nada —
+  diferente de REAGIR, ver seção própria "Reações com emoji" abaixo, essa
+  sim construída), encaminhar mensagem, apagar/editar mensagem enviada,
   indicador de "digitando...", gravar/enviar áudio (voice notes),
   chamada de voz/vídeo, conversas em grupo — nenhum desses tem
   equivalente simples na Meta Cloud API hoje (ou exigiria trabalho bem
@@ -5906,6 +5911,47 @@ print foi, aparentemente, transitório). Isso é consistente com
 > 1` (AMBÍGUO — 2+ leads com o mesmo telefone) só naquele momento exato,
 e nunca mais depois.
 
+**2ª rodada, teoria do usuário — "o CRM já lida com o 9º dígito na
+resposta?" (2026-09-28, mesmo dia)**: o usuário levantou uma hipótese
+concreta e bem razoável — "quando eu falo com a pessoa, o crm coloca o 9
+na frente [via `montarNumeroE164()`]; quando a pessoa fala comigo, o
+whatsapp não coloca o 9, e o crm não reconhece isso". Investigado contra
+dado REAL antes de mexer em qualquer coisa (não aceitei a teoria de
+cabeça, nem descartei): `_shared/telefone.ts` (`candidatosNumeroBR()`)
+já gera as DUAS variantes (com/sem o 9º dígito) do número que chega no
+webhook e compara contra `pessoaTelefoneNumero` de qualquer formato —
+essa simetria já existe desde antes desta sessão, não é um bug novo.
+Confirmado achando uma mensagem de entrada REAL de hoje com
+`pessoaIdentificador is null` (`from = "556293162669"`, DDD 62, local
+"93162669", 8 dígitos começando com 9 — exatamente o padrão do 9º dígito
+duplicado sendo perdido pela Meta) e testando a lógica à mão contra o
+banco: existe sim um lead com esse telefone
+(`951000017`/"DANILO FORTALEZA DE MATOS AIRES", `pessoaTelefoneNumero =
+"993162669"`), sem ambiguidade (só 1 candidato), fora da lixeira — ou
+seja, a variante gerada por `candidatosNumeroBR()` ("993162669") BATE
+exatamente com o telefone salvo. Pelo código, isso deveria ter casado.
+**A causa real desta mensagem específica**: puxando o `payload_bruto`
+completo, `type` era `"reaction"` (o usuário reagiu com ❤️ a uma
+mensagem nossa) — **não é uma resposta de texto**. Comparando o horário
+exato do evento (19:26:02 UTC) com o `updated_at` do último deploy do
+`whatsapp-webhook` feito nesta mesma sessão (19:26:08 UTC, só 6 segundos
+depois — o redeploy do fix da lixeira, ver acima), é bem mais provável
+que esta mensagem específica tenha caído numa janela de corrida do
+PRÓPRIO desenvolvimento (function sendo trocada quase no mesmo instante)
+do que revelar uma falha permanente no casamento por telefone — que,
+pela lógica e pelo teste manual acima, está correto.
+- **Achado real e concreto que sobrou desta investigação, mesmo sem
+  confirmar um bug de 9º dígito**: reações (`type: "reaction"`) nunca
+  tinham tratamento próprio no webhook — caíam no caminho normal de
+  mensagem, viravam uma linha esquisita (`tipo: "outro"`, corpo
+  `"[Mensagem tipo reaction]"`) e, se o casamento de telefone falhasse
+  por QUALQUER motivo passageiro (como parece ter sido o caso aqui),
+  ficavam presas em "não identificado" pra sempre, poluindo a lista sem
+  nunca terem sido uma conversa de verdade. Corrigido construindo suporte
+  de verdade a reações (pedido do usuário na mesma leva — ver seção
+  "Reações com emoji" logo abaixo): agora `type: "reaction"` NUNCA cria
+  uma linha nova, só atualiza a reação da mensagem alvo.
+
 - **Lacuna real encontrada e corrigida, independente de confirmar a
   causa exata**: `buscarLeadsPorTelefone()` contava leads na LIXEIRA
   (`lixeira_em` preenchido — soft-delete, ver "Lixeira de Leads") como
@@ -5931,6 +5977,80 @@ e nunca mais depois.
   `pessoaIdentificador is null` existentes.
 - **Redeployada**: `whatsapp-webhook` (só a query, sem mudança de
   comportamento pra ninguém que já está ativo).
+
+## Reações com emoji nas mensagens (2026-09-28)
+
+Pedido do usuário: "quero poder 'reagir' às mensagens com emojis, como
+numa mensagem normal do whatsapp" — a Meta Cloud API já suporta reação
+nativamente (não precisou de nenhum workaround visual).
+
+- **`mensagens_whatsapp.reacoes`** (jsonb, `migracao_whatsapp_reacoes.sql`):
+  no máximo 1 reação por LADO — `{"lead": "❤️", "atendente": "👍"}` — nunca
+  uma lista de várias reações da mesma pessoa (mesmo comportamento do
+  WhatsApp real: reagir de novo TROCA a própria reação; mandar emoji vazio
+  REMOVE). `null` = ninguém reagiu ainda.
+- **`_shared/reacoes.ts`, NOVO** — `aplicarReacao(supabaseAdmin, tabela,
+  waMessageIdAlvo, chave, emoji)`, compartilhado entre `whatsapp-send`
+  (quando NÓS reagimos) e `whatsapp-webhook` (quando o LEAD reage): busca
+  a mensagem alvo por `wa_message_id`, mescla `chave` (`'atendente'` ou
+  `'lead'`) no jsonb já existente (ou remove a chave se `emoji` vier
+  vazio/ausente), sempre gravando `null` de volta se a reação ficar
+  vazia dos dois lados. **Nunca cria uma linha nova** — reação sempre
+  atualiza uma mensagem que já existe.
+- **`whatsapp-send` ganhou `tipo: 'reacao'`** (`{pessoaIdentificador,
+  tipo:'reacao', mensagemAlvoId, emoji}` — `emoji: ''` é válido, remove
+  uma reação já enviada, igual o app real): monta
+  `{type:"reaction", reaction:{message_id, emoji}}` pra Graph API; só em
+  caso de SUCESSO chama `aplicarReacao(..., 'atendente', emoji)` — ao
+  contrário de texto/imagem/documento, o tipo `reacao` NUNCA insere uma
+  linha nova em `mensagens_whatsapp` (nem em sucesso nem em falha), só
+  atualiza a reação da mensagem alvo.
+- **`whatsapp-webhook` trata `msg.type === 'reaction'` separadamente**,
+  ANTES do casamento por telefone de sempre — chama `aplicarReacao(...,
+  'lead', msg.reaction?.emoji)` casando pelo `msg.reaction.message_id`
+  (o id da mensagem que o lead reagiu) e passa pro próximo item do loop
+  (`continue`), sem tentar achar lead por telefone (a mensagem original
+  já sabe de quem é) e sem nunca gravar uma linha "outro"/"[Mensagem tipo
+  reaction]" como acontecia antes. Se a mensagem alvo não for encontrada
+  (`wa_message_id` desconhecido), só loga aviso — best-effort, nunca
+  quebra o resto do webhook.
+- **Frontend (`js/whatsapp.js`)**: `htmlBotaoReagirWpp(m)` desenha um
+  botão de carinha (só quando a mensagem tem `wa_message_id` de verdade —
+  falha de envio e conversa importada manualmente não têm um id real da
+  Meta pra reagir em cima) que só aparece no HOVER do balão
+  (`.wpp-reagir-btn`, CSS `display:none` + `.msg:hover .wpp-reagir-btn`).
+  Clicar abre `abrirSeletorReacaoWpp()` — um picker flutuante único e
+  compartilhado (`#wppReacaoPicker`, criado 1x, reposicionado a cada
+  abertura via `getBoundingClientRect()` do botão clicado, mesmo espírito
+  de `_containerPopupWpp()` em `js/notificacoes.js`) com os 6 emojis
+  padrão do WhatsApp (👍❤️😂😮😢🙏); clicar no MESMO emoji já ativo remove
+  a reação (toggle), clicar em outro troca. `htmlReacoesWpp(m)` desenha o
+  badge com a(s) reação(ões) já aplicada(s) (`.wpp-reacao-badge`,
+  flutuando no canto inferior do balão — mostra só emojis DISTINTOS, se
+  os 2 lados reagiram com o mesmo emoji aparece 1 badge só). Escuta de
+  clique é DELEGADA no container de mensagens (`addEventListener` 1x na
+  criação do `criarChatController()`, não por balão — o `innerHTML` é
+  reconstruído a cada `renderizarMensagens()`, um listener por balão se
+  perderia a cada render).
+  - **Atualização em tela é via Realtime, sem chamada extra**: como o
+    canal `postgres_changes` de `UPDATE` já existia (escuta qualquer
+    UPDATE de `mensagens_whatsapp` daquele lead), tanto reagir quanto
+    receber uma reação do lead atualizam a tela sozinhos assim que o
+    banco muda — nenhuma chamada de `recarregarHistorico()` nova
+    precisou ser adicionada.
+- **Testado ao vivo, ponta a ponta, em produção** (lead de teste do
+  usuário, 904000019): `whatsapp-send` com `tipo:'reacao'` e um
+  `wa_message_id` real devolveu `{"ok":true}` e a Graph API aceitou de
+  verdade (chamada real, mesma que teria ido pro WhatsApp do usuário);
+  confirmado no banco que `reacoes` da mensagem alvo virou
+  `{"atendente":"👍"}` SEM criar nenhuma linha nova; reenviando com
+  `emoji:''` confirmado que `reacoes` voltou a `null` (remoção). **O
+  lado do webhook (reação CHEGANDO do lead) não foi testado ao vivo**
+  (não dá pra forjar a assinatura HMAC de um webhook real da Meta sem o
+  `WHATSAPP_APP_SECRET`, que é um secret só do servidor) — mas usa a
+  MESMA função `aplicarReacao()` já validada pelo teste acima, então o
+  risco residual é baixo; a próxima reação real recebida de um lead
+  confirma visualmente.
 
 ## Bloqueio da API do WhatsApp (Meta) — investigado 2026-09-07
 

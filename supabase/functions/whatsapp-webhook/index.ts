@@ -7,6 +7,7 @@
 // manda Authorization: Bearer, só X-Hub-Signature-256, que é validado abaixo.
 import { supabaseAdmin, NOME_TABELA_LEADS, NOME_TABELA_MENSAGENS } from "../_shared/supabaseAdmin.ts";
 import { candidatosNumeroBR, separarFromMeta } from "../_shared/telefone.ts";
+import { aplicarReacao } from "../_shared/reacoes.ts";
 
 const APP_SECRET = Deno.env.get("WHATSAPP_APP_SECRET")!;
 const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN")!;
@@ -120,6 +121,31 @@ Deno.serve(async (req) => {
             const phoneNumberId: string | undefined = value.metadata?.phone_number_id;
 
             for (const msg of value.messages ?? []) {
+                // Reação com emoji a uma mensagem já existente (pedido do
+                // usuário, 2026-09-28) — NUNCA cria uma linha nova em
+                // mensagens_whatsapp; só atualiza `reacoes.lead` na
+                // mensagem alvo (casada por wa_message_id). Achado
+                // investigando um relato de "não identificado": antes
+                // desta função existir, uma reação caía no caminho padrão
+                // de mensagem — virava uma linha estranha ("[Mensagem
+                // tipo reaction]") e, se o casamento por telefone falhasse
+                // por qualquer motivo transitório (ex: durante um redeploy
+                // desta própria function), ficava presa como "não
+                // identificado" sem nunca ter sido uma conversa de
+                // verdade. Sem casar telefone/lead nenhum aqui — a
+                // mensagem original já tem o pessoaIdentificador certo.
+                if (msg.type === "reaction") {
+                    const resultado = await aplicarReacao(
+                        supabaseAdmin,
+                        NOME_TABELA_MENSAGENS,
+                        msg.reaction?.message_id,
+                        "lead",
+                        msg.reaction?.emoji,
+                    );
+                    if (!resultado.ok) console.warn("Reação recebida não pôde ser aplicada:", msg.reaction, resultado.erro);
+                    continue;
+                }
+
                 const { ddd, numero } = separarFromMeta(msg.from);
                 const candidatos = candidatosNumeroBR(numero);
                 const matches = await buscarLeadsPorTelefone(ddd, candidatos);
