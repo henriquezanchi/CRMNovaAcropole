@@ -96,6 +96,10 @@ supabase/functions/_shared/midia.ts → baixarEArmazenarMidiaRecebida() — baix
                                      da Graph API e re-hospeda no bucket whatsapp-midia;
                                      compartilhada entre whatsapp-webhook e
                                      whatsapp-backfill-midia
+supabase/functions/whatsapp-marcar-lido/ → Edge Function: marca uma mensagem recebida como
+                                     lida na Meta (✓✓ azul do lado do lead) — endpoint próprio
+                                     da Graph API, chamada ao abrir uma conversa; ver seção
+                                     "Vídeo/figurinha/localização, leitura ativa..."
 migracao_filiais.sql              → já rodada (cria tabela filiais + coluna filial)
 migracao_historico_eventos.sql    → já rodada (coluna historico_eventos + constraint UNIQUE)
 migracao_whatsapp.sql             → tabela mensagens_whatsapp + view vw_wpp_conversas
@@ -6859,7 +6863,70 @@ ilegível, pergunta sobre foto de perfil).
   construído, e não há solução conhecida enquanto essa restrição da API
   existir.
 
-## Bloqueio da API do WhatsApp (Meta) — investigado 2026-09-07
+## Vídeo/figurinha/localização, leitura ativa, busca, priorização e IA com contexto do CRM (2026-09-29)
+
+Pedido do usuário: "implemente tudo que for possível no whatsapp do
+crm" — a partir do comparativo WhatsApp real vs. Cloud API vs. CRM feito
+nesta sessão, mais "quero criar um 'bot' de atendimento que possa ler a
+conversa e organizar a ordem de resposta por prioridade... já com uma
+sugestão de resposta inteligente (pode pesquisar em todo os crm para
+responder)". Não é um bot novo/separado — é a MESMA infraestrutura de
+`sugerir-resposta-whatsapp` (ver seção própria acima) enriquecida.
+
+- **Bug real corrigido primeiro: cabeçalho do chat da gaveta cortado**
+  — `.chat-header` (`css/style.css`) não tinha `flex-wrap`; a gaveta
+  acumulou botões (Importar Conversa/Convidar pra Evento/Nova Turma/
+  Buscar/Ver no WhatsApp Unificado/alterar nome) numa coluna estreita
+  (drawer tem 800px total, 350px já vão pra `.drawer-info`) e a fila
+  simplesmente extrapolava a largura. Corrigido com `flex-wrap: wrap`
+  (inofensivo pro cabeçalho do WhatsApp Unificado, painel bem mais
+  largo).
+- **Vídeo e figurinha recebidos** — mesmo mecanismo de
+  `baixarEArmazenarMidiaRecebida()` (áudio/imagem/documento, ver seção
+  própria) — `msg.video.id`/`msg.sticker.id` → `video_url`/`sticker_url`
+  em `payload_bruto`. `htmlMensagemWpp()` ganhou `<video controls>` e um
+  `<img>` pequeno (sem moldura de balão, igual o real) pra figurinha.
+  **Sem migração nova** — `tipo` já aceitava `'video'`/`'sticker'` no
+  `check` constraint desde `migracao_whatsapp.sql`, só nunca eram
+  baixados de verdade.
+- **Localização compartilhada** — `msg.location` já vem com lat/long
+  direto (sem `id` de mídia pra baixar); card clicável (`<a>` pro Google
+  Maps, `?q=lat,long`) com nome/endereço quando a Meta manda.
+- **Confirmação de leitura ativa** (✓✓ azul do lado do lead) — nova Edge
+  Function `whatsapp-marcar-lido` (`POST .../messages` com
+  `{status:"read", message_id}`, endpoint PRÓPRIO da Graph API,
+  diferente do envio normal — por isso não entrou em `whatsapp-send`).
+  Chamada de dentro do `abrir()` do `criarChatController()` — cobre
+  WhatsApp Unificado E gaveta de uma vez (os 2 usam o mesmo `abrir()`).
+  `wppMensagensMarcadasLidas` (Set em memória) evita repetir a chamada
+  pra mesma mensagem em reaberturas seguidas da mesma sessão.
+- **Busca dentro da conversa aberta** — `toggleBuscaConversa()` (dentro
+  do controller, exposta em `chatWpp`/`chatDrawer`), botão de lupa nos 2
+  cabeçalhos. Filtra os balões já carregados (mesmo limite de 200 de
+  `carregarHistoricoMensagens()`) — diferente do WhatsApp real (que
+  destaca e pula entre resultados sem esconder o resto), aqui é uma
+  versão mais simples: só mostra quem bate, com contador "N resultado(s)".
+- **Priorização automática ("bot")** — novo modo de ordenação
+  `"Prioridade (recomendado)"`, agora o PADRÃO da lista de conversas
+  (`#wppOrdenarSelect`). Pontuação 100% determinística (nunca a IA
+  decidindo a ordem), combinando sinais que já existiam no CRM:
+  sugestão de IA pendente (+1000, pesa mais — já tem resposta pronta, só
+  falta autorizar), janela fechando (+400/+200/+50 conforme urgência),
+  Lead Forte 1/2/3 (+300/+180/+90), não lida (+60). Empate cai pra mais
+  recente primeiro.
+- **`sugerir-resposta-whatsapp` ganhou `montarContextoCRM()`** — antes só
+  via as últimas 6 mensagens da PRÓPRIA conversa (nunca respondia
+  "quanto custa"/"onde fica"/"que evento eu já fui" com segurança, sempre
+  caía no "vou confirmar"). Agora busca, por lead: tags, últimos 5
+  eventos de `historico_eventos`, `resumo_ia`, `abordagem_sugerida`; por
+  filial: `nome_com_preposicao`/`endereco`/`valor_mensalidade`. O prompt
+  instrui explicitamente a IA a USAR esses dados reais quando responderem
+  a pergunta, e continua proibido inventar o que não estiver ali.
+  **Testado**: campos confirmados no formato real do banco (`tags` como
+  string JSON, `historico_eventos` como array `{evento,data,tipo}`) —
+  a geração de texto em si continua bloqueada pela mesma falha de
+  credencial da Anthropic já documentada (não testado com resposta real
+  da IA, só a montagem do contexto).
 
 Toda mensagem de saída desde 2026-09-05 22:21 (e antes, 19:23) falha com
 `{"code":200,"type":"OAuthException","message":"API access blocked."}` —
