@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
         // pra template/imagem/documento (não faz sentido sem lead pra
         // resolver as variáveis) — só texto.
         telefoneWhatsapp?: string;
-        tipo?: "texto" | "template" | "imagem" | "documento" | "reacao";
+        tipo?: "texto" | "template" | "imagem" | "documento" | "audio" | "reacao";
         texto?: string;
         templateNome?: string;
         templateIdioma?: string;
@@ -43,11 +43,22 @@ Deno.serve(async (req) => {
         templatePreview?: string;
         imagemUrl?: string;
         documentoUrl?: string;
+        audioUrl?: string;
         nomeArquivo?: string;
         caption?: string;
         atendenteNome?: string;
         mensagemAlvoId?: string;
         emoji?: string;
+        // Responder a UMA mensagem específica (pedido do usuário,
+        // 2026-09-29: "igual no whatsapp real") — `contextoMessageId` é o
+        // wa_message_id da mensagem citada, exigido pela Graph API pra
+        // montar o `context` da resposta; `contextoPreview`/`contextoRemetente`
+        // são só nossos, guardados em payload_bruto pra renderizar a
+        // citação no balão sem precisar resolver de novo depois (ver
+        // resolverCitacaoWpp(), js/whatsapp.js).
+        contextoMessageId?: string;
+        contextoPreview?: string;
+        contextoRemetente?: string;
     };
     try {
         corpoReq = await req.json();
@@ -55,13 +66,14 @@ Deno.serve(async (req) => {
         return json({ ok: false, erro: "json_invalido" }, 400);
     }
 
-    const { pessoaIdentificador, telefoneWhatsapp, tipo, texto, templateNome, templateIdioma, templateParams, templatePreview, imagemUrl, documentoUrl, nomeArquivo, caption, atendenteNome, mensagemAlvoId, emoji } = corpoReq;
+    const { pessoaIdentificador, telefoneWhatsapp, tipo, texto, templateNome, templateIdioma, templateParams, templatePreview, imagemUrl, documentoUrl, audioUrl, nomeArquivo, caption, atendenteNome, mensagemAlvoId, emoji, contextoMessageId, contextoPreview, contextoRemetente } = corpoReq;
     if ((!pessoaIdentificador && !telefoneWhatsapp) || !tipo) return json({ ok: false, erro: "parametros_faltando" }, 400);
     if (!pessoaIdentificador && tipo !== "texto") return json({ ok: false, erro: "tipo_exige_lead" }, 400);
     if (tipo === "texto" && !texto?.trim()) return json({ ok: false, erro: "texto_vazio" }, 400);
     if (tipo === "template" && !templateNome) return json({ ok: false, erro: "template_nome_faltando" }, 400);
     if (tipo === "imagem" && !imagemUrl?.trim()) return json({ ok: false, erro: "imagem_url_faltando" }, 400);
     if (tipo === "documento" && !documentoUrl?.trim()) return json({ ok: false, erro: "documento_url_faltando" }, 400);
+    if (tipo === "audio" && !audioUrl?.trim()) return json({ ok: false, erro: "audio_url_faltando" }, 400);
     // "reacao" — emoji vazio é válido (remove uma reação já enviada, mesmo
     // comportamento do WhatsApp real), só o id da mensagem alvo é obrigatório.
     if (tipo === "reacao" && !mensagemAlvoId?.trim()) return json({ ok: false, erro: "mensagem_alvo_faltando" }, 400);
@@ -148,6 +160,18 @@ Deno.serve(async (req) => {
                 ? { link: documentoUrl, filename: nomeArquivo, caption }
                 : { link: documentoUrl, filename: nomeArquivo },
         }
+        : tipo === "audio"
+        ? {
+            // Mesmo raciocínio de imagem/documento — "link", a própria
+            // Meta busca o arquivo. Usado hoje só por "Encaminhar
+            // mensagem" (áudio recebido de um lead, re-hospedado no
+            // Storage, encaminhado como áudio de verdade pra outro lead
+            // — ver confirmarEncaminharWpp(), js/whatsapp.js).
+            messaging_product: "whatsapp",
+            to: numeroE164,
+            type: "audio",
+            audio: { link: audioUrl },
+        }
         : tipo === "reacao"
         ? {
             // Pedido do usuário (2026-09-28): reagir com emoji igual o
@@ -167,17 +191,27 @@ Deno.serve(async (req) => {
             text: { body: texto },
         };
 
+    // Responder a uma mensagem específica (pedido do usuário, 2026-09-29)
+    // — a Graph API aceita `context.message_id` em QUALQUER tipo de
+    // mensagem de saída (não só texto), então basta anexar aqui, depois
+    // de `bodyGraph` já montado pro tipo certo.
+    if (contextoMessageId) (bodyGraph as any).context = { message_id: contextoMessageId };
+
     const corpoTexto = tipo === "template" ? (templatePreview || `[Template: ${templateNome}]`)
         : tipo === "imagem" ? (caption || "[Imagem]")
         : tipo === "documento" ? (caption || `[Documento: ${nomeArquivo || "arquivo"}]`)
+        : tipo === "audio" ? "[Áudio]"
         : texto;
     // Guarda a URL/nome junto do payload bruto — a resposta da Graph API
     // não devolve isso de volta, e o chat precisa pra RENDERIZAR a
-    // imagem/o cartão de documento de verdade (não só a legenda). Ver
-    // htmlMensagemWpp() em js/whatsapp.js.
-    const payloadExtra = tipo === "imagem" ? { imagem_url: imagemUrl }
-        : tipo === "documento" ? { documento_url: documentoUrl, nome_arquivo: nomeArquivo }
-        : {};
+    // imagem/o cartão de documento/o player de áudio de verdade (não só
+    // a legenda). Ver htmlMensagemWpp() em js/whatsapp.js.
+    const payloadExtra = {
+        ...(tipo === "imagem" ? { imagem_url: imagemUrl } : {}),
+        ...(tipo === "documento" ? { documento_url: documentoUrl, nome_arquivo: nomeArquivo } : {}),
+        ...(tipo === "audio" ? { audio_url: audioUrl } : {}),
+        ...(contextoMessageId ? { contexto_preview: contextoPreview || null, contexto_remetente: contextoRemetente || null } : {}),
+    };
 
     let respGraph: Response;
     let respJson: any;

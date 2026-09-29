@@ -402,8 +402,13 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
    row de sempre, só que agora dentro de um wrapper próprio (.chat-input-row),
    já que .chat-input-area passou a ter mais de 1 filho possível. */
 .chat-input-area { background: #f0f2f5; padding: 12px 20px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border-color); }
-.chat-input-row { display: flex; gap: 10px; align-items: center; }
-.chat-input { flex: 1; padding: 10px 16px; border: none; border-radius: 21px; font-size: 13px; outline: none; background: white; box-shadow: 0 1px 1px rgba(0,0,0,0.06); }
+.chat-input-row { display: flex; gap: 10px; align-items: flex-end; }
+/* Virou <textarea> (2026-09-29, pedido do usuário: "criar uma nova linha
+   na mensagem ao apertar ctrl+enter") — Enter sozinho continua enviando
+   (preventDefault no keydown, ver renderizarAreaInput()); Ctrl+Enter cai
+   no comportamento padrão do textarea (insere a quebra de linha). Cresce
+   sozinho até um limite (ver ajustarAlturaTextareaWpp()), depois rola. */
+.chat-input { flex: 1; padding: 10px 16px; border: none; border-radius: 21px; font-size: 13px; outline: none; background: white; box-shadow: 0 1px 1px rgba(0,0,0,0.06); font-family: inherit; resize: none; overflow-y: auto; max-height: 100px; line-height: 1.35; }
 .btn-send { background: var(--na-green); color: white; border: none; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 /* Prévia do anexo escolhido (foto ou documento), antes de enviar —
    pedido do usuário ("máximo de funcionalidades iguais ao WhatsApp
@@ -702,6 +707,56 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
     line-height: 1;
 }
 .wpp-reacao-opcao:hover, .wpp-reacao-opcao.ativa { background: #f0f2f5; transform: scale(1.15); }
+
+/* Responder a uma mensagem específica (pedido do usuário, 2026-09-29:
+   "igual no whatsapp real") — botão de responder ao lado do de reagir,
+   citação dentro do balão de quem respondeu, e a barra "respondendo a
+   X" acima da caixa de texto, com botão de cancelar. */
+.wpp-responder-btn {
+    position: absolute; top: -12px; background: white; border: 1px solid #e2e8f0; border-radius: 50%;
+    width: 22px; height: 22px; font-size: 11px; color: #64748b; cursor: pointer; display: none;
+    align-items: center; justify-content: center; box-shadow: 0 1px 2px rgba(0,0,0,0.15); padding: 0;
+}
+.msg:hover .wpp-responder-btn { display: flex; }
+.msg-out .wpp-responder-btn { left: 18px; }
+.msg-in .wpp-responder-btn { right: 18px; }
+.wpp-encaminhar-btn {
+    position: absolute; top: -12px; background: white; border: 1px solid #e2e8f0; border-radius: 50%;
+    width: 22px; height: 22px; font-size: 11px; color: #64748b; cursor: pointer; display: none;
+    align-items: center; justify-content: center; box-shadow: 0 1px 2px rgba(0,0,0,0.15); padding: 0;
+}
+.msg:hover .wpp-encaminhar-btn { display: flex; }
+.msg-out .wpp-encaminhar-btn { left: 44px; }
+.msg-in .wpp-encaminhar-btn { right: 44px; }
+/* Painel de "Encaminhar mensagem" — busca de lead destino, mesmo
+   espírito visual do seletor de reação (overlay + caixa flutuante). */
+.wpp-encaminhar-panel { position: fixed; inset: 0; z-index: 3100; display: flex; align-items: center; justify-content: center; }
+.wpp-encaminhar-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.4); }
+.wpp-encaminhar-caixa { position: relative; background: white; border-radius: 10px; width: 320px; max-width: 90vw; padding: 14px; box-shadow: 0 8px 30px rgba(0,0,0,0.3); }
+.wpp-encaminhar-titulo { display: flex; justify-content: space-between; align-items: center; font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+.wpp-encaminhar-titulo button { background: none; border: none; cursor: pointer; color: #64748b; font-size: 14px; }
+.wpp-encaminhar-preview { font-size: 11.5px; color: #475569; background: #f0f2f5; border-radius: 6px; padding: 6px 8px; margin-bottom: 8px; max-height: 60px; overflow-y: auto; white-space: pre-line; }
+.wpp-encaminhar-busca { width: 100%; padding: 8px 10px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 13px; box-sizing: border-box; margin-bottom: 6px; }
+.wpp-encaminhar-resultados { max-height: 220px; overflow-y: auto; }
+.wpp-encaminhar-item { padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+.wpp-encaminhar-item:hover { background: #f0f2f5; }
+.wpp-quote {
+    border-left: 3px solid var(--na-green-dark); background: rgba(0,0,0,0.05); border-radius: 4px;
+    padding: 4px 6px; margin-bottom: 4px; font-size: 11px; overflow: hidden;
+}
+.msg-out .wpp-quote { background: rgba(255,255,255,0.25); border-left-color: rgba(255,255,255,0.7); }
+.wpp-quote-remetente { font-weight: 700; color: var(--na-green-dark); }
+.msg-out .wpp-quote-remetente { color: rgba(255,255,255,0.9); }
+.wpp-quote-texto { color: #475569; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.msg-out .wpp-quote-texto { color: rgba(255,255,255,0.85); }
+.wpp-respondendo-bar {
+    display: flex; align-items: center; gap: 8px; padding: 6px 10px; margin: 0 0 6px;
+    background: #f0f2f5; border-radius: 6px; border-left: 3px solid var(--na-green-dark);
+}
+.wpp-respondendo-info { flex: 1; overflow: hidden; }
+.wpp-respondendo-remetente { font-size: 10.5px; font-weight: 700; color: var(--na-green-dark); }
+.wpp-respondendo-preview { font-size: 11px; color: #475569; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.wpp-respondendo-cancelar { background: none; border: none; cursor: pointer; color: #64748b; font-size: 14px; padding: 4px; }
 
 /* Indicador de status de contato nas listas de aniversariantes do
    Dashboard (pedido do usuário, 2026-09-28) — evita reabordar quem já

@@ -284,6 +284,68 @@ function htmlBotaoReagirWpp(m) {
     const reacaoAtendente = (m.reacoes && m.reacoes.atendente) || '';
     return `<button type="button" class="wpp-reagir-btn" data-wa-id="${escapeHTML(m.wa_message_id)}" data-reacao-atendente="${escapeHTML(reacaoAtendente)}" title="Reagir"><i class="fa-regular fa-face-smile"></i></button>`;
 }
+
+// Resumo curto de uma mensagem pra citação (barra "respondendo a"/balão
+// de citação) — mesmo texto pra qualquer tipo de mídia, já que não dá
+// pra mostrar a imagem inteira numa citação de 1 linha.
+function previewTextoMensagemWpp(m) {
+    if (m.tipo === 'imagem') return '📷 Imagem';
+    if (m.tipo === 'documento') return '📄 ' + ((m.payload_bruto && m.payload_bruto.nome_arquivo) || 'Documento');
+    if (m.tipo === 'audio') return '🎤 Áudio';
+    return (m.corpo_texto || '').slice(0, 80);
+}
+
+// Botão de "Responder" (pedido do usuário, 2026-09-29: "igual no
+// whatsapp real") — só existe pra mensagem com wa_message_id de verdade
+// (a Graph API exige o id da mensagem original pra montar o `context`
+// de citação; falha de envio/conversa importada não têm isso).
+function htmlBotaoResponderWpp(m) {
+    if (!m.wa_message_id) return '';
+    return `<button type="button" class="wpp-responder-btn" data-wa-id="${escapeHTML(m.wa_message_id)}" data-preview="${escapeHTML(previewTextoMensagemWpp(m))}" data-remetente="${escapeHTML(m.direcao)}" title="Responder"><i class="fa-solid fa-reply"></i></button>`;
+}
+
+// Botão de "Encaminhar" (pedido do usuário, 2026-09-29: "igual no
+// whatsapp real") — só existe pra mensagem com conteúdo reenviável
+// (texto, ou mídia já com URL pública guardada em payload_bruto).
+// Referencia a mensagem pelo `id` PRÓPRIO (bigint da tabela, não
+// wa_message_id) — o clique busca o objeto completo em `mensagens`
+// (closure do controller), não dá pra guardar um objeto num atributo
+// data-*.
+function htmlBotaoEncaminharWpp(m) {
+    const podeEncaminhar = m.corpo_texto || (m.payload_bruto && (m.payload_bruto.imagem_url || m.payload_bruto.documento_url || m.payload_bruto.audio_url));
+    if (!podeEncaminhar) return '';
+    return `<button type="button" class="wpp-encaminhar-btn" data-msg-id="${m.id}" title="Encaminhar"><i class="fa-solid fa-share"></i></button>`;
+}
+
+// Citação dentro do balão (pedido do usuário, "igual no whatsapp real")
+// — `quotedInfo` já vem resolvida por htmlMensagemWpp(): `{texto,
+// propria}` (`propria` true = a mensagem citada era NOSSA, false = do
+// lead, null = não sabe dizer — mensagem antiga fora da janela
+// carregada). Sempre some se não houver contexto de resposta.
+function htmlCitacaoWpp(quotedInfo) {
+    if (!quotedInfo) return '';
+    const rotulo = quotedInfo.propria === true ? 'Você' : quotedInfo.propria === false ? 'Lead' : 'Mensagem anterior';
+    return `<div class="wpp-quote"><div class="wpp-quote-remetente">${escapeHTML(rotulo)}</div><div class="wpp-quote-texto">${escapeHTML(quotedInfo.texto)}</div></div>`;
+}
+
+// Resolve a citação de uma mensagem — nossas próprias mensagens de
+// SAÍDA já guardam o preview/remetente da mensagem citada no momento do
+// envio (payload_bruto.contexto_preview, ver whatsapp-send); mensagens
+// de ENTRADA só trazem o `context.id` (wa_message_id) da Meta, sem
+// texto — resolve contra o que já está carregado NESTA conversa
+// (`mapaPorWaId`); se a mensagem citada não estiver carregada (mais
+// antiga que a janela já buscada), mostra "Mensagem anterior" mesmo
+// assim, sem travar.
+function resolverCitacaoWpp(m, mapaPorWaId) {
+    if (m.payload_bruto && m.payload_bruto.contexto_preview) {
+        return { texto: m.payload_bruto.contexto_preview, propria: m.payload_bruto.contexto_remetente === 'saida' };
+    }
+    const ctxId = m.payload_bruto && m.payload_bruto.context && m.payload_bruto.context.id;
+    if (!ctxId) return null;
+    const alvo = mapaPorWaId ? mapaPorWaId.get(ctxId) : null;
+    if (!alvo) return { texto: 'Mensagem anterior', propria: null };
+    return { texto: previewTextoMensagemWpp(alvo), propria: alvo.direcao === 'saida' };
+}
 function htmlReacoesWpp(m) {
     if (!m.reacoes) return '';
     const distintos = [...new Set([m.reacoes.lead, m.reacoes.atendente].filter(Boolean))];
@@ -291,7 +353,7 @@ function htmlReacoesWpp(m) {
     return `<div class="wpp-reacao-badge">${distintos.map(e => escapeHTML(e)).join('')}</div>`;
 }
 
-function htmlMensagemWpp(m) {
+function htmlMensagemWpp(m, quotedInfo) {
     const classeDirecao = m.direcao === 'saida' ? 'msg-out' : 'msg-in';
     const classeExtra = m.wa_status === 'falhou' ? 'msg-falhou' : '';
     const classeReacao = (m.reacoes && (m.reacoes.lead || m.reacoes.atendente)) ? 'msg-com-reacao' : '';
@@ -339,6 +401,9 @@ function htmlMensagemWpp(m) {
     return `
         <div class="msg ${classeDirecao} ${classeExtra} ${classeReacao}">
             ${htmlBotaoReagirWpp(m)}
+            ${htmlBotaoResponderWpp(m)}
+            ${htmlBotaoEncaminharWpp(m)}
+            ${htmlCitacaoWpp(quotedInfo)}
             ${corpoHTML}
             ${atendenteHTML}
             <div class="msg-time">${badgeImportada}${formatarHoraWpp(m.criado_em)}${m.direcao === 'saida' ? statusIconHTML(m) : ''}</div>
@@ -392,6 +457,99 @@ function abrirSeletorReacaoWpp(botaoEl, reacaoAtual, aoEscolher) {
     setTimeout(() => document.addEventListener('click', fecharSeletorReacaoWpp, { once: true }), 0);
 }
 
+// ==========================================================
+// Encaminhar mensagem (pedido do usuário, 2026-09-29: "igual no
+// whatsapp real") — busca um lead destino (cross-filial, qualquer
+// filial) e reenvia o MESMO conteúdo como uma mensagem nova. A Graph
+// API não tem um "flag de encaminhado" pra mensagem de SAÍDA — chega pro
+// destinatário como uma mensagem normal, sem o rótulo "Encaminhada" que
+// o app nativo mostra (limitação da API, não do CRM).
+// ==========================================================
+function _containerEncaminharWpp() {
+    let el = document.getElementById('wppEncaminharPanel');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'wppEncaminharPanel';
+        el.className = 'wpp-encaminhar-panel';
+        document.body.appendChild(el);
+    }
+    return el;
+}
+
+function fecharEncaminharWpp() {
+    const el = document.getElementById('wppEncaminharPanel');
+    if (el) el.remove();
+}
+
+function abrirSeletorEncaminharWpp(msg) {
+    fecharEncaminharWpp();
+    const panel = _containerEncaminharWpp();
+    panel.innerHTML = `
+        <div class="wpp-encaminhar-overlay"></div>
+        <div class="wpp-encaminhar-caixa">
+            <div class="wpp-encaminhar-titulo">Encaminhar mensagem <button type="button" class="wpp-encaminhar-fechar"><i class="fa-solid fa-xmark"></i></button></div>
+            <div class="wpp-encaminhar-preview">${escapeHTML(previewTextoMensagemWpp(msg))}</div>
+            <input type="text" class="wpp-encaminhar-busca" placeholder="Buscar lead por nome (qualquer filial)...">
+            <div class="wpp-encaminhar-resultados"></div>
+        </div>
+    `;
+    panel.querySelector('.wpp-encaminhar-overlay').addEventListener('click', fecharEncaminharWpp);
+    panel.querySelector('.wpp-encaminhar-fechar').addEventListener('click', fecharEncaminharWpp);
+
+    const busca = panel.querySelector('.wpp-encaminhar-busca');
+    const resultados = panel.querySelector('.wpp-encaminhar-resultados');
+    let timer = null;
+    busca.addEventListener('input', () => {
+        clearTimeout(timer);
+        timer = setTimeout(async () => {
+            const termo = busca.value.trim();
+            if (!termo) { resultados.innerHTML = ''; return; }
+            const { data } = await window.supabaseClient
+                .from('leads_inscricoes')
+                .select('pessoaIdentificador, pessoaNome, filial')
+                .ilike('pessoaNome', `%${termo}%`)
+                .is('lixeira_em', null)
+                .not('pessoaTelefoneNumero', 'is', null)
+                .limit(15);
+            resultados.innerHTML = (data || []).length > 0
+                ? data.map(l => `
+                    <div class="wpp-encaminhar-item" data-id="${l.pessoaIdentificador}" data-nome="${escapeHTML(l.pessoaNome || '')}">
+                        <div style="font-size:12.5px;">${escapeHTML(l.pessoaNome || 'Sem nome')}</div>
+                        <div style="font-size:10px; color:var(--text-muted);"><i class="fa-solid fa-building"></i> ${escapeHTML(l.filial || 'sem filial')}</div>
+                    </div>
+                `).join('')
+                : '<div style="font-size:11px; color:var(--text-muted); padding:8px;">Nenhum lead encontrado.</div>';
+            resultados.querySelectorAll('.wpp-encaminhar-item').forEach(item => {
+                item.addEventListener('click', () => confirmarEncaminharWpp(msg, item.dataset.id, item.dataset.nome));
+            });
+        }, 250);
+    });
+    busca.focus();
+}
+
+async function confirmarEncaminharWpp(msg, leadIdDestino, nomeDestino) {
+    if (!confirm(`Encaminhar esta mensagem pra ${nomeDestino}?`)) return;
+    fecharEncaminharWpp();
+
+    let body;
+    if (msg.tipo === 'imagem' && msg.payload_bruto?.imagem_url) {
+        body = { pessoaIdentificador: leadIdDestino, tipo: 'imagem', imagemUrl: msg.payload_bruto.imagem_url, atendenteNome: obterNomeAtendente() };
+    } else if (msg.tipo === 'documento' && msg.payload_bruto?.documento_url) {
+        body = { pessoaIdentificador: leadIdDestino, tipo: 'documento', documentoUrl: msg.payload_bruto.documento_url, nomeArquivo: msg.payload_bruto.nome_arquivo, atendenteNome: obterNomeAtendente() };
+    } else if (msg.tipo === 'audio' && msg.payload_bruto?.audio_url) {
+        body = { pessoaIdentificador: leadIdDestino, tipo: 'audio', audioUrl: msg.payload_bruto.audio_url, atendenteNome: obterNomeAtendente() };
+    } else {
+        body = { pessoaIdentificador: leadIdDestino, tipo: 'texto', texto: msg.corpo_texto, atendenteNome: obterNomeAtendente() };
+    }
+
+    const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', { body });
+    if (error || !data || data.ok === false) {
+        alert('Não foi possível encaminhar: ' + (error ? error.message : mensagemErroWpp(data)));
+        return;
+    }
+    moverParaAbordagemAposEnvio(leadIdDestino).catch(e => console.warn('Erro ao mover lead pra Abordagem após envio:', e.message));
+}
+
 async function enviarReacaoWpp(leadId, mensagemAlvoId, emoji) {
     if (!leadId || !mensagemAlvoId) return;
     const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
@@ -418,29 +576,87 @@ async function carregarHistoricoMensagens(pessoaIdentificador) {
 // Controller de chat reaproveitável — instanciado uma vez pra aba
 // unificada e uma vez pra gaveta lateral do lead, sem duplicar lógica.
 // ==========================================================
+// Auto-crescimento do <textarea> de mensagem (pedido do usuário,
+// 2026-09-29, junto do Ctrl+Enter pra nova linha) — cresce conforme o
+// texto ganha linhas, até o limite de `max-height` do CSS (.chat-input),
+// onde passa a rolar em vez de continuar crescendo.
+function ajustarAlturaTextareaWpp(textarea) {
+    textarea.style.height = 'auto';
+    textarea.style.height = textarea.scrollHeight + 'px';
+}
+
 function criarChatController({ messagesId, inputAreaId }) {
     let leadId = null;
     let mensagens = [];
     let canal = null;
     let anexoPendente = null; // { file, tipo: 'imagem'|'documento' } — ver selecionarAnexo()
+    // "Responder a uma mensagem específica" (pedido do usuário, 2026-09-29:
+    // "igual no whatsapp real") — { waId, preview, remetente: 'saida'|'entrada' }
+    // do balão clicado; null = não está respondendo nada em particular.
+    let respondendoA = null;
 
     const el = (id) => document.getElementById(id);
 
     // Clique delegado no CONTAINER (não nos balões — o innerHTML é
     // reconstruído a cada renderizarMensagens(), um listener por balão se
-    // perderia) pro botão de reagir. Ligado 1x na criação do controller,
-    // sobrevive a qualquer re-render.
+    // perderia) pro botão de reagir/responder. Ligado 1x na criação do
+    // controller, sobrevive a qualquer re-render.
     const containerMsgsParaReacao = el(messagesId);
     if (containerMsgsParaReacao) {
         containerMsgsParaReacao.addEventListener('click', (e) => {
-            const btn = e.target.closest('.wpp-reagir-btn');
-            if (!btn || !leadId) return;
-            e.stopPropagation();
-            const waId = btn.dataset.waId;
-            abrirSeletorReacaoWpp(btn, btn.dataset.reacaoAtendente || '', (emoji) => {
-                enviarReacaoWpp(leadId, waId, emoji);
-            });
+            const btnReagir = e.target.closest('.wpp-reagir-btn');
+            if (btnReagir && leadId) {
+                e.stopPropagation();
+                const waId = btnReagir.dataset.waId;
+                abrirSeletorReacaoWpp(btnReagir, btnReagir.dataset.reacaoAtendente || '', (emoji) => {
+                    enviarReacaoWpp(leadId, waId, emoji);
+                });
+                return;
+            }
+            const btnResponder = e.target.closest('.wpp-responder-btn');
+            if (btnResponder) {
+                e.stopPropagation();
+                respondendoA = { waId: btnResponder.dataset.waId, preview: btnResponder.dataset.preview, remetente: btnResponder.dataset.remetente };
+                atualizarBarraRespondendo();
+                const input = el(inputAreaId)?.querySelector('.chat-input');
+                if (input) input.focus();
+                return;
+            }
+            const btnEncaminhar = e.target.closest('.wpp-encaminhar-btn');
+            if (btnEncaminhar) {
+                e.stopPropagation();
+                const msg = mensagens.find(x => String(x.id) === btnEncaminhar.dataset.msgId);
+                if (msg) abrirSeletorEncaminharWpp(msg);
+            }
         });
+    }
+
+    // Injeta/remove a barra "Respondendo a..." acima da caixa de texto,
+    // SEM re-renderizar a área de input inteira (evitaria perder o foco/
+    // valor já digitado no <input>, ou a referência do elemento em uso
+    // por enviarTexto() no meio de um envio). Chamada ao clicar
+    // "Responder" e ao cancelar/enviar.
+    function atualizarBarraRespondendo() {
+        const container = el(inputAreaId);
+        if (!container) return;
+        const barraAntiga = container.querySelector('.wpp-respondendo-bar');
+        if (barraAntiga) barraAntiga.remove();
+        if (!respondendoA) return;
+        const rotulo = respondendoA.remetente === 'saida' ? 'Respondendo a você' : 'Respondendo ao lead';
+        const barra = document.createElement('div');
+        barra.className = 'wpp-respondendo-bar';
+        barra.innerHTML = `
+            <div class="wpp-respondendo-info">
+                <div class="wpp-respondendo-remetente">${escapeHTML(rotulo)}</div>
+                <div class="wpp-respondendo-preview">${escapeHTML(respondendoA.preview || '')}</div>
+            </div>
+            <button type="button" class="wpp-respondendo-cancelar"><i class="fa-solid fa-xmark"></i></button>
+        `;
+        barra.querySelector('.wpp-respondendo-cancelar').addEventListener('click', () => {
+            respondendoA = null;
+            atualizarBarraRespondendo();
+        });
+        container.insertBefore(barra, container.firstChild);
     }
 
     // "Fidelidade ao WhatsApp real" (pedido do usuário, 2026-09-28) — o
@@ -453,6 +669,7 @@ function criarChatController({ messagesId, inputAreaId }) {
             container.innerHTML = '<div style="text-align:center; font-size:11px; color:#64748b; margin-top:20px;">Nenhuma mensagem ainda. Envie a primeira abaixo.</div>';
             return;
         }
+        const mapaPorWaId = new Map(mensagens.filter(x => x.wa_message_id).map(x => [x.wa_message_id, x]));
         let html = '';
         let ultimoDia = null;
         mensagens.forEach(m => {
@@ -461,7 +678,7 @@ function criarChatController({ messagesId, inputAreaId }) {
                 html += `<div class="wpp-date-divider"><span>${escapeHTML(rotuloDataSeparadorWpp(m.criado_em))}</span></div>`;
                 ultimoDia = diaAtual;
             }
-            html += htmlMensagemWpp(m);
+            html += htmlMensagemWpp(m, resolverCitacaoWpp(m, mapaPorWaId));
         });
         container.innerHTML = html;
         container.scrollTop = container.scrollHeight;
@@ -504,10 +721,16 @@ function criarChatController({ messagesId, inputAreaId }) {
             if (tpl.variaveis?.length && params.some(p => !p)) { alert('Preencha todas as variáveis do modelo.'); return; }
 
             const preview = montarPreviewTemplate(tpl, params);
+            const contexto = respondendoA;
+            respondendoA = null;
+            atualizarBarraRespondendo();
 
             botao.disabled = true;
             const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
-                body: { pessoaIdentificador: leadId, tipo: 'template', templateNome: tpl.nome, templateIdioma: tpl.idioma || 'pt_BR', templateParams: params, templatePreview: preview, atendenteNome: obterNomeAtendente() }
+                body: {
+                    pessoaIdentificador: leadId, tipo: 'template', templateNome: tpl.nome, templateIdioma: tpl.idioma || 'pt_BR', templateParams: params, templatePreview: preview, atendenteNome: obterNomeAtendente(),
+                    ...(contexto ? { contextoMessageId: contexto.waId, contextoPreview: contexto.preview, contextoRemetente: contexto.remetente } : {}),
+                }
             });
             botao.disabled = false;
 
@@ -529,6 +752,7 @@ function criarChatController({ messagesId, inputAreaId }) {
         if (!container) return;
         container.innerHTML = htmlSeletorTemplate();
         ligarHandlersTemplate(container);
+        atualizarBarraRespondendo();
     }
 
     // Anexar foto/documento (pedido do usuário, 2026-09-28: "máximo de
@@ -573,7 +797,7 @@ function criarChatController({ messagesId, inputAreaId }) {
                     <button type="button" class="btn-anexo-toggle" style="background: none; border: none; font-size: 18px; color: var(--text-muted); cursor: pointer;" title="Anexar foto ou documento"><i class="fa-solid fa-paperclip"></i></button>
                     <input type="file" class="wpp-anexo-input" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" hidden>
                     <button type="button" style="background: none; border: none; font-size: 20px; color: var(--text-muted); cursor: pointer;"><i class="fa-regular fa-face-smile"></i></button>
-                    <input type="text" class="chat-input" placeholder="Digite uma mensagem...">
+                    <textarea class="chat-input" rows="1" placeholder="Digite uma mensagem... (Ctrl+Enter pra nova linha)"></textarea>
                     <button type="button" class="btn-send"><i class="fa-solid fa-paper-plane"></i></button>
                 </div>
             `;
@@ -583,7 +807,13 @@ function criarChatController({ messagesId, inputAreaId }) {
             const anexoInput = container.querySelector('.wpp-anexo-input');
             const disparar = () => enviarMensagem(input);
             botao.addEventListener('click', disparar);
-            input.addEventListener('keydown', (e) => { if (e.key === 'Enter') disparar(); });
+            // Enter sozinho envia (mesmo comportamento de sempre); Ctrl+Enter
+            // (pedido do usuário, 2026-09-29) cai no padrão do <textarea> —
+            // insere a quebra de linha, sem preventDefault nenhum.
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.ctrlKey) { e.preventDefault(); disparar(); }
+            });
+            input.addEventListener('input', () => ajustarAlturaTextareaWpp(input));
             anexoBtn.addEventListener('click', () => anexoInput.click());
             anexoInput.addEventListener('change', () => {
                 if (anexoInput.files[0]) selecionarAnexo(anexoInput.files[0]);
@@ -591,7 +821,9 @@ function criarChatController({ messagesId, inputAreaId }) {
             });
         } else {
             renderizarAreaInputTemplate();
+            return;
         }
+        atualizarBarraRespondendo();
     }
 
     // Decide entre texto livre e anexo (foto/documento, legenda = o texto
@@ -604,11 +836,18 @@ function criarChatController({ messagesId, inputAreaId }) {
     async function enviarTexto(input) {
         const texto = input.value.trim();
         if (!texto || !leadId) return;
+        const contexto = respondendoA;
+        respondendoA = null;
+        atualizarBarraRespondendo();
         input.value = '';
+        ajustarAlturaTextareaWpp(input);
         input.disabled = true;
 
         const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
-            body: { pessoaIdentificador: leadId, tipo: 'texto', texto, atendenteNome: obterNomeAtendente() }
+            body: {
+                pessoaIdentificador: leadId, tipo: 'texto', texto, atendenteNome: obterNomeAtendente(),
+                ...(contexto ? { contextoMessageId: contexto.waId, contextoPreview: contexto.preview, contextoRemetente: contexto.remetente } : {}),
+            }
         });
         input.disabled = false;
 
@@ -631,6 +870,9 @@ function criarChatController({ messagesId, inputAreaId }) {
         if (!leadId || !anexoPendente) return;
         const anexo = anexoPendente;
         const legenda = input.value.trim();
+        const contexto = respondendoA;
+        respondendoA = null;
+        atualizarBarraRespondendo();
         input.value = '';
         input.disabled = true;
         anexoPendente = null;
@@ -647,9 +889,10 @@ function criarChatController({ messagesId, inputAreaId }) {
             const { data: urlData } = window.supabaseClient.storage.from('whatsapp-midia').getPublicUrl(caminho);
             const url = urlData.publicUrl;
 
+            const contextoBody = contexto ? { contextoMessageId: contexto.waId, contextoPreview: contexto.preview, contextoRemetente: contexto.remetente } : {};
             const body = anexo.tipo === 'imagem'
-                ? { pessoaIdentificador: leadId, tipo: 'imagem', imagemUrl: url, caption: legenda || undefined, atendenteNome: obterNomeAtendente() }
-                : { pessoaIdentificador: leadId, tipo: 'documento', documentoUrl: url, nomeArquivo: anexo.file.name, caption: legenda || undefined, atendenteNome: obterNomeAtendente() };
+                ? { pessoaIdentificador: leadId, tipo: 'imagem', imagemUrl: url, caption: legenda || undefined, atendenteNome: obterNomeAtendente(), ...contextoBody }
+                : { pessoaIdentificador: leadId, tipo: 'documento', documentoUrl: url, nomeArquivo: anexo.file.name, caption: legenda || undefined, atendenteNome: obterNomeAtendente(), ...contextoBody };
 
             const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', { body });
             input.disabled = false;
@@ -699,6 +942,7 @@ function criarChatController({ messagesId, inputAreaId }) {
         if (canal) { window.supabaseClient.removeChannel(canal); canal = null; }
         leadId = pessoaIdentificador;
         mensagens = [];
+        respondendoA = null; // trocar de conversa cancela qualquer "respondendo a" pendente
 
         const containerMsgs = el(messagesId);
         if (containerMsgs) containerMsgs.innerHTML = '<div style="text-align:center; font-size:11px; color:#64748b; margin-top:20px;">Carregando conversa...</div>';
@@ -2331,6 +2575,7 @@ async function carregarERenderizarChatNaoIdentificado(telefone) {
         if (mensagens.length === 0) {
             container.innerHTML = '<div style="text-align:center; font-size:11px; color:#64748b; margin-top:20px;">Nenhuma mensagem ainda.</div>';
         } else {
+            const mapaPorWaId = new Map(mensagens.filter(x => x.wa_message_id).map(x => [x.wa_message_id, x]));
             let html = '';
             let ultimoDia = null;
             mensagens.forEach(m => {
@@ -2339,7 +2584,7 @@ async function carregarERenderizarChatNaoIdentificado(telefone) {
                     html += `<div class="wpp-date-divider"><span>${escapeHTML(rotuloDataSeparadorWpp(m.criado_em))}</span></div>`;
                     ultimoDia = diaAtual;
                 }
-                html += htmlMensagemWpp(m);
+                html += htmlMensagemWpp(m, resolverCitacaoWpp(m, mapaPorWaId));
             });
             container.innerHTML = html;
             container.scrollTop = container.scrollHeight;

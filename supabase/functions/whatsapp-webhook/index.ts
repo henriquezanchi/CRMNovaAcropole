@@ -46,6 +46,22 @@ function extrairTexto(msg: any): string {
     if (msg.type === "text") return msg.text?.body ?? "";
     if (msg.type === "button") return msg.button?.text ?? "[Botão]";
     if (msg.type === "interactive") return msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || "[Resposta interativa]";
+    // Contato compartilhado (vCard) — pedido do usuário (2026-09-29):
+    // "recebemos contatos pelo whatsapp, que não conseguimos ler" — antes
+    // só gravava o texto genérico "[Mensagem tipo contacts]", mesmo o
+    // payload da Meta já trazendo nome + telefone de verdade (guardado em
+    // `msg.contacts`, e já preservado por completo em `payload_bruto`
+    // desde sempre — só a coluna `corpo_texto`, que é o que aparece no
+    // balão, nunca lia esses campos). Sem migração nova: continua
+    // gravado com `tipo='outro'` (mensagens_whatsapp.tipo não tem
+    // 'contato' no check constraint), só o TEXTO agora é legível.
+    if (msg.type === "contacts" && Array.isArray(msg.contacts) && msg.contacts.length > 0) {
+        return msg.contacts.map((c: any) => {
+            const nome = c.name?.formatted_name || c.name?.first_name || "Contato sem nome";
+            const telefones = (c.phones || []).map((p: any) => p.phone || p.wa_id).filter(Boolean).join(", ");
+            return `📇 Contato compartilhado: ${nome}${telefones ? ` — ${telefones}` : ""}`;
+        }).join("\n");
+    }
     const rotulos: Record<string, string> = {
         image: "[Imagem recebida]", audio: "[Áudio recebido]", document: "[Documento recebido]",
         video: "[Vídeo recebido]", sticker: "[Figurinha recebida]", location: "[Localização recebida]",
