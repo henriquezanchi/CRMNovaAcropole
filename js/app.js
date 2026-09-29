@@ -2331,6 +2331,9 @@ async function renderizarListaFiliaisModal() {
                 <label class="col-tag-option" style="white-space:nowrap;">
                     <input type="checkbox" ${f.ativo ? 'checked' : ''} onchange="atualizarAtivoFilial(${f.id}, this.checked)"> Ativa
                 </label>
+                <label class="col-tag-option" style="white-space:nowrap;" title="Padrão pra esta filial no WhatsApp Unificado — pode ser desligado individualmente por conversa">
+                    <input type="checkbox" ${f.ia_sugestao_resposta_habilitada !== false ? 'checked' : ''} onchange="atualizarIaSugestaoFilial(${f.id}, this.checked)"> Sugestão de IA no WhatsApp
+                </label>
             </div>
             <input type="text" value="${escapeHTML(f.nome_com_preposicao || '')}" placeholder="Como falar dela naturalmente (ex: do Jardim América, de Barra do Garças)" onchange="atualizarPreposicaoFilial(${f.id}, this.value)">
             <input type="text" value="${escapeHTML(f.whatsapp_chefe_numero || '')}" placeholder="WhatsApp do chefe de filial (E.164, ex: 5562991234567) — aviso de aniversário e resumo de lead" onchange="atualizarWhatsappChefeFilial(${f.id}, this.value)">
@@ -2351,6 +2354,17 @@ async function atualizarNomeFilial(id, novoNome) {
 
 async function atualizarAtivoFilial(id, ativo) {
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ ativo }).eq('id', id);
+    if (error) alert('Erro ao salvar: ' + error.message);
+}
+
+// Pedido do usuário (2026-09-29): "permita habilitar ou desabilitar essa
+// função [sugestão de resposta por IA] por conversa, e também por
+// filial" — este é o padrão DA FILIAL; cada lead pode sobrescrever na
+// própria conversa do WhatsApp Unificado (leads_inscricoes.ia_sugestao_resposta,
+// null = segue este padrão — ver renderizarTagsWpp()/toggle de IA em
+// js/whatsapp.js e a RPC mensagens_candidatas_sugestao_resposta()).
+async function atualizarIaSugestaoFilial(id, habilitada) {
+    const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ ia_sugestao_resposta_habilitada: habilitada }).eq('id', id);
     if (error) alert('Erro ao salvar: ' + error.message);
 }
 

@@ -2242,7 +2242,7 @@ function htmlTimerJanelaWpp(conversa) {
     return `<div class="wpp-timer-janela ${classe}" title="Tempo restante antes da janela de 24h da Meta fechar — depois disso só um modelo aprovado reabre a conversa"><i class="fa-solid fa-clock"></i> ${horas}h${String(minutos).padStart(2, '0')} restantes</div>`;
 }
 
-function htmlContatoWpp(lead, conversa) {
+function htmlContatoWpp(lead, conversa, temSugestaoIa) {
     const id = lead.pessoaIdentificador;
     const ativo = String(id) === String(wppContatoAtivoId) ? 'active' : '';
     const naoLida = conversaNaoLidaWpp(conversa);
@@ -2253,7 +2253,7 @@ function htmlContatoWpp(lead, conversa) {
         <div class="wpp-contact-item ${ativo} ${naoLida ? 'nao-lida' : ''}" onclick="abrirChatWpp('${id}')">
             <div class="wpp-contact-avatar"><i class="fa-solid fa-user"></i></div>
             <div class="wpp-contact-info" style="flex:1;">
-                <div class="wpp-contact-name">${escapeHTML(lead.pessoaNome || 'Sem nome')}</div>
+                <div class="wpp-contact-name">${escapeHTML(lead.pessoaNome || 'Sem nome')}${temSugestaoIa ? ' <i class="fa-solid fa-wand-magic-sparkles" style="color:#1d4ed8; font-size:10px;" title="Sugestão de resposta da IA pronta pra revisar"></i>' : ''}</div>
                 <div class="wpp-contact-phone">${escapeHTML(preview)}</div>
                 ${lead.filial ? `<div style="font-size:9px; color:var(--text-muted);"><i class="fa-solid fa-building"></i> ${escapeHTML(lead.filial)}</div>` : ''}
                 ${htmlTimerJanelaWpp(conversa)}
@@ -2286,13 +2286,17 @@ function htmlContatoNaoIdentificadoWpp(m) {
 // e aqui não há lead nenhum ainda) — só histórico + texto livre.
 let wppTelefoneNaoIdentAtivo = null;
 let wppCanalNaoIdent = null;
+let wppCanalSugestaoIa = null;
 
 async function abrirChatNaoIdentificado(telefone) {
     wppContatoAtivoId = null;
     wppTelefoneNaoIdentAtivo = telefone;
     if (chatWpp && chatWpp.fechar) chatWpp.fechar();
+    if (wppCanalSugestaoIa) { window.supabaseClient.removeChannel(wppCanalSugestaoIa); wppCanalSugestaoIa = null; }
     const blocoTags = document.getElementById('wppChatTagsBlock');
     if (blocoTags) blocoTags.innerHTML = '';
+    const blocoSugestao = document.getElementById('wppSugestaoIaBox');
+    if (blocoSugestao) blocoSugestao.innerHTML = '';
 
     const searchEl = document.getElementById('wppSearch');
     renderizarContatosWpp(searchEl ? searchEl.value : '');
@@ -2452,6 +2456,12 @@ function renderizarTagsWpp(leadId) {
         return `<span class="tag ${classe}" style="font-size:10.5px; padding:4px 8px; display:inline-flex; align-items:center; gap:4px;">${escapeHTML(tagLimpa)} <i class="fa-solid fa-xmark" style="cursor:pointer;" onclick="removerTagWpp('${leadId}', ${i})" title="Remover tag"></i></span>`;
     }).join('');
 
+    // Toggle de sugestão de IA por CONVERSA (pedido do usuário,
+    // 2026-09-29) — `ia_sugestao_resposta` é nullable: null = segue o
+    // padrão da FILIAL (ver "Gerenciar Filiais", js/app.js); true/false =
+    // decisão explícita pra ESTE lead, independente do resto da filial.
+    const valorToggle = lead.ia_sugestao_resposta === true ? 'ligado' : lead.ia_sugestao_resposta === false ? 'desligado' : 'padrao';
+
     container.innerHTML = `
         <div style="display:flex; flex-wrap:wrap; gap:4px; align-items:center; padding:6px 12px; border-bottom:1px solid var(--border-color); background:#fafafa;">
             ${badges}
@@ -2460,8 +2470,89 @@ function renderizarTagsWpp(leadId) {
                 <input type="text" id="wppTagInput" list="tagsSugeridasList" placeholder="Nova tag..." style="font-size:11px; padding:3px 6px; width:150px;" onkeydown="if(event.key==='Enter') confirmarNovaTagWpp('${leadId}'); if(event.key==='Escape') document.getElementById('wppTagFormInline').style.display='none';">
                 <button class="btn-add-tag" style="font-size:10.5px;" onclick="confirmarNovaTagWpp('${leadId}')">OK</button>
             </span>
+            <span style="margin-left:auto; display:flex; align-items:center; gap:4px; font-size:10.5px; color:var(--text-muted);">
+                <i class="fa-solid fa-wand-magic-sparkles"></i> Sugestão de IA:
+                <select onchange="alternarSugestaoIaLead('${leadId}', this.value)" style="font-size:10.5px; padding:2px 4px;">
+                    <option value="padrao" ${valorToggle === 'padrao' ? 'selected' : ''}>Padrão da filial</option>
+                    <option value="ligado" ${valorToggle === 'ligado' ? 'selected' : ''}>Ativada nesta conversa</option>
+                    <option value="desligado" ${valorToggle === 'desligado' ? 'selected' : ''}>Desativada nesta conversa</option>
+                </select>
+            </span>
         </div>
     `;
+}
+
+async function alternarSugestaoIaLead(leadId, valor) {
+    const novoValor = valor === 'ligado' ? true : valor === 'desligado' ? false : null;
+    const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(leadId));
+    if (leadIndex !== -1) leadsAtuais[leadIndex].ia_sugestao_resposta = novoValor;
+    const { error } = await window.supabaseClient.from('leads_inscricoes').update({ ia_sugestao_resposta: novoValor }).eq('pessoaIdentificador', leadId);
+    if (error) alert('Erro ao salvar: ' + error.message);
+}
+
+// ==========================================================
+// Sugestão de resposta por IA (pedido do usuário, 2026-09-29): "Crie uma
+// sugestão de resposta com IA para cada lead que respondeu (eu preciso
+// autorizar o envio dessa sugestão)". Detecção 100% determinística
+// (RPC mensagens_candidatas_sugestao_resposta(), respeitando os 2
+// toggles acima) roda por cron (sugerir-resposta-whatsapp, a cada 15
+// min) e só grava com status='pendente' — a IA nunca envia sozinha, só
+// escreve o rascunho; aqui é só ler/mostrar o que já foi gravado e
+// autorizar/editar o envio.
+// ==========================================================
+async function carregarSugestaoIaWpp(leadId) {
+    const container = document.getElementById('wppSugestaoIaBox');
+    if (!container) return;
+    if (!leadId) { container.innerHTML = ''; return; }
+
+    const { data } = await window.supabaseClient
+        .from('sugestoes_resposta_wpp')
+        .select('*')
+        .eq('pessoaIdentificador', leadId)
+        .eq('status', 'pendente')
+        .order('criado_em', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+    if (!data) { container.innerHTML = ''; return; }
+
+    container.innerHTML = `
+        <div style="margin:0 12px 8px; padding:8px 10px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px;">
+            <div style="font-size:11px; font-weight:600; color:#1d4ed8; margin-bottom:4px;"><i class="fa-solid fa-wand-magic-sparkles"></i> Sugestão de resposta (IA) — revise antes de enviar</div>
+            ${data.sugestao_resposta
+                ? `<textarea id="wppSugestaoTexto" style="width:100%; font-size:12px; padding:6px; border-radius:6px; border:1px solid #bfdbfe; resize:vertical; min-height:50px; box-sizing:border-box;">${escapeHTML(data.sugestao_resposta)}</textarea>`
+                : `<div style="font-size:11px; color:var(--text-muted); margin-bottom:6px;">A IA não conseguiu gerar um texto pra esta mensagem — escreva a resposta na caixa abaixo, ou descarte esta sugestão.</div>`
+            }
+            <div style="display:flex; gap:6px; margin-top:6px;">
+                ${data.sugestao_resposta ? `<button class="btn-primary" style="font-size:11px; padding:4px 10px;" onclick="enviarSugestaoIaWpp(${data.id}, '${leadId}')"><i class="fa-solid fa-paper-plane"></i> Enviar</button>` : ''}
+                <button class="btn-secondary" style="font-size:11px; padding:4px 10px;" onclick="descartarSugestaoIaWpp(${data.id}, '${leadId}')">Descartar</button>
+            </div>
+        </div>
+    `;
+}
+
+async function enviarSugestaoIaWpp(id, leadId) {
+    const textarea = document.getElementById('wppSugestaoTexto');
+    const texto = textarea ? textarea.value.trim() : '';
+    if (!texto) return;
+
+    const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
+        body: { pessoaIdentificador: leadId, tipo: 'texto', texto, atendenteNome: obterNomeAtendente() }
+    });
+    if (error || !data || data.ok === false) {
+        alert('Não foi possível enviar: ' + (error ? error.message : mensagemErroWpp(data)));
+        return;
+    }
+
+    await window.supabaseClient.from('sugestoes_resposta_wpp').update({ status: 'enviada' }).eq('id', id);
+    await carregarSugestaoIaWpp(leadId);
+    if (String(wppContatoAtivoId) === String(leadId)) await chatWpp.abrir(leadId);
+    moverParaAbordagemAposEnvio(leadId).catch(e => console.warn('Erro ao mover lead pra Abordagem após envio:', e.message));
+}
+
+async function descartarSugestaoIaWpp(id, leadId) {
+    await window.supabaseClient.from('sugestoes_resposta_wpp').update({ status: 'descartada' }).eq('id', id);
+    await carregarSugestaoIaWpp(leadId);
 }
 
 function abrirFormNovaTagWpp(leadId) {
@@ -2646,7 +2737,20 @@ async function renderizarContatosWpp(filtro = '') {
         return;
     }
 
-    let html = contatosExistentes.map(({ conversa, lead }) => htmlContatoWpp(lead, conversa)).join('');
+    // Badge de "sugestão de IA pronta" na lista (pedido do usuário,
+    // 2026-09-29) — sem precisar abrir cada chat pra descobrir quem já
+    // tem uma sugestão pendente de revisão.
+    let idsComSugestaoPendente = new Set();
+    if (contatosExistentes.length > 0) {
+        const { data: pendentes } = await window.supabaseClient
+            .from('sugestoes_resposta_wpp')
+            .select('"pessoaIdentificador"')
+            .eq('status', 'pendente')
+            .in('pessoaIdentificador', contatosExistentes.map(c => c.lead.pessoaIdentificador));
+        idsComSugestaoPendente = new Set((pendentes || []).map(p => String(p.pessoaIdentificador)));
+    }
+
+    let html = contatosExistentes.map(({ conversa, lead }) => htmlContatoWpp(lead, conversa, idsComSugestaoPendente.has(String(lead.pessoaIdentificador)))).join('');
     if (novosContatos.length > 0) {
         html += `<div style="padding:8px 14px; font-size:10px; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Iniciar nova conversa</div>`;
         html += novosContatos.map(l => htmlContatoWpp(l, null)).join('');
@@ -2693,6 +2797,15 @@ async function abrirChatWpp(leadId) {
         }
     }
     renderizarTagsWpp(leadId);
+    carregarSugestaoIaWpp(leadId);
+
+    if (wppCanalSugestaoIa) { window.supabaseClient.removeChannel(wppCanalSugestaoIa); wppCanalSugestaoIa = null; }
+    wppCanalSugestaoIa = window.supabaseClient
+        .channel(`wpp-sugestao-ia-${leadId}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'sugestoes_resposta_wpp', filter: `pessoaIdentificador=eq.${leadId}` }, () => {
+            if (String(wppContatoAtivoId) === String(leadId)) carregarSugestaoIaWpp(leadId);
+        })
+        .subscribe();
 
     const searchEl = document.getElementById('wppSearch');
     renderizarContatosWpp(searchEl ? searchEl.value : '');
