@@ -2221,8 +2221,9 @@ function htmlContatoWpp(lead, conversa) {
 }
 
 function htmlContatoNaoIdentificadoWpp(m) {
+    const ativo = String(m.telefone_whatsapp) === String(wppTelefoneNaoIdentAtivo) ? 'active' : '';
     return `
-        <div class="wpp-contact-item">
+        <div class="wpp-contact-item ${ativo}" onclick="abrirChatNaoIdentificado('${m.telefone_whatsapp}')">
             <div class="wpp-contact-avatar" style="background:#f59e0b;"><i class="fa-solid fa-question"></i></div>
             <div class="wpp-contact-info" style="flex:1;">
                 <div class="wpp-contact-name">${escapeHTML(m.telefone_whatsapp)}</div>
@@ -2231,6 +2232,153 @@ function htmlContatoNaoIdentificadoWpp(m) {
             <button class="btn-add-tag" style="flex-shrink:0;" onclick="event.stopPropagation(); vincularConversaNaoIdentificada('${m.telefone_whatsapp}')">Vincular</button>
         </div>
     `;
+}
+
+// Bug real relatado pelo usuário (2026-09-29): clicar numa conversa "não
+// identificada" não abria nada — só existia o botão "Vincular" (que exige
+// já saber o nome). Sem abrir, não dava pra LER o histórico nem RESPONDER
+// antes de descobrir quem é. Agora a linha inteira abre uma mini-visão de
+// chat própria (não reaproveita `criarChatController()` — ele é montado
+// em torno de um `pessoaIdentificador` fixo pro Realtime/templates/anexos,
+// e aqui não há lead nenhum ainda) — só histórico + texto livre.
+let wppTelefoneNaoIdentAtivo = null;
+let wppCanalNaoIdent = null;
+
+async function abrirChatNaoIdentificado(telefone) {
+    wppContatoAtivoId = null;
+    wppTelefoneNaoIdentAtivo = telefone;
+    if (chatWpp && chatWpp.fechar) chatWpp.fechar();
+
+    const searchEl = document.getElementById('wppSearch');
+    renderizarContatosWpp(searchEl ? searchEl.value : '');
+
+    const header = document.getElementById('wppChatHeader');
+    if (header) {
+        header.innerHTML = `
+            <div style="width: 36px; height: 36px; background: #f59e0b; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; color: white;"><i class="fa-solid fa-question"></i></div>
+            <div style="flex:1;">
+                <div style="font-size: 13px; font-weight: 600;">${escapeHTML(telefone)}</div>
+                <div style="font-size: 11px; color: #b45309;"><i class="fa-solid fa-triangle-exclamation"></i> Número não identificado</div>
+            </div>
+            <button class="btn-add-tag" onclick="vincularConversaNaoIdentificada('${telefone}')">Vincular a um lead</button>
+        `;
+    }
+
+    await carregarERenderizarChatNaoIdentificado(telefone);
+}
+
+async function carregarERenderizarChatNaoIdentificado(telefone) {
+    const container = document.getElementById('wppMessages');
+    if (container) container.innerHTML = '<div style="text-align:center; font-size:11px; color:#64748b; margin-top:20px;">Carregando conversa...</div>';
+
+    const { data } = await window.supabaseClient
+        .from('mensagens_whatsapp')
+        .select('*')
+        .eq('telefone_whatsapp', telefone)
+        .order('criado_em', { ascending: true });
+    const mensagens = data || [];
+
+    if (container) {
+        if (mensagens.length === 0) {
+            container.innerHTML = '<div style="text-align:center; font-size:11px; color:#64748b; margin-top:20px;">Nenhuma mensagem ainda.</div>';
+        } else {
+            let html = '';
+            let ultimoDia = null;
+            mensagens.forEach(m => {
+                const diaAtual = new Date(m.criado_em).toDateString();
+                if (diaAtual !== ultimoDia) {
+                    html += `<div class="wpp-date-divider"><span>${escapeHTML(rotuloDataSeparadorWpp(m.criado_em))}</span></div>`;
+                    ultimoDia = diaAtual;
+                }
+                html += htmlMensagemWpp(m);
+            });
+            container.innerHTML = html;
+            container.scrollTop = container.scrollHeight;
+        }
+    }
+
+    // Se a última mensagem ficou ambígua (2+ leads com o mesmo telefone,
+    // ver whatsapp-webhook), mostra escolha rápida por quem já foi
+    // identificado como candidato — evita ter que digitar o nome de novo.
+    const ultimaComCandidatos = [...mensagens].reverse().find(m => m.payload_bruto && Array.isArray(m.payload_bruto.candidatos_ambiguos));
+    renderizarAreaInputNaoIdentificado(telefone, ultimaComCandidatos ? ultimaComCandidatos.payload_bruto.candidatos_ambiguos : null);
+
+    if (wppCanalNaoIdent) { window.supabaseClient.removeChannel(wppCanalNaoIdent); wppCanalNaoIdent = null; }
+    wppCanalNaoIdent = window.supabaseClient
+        .channel(`wpp-naoident-${telefone}`)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mensagens_whatsapp', filter: `telefone_whatsapp=eq.${telefone}` }, () => {
+            if (wppTelefoneNaoIdentAtivo === telefone) carregarERenderizarChatNaoIdentificado(telefone);
+        })
+        .subscribe();
+}
+
+function renderizarAreaInputNaoIdentificado(telefone, candidatosAmbiguos) {
+    const container = document.getElementById('wppChatInputArea');
+    if (!container) return;
+
+    let quickPick = '';
+    if (candidatosAmbiguos && candidatosAmbiguos.length > 0) {
+        quickPick = `
+            <div style="padding:8px 12px; background:#fef3c7; border-radius:8px; margin-bottom:8px; font-size:12px;">
+                <div style="font-weight:600; margin-bottom:6px; color:#92400e;"><i class="fa-solid fa-triangle-exclamation"></i> Esse telefone bate com ${candidatosAmbiguos.length} leads diferentes (provável cadastro duplicado entre filiais) — escolha quem respondeu:</div>
+                ${candidatosAmbiguos.map(c => `<button class="btn-add-tag" style="margin:2px 4px 2px 0;" onclick="vincularConversaNaoIdentificadaPorId('${telefone}', '${c.pessoaIdentificador}')">${escapeHTML(c.pessoaNome || ('#' + c.pessoaIdentificador))} — ${escapeHTML(c.filial || 'sem filial')}</button>`).join('')}
+            </div>`;
+    }
+
+    container.innerHTML = `
+        ${quickPick}
+        <div class="chat-input-row">
+            <input type="text" class="chat-input" id="wppNaoIdentInput" placeholder="Responder (ainda sem saber quem é)...">
+            <button type="button" class="btn-send" id="wppNaoIdentEnviar"><i class="fa-solid fa-paper-plane"></i></button>
+        </div>
+    `;
+    const input = container.querySelector('#wppNaoIdentInput');
+    const botao = container.querySelector('#wppNaoIdentEnviar');
+    const disparar = () => enviarTextoNaoIdentificado(telefone);
+    if (botao) botao.addEventListener('click', disparar);
+    if (input) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') disparar(); });
+}
+
+async function enviarTextoNaoIdentificado(telefone) {
+    const input = document.getElementById('wppNaoIdentInput');
+    if (!input) return;
+    const texto = input.value.trim();
+    if (!texto) return;
+    input.value = '';
+    input.disabled = true;
+
+    const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
+        body: { telefoneWhatsapp: telefone, tipo: 'texto', texto, atendenteNome: obterNomeAtendente() }
+    });
+    input.disabled = false;
+
+    if (error) { alert('Erro ao enviar mensagem: ' + error.message); input.value = texto; return; }
+    if (!data.ok) {
+        console.error('Erro ao enviar mensagem (não identificado):', data.detalhe || data.erro);
+        alert('Não foi possível enviar: ' + mensagemErroWpp(data));
+        return;
+    }
+    await carregarERenderizarChatNaoIdentificado(telefone);
+}
+
+// Vincula direto por id (sem digitar nome) — usado pela escolha rápida
+// entre candidatos ambíguos (ver renderizarAreaInputNaoIdentificado()).
+async function vincularConversaNaoIdentificadaPorId(telefone, pessoaIdentificador) {
+    if (!confirm('Vincular todo o histórico deste número a este lead?')) return;
+    const { data: lead } = await window.supabaseClient
+        .from('leads_inscricoes')
+        .select('filial')
+        .eq('pessoaIdentificador', pessoaIdentificador)
+        .maybeSingle();
+    const { error } = await window.supabaseClient
+        .from('mensagens_whatsapp')
+        .update({ pessoaIdentificador, filial: lead ? lead.filial : null })
+        .eq('telefone_whatsapp', telefone)
+        .is('pessoaIdentificador', null);
+    if (error) { alert('Erro ao vincular: ' + error.message); return; }
+    wppTelefoneNaoIdentAtivo = null;
+    if (wppCanalNaoIdent) { window.supabaseClient.removeChannel(wppCanalNaoIdent); wppCanalNaoIdent = null; }
+    abrirChatWpp(pessoaIdentificador);
 }
 
 async function renderizarContatosWpp(filtro = '') {
@@ -2342,6 +2490,8 @@ function filtrarContatosWpp(valor) {
 // normalmente, de qualquer filial.
 async function abrirChatWpp(leadId) {
     wppContatoAtivoId = leadId;
+    wppTelefoneNaoIdentAtivo = null;
+    if (wppCanalNaoIdent) { window.supabaseClient.removeChannel(wppCanalNaoIdent); wppCanalNaoIdent = null; }
     marcarConversaLidaWpp(leadId);
 
     let lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
@@ -2379,14 +2529,30 @@ async function abrirChatWpp(leadId) {
 // lead existente. Mesmo padrão de escrita direta do navegador já usado
 // em outras partes do CRM (ex: tags) — ver policy de UPDATE em
 // migracao_whatsapp.sql, que só libera linhas ainda sem pessoaIdentificador.
+// Bug real relatado pelo usuário (2026-09-29): buscava só em `leadsAtuais`
+// (escopado à filial selecionada no topo) — pra um duplicado CROSS-FILIAL
+// (mesmo telefone em 2 filiais diferentes, o padrão real mais comum de
+// "não identificado" achado nesta sessão), o lead certo podia nem estar
+// carregado, e a busca dizia "nenhum lead encontrado" mesmo ele existindo.
+// Agora busca direto no banco, em TODAS as filiais.
 async function vincularConversaNaoIdentificada(telefoneWhatsapp) {
     const nomeBusca = prompt('Digite o nome (ou parte do nome) do lead pra vincular a esse número de WhatsApp:');
     if (!nomeBusca || !nomeBusca.trim()) return;
 
-    const termo = nomeBusca.trim().toLowerCase();
-    const candidatos = leadsAtuais.filter(l => (l.pessoaNome || '').toLowerCase().includes(termo));
-    if (candidatos.length === 0) { alert('Nenhum lead encontrado com esse nome (entre os leads já carregados na tela).'); return; }
-    if (candidatos.length > 1) { alert(`Encontrei ${candidatos.length} leads com esse nome — seja mais específico.`); return; }
+    const termo = nomeBusca.trim();
+    const { data: candidatos, error: erroBusca } = await window.supabaseClient
+        .from('leads_inscricoes')
+        .select('pessoaIdentificador, pessoaNome, filial')
+        .ilike('pessoaNome', `%${termo}%`)
+        .is('lixeira_em', null)
+        .limit(10);
+    if (erroBusca) { alert('Erro ao buscar: ' + erroBusca.message); return; }
+    if (!candidatos || candidatos.length === 0) { alert('Nenhum lead encontrado com esse nome.'); return; }
+    if (candidatos.length > 1) {
+        alert(`Encontrei ${candidatos.length} leads com esse nome — seja mais específico:\n` +
+            candidatos.map(c => `${c.pessoaNome} (${c.filial || 'sem filial'})`).join('\n'));
+        return;
+    }
 
     const lead = candidatos[0];
     const { error } = await window.supabaseClient
@@ -2396,8 +2562,9 @@ async function vincularConversaNaoIdentificada(telefoneWhatsapp) {
         .is('pessoaIdentificador', null);
     if (error) { alert('Erro ao vincular: ' + error.message); return; }
 
-    const searchEl = document.getElementById('wppSearch');
-    renderizarContatosWpp(searchEl ? searchEl.value : '');
+    wppTelefoneNaoIdentAtivo = null;
+    if (wppCanalNaoIdent) { window.supabaseClient.removeChannel(wppCanalNaoIdent); wppCanalNaoIdent = null; }
+    abrirChatWpp(lead.pessoaIdentificador);
 }
 
 // Refresca a lista de contatos a cada 1 min só pro timer de 24h

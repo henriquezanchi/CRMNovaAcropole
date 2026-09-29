@@ -84,13 +84,48 @@ async function buscarLeadsPorTelefone(ddd: string, candidatos: string[]) {
     if (!ddd || candidatos.length === 0) return [];
     const { data } = await supabaseAdmin
         .from(NOME_TABELA_LEADS)
-        .select('pessoaIdentificador, filial, pessoaTelefoneNumero')
+        .select('pessoaIdentificador, filial, pessoaNome, pessoaTelefoneNumero')
         .eq('pessoaTelefoneDDD', ddd)
         .in('pessoaTelefoneNumero', candidatos)
         .is('lixeira_em', null);
     if (!data) return [];
     const candidatosSet = new Set(candidatos);
     return data.filter((l: any) => candidatosSet.has(String(l.pessoaTelefoneNumero || "").replace(/\D/g, "")));
+}
+
+// Bug real relatado pelo usuário (2026-09-29): "várias respostas continuam
+// caindo no não identificados" — investigado contra dado real de produção,
+// TODOS os casos encontrados eram o MESMO padrão: telefone duplicado entre
+// 2+ filiais (mesma pessoa cadastrada 2x, ex: "GIORGIA TOMITÃO MÁRIO" em
+// Jardim América E Goiânia II) — `buscarLeadsPorTelefone()` corretamente
+// se recusa a escolher entre 2+ leads ATIVOS ambíguos (nunca arrisca
+// atribuir a pessoa errada), então a resposta ficava presa sem
+// pessoaIdentificador nenhum, mesmo sendo resolvível na prática.
+//
+// Sinal seguro pra desambiguar, achado consultando o histórico real: toda
+// mensagem de SAÍDA (`whatsapp-send`) já sabe EXATAMENTE qual
+// pessoaIdentificador estava mandando pra (nunca é ambígua — a chamada
+// vem com o id certo desde o CRM), então "qual dos candidatos JÁ recebeu
+// alguma mensagem nossa antes" é um sinal confiável de "é esse aqui que
+// estamos contatando de verdade", nunca um chute. Testado contra os 4
+// casos reais que geraram este bug (Kelly Susan, Nayana, Lorena, Giorgia):
+// os 4 resolveriam corretamente com este critério (só 1 candidato de cada
+// par/trio tinha histórico de mensagem). Só resolve quando EXATAMENTE 1
+// candidato tem histórico — 2+ com histórico, ou nenhum, continua
+// ambíguo (mesma cautela de sempre, nunca decide no chute).
+async function resolverAmbiguidadePorHistorico(matches: any[]): Promise<any | null> {
+    if (matches.length < 2) return null;
+    const ids = matches.map((m: any) => String(m.pessoaIdentificador));
+    const { data } = await supabaseAdmin
+        .from(NOME_TABELA_MENSAGENS)
+        .select('pessoaIdentificador')
+        .in('pessoaIdentificador', ids)
+        .limit(500);
+    if (!data || data.length === 0) return null;
+    const comHistorico = new Set(data.map((r: any) => String(r.pessoaIdentificador)));
+    if (comHistorico.size !== 1) return null;
+    const idResolvido = [...comHistorico][0];
+    return matches.find((m: any) => String(m.pessoaIdentificador) === idResolvido) ?? null;
 }
 
 Deno.serve(async (req) => {
@@ -153,7 +188,12 @@ Deno.serve(async (req) => {
                 const { ddd, numero } = separarFromMeta(msg.from);
                 const candidatos = candidatosNumeroBR(numero);
                 const matches = await buscarLeadsPorTelefone(ddd, candidatos);
-                const match = matches.length === 1 ? matches[0] : null;
+                let match = matches.length === 1 ? matches[0] : null;
+                let resolvidoPorHistorico = false;
+                if (!match && matches.length > 1) {
+                    const resolvido = await resolverAmbiguidadePorHistorico(matches);
+                    if (resolvido) { match = resolvido; resolvidoPorHistorico = true; }
+                }
 
                 const { error } = await supabaseAdmin.from(NOME_TABELA_MENSAGENS).upsert({
                     pessoaIdentificador: match?.pessoaIdentificador ?? null,
@@ -165,7 +205,9 @@ Deno.serve(async (req) => {
                     wa_message_id: msg.id,
                     wa_status: "entregue",
                     phone_number_id_meta: phoneNumberId,
-                    payload_bruto: matches.length > 1 ? { ...msg, candidatos_ambiguos: matches } : msg,
+                    payload_bruto: resolvidoPorHistorico
+                        ? { ...msg, resolvido_por_historico: true, candidatos_ambiguos: matches }
+                        : (matches.length > 1 ? { ...msg, candidatos_ambiguos: matches } : msg),
                     criado_em: new Date(Number(msg.timestamp) * 1000).toISOString(),
                 }, { onConflict: "wa_message_id", ignoreDuplicates: true });
 

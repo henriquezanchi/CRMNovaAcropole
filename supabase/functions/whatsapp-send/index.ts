@@ -28,6 +28,13 @@ Deno.serve(async (req) => {
 
     let corpoReq: {
         pessoaIdentificador?: string;
+        // Responder um número "não identificado" (mensagem recebida sem
+        // nenhum lead casado por telefone, ver whatsapp-webhook) — quando
+        // vem preenchido SEM pessoaIdentificador, manda texto livre direto
+        // pra esse número, sem lead/filial nenhum resolvido. Não suportado
+        // pra template/imagem/documento (não faz sentido sem lead pra
+        // resolver as variáveis) — só texto.
+        telefoneWhatsapp?: string;
         tipo?: "texto" | "template" | "imagem" | "documento" | "reacao";
         texto?: string;
         templateNome?: string;
@@ -48,8 +55,9 @@ Deno.serve(async (req) => {
         return json({ ok: false, erro: "json_invalido" }, 400);
     }
 
-    const { pessoaIdentificador, tipo, texto, templateNome, templateIdioma, templateParams, templatePreview, imagemUrl, documentoUrl, nomeArquivo, caption, atendenteNome, mensagemAlvoId, emoji } = corpoReq;
-    if (!pessoaIdentificador || !tipo) return json({ ok: false, erro: "parametros_faltando" }, 400);
+    const { pessoaIdentificador, telefoneWhatsapp, tipo, texto, templateNome, templateIdioma, templateParams, templatePreview, imagemUrl, documentoUrl, nomeArquivo, caption, atendenteNome, mensagemAlvoId, emoji } = corpoReq;
+    if ((!pessoaIdentificador && !telefoneWhatsapp) || !tipo) return json({ ok: false, erro: "parametros_faltando" }, 400);
+    if (!pessoaIdentificador && tipo !== "texto") return json({ ok: false, erro: "tipo_exige_lead" }, 400);
     if (tipo === "texto" && !texto?.trim()) return json({ ok: false, erro: "texto_vazio" }, 400);
     if (tipo === "template" && !templateNome) return json({ ok: false, erro: "template_nome_faltando" }, 400);
     if (tipo === "imagem" && !imagemUrl?.trim()) return json({ ok: false, erro: "imagem_url_faltando" }, 400);
@@ -58,24 +66,34 @@ Deno.serve(async (req) => {
     // comportamento do WhatsApp real), só o id da mensagem alvo é obrigatório.
     if (tipo === "reacao" && !mensagemAlvoId?.trim()) return json({ ok: false, erro: "mensagem_alvo_faltando" }, 400);
 
-    // Busca telefone/filial do lead no servidor — não confia no que vier do front.
-    const { data: lead, error: erroLead } = await supabaseAdmin
-        .from(NOME_TABELA_LEADS)
-        .select('pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaNome, filial')
-        .eq('pessoaIdentificador', pessoaIdentificador)
-        .single();
-    if (erroLead || !lead) return json({ ok: false, erro: "lead_nao_encontrado" }, 404);
-
-    const numeroE164 = montarNumeroE164(lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero);
-    if (!numeroE164) return json({ ok: false, erro: "lead_sem_telefone" }, 422);
+    // Busca telefone/filial do lead no servidor — não confia no que vier do
+    // front. Quando não há pessoaIdentificador (respondendo um número
+    // "não identificado", ver whatsapp-webhook), usa o telefone bruto
+    // direto, sem filial nenhuma resolvida (cai no número padrão).
+    let numeroE164: string | null = null;
+    let filial: string | null = null;
+    if (pessoaIdentificador) {
+        const { data: lead, error: erroLead } = await supabaseAdmin
+            .from(NOME_TABELA_LEADS)
+            .select('pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaNome, filial')
+            .eq('pessoaIdentificador', pessoaIdentificador)
+            .single();
+        if (erroLead || !lead) return json({ ok: false, erro: "lead_nao_encontrado" }, 404);
+        numeroE164 = montarNumeroE164(lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero);
+        if (!numeroE164) return json({ ok: false, erro: "lead_sem_telefone" }, 422);
+        filial = lead.filial;
+    } else {
+        numeroE164 = (telefoneWhatsapp || "").replace(/\D/g, "") || null;
+        if (!numeroE164) return json({ ok: false, erro: "telefone_invalido" }, 422);
+    }
 
     // Resolve o número da Meta que envia: da filial do lead, com fallback pro padrão.
     let phoneNumberId = PHONE_ID_DEFAULT;
-    if (lead.filial) {
+    if (filial) {
         const { data: filialRow } = await supabaseAdmin
             .from("filiais")
             .select("whatsapp_phone_number_id")
-            .eq("nome", lead.filial)
+            .eq("nome", filial)
             .maybeSingle();
         if (filialRow?.whatsapp_phone_number_id) phoneNumberId = filialRow.whatsapp_phone_number_id;
     }
@@ -185,9 +203,9 @@ Deno.serve(async (req) => {
         // atualiza a mensagem alvo (e, se a Meta recusou, nem isso).
         if (tipo !== "reacao") {
             await supabaseAdmin.from(NOME_TABELA_MENSAGENS).insert({
-                pessoaIdentificador,
+                pessoaIdentificador: pessoaIdentificador ?? null,
                 telefone_whatsapp: numeroE164,
-                filial: lead.filial,
+                filial,
                 direcao: "saida",
                 tipo,
                 corpo_texto: corpoTexto,
@@ -210,9 +228,9 @@ Deno.serve(async (req) => {
 
     const waMessageId = respJson.messages?.[0]?.id;
     await supabaseAdmin.from(NOME_TABELA_MENSAGENS).insert({
-        pessoaIdentificador,
+        pessoaIdentificador: pessoaIdentificador ?? null,
         telefone_whatsapp: numeroE164,
-        filial: lead.filial,
+        filial,
         direcao: "saida",
         tipo,
         corpo_texto: corpoTexto,
