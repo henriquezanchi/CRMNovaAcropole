@@ -6780,6 +6780,85 @@ detecção é 100% regra fixa em SQL, e o SDR sempre autoriza o envio.
   sempre), só falta o texto até a credencial ser corrigida no Console da
   Anthropic (ação do usuário, fora do código).
 
+## Responder mensagem específica, encaminhar, Ctrl+Enter, contatos legíveis (2026-09-29)
+
+Pedido do usuário: "inclua na tela do whatsapp unificado e na gaveta do
+lead a opção de responder a uma mensagem específica (igual no whatsapp
+real)", "inclua também a opção de encaminhar mensagens de um contato
+para outro, e de criar uma nova linha na mensagem ao apertar ctrl+enter"
+— mais 2 bugs reais achados no meio do caminho (contato compartilhado
+ilegível, pergunta sobre foto de perfil).
+
+- **Responder a uma mensagem específica**: botão (ícone de seta,
+  `.wpp-responder-btn`) aparece no hover de qualquer balão com
+  `wa_message_id` — clicar preenche uma barra "Respondendo a..." acima
+  da caixa de texto (com "x" pra cancelar), e a mensagem enviada carrega
+  a citação. Implementado DENTRO de `criarChatController()`
+  (`js/whatsapp.js`) — como `chatWpp` (WhatsApp Unificado) e
+  `chatDrawer` (gaveta do lead) são as 2 instâncias desse MESMO
+  controller, o recurso já cobre as 2 telas de uma vez, sem duplicar
+  nada. `whatsapp-send` ganhou `contextoMessageId` (manda
+  `context.message_id` pra Graph API, suportado em qualquer tipo de
+  mensagem de saída) + `contextoPreview`/`contextoRemetente` (só
+  nossos, guardados em `payload_bruto.contexto_preview`/
+  `contexto_remetente` — evita ter que resolver de novo depois).
+  - **Renderização da citação**: `resolverCitacaoWpp(m, mapaPorWaId)` —
+    mensagem de SAÍDA já tem o preview guardado (não precisa resolver
+    nada); mensagem de ENTRADA só traz `context.id` (a Meta nunca manda
+    o texto da mensagem citada, só o id) — resolve contra o que já está
+    carregado NA CONVERSA (`mapaPorWaId`, construído a cada
+    `renderizarMensagens()`); se a citada não estiver carregada (mais
+    antiga que a janela já buscada), mostra "Mensagem anterior" mesmo
+    assim, sem travar.
+  - **Testado ao vivo contra produção**: envio real com
+    `contextoMessageId` de uma mensagem real do lead de teste (904000019)
+    confirmado — `payload_bruto.contexto_preview`/`contexto_remetente`
+    gravados corretos.
+- **Encaminhar mensagem**: botão (`.wpp-encaminhar-btn`) abre um painel
+  flutuante (`abrirSeletorEncaminharWpp()`) com busca de lead por nome
+  em TODA a base (cross-filial, mesmo padrão de outras buscas já
+  existentes) — escolher um lead reenvia o MESMO conteúdo (texto,
+  imagem, documento ou áudio, usando a URL já pública guardada em
+  `payload_bruto`) como mensagem nova pra ele. **Limitação real da API,
+  não do CRM**: a Graph API não tem um "flag de encaminhado" pra
+  mensagem de SAÍDA — chega pro destinatário como uma mensagem comum,
+  sem o rótulo "Encaminhada" que o app nativo mostra.
+  - **`whatsapp-send` ganhou o tipo `"audio"` nativo** (Graph API
+    `{type:"audio", audio:{link}}`) — antes só existia imagem/documento/
+    texto/template/reação; necessário pra encaminhar áudio como áudio de
+    verdade (não como documento). Testado ao vivo: áudio real
+    encaminhado com sucesso pro lead de teste.
+- **Ctrl+Enter insere nova linha** — a caixa de mensagem
+  (`.chat-input`) virou um `<textarea>` (antes era `<input type="text">`,
+  fisicamente incapaz de mostrar quebra de linha) com auto-crescimento
+  (`ajustarAlturaTextareaWpp()`, até `max-height` do CSS, depois rola).
+  Enter sozinho continua enviando (`e.preventDefault()` só nesse caso);
+  Ctrl+Enter cai no comportamento padrão do `<textarea>` (insere `\n`),
+  sem nenhum código especial pra isso — só não intercepta.
+- **Bug real corrigido: contato compartilhado (vCard) ilegível** —
+  relatado pelo usuário ("recebemos contatos pelo whatsapp, que não
+  conseguimos ler"), com exemplo real colado (2 mensagens
+  "[Mensagem tipo contacts]" sem nome/telefone nenhum visível).
+  `extrairTexto()` (`whatsapp-webhook`) nunca lia `msg.contacts` (array
+  de vCard que a Meta já manda completo — nome, telefone — sempre
+  preservado em `payload_bruto` desde sempre, só a coluna `corpo_texto`
+  nunca extraía nada dali). Corrigido: monta
+  `"📇 Contato compartilhado: {nome} — {telefone}"` a partir de
+  `msg.contacts[].name.formatted_name`/`phones[0].phone`. **Sem migração
+  nova** — continua gravado com `tipo='outro'` (`mensagens_whatsapp.tipo`
+  não tem `'contato'` no `check` constraint, e o texto já resolve o
+  problema relatado sem precisar alargar o schema). 2 mensagens já
+  presas com o texto genérico foram corrigidas via backfill (Sheila,
+  Ivani — nomes/telefones reais recuperados do `payload_bruto` já
+  salvo).
+- **Pergunta do usuário, resposta honesta**: "também gostaria de ver as
+  fotos dos contatos" — a WhatsApp Business Cloud API **não expõe foto
+  de perfil de contato/lead nenhum** (só a foto do PRÓPRIO número de
+  negócio, via um endpoint diferente) — é uma limitação deliberada da
+  Meta por privacidade, não algo que dê pra contornar com código. Não
+  construído, e não há solução conhecida enquanto essa restrição da API
+  existir.
+
 ## Bloqueio da API do WhatsApp (Meta) — investigado 2026-09-07
 
 Toda mensagem de saída desde 2026-09-05 22:21 (e antes, 19:23) falha com
