@@ -1110,6 +1110,27 @@ function alterarNomeAtendente() {
     else localStorage.removeItem(CHAVE_STORAGE_NOME_ATENDENTE);
 }
 
+// Navegação cruzada entre a gaveta do lead (Kanban) e o WhatsApp
+// Unificado (pedido do usuário, 2026-09-29): "no whatsapp unificado tem
+// que ter tudo que tem na gaveta do lead... uma opção, se isso ficar
+// complicado, é ter um botão que me leve pra gaveta, e outro na gaveta
+// que leve pro whatsapp unificado" — dado o tamanho da gaveta (Eventos/
+// Como Abordar/Resumo/Lembrete/Tags/Contato/Histórico/Vínculo Familiar),
+// duplicar tudo dentro da aba WhatsApp seria muito trabalho pra manter
+// sincronizado; navegação direta resolve o mesmo problema de fundo (não
+// perder acesso a nada) com uma fração do esforço.
+function abrirConversaNoWppUnificado(leadId) {
+    if (!leadId) return;
+    if (typeof fecharGaveta === 'function') fecharGaveta();
+    switchModule('tab-whatsapp', 'WhatsApp Unificado', 'Caixa de entrada centralizada');
+    abrirChatWpp(leadId);
+}
+
+function abrirFichaCompletaDoWpp(leadId) {
+    if (!leadId || typeof abrirGaveta !== 'function') return;
+    abrirGaveta(leadId);
+}
+
 // Se o evento escolhido no seletor tem evento.data no PASSADO mas ainda
 // aparece na lista (só é possível quando data_limite_inscricao vai além
 // da própria data — hoje, só "Abertura de Turma" usa isso, ver
@@ -3059,10 +3080,11 @@ async function abrirChatWpp(leadId) {
     if (header && lead) {
         header.innerHTML = `
             <div style="width: 36px; height: 36px; background: #cbd5e1; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; color: white;"><i class="fa-solid fa-user"></i></div>
-            <div>
+            <div style="flex:1;">
                 <div style="font-size: 13px; font-weight: 600;">${escapeHTML(lead.pessoaNome || 'Sem nome')}</div>
                 <div style="font-size: 11px; color: var(--na-green); display:flex; align-items:center; gap:4px;"><i class="fa-brands fa-whatsapp"></i> ${escapeHTML(lead.pessoaTelefoneDDD || '')} ${escapeHTML(lead.pessoaTelefoneNumero || '')}${lead.filial ? ` · <i class="fa-solid fa-building"></i> ${escapeHTML(lead.filial)}` : ''}</div>
             </div>
+            <button class="btn-toggle" style="font-size:10px;" title="Abre a ficha completa do lead (eventos, tags, resumo, lembrete, histórico, etc.)" onclick="abrirFichaCompletaDoWpp('${id}')"><i class="fa-solid fa-address-card"></i> Ficha completa</button>
         `;
     }
 
