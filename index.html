@@ -372,6 +372,14 @@
                         <select id="wppFiltroFilialSelect" onchange="filtrarContatosWpp(document.getElementById('wppSearch').value)" style="width:100%; padding:6px 8px; font-size:12px; margin-bottom:6px;" title="Caixa de entrada unificada por padrão — filtre por uma filial se quiser ver só as conversas dela">
                             <option value="">Todas as filiais</option>
                         </select>
+                        <select id="wppOrdenarSelect" onchange="filtrarContatosWpp(document.getElementById('wppSearch').value)" style="width:100%; padding:6px 8px; font-size:12px; margin-bottom:6px;" title="Como ordenar a lista de conversas">
+                            <option value="recentes">Mais recentes primeiro</option>
+                            <option value="nao_lidas">Não lidas primeiro</option>
+                            <option value="janela">Janela fechando primeiro</option>
+                        </select>
+                        <label style="display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text-muted); margin-bottom:6px; cursor:pointer;">
+                            <input type="checkbox" id="wppFiltroSoJanelaAberta" onchange="filtrarContatosWpp(document.getElementById('wppSearch').value)"> Só dentro da janela de 24h
+                        </label>
                         <button class="btn-toggle" style="width:100%; font-size:11px; padding:6px;" onclick="iniciarConviteJanelaAberta()" title="Manda um convite pra próxima Abertura de Turma da própria filial de cada lead com conversa aberta agora"><i class="fa-solid fa-bolt"></i> Convidar (Janela Aberta)</button>
                     </div>
                     <div class="wpp-contact-list" id="wppContactList"></div>
@@ -381,6 +389,7 @@
                         <div style="width: 36px; height: 36px; background: #cbd5e1; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; color: white;"><i class="fa-solid fa-user"></i></div>
                         <div style="font-size:13px; color:var(--text-muted);">Selecione um contato à esquerda</div>
                     </div>
+                    <div id="wppChatTagsBlock"></div>
                     <div class="chat-messages" id="wppMessages">
                         <div style="text-align:center; font-size:11px; color:#64748b; margin-top:20px;">
                             Selecione um contato para ver a conversa.

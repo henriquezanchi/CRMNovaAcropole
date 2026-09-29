@@ -813,6 +813,19 @@ Vai rolar {evento}{quando}, e você é muito importante nesse momento! Você pod
 
 Me conta o que topa fazer?`;
 
+// Variantes SEM auto-apresentação — pedido do usuário (2026-09-29):
+// "Reparei que vc criou uma mensagem em que eu me apresento de novo, e
+// isso não é necessário pois estamos respondendo uma mensagem já
+// iniciada". Usadas só por "Convidar (Janela Aberta)" (o único fluxo que
+// SEMPRE responde uma conversa já em andamento, nunca um contato frio) —
+// ver montarTextoConviteEvento(), parâmetro `semApresentacao`.
+const CONVITE_EVENTO_NAO_ALUNO_SEM_APRESENTACAO = `Aproveitando que a gente já está conversando — vai rolar {evento}{quando} e eu queria muito te convidar pra vir!{interesses}
+
+Posso te passar mais detalhes?`;
+const CONVITE_EVENTO_ATIVO_SEM_APRESENTACAO = `Aproveitando que a gente já está conversando — vai rolar {evento}{quando}, e você é muito importante nesse momento! Você pode: 1) encaminhar esse convite pra quem você acha que ia gostar de conhecer; 2) me passar o telefone de alguém que valeria a pena a gente chamar pessoalmente; ou 3) topar ser voluntário(a) no dia, ajudando a receber o pessoal.
+
+Me conta o que topa fazer?`;
+
 // Nome de quem está mandando. Prioriza o usuário LOGADO (js/usuarios.js,
 // login nominal por conta) — nesse caso não pergunta nada, o nome já é o
 // da conta. Só cai no prompt() antigo (localStorage próprio, sem login)
@@ -1038,7 +1051,7 @@ async function enviarConviteAberturaTurmaFilial() {
 // massa via wa.me, onde a pessoa edita 1 texto pra todo o lote antes de
 // gerar os links); sem ele, comportamento de sempre (convite individual
 // da gaveta).
-function montarTextoConviteEvento(lead, evento, templateCustom) {
+function montarTextoConviteEvento(lead, evento, templateCustom, semApresentacao) {
     const tagsLead = (typeof parseTags === 'function' ? parseTags(lead.tags) : []).map(t => t.trim()).filter(Boolean);
     const ehAtivo = tagsLead.includes('Ativo') || tagsLead.includes('Aluno Ativo');
     const primeiroNome = nomeParaChamar(lead);
@@ -1072,7 +1085,11 @@ function montarTextoConviteEvento(lead, evento, templateCustom) {
     // replaceAll (não replace) — texto CUSTOM editado à mão pode repetir
     // um placeholder mais de 1 vez; com replace() simples, só a 1ª
     // ocorrência seria trocada, deixando "{nome}" literal na 2ª.
-    return (templateCustom || (ehAtivo ? CONVITE_EVENTO_ATIVO : CONVITE_EVENTO_NAO_ALUNO))
+    const base = templateCustom
+        || (semApresentacao
+            ? (ehAtivo ? CONVITE_EVENTO_ATIVO_SEM_APRESENTACAO : CONVITE_EVENTO_NAO_ALUNO_SEM_APRESENTACAO)
+            : (ehAtivo ? CONVITE_EVENTO_ATIVO : CONVITE_EVENTO_NAO_ALUNO));
+    return base
         .replaceAll('{nome}', primeiroNome)
         .replaceAll('{atendente}', atendente || 'a equipe da Nova Acrópole')
         .replaceAll('{filial}', nomeFilialComPreposicao(lead.filial))
@@ -1989,7 +2006,7 @@ async function iniciarConviteJanelaAberta() {
             filial: c.filial,
             evento,
             horasRestantes: c.horasRestantes,
-            texto: montarTextoConviteEvento(lead, evento),
+            texto: montarTextoConviteEvento(lead, evento, null, true),
         });
     });
 
@@ -2035,7 +2052,7 @@ function renderizarPreviaConviteJanelaAberta(semEventoNaFilial, totalAbertas) {
                             <strong>${escapeHTML(c.nome)}</strong> · ${escapeHTML(c.filial)} · ${escapeHTML(c.evento.nome)}
                             <span style="color:var(--text-muted);">(${Math.round(c.horasRestantes)}h restantes na janela)</span>
                         </summary>
-                        <div style="font-size:11.5px; white-space:pre-line; background:#f8fafc; padding:6px; border-radius:6px; margin-top:4px;">${escapeHTML(c.texto)}</div>
+                        <textarea style="width:100%; font-size:11.5px; white-space:pre-line; background:#f8fafc; padding:6px; border-radius:6px; margin-top:4px; border:1px solid var(--border-color); resize:vertical; min-height:80px; box-sizing:border-box;" oninput="editarTextoCandidatoConviteJanelaAberta(${i}, this.value)">${escapeHTML(c.texto)}</textarea>
                     </details>
                     <button class="icon-btn danger" title="Remover este da lista (ex: número reciclado, não é o lead de verdade)" onclick="removerCandidatoConviteJanelaAberta(${i})"><i class="fa-solid fa-xmark"></i></button>
                 </div>
@@ -2051,6 +2068,14 @@ function renderizarPreviaConviteJanelaAberta(semEventoNaFilial, totalAbertas) {
 function removerCandidatoConviteJanelaAberta(indice) {
     conviteJanelaAbertaCandidatos.splice(indice, 1);
     renderizarPreviaConviteJanelaAberta(0, conviteJanelaAbertaCandidatos.length);
+}
+
+// Pedido do usuário (2026-09-29): "libere a mensagem para edição" — o
+// texto de cada candidato agora é uma caixa editável antes de enviar,
+// não mais só leitura. Edita SÓ o array em memória (sem re-render — um
+// re-render a cada tecla perderia o foco/cursor do textarea).
+function editarTextoCandidatoConviteJanelaAberta(indice, novoTexto) {
+    if (conviteJanelaAbertaCandidatos[indice]) conviteJanelaAbertaCandidatos[indice].texto = novoTexto;
 }
 
 async function confirmarConviteJanelaAberta() {
@@ -2186,10 +2211,18 @@ function conversaNaoLidaWpp(conversa) {
 // Reaproveita 100% `vw_wpp_conversas` (já consultada por
 // renderizarContatosWpp()) — nenhuma coluna/tabela nova precisou existir
 // só pra isso.
+// Extraído do corpo de htmlTimerJanelaWpp() pra reuso em ordenar/filtrar a
+// lista de conversas (item 3 do pedido do usuário, 2026-09-29) — null
+// quando a janela nem está correndo (última mensagem foi NOSSA).
+function horasRestantesJanelaWpp(conversa) {
+    if (!conversa || conversa.ultima_direcao !== 'entrada') return null;
+    const horasPassadas = (Date.now() - new Date(conversa.ultima_mensagem_em).getTime()) / 3600000;
+    return 24 - horasPassadas;
+}
+
 function htmlTimerJanelaWpp(conversa) {
     if (!conversa || conversa.ultima_direcao !== 'entrada') return '';
-    const horasPassadas = (Date.now() - new Date(conversa.ultima_mensagem_em).getTime()) / 3600000;
-    const restante = 24 - horasPassadas;
+    const restante = horasRestantesJanelaWpp(conversa);
     if (restante <= 0) {
         return `<div class="wpp-timer-janela wpp-timer-fechada" title="Janela de 24h da Meta já fechou — só um modelo aprovado consegue reabrir a conversa"><i class="fa-solid fa-lock"></i> Janela fechada</div>`;
     }
@@ -2248,6 +2281,8 @@ async function abrirChatNaoIdentificado(telefone) {
     wppContatoAtivoId = null;
     wppTelefoneNaoIdentAtivo = telefone;
     if (chatWpp && chatWpp.fechar) chatWpp.fechar();
+    const blocoTags = document.getElementById('wppChatTagsBlock');
+    if (blocoTags) blocoTags.innerHTML = '';
 
     const searchEl = document.getElementById('wppSearch');
     renderizarContatosWpp(searchEl ? searchEl.value : '');
@@ -2381,6 +2416,112 @@ async function vincularConversaNaoIdentificadaPorId(telefone, pessoaIdentificado
     abrirChatWpp(pessoaIdentificador);
 }
 
+// ==========================================================
+// Tags direto no WhatsApp Unificado (pedido do usuário, 2026-09-29):
+// "dentro da área de whatsapp unificado, permita as tags (ver, incluir,
+// remover, alterar)" — antes só dava pra ver/editar tags abrindo a gaveta
+// do lead no Kanban. Reaproveita as mesmas funções puras já usadas lá
+// (parseTags/classeVisualTag/TAGS_SUGERIDAS/registrarLogAtividade,
+// js/app.js) mas com fluxo próprio (opera por `leadId` explícito, não o
+// `currentLeadId` global da gaveta) — não reaproveita renderDrawerTags()/
+// confirmarNovaTag()/removerTag() diretamente porque são amarradas a
+// elementos DOM (`drawer-tags`, `drawer-tag-form`) e ao lead da gaveta.
+// ==========================================================
+function renderizarTagsWpp(leadId) {
+    const container = document.getElementById('wppChatTagsBlock');
+    if (!container) return;
+    if (!leadId) { container.innerHTML = ''; return; }
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
+    if (!lead) { container.innerHTML = ''; return; }
+
+    const tags = (typeof parseTags === 'function' ? parseTags(lead.tags) : []);
+    const badges = tags.map((t, i) => {
+        const tagLimpa = (t || '').trim();
+        if (!tagLimpa) return '';
+        const classe = typeof classeVisualTag === 'function' ? classeVisualTag(tagLimpa) : '';
+        return `<span class="tag ${classe}" style="font-size:10.5px; padding:4px 8px; display:inline-flex; align-items:center; gap:4px;">${escapeHTML(tagLimpa)} <i class="fa-solid fa-xmark" style="cursor:pointer;" onclick="removerTagWpp('${leadId}', ${i})" title="Remover tag"></i></span>`;
+    }).join('');
+
+    container.innerHTML = `
+        <div style="display:flex; flex-wrap:wrap; gap:4px; align-items:center; padding:6px 12px; border-bottom:1px solid var(--border-color); background:#fafafa;">
+            ${badges}
+            <button class="btn-add-tag" style="font-size:10.5px; padding:3px 8px;" onclick="abrirFormNovaTagWpp('${leadId}')"><i class="fa-solid fa-plus"></i> Tag</button>
+            <span id="wppTagFormInline" style="display:none; gap:4px; align-items:center;">
+                <input type="text" id="wppTagInput" list="tagsSugeridasList" placeholder="Nova tag..." style="font-size:11px; padding:3px 6px; width:150px;" onkeydown="if(event.key==='Enter') confirmarNovaTagWpp('${leadId}'); if(event.key==='Escape') document.getElementById('wppTagFormInline').style.display='none';">
+                <button class="btn-add-tag" style="font-size:10.5px;" onclick="confirmarNovaTagWpp('${leadId}')">OK</button>
+            </span>
+        </div>
+    `;
+}
+
+function abrirFormNovaTagWpp(leadId) {
+    const span = document.getElementById('wppTagFormInline');
+    const input = document.getElementById('wppTagInput');
+    if (!span || !input) return;
+    span.style.display = 'inline-flex';
+    input.value = '';
+    input.focus();
+}
+
+async function confirmarNovaTagWpp(leadId) {
+    const input = document.getElementById('wppTagInput');
+    if (!input) return;
+    const novaTagText = input.value.trim();
+    if (!novaTagText) return;
+
+    const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(leadId));
+    if (leadIndex === -1) return;
+    let tagsArray = parseTags(leadsAtuais[leadIndex].tags).map(t => t.trim()).filter(Boolean);
+
+    if (tagsArray.includes(novaTagText)) { alert('Esse lead já tem essa tag.'); return; }
+    if (typeof TAG_LEAD_MANUAL !== 'undefined' && novaTagText === TAG_LEAD_MANUAL) {
+        alert('A tag "CRM" só é aplicada automaticamente ao criar um lead pelo botão "Novo Lead" — não dá pra adicionar à mão.');
+        return;
+    }
+    // Mesma regra de exclusão mútua já usada na gaveta (confirmarNovaTag(), js/app.js).
+    if (novaTagText === 'Ativo') tagsArray = tagsArray.filter(t => t !== 'Inativo' && t !== 'Ex-Aluno (Inativo)');
+    else if (novaTagText === 'Inativo') tagsArray = tagsArray.filter(t => t !== 'Ativo' && t !== 'Aluno Ativo');
+
+    tagsArray.push(novaTagText);
+    leadsAtuais[leadIndex].tags = JSON.stringify(tagsArray);
+    renderizarTagsWpp(leadId);
+    if (typeof renderizarCards === 'function') renderizarCards();
+
+    await window.supabaseClient
+        .from('leads_inscricoes')
+        .update({ tags: JSON.stringify(tagsArray) })
+        .eq('pessoaIdentificador', leadId);
+
+    if (typeof registrarLogAtividade === 'function') {
+        registrarLogAtividade('tag_adicionar', { pessoaIds: [String(leadId)], detalhes: { tag: novaTagText, origem: 'whatsapp_unificado' } });
+    }
+}
+
+async function removerTagWpp(leadId, index) {
+    const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(leadId));
+    if (leadIndex === -1) return;
+    let tagsArray = parseTags(leadsAtuais[leadIndex].tags);
+    const tagRemovida = tagsArray[index];
+    if (typeof TAG_LEAD_MANUAL !== 'undefined' && tagRemovida === TAG_LEAD_MANUAL) {
+        alert('A tag "CRM" é permanente — só some se o lead inteiro for apagado.');
+        return;
+    }
+
+    tagsArray.splice(index, 1);
+    leadsAtuais[leadIndex].tags = JSON.stringify(tagsArray);
+    renderizarTagsWpp(leadId);
+    if (typeof renderizarCards === 'function') renderizarCards();
+
+    await window.supabaseClient
+        .from('leads_inscricoes')
+        .update({ tags: JSON.stringify(tagsArray) })
+        .eq('pessoaIdentificador', leadId);
+
+    if (typeof registrarLogAtividade === 'function') {
+        registrarLogAtividade('tag_remover', { pessoaIds: [String(leadId)], detalhes: { tag: tagRemovida, origem: 'whatsapp_unificado' } });
+    }
+}
+
 async function renderizarContatosWpp(filtro = '') {
     const lista = document.getElementById('wppContactList');
     if (!lista) return;
@@ -2412,10 +2553,45 @@ async function renderizarContatosWpp(filtro = '') {
         (extras || []).forEach(l => mapaLeads.set(String(l.pessoaIdentificador), l));
     }
 
-    const contatosExistentes = conversasValidas
+    let contatosExistentes = conversasValidas
         .map(c => ({ conversa: c, lead: mapaLeads.get(String(c.pessoaIdentificador)) }))
         .filter(c => c.lead)
         .filter(c => !termo || (c.lead.pessoaNome || '').toLowerCase().includes(termo));
+
+    // Ordenar/filtrar (pedido do usuário, 2026-09-29): "coloque uma forma
+    // de ordenar e filtrar as conversas (não lidas, respostas mais
+    // recentes, dentro da janela, etc.)". A query já vem ordenada por
+    // mais recente (o padrão) — os outros modos reordenam em memória
+    // sobre o que já foi buscado, sem bater no banco de novo.
+    const selectSoJanela = document.getElementById('wppFiltroSoJanelaAberta');
+    if (selectSoJanela && selectSoJanela.checked) {
+        contatosExistentes = contatosExistentes.filter(c => {
+            const restante = horasRestantesJanelaWpp(c.conversa);
+            return restante !== null && restante > 0;
+        });
+    }
+    const selectOrdenar = document.getElementById('wppOrdenarSelect');
+    const modoOrdenar = selectOrdenar ? selectOrdenar.value : 'recentes';
+    if (modoOrdenar === 'nao_lidas') {
+        contatosExistentes.sort((a, b) => {
+            const naoLidaA = conversaNaoLidaWpp(a.conversa) ? 1 : 0;
+            const naoLidaB = conversaNaoLidaWpp(b.conversa) ? 1 : 0;
+            if (naoLidaA !== naoLidaB) return naoLidaB - naoLidaA;
+            return new Date(b.conversa.ultima_mensagem_em) - new Date(a.conversa.ultima_mensagem_em);
+        });
+    } else if (modoOrdenar === 'janela') {
+        contatosExistentes.sort((a, b) => {
+            const restA = horasRestantesJanelaWpp(a.conversa);
+            const restB = horasRestantesJanelaWpp(b.conversa);
+            // Quem não tem janela correndo (última mensagem foi nossa) vai
+            // pro fim — não é urgente responder algo que já respondemos.
+            if (restA === null && restB === null) return new Date(b.conversa.ultima_mensagem_em) - new Date(a.conversa.ultima_mensagem_em);
+            if (restA === null) return 1;
+            if (restB === null) return -1;
+            return restA - restB; // menos tempo restante primeiro — mais urgente
+        });
+    }
+    // 'recentes' — mantém a ordem já vinda da query (ultima_mensagem_em desc).
 
     // "Iniciar nova conversa" — busca em TODA a base (respeitando o
     // filtro de filial escolhido, se houver), não só nos leads já
@@ -2506,6 +2682,7 @@ async function abrirChatWpp(leadId) {
             lead = data;
         }
     }
+    renderizarTagsWpp(leadId);
 
     const searchEl = document.getElementById('wppSearch');
     renderizarContatosWpp(searchEl ? searchEl.value : '');
