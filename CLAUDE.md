@@ -84,6 +84,18 @@ supabase/functions/classificar-resposta-convite/ → Edge Function: classifica r
                                      convite de evento por IA (categoria fixa + texto
                                      sugerido), chamada por cron; ver seção "Classificação
                                      de Respostas de Convite (IA)"
+supabase/functions/sugerir-resposta-whatsapp/ → Edge Function: sugere resposta por IA pra
+                                     QUALQUER lead que respondeu no WhatsApp (não só convite
+                                     de evento), chamada por cron; ver seção "Sugestão de
+                                     resposta por IA no WhatsApp"
+supabase/functions/whatsapp-backfill-midia/ → Edge Function de manutenção pontual (não é
+                                     cron): baixa mídia de áudio/imagem/documento recebidos
+                                     ANTES de baixarEArmazenarMidiaRecebida() existir; ver
+                                     seção "Áudio recebido pelo WhatsApp toca de verdade"
+supabase/functions/_shared/midia.ts → baixarEArmazenarMidiaRecebida() — baixa mídia recebida
+                                     da Graph API e re-hospeda no bucket whatsapp-midia;
+                                     compartilhada entre whatsapp-webhook e
+                                     whatsapp-backfill-midia
 migracao_filiais.sql              → já rodada (cria tabela filiais + coluna filial)
 migracao_historico_eventos.sql    → já rodada (coluna historico_eventos + constraint UNIQUE)
 migracao_whatsapp.sql             → tabela mensagens_whatsapp + view vw_wpp_conversas
@@ -338,6 +350,18 @@ migracao_classificacao_respostas_convite.sql → tabela classificacoes_resposta_
 migracao_agendamento_classificacao_respostas.sql → cron job que roda
                                      classificar-resposta-convite a cada 15 min; JÁ RODADA
                                      nesta sessão via `supabase db query --linked`
+migracao_sugestao_resposta_ia.sql → coluna ia_sugestao_resposta_habilitada em filiais +
+                                     ia_sugestao_resposta em leads_inscricoes (toggles) +
+                                     tabela sugestoes_resposta_wpp; ver seção "Sugestão de
+                                     resposta por IA no WhatsApp"; JÁ RODADA nesta sessão via
+                                     `supabase db query --linked`
+migracao_rpc_candidatas_sugestao_resposta.sql → função
+                                     mensagens_candidatas_sugestao_resposta(), rodar depois
+                                     da migração acima; JÁ RODADA nesta sessão via
+                                     `supabase db query --linked`
+migracao_agendamento_sugestao_resposta.sql → cron job que roda
+                                     sugerir-resposta-whatsapp a cada 15 min; JÁ RODADA nesta
+                                     sessão via `supabase db query --linked`
 ```
 
 ## Banco de dados (Supabase)
@@ -6524,6 +6548,237 @@ coluna) — é um indicador de TEMPO, não uma posição no quadro.
   `vw_wpp_conversas` devolve `ultima_mensagem_em`/`ultima_direcao`
   corretos, e que o cálculo de horas restantes bate (mensagens recém-
   chegadas mostrando ~24h restantes).
+
+## Bug real GRAVÍSSIMO: respostas caindo em "Não Identificados" — causa raiz de verdade (2026-09-29)
+
+Depois do fix de `buscarLeadsPorTelefone()` (limite de 1000 do
+PostgREST, ver seção "Investigação: reply cai em 'Não Identificados'"
+acima), o usuário relatou que "várias respostas continuam caindo no não
+identificados" — e que, além disso, não dava pra abrir essas conversas
+pra ler/responder (só existia o botão "Vincular", que exige já saber o
+nome de antemão).
+
+- **Causa raiz real, confirmada consultando produção**: TODOS os casos
+  investigados (14 conversas presas) eram o MESMO padrão — telefone
+  duplicado entre 2 (ou 3) FILIAIS diferentes (a mesma pessoa cadastrada
+  mais de uma vez, resíduo dos bugs históricos de importação já
+  documentados). `buscarLeadsPorTelefone()` corretamente se recusa a
+  escolher entre 2+ leads ATIVOS ambíguos — mas isso vinha acontecendo
+  com muito mais frequência desde que as campanhas em massa ("Convidar
+  (Janela Aberta)"/"Convidar (API)") passaram a contatar um volume bem
+  maior de gente de uma vez.
+- **Sinal seguro pra desambiguar, achado consultando o histórico real**:
+  toda mensagem de SAÍDA (`whatsapp-send`) já sabe EXATAMENTE qual
+  `pessoaIdentificador` estava mandando pra (nunca é ambígua — a chamada
+  vem com o id certo desde o CRM) — então "qual dos candidatos JÁ
+  recebeu alguma mensagem nossa antes" é um sinal confiável de "é esse
+  aqui que estamos de fato contatando", nunca um chute.
+  `resolverAmbiguidadePorHistorico()` (`whatsapp-webhook/index.ts`): só
+  resolve quando EXATAMENTE 1 dos candidatos tem QUALQUER linha em
+  `mensagens_whatsapp` — 2+ com histórico, ou nenhum, continua ambíguo
+  (mesma cautela de sempre). Testado contra os 14 casos reais que
+  motivaram este bug (Kelly Susan, Nayana, Lorena, Giorgia, Rodrigo,
+  Fernanda/Cleuber, Rômulo, Joselle, Eloiza, Ana Carolina, Josilena,
+  Pollyanne) — os 14 resolveriam corretamente com este critério.
+  `payload_bruto` grava `resolvido_por_historico: true` quando esse
+  caminho foi usado (auditoria — diferencia de um match direto por
+  telefone único). **Backfill retroativo rodado contra produção**: as 14
+  conversas já presas antes deste fix foram religadas ao lead certo via
+  `UPDATE` direto (mesma lógica, aplicada manualmente).
+- **"Não dava pra abrir a conversa" — corrigido** (`js/whatsapp.js`):
+  antes, `htmlContatoNaoIdentificadoWpp()` só tinha o botão "Vincular"
+  (que abre um `prompt()` pedindo o nome) — a linha em si não tinha
+  `onclick` nenhum. Agora a linha inteira abre `abrirChatNaoIdentificado(telefone)`
+  — uma mini-visão de chat própria (não reaproveita `criarChatController()`,
+  que é montado em torno de um `pessoaIdentificador` fixo pro Realtime/
+  templates/anexos — aqui ainda não há lead nenhum): histórico completo
+  (`mensagens_whatsapp` filtrado por `telefone_whatsapp`, reusando
+  `htmlMensagemWpp()`) + resposta livre. **`whatsapp-send` ganhou um
+  novo parâmetro `telefoneWhatsapp`** (alternativa a
+  `pessoaIdentificador`, só pra `tipo: 'texto'`) — resolve o número
+  direto, sem lead/filial nenhuma, cai no `phone_number_id` padrão.
+  Quando a última mensagem ficou ambígua, `payload_bruto.candidatos_ambiguos`
+  (já existia, agora inclui `pessoaNome` também) alimenta uma **escolha
+  rápida** — um botão por candidato (`vincularConversaNaoIdentificadaPorId()`),
+  sem precisar digitar nome.
+- **`vincularConversaNaoIdentificada()` (busca por nome) também corrigida**:
+  antes buscava só em `leadsAtuais` (escopado à filial selecionada no
+  topo) — pra um duplicado CROSS-FILIAL, o lead certo podia nem estar
+  carregado, e a busca dizia "nenhum lead encontrado" à toa. Agora busca
+  direto no banco, em TODAS as filiais.
+- **Achado nesta mesma varredura, não relacionado ao bug acima**: um
+  pedido de LGPD (Thiago Dias, "peço, gentilmente, que exclua meu
+  telefone... já havia feito esse pedido em outra oportunidade") e um
+  caso real de telefone errado (Gisele Nunes Miranda, "Não sou Gisele e
+  nem conheço nenhuma Gisele!" — telefone marcado como `"Telefone
+  Inválido"` manualmente, mesmo efeito de `marcarTelefoneInvalido()` na
+  gaveta).
+
+## Convidar (Janela Aberta) — mensagem editável, sem auto-apresentação (2026-09-29)
+
+Feedback direto do usuário sobre o recurso ("Convidar (Janela Aberta)",
+ver seção própria acima): "libere a mensagem para edição. Reparei que vc
+criou uma mensagem em que eu me apresento de novo, e isso não é
+necessário pois estamos respondendo uma mensagem já iniciada".
+
+- **Texto de cada candidato agora é editável** antes de enviar
+  (`renderizarPreviaConviteJanelaAberta()`, `js/whatsapp.js`) — o antigo
+  `<div>` só-leitura virou um `<textarea>` (`editarTextoCandidatoConviteJanelaAberta()`
+  atualiza o array em memória a cada tecla, sem re-render — perderia o
+  cursor); `confirmarConviteJanelaAberta()` já lia `c.texto` na hora do
+  envio, então o valor editado é o que sai.
+- **Novas variantes de template SEM auto-apresentação**
+  (`CONVITE_EVENTO_NAO_ALUNO_SEM_APRESENTACAO`/`CONVITE_EVENTO_ATIVO_SEM_APRESENTACAO`,
+  `js/whatsapp.js`) — os templates originais (`CONVITE_EVENTO_NAO_ALUNO`/
+  `CONVITE_EVENTO_ATIVO`) sempre abrem com "Aqui é {atendente}, da Nova
+  Acrópole {filial}, tudo bem?", apropriado pra um contato FRIO — mas
+  "Janela Aberta" SEMPRE responde uma conversa já em andamento (é
+  literalmente o critério de entrada: só quem tem a janela de 24h aberta
+  porque já nos mandou mensagem). `montarTextoConviteEvento()` ganhou um
+  4º parâmetro, `semApresentacao` — quando `true`, troca a escolha
+  ativo/não-aluno pra essas variantes (a lógica de detectar "Ativo" via
+  tag continua igual, só o texto-base muda). Chamado com
+  `semApresentacao=true` só no ponto de montagem dos candidatos da
+  Janela Aberta — o convite individual da gaveta/lote via wa.me/API
+  continuam usando os templates originais (contato às vezes é frio de
+  verdade nesses casos).
+
+## WhatsApp Unificado: ordenar/filtrar + tags direto na conversa (2026-09-29)
+
+Pedido do usuário, itens 3 e 4 de uma lista de 5: "coloque uma forma de
+ordenar e filtrar as conversas no whatsapp unificado (não lidas,
+respostas mais recentes, dentro da janela, etc.)" e "dentro da área de
+whatsapp unificado, permita as tags (ver, incluir, remover, alterar)".
+
+- **Ordenar/filtrar** (`index.html`, `#wppOrdenarSelect`/
+  `#wppFiltroSoJanelaAberta`, ao lado do filtro de filial já existente):
+  3 modos de ordenação — "Mais recentes primeiro" (padrão, já era a
+  ordem da query), "Não lidas primeiro" (`conversaNaoLidaWpp()`, já
+  existia pro indicador visual) e "Janela fechando primeiro" (menor
+  `horasRestantesJanelaWpp()` primeiro — quem não tem janela correndo,
+  porque a última mensagem foi NOSSA, vai pro fim, não é urgente) — mais
+  um checkbox "Só dentro da janela de 24h". Tudo aplicado em MEMÓRIA
+  sobre o que `renderizarContatosWpp()` já buscou (sem bater no banco de
+  novo) — `horasRestantesJanelaWpp()` foi extraída do corpo de
+  `htmlTimerJanelaWpp()` pra ser reaproveitada aqui.
+- **Tags direto no cabeçalho da conversa** (`#wppChatTagsBlock`,
+  `js/whatsapp.js`, `renderizarTagsWpp()`/`confirmarNovaTagWpp()`/
+  `removerTagWpp()`): antes só dava pra ver/editar tags abrindo a gaveta
+  do lead no Kanban. **De propósito NÃO reaproveita `renderDrawerTags()`/
+  `confirmarNovaTag()`/`removerTag()` diretamente** (`js/app.js`) — são
+  amarradas ao `currentLeadId` global e a elementos DOM da gaveta
+  (`drawer-tags`, `drawer-tag-form`); em vez disso, funções paralelas
+  que operam por `leadId` explícito, reaproveitando as peças PURAS
+  (`parseTags`/`classeVisualTag`/`TAG_LEAD_MANUAL`/`registrarLogAtividade`,
+  com `origem: 'whatsapp_unificado'` no log) e a MESMA regra de negócio
+  (exclusão mútua Ativo/Inativo, tag "CRM" permanente). Reusa o
+  `<datalist id="tagsSugeridasList">` que já existia globalmente — sem
+  datalist novo. Chamado de dentro de `abrirChatWpp()`, depois do lead
+  já estar garantido em `leadsAtuais`.
+
+## Áudio recebido pelo WhatsApp toca de verdade no CRM (2026-09-29)
+
+Pedido do usuário: "não consigo ouvir áudio pelo crm e preciso disso" —
+`extrairTexto()` (`whatsapp-webhook`) sempre só gravou o texto literal
+"[Áudio recebido]" pra mensagens de voz, sem nunca baixar a mídia de
+verdade. A Graph API nunca manda a mídia direto no payload do webhook,
+só um `id` — é preciso 1 chamada (`GET /{media-id}`, Bearer token) pra
+pegar uma URL temporária assinada (expira rápido) e outra pra baixar o
+binário de fato, com o MESMO Bearer.
+
+- **`_shared/midia.ts`, NOVO** — `baixarEArmazenarMidiaRecebida(supabaseAdmin,
+  mediaId)`: faz as 2 chamadas e re-hospeda no MESMO bucket público já
+  usado pro envio de anexos (`whatsapp-midia`,
+  `migracao_storage_whatsapp_midia.sql`) — assim o link nunca expira e o
+  navegador só precisa de uma URL pública comum
+  (`<audio src>`/`<img src>`), sem token nenhum. Best-effort: falha em
+  qualquer etapa (token, rede, upload) devolve `null`, a mensagem ainda
+  é gravada normalmente (cai no texto placeholder), nunca trava o
+  webhook. Compartilhado entre `whatsapp-webhook` (mídia nova, tempo
+  real) e `whatsapp-backfill-midia` (mídia antiga, ver abaixo).
+- **Ganho de carona pra imagem/documento recebidos**: `htmlMensagemWpp()`
+  já lia `payload_bruto.imagem_url`/`documento_url`+`nome_arquivo` pra
+  renderizar imagem/documento — mas só preenchidos quando NÓS
+  enviávamos (`whatsapp-send`). Populando essas MESMAS chaves pra
+  mensagens RECEBIDAS (`msg.image.id`/`msg.document.id`), o render já
+  funciona pros dois lados sem nenhuma mudança de frontend — só áudio
+  precisou de um branch novo (`<audio controls>`, `audio_url`/`audio_mime`
+  em `payload_bruto`).
+- **`whatsapp-backfill-midia`, NOVA Edge Function de manutenção pontual**
+  (não faz parte de nenhum cron/fluxo automático) — baixa a mídia de
+  áudio/imagem/documento recebidos ANTES deste recurso existir (senão
+  ficariam pra sempre só com o texto placeholder). Chamada manualmente 1x
+  via `curl`/`invoke` — **já rodada contra produção nesta sessão**:
+  recuperou os 2 áudios recebidos antes do deploy, confirmados
+  publicamente acessíveis (`curl -I`, `200 OK`, `audio/ogg`).
+- **Testado ao vivo, ponta a ponta**: os 2 áudios de backfill confirmados
+  gravados com `audio_url`/`audio_mime` corretos e acessíveis via HTTP
+  direto. Áudio novo chegando pelo webhook em tempo real não foi
+  confirmado visualmente nesta sessão (sem receber um áudio de teste) —
+  a lógica é a MESMA já validada pelo backfill, risco residual baixo.
+
+## Sugestão de resposta por IA no WhatsApp — toggle por conversa e por filial (2026-09-29)
+
+Pedido do usuário: "Crie uma sugestão de resposta com IA para cada lead
+que respondeu (eu preciso autorizar o envio dessa sugestão). Permita
+habilitar ou desabilitar essa função por conversa, e também por
+filial". Mesmo princípio de sempre (`ia-diagnostico-saude`/
+`ia-recomendar-contatos`/`classificar-resposta-convite`): a IA NUNCA
+decide quem entra na lista nem envia sozinha — só escreve um rascunho; a
+detecção é 100% regra fixa em SQL, e o SDR sempre autoriza o envio.
+
+- **Diferença pra `classificar-resposta-convite`** (seção própria acima):
+  aquela só cobre quem tem um CONVITE DE EVENTO pendente (categoriza
+  confirmou/recusou/etc., toca em `evento_leads`); esta cobre QUALQUER
+  resposta recebida, sem categoria fixa, só um rascunho de resposta —
+  as duas coexistem, e esta pula quem já tem uma classificação de
+  convite pra evitar 2 sugestões concorrentes pro mesmo lead.
+- **2 toggles novos**: `filiais.ia_sugestao_resposta_habilitada`
+  (boolean, default `true` — "Gerenciar Filiais", checkbox novo ao lado
+  de "Ativa") é o padrão da FILIAL; `leads_inscricoes.ia_sugestao_resposta`
+  (boolean NULLABLE — `null` = segue o padrão da filial; `true`/`false`
+  = override explícito) é o override por CONVERSA, um `<select>` novo no
+  cabeçalho do chat (WhatsApp Unificado, ao lado das tags —
+  `alternarSugestaoIaLead()`). `migracao_sugestao_resposta_ia.sql`.
+- **Detecção 100% determinística**: `mensagens_candidatas_sugestao_resposta(p_limite)`
+  (`migracao_rpc_candidatas_sugestao_resposta.sql`) — mensagens de
+  ENTRADA de texto das últimas 2h, sem sugestão ainda, respeitando
+  `coalesce(lead.ia_sugestao_resposta, filial.ia_sugestao_resposta_habilitada, true)`.
+- **Edge Function `sugerir-resposta-whatsapp`**, chamada por pg_cron a
+  cada 15 min (`migracao_agendamento_sugestao_resposta.sql`, mesmo
+  padrão de `net.http_post` com a chave publishable como Bearer): pra
+  cada candidata, monta o CONTEXTO (últimas 6 mensagens da conversa,
+  `montarContexto()`) e pede um rascunho curto/caloroso/não-vendedor à
+  Claude Haiku — proibido explicitamente inventar fato concreto (data,
+  valor, endereço) que não veio no contexto; sem confiança, devolve
+  `sugestao: null` em vez de forçar um texto. Grava em
+  `sugestoes_resposta_wpp` (`status='pendente'`, `unique(mensagem_origem_id)`
+  — corrida entre execuções do cron falha o insert e segue, sem
+  duplicar).
+- **Card de revisão no WhatsApp Unificado** (`#wppSugestaoIaBox`, entre
+  as mensagens e a caixa de texto): aparece quando o lead aberto tem uma
+  sugestão `pendente` — texto EDITÁVEL (`<textarea>`) + "Enviar"
+  (`enviarSugestaoIaWpp()`, chama `whatsapp-send` de verdade e marca
+  `status='enviada'`) + "Descartar". Sem texto gerado (IA falhou), mostra
+  só "Descartar" e um aviso pra escrever na mão. Atualiza sozinho via
+  Realtime (canal `postgres_changes` filtrado por `pessoaIdentificador`,
+  mesmo padrão do chat) quando o cron gera uma sugestão nova enquanto a
+  conversa já está aberta. **Badge na lista de contatos**
+  (`htmlContatoWpp()`, ícone de varinha) avisa quem tem sugestão
+  pendente sem precisar abrir cada chat — 1 query em lote, não 1 por
+  lead.
+- **Testado ao vivo, ponta a ponta, contra produção**: RPC de candidatos
+  confirmada com dado real (5 mensagens reais); dedupe contra
+  `classificar-resposta-convite` confirmado (4 de 5 candidatas puladas
+  por já terem classificação de convite — só a que não tinha convite
+  pendente gerou sugestão de verdade); leitura via chave publishable
+  confirmada (`curl` direto na REST API). **A ESCRITA da IA está
+  falhando** — `"credential validation failed"` (Anthropic), um erro
+  diferente do já documentado "Your credit balance is too low" — mesma
+  classe de bloqueio externo, mas causa nova; a detecção/fallback nunca
+  trava (grava `sugestao_resposta: null`, mesmo comportamento seguro de
+  sempre), só falta o texto até a credencial ser corrigida no Console da
+  Anthropic (ação do usuário, fora do código).
 
 ## Bloqueio da API do WhatsApp (Meta) — investigado 2026-09-07
 
