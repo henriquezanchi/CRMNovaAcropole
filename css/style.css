@@ -395,7 +395,14 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 
 /* Estrutura do Chat na Gaveta */
 .drawer-chat { display: flex; flex-direction: column; background: #efeae2; position: relative; padding: 0 !important; flex: 1; }
-.chat-header { background: #f0f2f5; padding: 12px 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border-color); }
+/* flex-wrap (2026-09-29) — a gaveta do lead acumulou muitos botões neste
+   cabeçalho (Importar Conversa/Convidar pra Evento/Nova Turma/Ver no
+   WhatsApp Unificado/alterar nome) e a coluna do chat dentro da gaveta é
+   estreita (drawer tem 800px no total, 350px já vão pra .drawer-info) —
+   sem wrap, os botões extrapolavam a largura e ficavam cortados/
+   invisíveis à direita. Inofensivo pro cabeçalho do WhatsApp Unificado
+   (painel bem mais largo, raramente chega a quebrar linha). */
+.chat-header { background: #f0f2f5; padding: 12px 20px; display: flex; align-items: center; gap: 8px 12px; border-bottom: 1px solid var(--border-color); flex-wrap: wrap; row-gap: 8px; }
 .chat-messages { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
 /* Virou coluna (2026-09-28) pra caber a prévia de anexo (.wpp-anexo-preview)
    ACIMA da linha de ícones/input/botão — essa linha em si continua um flex
@@ -740,6 +747,12 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .wpp-encaminhar-resultados { max-height: 220px; overflow-y: auto; }
 .wpp-encaminhar-item { padding: 8px 10px; border-radius: 6px; cursor: pointer; }
 .wpp-encaminhar-item:hover { background: #f0f2f5; }
+
+/* Busca dentro da conversa aberta (pedido do usuário, 2026-09-29). */
+.wpp-busca-bar { display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: #f0f2f5; border-bottom: 1px solid var(--border-color); }
+.wpp-busca-bar .wpp-busca-input { flex: 1; border: none; background: white; padding: 6px 10px; border-radius: 6px; font-size: 12px; outline: none; }
+.wpp-busca-bar .wpp-busca-contador { font-size: 10.5px; color: var(--text-muted); white-space: nowrap; }
+.wpp-busca-bar .wpp-busca-fechar { background: none; border: none; cursor: pointer; color: #64748b; font-size: 13px; }
 .wpp-quote {
     border-left: 3px solid var(--na-green-dark); background: rgba(0,0,0,0.05); border-radius: 4px;
     padding: 4px 6px; margin-bottom: 4px; font-size: 11px; overflow: hidden;

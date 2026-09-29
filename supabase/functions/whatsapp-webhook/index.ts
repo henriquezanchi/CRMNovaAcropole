@@ -55,6 +55,17 @@ function extrairTexto(msg: any): string {
     // balão, nunca lia esses campos). Sem migração nova: continua
     // gravado com `tipo='outro'` (mensagens_whatsapp.tipo não tem
     // 'contato' no check constraint), só o TEXTO agora é legível.
+    // Localização compartilhada — pedido do usuário (2026-09-29,
+    // "implemente tudo que for possível"): a Meta manda lat/long direto
+    // no payload (sem `id` de mídia pra baixar, diferente de imagem/
+    // áudio/vídeo/figurinha) — já preservado por completo em
+    // `payload_bruto` (spread de `msg`); só o TEXTO nunca lia isso.
+    if (msg.type === "location" && msg.location) {
+        const { latitude, longitude, name, address } = msg.location;
+        const linkMaps = `https://www.google.com/maps?q=${latitude},${longitude}`;
+        const rotulo = [name, address].filter(Boolean).join(" — ");
+        return `📍 ${rotulo ? rotulo + " — " : ""}${linkMaps}`;
+    }
     if (msg.type === "contacts" && Array.isArray(msg.contacts) && msg.contacts.length > 0) {
         return msg.contacts.map((c: any) => {
             const nome = c.name?.formatted_name || c.name?.first_name || "Contato sem nome";
@@ -239,6 +250,15 @@ Deno.serve(async (req) => {
                 } else if (tipoMapeado === "documento" && msg.document?.id) {
                     const midia = await baixarEArmazenarMidiaRecebida(supabaseAdmin, msg.document.id);
                     if (midia) midiaExtra = { documento_url: midia.url, nome_arquivo: msg.document.filename || "documento" };
+                } else if (tipoMapeado === "video" && msg.video?.id) {
+                    // Pedido do usuário (2026-09-29, "implemente tudo que for
+                    // possível"): vídeo recebido tocando de verdade — mesmo
+                    // mecanismo de áudio/imagem, só o `id` muda de campo.
+                    const midia = await baixarEArmazenarMidiaRecebida(supabaseAdmin, msg.video.id);
+                    if (midia) midiaExtra = { video_url: midia.url, video_mime: midia.mimeType };
+                } else if (tipoMapeado === "sticker" && msg.sticker?.id) {
+                    const midia = await baixarEArmazenarMidiaRecebida(supabaseAdmin, msg.sticker.id);
+                    if (midia) midiaExtra = { sticker_url: midia.url };
                 }
 
                 const payloadBase = resolvidoPorHistorico

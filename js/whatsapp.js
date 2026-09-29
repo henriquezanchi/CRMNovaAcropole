@@ -380,6 +380,14 @@ function htmlMensagemWpp(m, quotedInfo) {
     // — se por algum motivo a mídia não puder ser baixada (token, rede),
     // `audio_url` fica ausente e cai no texto normal, sem quebrar nada.
     const audioUrl = m.tipo === 'audio' ? (m.payload_bruto && m.payload_bruto.audio_url) : null;
+    // Vídeo/figurinha recebidos e localização compartilhada — pedido do
+    // usuário (2026-09-29, "implemente tudo que for possível"). Vídeo/
+    // figurinha seguem o MESMO mecanismo de mídia baixada/re-hospedada
+    // (whatsapp-webhook); localização vem com lat/long direto no
+    // payload (sem mídia pra baixar), sempre disponível.
+    const videoUrl = m.tipo === 'video' ? (m.payload_bruto && m.payload_bruto.video_url) : null;
+    const stickerUrl = m.tipo === 'sticker' ? (m.payload_bruto && m.payload_bruto.sticker_url) : null;
+    const localizacao = m.tipo === 'localizacao' ? (m.payload_bruto && m.payload_bruto.location) : null;
     const corpoHTML = imagemUrl
         ? `<img src="${escapeHTML(imagemUrl)}" alt="Imagem" style="max-width:100%; border-radius:6px; display:block; margin-bottom:${m.corpo_texto ? '4px' : '0'};">${m.corpo_texto ? textoComQuebrasDeLinha(m.corpo_texto) : ''}`
         : documento
@@ -389,6 +397,15 @@ function htmlMensagemWpp(m, quotedInfo) {
           </a>${m.corpo_texto ? textoComQuebrasDeLinha(m.corpo_texto) : ''}`
         : audioUrl
         ? `<audio controls preload="none" style="max-width:220px; height:38px;"><source src="${escapeHTML(audioUrl)}"></audio>`
+        : videoUrl
+        ? `<video controls preload="metadata" style="max-width:100%; border-radius:6px; display:block; max-height:260px;"><source src="${escapeHTML(videoUrl)}"></video>${m.corpo_texto ? textoComQuebrasDeLinha(m.corpo_texto) : ''}`
+        : stickerUrl
+        ? `<img src="${escapeHTML(stickerUrl)}" alt="Figurinha" style="max-width:120px; display:block;">`
+        : localizacao
+        ? `<a href="https://www.google.com/maps?q=${localizacao.latitude},${localizacao.longitude}" target="_blank" rel="noopener" style="display:flex; align-items:center; gap:8px; padding:8px; background:rgba(0,0,0,0.04); border-radius:8px; text-decoration:none; color:inherit;">
+            <i class="fa-solid fa-location-dot" style="font-size:22px; color:#dc2626;"></i>
+            <span style="font-size:12px;"><strong>${escapeHTML(localizacao.name || 'Localização compartilhada')}</strong>${localizacao.address ? `<br><span style="color:#64748b;">${escapeHTML(localizacao.address)}</span>` : ''}</span>
+          </a>`
         : textoComQuebrasDeLinha(m.corpo_texto);
     // Nome do usuário logado (js/usuarios.js) que enviou esta mensagem —
     // pedido do usuário ("no whatsapp precisa aparecer o nome do usuário
@@ -585,6 +602,24 @@ function ajustarAlturaTextareaWpp(textarea) {
     textarea.style.height = textarea.scrollHeight + 'px';
 }
 
+// Confirmação de leitura ativa (pedido do usuário, 2026-09-29: "implemente
+// tudo que for possível") — marca a última mensagem RECEBIDA do lead como
+// lida na Meta (whatsapp-marcar-lido), pra ele ver o ✓✓ azul, igual o
+// WhatsApp real quando alguém abre a conversa. `wppMensagensMarcadasLidas`
+// evita repetir a chamada pra mesma mensagem em reaberturas seguidas da
+// mesma sessão (idempotente do lado da Meta de qualquer jeito, mas sem
+// necessidade de bater na API de novo à toa).
+const wppMensagensMarcadasLidas = new Set();
+function marcarUltimaMensagemComoLidaWpp(leadId, mensagensCarregadas) {
+    if (!leadId || !mensagensCarregadas || mensagensCarregadas.length === 0) return;
+    const ultimaRecebida = [...mensagensCarregadas].reverse().find(m => m.direcao === 'entrada' && m.wa_message_id);
+    if (!ultimaRecebida || wppMensagensMarcadasLidas.has(ultimaRecebida.wa_message_id)) return;
+    wppMensagensMarcadasLidas.add(ultimaRecebida.wa_message_id);
+    window.supabaseClient.functions.invoke('whatsapp-marcar-lido', {
+        body: { pessoaIdentificador: leadId, waMessageId: ultimaRecebida.wa_message_id }
+    }).catch(e => console.warn('Erro ao marcar mensagem como lida:', e.message));
+}
+
 function criarChatController({ messagesId, inputAreaId }) {
     let leadId = null;
     let mensagens = [];
@@ -594,6 +629,13 @@ function criarChatController({ messagesId, inputAreaId }) {
     // "igual no whatsapp real") — { waId, preview, remetente: 'saida'|'entrada' }
     // do balão clicado; null = não está respondendo nada em particular.
     let respondendoA = null;
+    // Busca dentro da conversa aberta (pedido do usuário, 2026-09-29:
+    // "implemente tudo que for possível") — filtra os balões já
+    // carregados (mesmo limite de 200 de carregarHistoricoMensagens(),
+    // não busca no banco inteiro); diferente do WhatsApp real (que
+    // destaca e pula entre resultados sem escondar o resto), aqui é uma
+    // versão mais simples — só mostra quem bate, com contador.
+    let termoBusca = '';
 
     const el = (id) => document.getElementById(id);
 
@@ -670,9 +712,19 @@ function criarChatController({ messagesId, inputAreaId }) {
             return;
         }
         const mapaPorWaId = new Map(mensagens.filter(x => x.wa_message_id).map(x => [x.wa_message_id, x]));
+        // Busca dentro da conversa (ver `termoBusca` acima) — filtra pra só
+        // quem bate, sem perder a numeração/contador da barra de busca.
+        const listaVisivel = termoBusca
+            ? mensagens.filter(m => (m.corpo_texto || '').toLowerCase().includes(termoBusca))
+            : mensagens;
+        atualizarContadorBusca(listaVisivel.length);
+        if (termoBusca && listaVisivel.length === 0) {
+            container.innerHTML = '<div style="text-align:center; font-size:11px; color:#64748b; margin-top:20px;">Nenhuma mensagem encontrada com esse termo.</div>';
+            return;
+        }
         let html = '';
         let ultimoDia = null;
-        mensagens.forEach(m => {
+        listaVisivel.forEach(m => {
             const diaAtual = new Date(m.criado_em).toDateString();
             if (diaAtual !== ultimoDia) {
                 html += `<div class="wpp-date-divider"><span>${escapeHTML(rotuloDataSeparadorWpp(m.criado_em))}</span></div>`;
@@ -681,7 +733,47 @@ function criarChatController({ messagesId, inputAreaId }) {
             html += htmlMensagemWpp(m, resolverCitacaoWpp(m, mapaPorWaId));
         });
         container.innerHTML = html;
-        container.scrollTop = container.scrollHeight;
+        if (!termoBusca) container.scrollTop = container.scrollHeight;
+    }
+
+    // Barra de busca dentro da conversa — injetada/removida ACIMA de
+    // `.chat-messages` (sibling, não dentro — pra não ser apagada a cada
+    // renderizarMensagens()). Alternada pelo botão de lupa no cabeçalho
+    // (ver htmlBotaoBuscaConversaWpp() e o onclick ligado em ambos os
+    // cabeçalhos, WhatsApp Unificado e gaveta).
+    function toggleBuscaConversa() {
+        const barraExistente = document.getElementById(messagesId + '-busca-bar');
+        if (barraExistente) { barraExistente.remove(); termoBusca = ''; renderizarMensagens(); return; }
+
+        const container = el(messagesId);
+        if (!container || !container.parentElement) return;
+        const barra = document.createElement('div');
+        barra.id = messagesId + '-busca-bar';
+        barra.className = 'wpp-busca-bar';
+        barra.innerHTML = `
+            <i class="fa-solid fa-magnifying-glass" style="color:var(--text-muted); font-size:12px;"></i>
+            <input type="text" class="wpp-busca-input" placeholder="Buscar nesta conversa...">
+            <span class="wpp-busca-contador"></span>
+            <button type="button" class="wpp-busca-fechar"><i class="fa-solid fa-xmark"></i></button>
+        `;
+        container.parentElement.insertBefore(barra, container);
+        const input = barra.querySelector('.wpp-busca-input');
+        input.addEventListener('input', () => {
+            termoBusca = input.value.trim().toLowerCase();
+            renderizarMensagens();
+        });
+        barra.querySelector('.wpp-busca-fechar').addEventListener('click', () => {
+            barra.remove();
+            termoBusca = '';
+            renderizarMensagens();
+        });
+        input.focus();
+    }
+
+    function atualizarContadorBusca(total) {
+        if (!termoBusca) return;
+        const contador = document.querySelector(`#${messagesId}-busca-bar .wpp-busca-contador`);
+        if (contador) contador.textContent = `${total} resultado(s)`;
     }
 
     function htmlSeletorTemplate() {
@@ -943,6 +1035,9 @@ function criarChatController({ messagesId, inputAreaId }) {
         leadId = pessoaIdentificador;
         mensagens = [];
         respondendoA = null; // trocar de conversa cancela qualquer "respondendo a" pendente
+        termoBusca = '';
+        const barraBuscaAntiga = document.getElementById(messagesId + '-busca-bar');
+        if (barraBuscaAntiga) barraBuscaAntiga.remove();
 
         const containerMsgs = el(messagesId);
         if (containerMsgs) containerMsgs.innerHTML = '<div style="text-align:center; font-size:11px; color:#64748b; margin-top:20px;">Carregando conversa...</div>';
@@ -951,6 +1046,11 @@ function criarChatController({ messagesId, inputAreaId }) {
         renderizarMensagens();
         renderizarAreaInput();
         if (templateNomeForcado) selecionarTemplatePorNome(templateNomeForcado);
+        // Confirmação de leitura ativa (pedido do usuário, 2026-09-29):
+        // marca a última mensagem RECEBIDA como lida na Meta (✓✓ azul do
+        // lado do lead) ao abrir a conversa — cobre WhatsApp Unificado E
+        // gaveta, já que os 2 usam este mesmo abrir(). Fire-and-forget.
+        marcarUltimaMensagemComoLidaWpp(leadId, mensagens);
 
         canal = window.supabaseClient
             .channel(`wpp-chat-${messagesId}-${leadId}`)
@@ -987,7 +1087,7 @@ function criarChatController({ messagesId, inputAreaId }) {
         return true;
     }
 
-    return { abrir, fechar, preencherTexto, selecionarTemplatePorNome };
+    return { abrir, fechar, preencherTexto, selecionarTemplatePorNome, toggleBuscaConversa };
 }
 
 const chatWpp = criarChatController({ messagesId: 'wppMessages', inputAreaId: 'wppChatInputArea' });
@@ -2937,9 +3037,47 @@ async function renderizarContatosWpp(filtro = '') {
             return restante !== null && restante > 0;
         });
     }
+
+    // Badge de "sugestão de IA pronta" + insumo do modo "Prioridade" —
+    // buscado ANTES de ordenar (o modo prioridade usa isso pra pontuar),
+    // reaproveitado depois pro badge de cada card (não busca 2x).
+    let idsComSugestaoPendente = new Set();
+    if (contatosExistentes.length > 0) {
+        const { data: pendentes } = await window.supabaseClient
+            .from('sugestoes_resposta_wpp')
+            .select('"pessoaIdentificador"')
+            .eq('status', 'pendente')
+            .in('pessoaIdentificador', contatosExistentes.map(c => c.lead.pessoaIdentificador));
+        idsComSugestaoPendente = new Set((pendentes || []).map(p => String(p.pessoaIdentificador)));
+    }
+
     const selectOrdenar = document.getElementById('wppOrdenarSelect');
-    const modoOrdenar = selectOrdenar ? selectOrdenar.value : 'recentes';
-    if (modoOrdenar === 'nao_lidas') {
+    const modoOrdenar = selectOrdenar ? selectOrdenar.value : 'prioridade';
+    if (modoOrdenar === 'prioridade') {
+        // "Bot" de priorização (pedido do usuário, 2026-09-29): "organizar
+        // a ordem de resposta por prioridade de forma inteligente e
+        // automática" — combina os sinais que já existem no CRM (nunca
+        // um cálculo obscuro/só-da-IA): sugestão de IA pronta pra revisar
+        // pesa mais que tudo (já tem uma resposta pronta, só falta
+        // autorizar); depois janela fechando (urgência real de prazo);
+        // depois Lead Forte (potencial de conversão); depois não lida.
+        const pontuar = ({ conversa, lead }) => {
+            let pontos = 0;
+            if (idsComSugestaoPendente.has(String(lead.pessoaIdentificador))) pontos += 1000;
+            const restante = horasRestantesJanelaWpp(conversa);
+            if (restante !== null) pontos += restante < 4 ? 400 : restante < 12 ? 200 : 50;
+            const tags = typeof parseTags === 'function' ? parseTags(lead.tags) : [];
+            if (tags.includes('Lead Forte 1')) pontos += 300;
+            else if (tags.includes('Lead Forte 2')) pontos += 180;
+            else if (tags.includes('Lead Forte 3')) pontos += 90;
+            if (conversaNaoLidaWpp(conversa)) pontos += 60;
+            return pontos;
+        };
+        contatosExistentes.sort((a, b) => {
+            const diff = pontuar(b) - pontuar(a);
+            return diff !== 0 ? diff : new Date(b.conversa.ultima_mensagem_em) - new Date(a.conversa.ultima_mensagem_em);
+        });
+    } else if (modoOrdenar === 'nao_lidas') {
         contatosExistentes.sort((a, b) => {
             const naoLidaA = conversaNaoLidaWpp(a.conversa) ? 1 : 0;
             const naoLidaB = conversaNaoLidaWpp(b.conversa) ? 1 : 0;
@@ -3001,19 +3139,6 @@ async function renderizarContatosWpp(filtro = '') {
     if (contatosExistentes.length === 0 && novosContatos.length === 0 && naoIdentUnicos.length === 0) {
         lista.innerHTML = '<div style="padding:16px; font-size:12px; color:var(--text-muted);">Nenhuma conversa encontrada. Busque pelo nome de um lead pra iniciar uma nova.</div>';
         return;
-    }
-
-    // Badge de "sugestão de IA pronta" na lista (pedido do usuário,
-    // 2026-09-29) — sem precisar abrir cada chat pra descobrir quem já
-    // tem uma sugestão pendente de revisão.
-    let idsComSugestaoPendente = new Set();
-    if (contatosExistentes.length > 0) {
-        const { data: pendentes } = await window.supabaseClient
-            .from('sugestoes_resposta_wpp')
-            .select('"pessoaIdentificador"')
-            .eq('status', 'pendente')
-            .in('pessoaIdentificador', contatosExistentes.map(c => c.lead.pessoaIdentificador));
-        idsComSugestaoPendente = new Set((pendentes || []).map(p => String(p.pessoaIdentificador)));
     }
 
     let html = contatosExistentes.map(({ conversa, lead }) => htmlContatoWpp(lead, conversa, idsComSugestaoPendente.has(String(lead.pessoaIdentificador)))).join('');
@@ -3084,6 +3209,7 @@ async function abrirChatWpp(leadId) {
                 <div style="font-size: 13px; font-weight: 600;">${escapeHTML(lead.pessoaNome || 'Sem nome')}</div>
                 <div style="font-size: 11px; color: var(--na-green); display:flex; align-items:center; gap:4px;"><i class="fa-brands fa-whatsapp"></i> ${escapeHTML(lead.pessoaTelefoneDDD || '')} ${escapeHTML(lead.pessoaTelefoneNumero || '')}${lead.filial ? ` · <i class="fa-solid fa-building"></i> ${escapeHTML(lead.filial)}` : ''}</div>
             </div>
+            <button class="icon-btn" title="Buscar nesta conversa" onclick="chatWpp.toggleBuscaConversa()"><i class="fa-solid fa-magnifying-glass"></i></button>
             <button class="btn-toggle" style="font-size:10px;" title="Abre a ficha completa do lead (eventos, tags, resumo, lembrete, histórico, etc.)" onclick="abrirFichaCompletaDoWpp('${id}')"><i class="fa-solid fa-address-card"></i> Ficha completa</button>
         `;
     }
