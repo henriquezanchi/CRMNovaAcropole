@@ -8,6 +8,7 @@
 import { supabaseAdmin, NOME_TABELA_LEADS, NOME_TABELA_MENSAGENS } from "../_shared/supabaseAdmin.ts";
 import { candidatosNumeroBR, separarFromMeta } from "../_shared/telefone.ts";
 import { aplicarReacao } from "../_shared/reacoes.ts";
+import { baixarEArmazenarMidiaRecebida } from "../_shared/midia.ts";
 
 const APP_SECRET = Deno.env.get("WHATSAPP_APP_SECRET")!;
 const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN")!;
@@ -51,6 +52,16 @@ function extrairTexto(msg: any): string {
     };
     return rotulos[msg.type] || `[Mensagem tipo ${msg.type}]`;
 }
+
+// Pedido do usuário (2026-09-29): "não consigo ouvir áudio pelo crm e
+// preciso disso" — antes, `extrairTexto()` só gravava o texto literal
+// "[Áudio recebido]", sem baixar a mídia de verdade em lugar nenhum.
+// `baixarEArmazenarMidiaRecebida()` (_shared/midia.ts, compartilhada com
+// whatsapp-backfill-midia) baixa da Graph API e re-hospeda no bucket
+// público `whatsapp-midia` — best-effort: se falhar em qualquer etapa
+// (token, rede, upload), devolve `null` e a mensagem ainda é gravada
+// normalmente, só sem a mídia (cai no texto placeholder de
+// extrairTexto()), nunca trava o webhook.
 
 function mapearStatusMeta(status: string): string {
     if (status === "sent") return "enviado";
@@ -195,19 +206,40 @@ Deno.serve(async (req) => {
                     if (resolvido) { match = resolvido; resolvidoPorHistorico = true; }
                 }
 
+                // Baixa e re-hospeda a mídia de verdade (áudio/imagem/
+                // documento) — mesmas chaves já lidas por htmlMensagemWpp()
+                // no frontend (`imagem_url`/`documento_url`+`nome_arquivo`)
+                // pra imagem/documento reaproveitarem o mesmo render já
+                // usado pro que NÓS enviamos; `audio_url`/`audio_mime` é
+                // novo, pro player de áudio.
+                let midiaExtra: Record<string, unknown> = {};
+                const tipoMapeado = mapearTipoMeta(msg.type);
+                if (tipoMapeado === "audio" && msg.audio?.id) {
+                    const midia = await baixarEArmazenarMidiaRecebida(supabaseAdmin, msg.audio.id);
+                    if (midia) midiaExtra = { audio_url: midia.url, audio_mime: midia.mimeType };
+                } else if (tipoMapeado === "imagem" && msg.image?.id) {
+                    const midia = await baixarEArmazenarMidiaRecebida(supabaseAdmin, msg.image.id);
+                    if (midia) midiaExtra = { imagem_url: midia.url };
+                } else if (tipoMapeado === "documento" && msg.document?.id) {
+                    const midia = await baixarEArmazenarMidiaRecebida(supabaseAdmin, msg.document.id);
+                    if (midia) midiaExtra = { documento_url: midia.url, nome_arquivo: msg.document.filename || "documento" };
+                }
+
+                const payloadBase = resolvidoPorHistorico
+                    ? { ...msg, resolvido_por_historico: true, candidatos_ambiguos: matches }
+                    : (matches.length > 1 ? { ...msg, candidatos_ambiguos: matches } : msg);
+
                 const { error } = await supabaseAdmin.from(NOME_TABELA_MENSAGENS).upsert({
                     pessoaIdentificador: match?.pessoaIdentificador ?? null,
                     telefone_whatsapp: msg.from,
                     filial: match?.filial ?? null,
                     direcao: "entrada",
-                    tipo: mapearTipoMeta(msg.type),
+                    tipo: tipoMapeado,
                     corpo_texto: extrairTexto(msg),
                     wa_message_id: msg.id,
                     wa_status: "entregue",
                     phone_number_id_meta: phoneNumberId,
-                    payload_bruto: resolvidoPorHistorico
-                        ? { ...msg, resolvido_por_historico: true, candidatos_ambiguos: matches }
-                        : (matches.length > 1 ? { ...msg, candidatos_ambiguos: matches } : msg),
+                    payload_bruto: { ...payloadBase, ...midiaExtra },
                     criado_em: new Date(Number(msg.timestamp) * 1000).toISOString(),
                 }, { onConflict: "wa_message_id", ignoreDuplicates: true });
 

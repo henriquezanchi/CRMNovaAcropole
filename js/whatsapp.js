@@ -310,6 +310,14 @@ function htmlMensagemWpp(m) {
     // enviarComAnexo()) — mesmo raciocínio, mas sem preview de imagem:
     // um cartão clicável com ícone + nome do arquivo, igual o WhatsApp real.
     const documento = m.tipo === 'documento' ? (m.payload_bruto || {}) : null;
+    // Áudio recebido (voice note) — pedido do usuário ("não consigo ouvir
+    // áudio pelo crm"): antes só mostrava o texto placeholder
+    // "[Áudio recebido]", sem nenhuma mídia de verdade. A URL é baixada da
+    // Graph API e re-hospedada no Storage pelo próprio webhook (ver
+    // baixarEArmazenarMidiaRecebida(), supabase/functions/whatsapp-webhook)
+    // — se por algum motivo a mídia não puder ser baixada (token, rede),
+    // `audio_url` fica ausente e cai no texto normal, sem quebrar nada.
+    const audioUrl = m.tipo === 'audio' ? (m.payload_bruto && m.payload_bruto.audio_url) : null;
     const corpoHTML = imagemUrl
         ? `<img src="${escapeHTML(imagemUrl)}" alt="Imagem" style="max-width:100%; border-radius:6px; display:block; margin-bottom:${m.corpo_texto ? '4px' : '0'};">${m.corpo_texto ? textoComQuebrasDeLinha(m.corpo_texto) : ''}`
         : documento
@@ -317,6 +325,8 @@ function htmlMensagemWpp(m) {
             <i class="fa-solid fa-file-arrow-down" style="font-size:22px; color:var(--na-green-dark);"></i>
             <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; font-size:12px;">${escapeHTML(documento.nome_arquivo || 'Documento')}</span>
           </a>${m.corpo_texto ? textoComQuebrasDeLinha(m.corpo_texto) : ''}`
+        : audioUrl
+        ? `<audio controls preload="none" style="max-width:220px; height:38px;"><source src="${escapeHTML(audioUrl)}"></audio>`
         : textoComQuebrasDeLinha(m.corpo_texto);
     // Nome do usuário logado (js/usuarios.js) que enviou esta mensagem —
     // pedido do usuário ("no whatsapp precisa aparecer o nome do usuário
