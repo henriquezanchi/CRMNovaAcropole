@@ -100,6 +100,10 @@ supabase/functions/whatsapp-marcar-lido/ → Edge Function: marca uma mensagem r
                                      lida na Meta (✓✓ azul do lado do lead) — endpoint próprio
                                      da Graph API, chamada ao abrir uma conversa; ver seção
                                      "Vídeo/figurinha/localização, leitura ativa..."
+supabase/functions/whatsapp-reenviar-falhas/ → Edge Function: reenvia automaticamente (cron
+                                     3h) mensagens que falharam por motivo TEMPORÁRIO (fatura
+                                     em aberto/limite de taxa) — nunca número sem WhatsApp de
+                                     verdade; ver seção "Reenvio automático de falhas"
 migracao_filiais.sql              → já rodada (cria tabela filiais + coluna filial)
 migracao_historico_eventos.sql    → já rodada (coluna historico_eventos + constraint UNIQUE)
 migracao_whatsapp.sql             → tabela mensagens_whatsapp + view vw_wpp_conversas
@@ -366,6 +370,16 @@ migracao_rpc_candidatas_sugestao_resposta.sql → função
 migracao_agendamento_sugestao_resposta.sql → cron job que roda
                                      sugerir-resposta-whatsapp a cada 15 min; JÁ RODADA nesta
                                      sessão via `supabase db query --linked`
+migracao_whatsapp_reenvio_automatico.sql → colunas tentativas_reenvio/
+                                     ultima_tentativa_reenvio_em em mensagens_whatsapp + novo
+                                     valor 'reenviada' no check de wa_status; ver seção
+                                     "Reenvio automático de falhas"; JÁ RODADA nesta sessão
+                                     via `supabase db query --linked`
+migracao_rpc_falhas_retriaveis.sql → função mensagens_falhas_retriaveis(), rodar depois da
+                                     migração acima; JÁ RODADA nesta sessão via
+                                     `supabase db query --linked`
+migracao_agendamento_reenvio_falhas.sql → cron job que roda whatsapp-reenviar-falhas a cada
+                                     3h; JÁ RODADA nesta sessão via `supabase db query --linked`
 ```
 
 ## Banco de dados (Supabase)
@@ -6862,6 +6876,72 @@ ilegível, pergunta sobre foto de perfil).
   Meta por privacidade, não algo que dê pra contornar com código. Não
   construído, e não há solução conhecida enquanto essa restrição da API
   existir.
+
+## Reenvio automático de falhas de WhatsApp (2026-09-29/30)
+
+Achado real, não um bug de código: um disparo em massa via "Convidar
+(API)" gerou 453 falhas — 312 por `131042` ("Business eligibility
+payment issue", fatura em aberto na conta de WhatsApp Business da Meta)
+e 141 por `131026` ("Message Undeliverable", número sem WhatsApp de
+verdade). O usuário pediu um script automático que reenvie sozinho as
+falhas a cada 3h.
+
+- **Decisão de design, deliberada**: NUNCA reenviar tudo que falhou —
+  só códigos de erro genuinamente TEMPORÁRIOS, que podem se resolver
+  sozinhos com o tempo. Whitelist (`131042` fatura em aberto, `130429`/
+  `131056` limite de taxa passageiro) vive DENTRO da RPC
+  `mensagens_falhas_retriaveis()` (`migracao_rpc_falhas_retriaveis.sql`)
+  — única fonte de verdade, a Edge Function não duplica a lista.
+  `131026` (Message Undeliverable) e qualquer outro código NUNCA entram
+  — reenviar pra um número que nunca teve WhatsApp de verdade não
+  funciona nunca, só gasta chamada de API à toa e arrisca a reputação
+  do número de negócio.
+- **`migracao_whatsapp_reenvio_automatico.sql`**: `tentativas_reenvio`
+  (int, default 0) + `ultima_tentativa_reenvio_em` em
+  `mensagens_whatsapp`, e o `check` de `wa_status` ganhou o valor
+  `'reenviada'` — a linha ORIGINAL que falhou fica marcada assim quando
+  um reenvio dá certo (a mensagem de verdade é uma linha NOVA, já que
+  `whatsapp-send` sempre insere 1 linha por chamada) — sai da fila de
+  retentativa pra sempre, sem duplicar a mesma falha em `'falhou'` pra
+  sempre.
+- **`whatsapp-send` ganhou `template_nome`/`template_idioma`/
+  `template_params` em `payload_bruto`** (só existiam pra imagem/
+  documento/áudio antes) — necessário pra um reenvio futuro conseguir
+  reconstruir a MESMA chamada de template; sem isso, só o texto já
+  renderizado (`corpo_texto`) fica gravado, que não dá pra mandar de
+  volta como template de verdade pra Graph API.
+- **Nova Edge Function `whatsapp-reenviar-falhas`**, cron a cada 3h
+  (`migracao_agendamento_reenvio_falhas.sql`) — busca candidatas via a
+  RPC (limite de 5 tentativas, validade de 7 dias), reconstrói o corpo
+  exato por tipo (`montarCorpoReenvio()`) e chama `whatsapp-send`
+  servidor-a-servidor (`SUPABASE_SERVICE_ROLE_KEY`, mesmo padrão de
+  `resumo-semanal-chefe` → `whatsapp-notificar-chefe-filial`) em lotes
+  de 5. Incrementa `tentativas_reenvio` ANTES de saber o resultado —
+  evita reprocessar a mesma linha pra sempre se algo quebrar no meio.
+- **Bug real corrigido durante o teste**: a 1ª versão buscava as falhas
+  com `.order(criado_em asc).limit(200)` e filtrava o código de erro EM
+  MEMÓRIA depois — com 723 falhas acumuladas em 7 dias, os 200 primeiros
+  (mais antigos) quase nunca eram os retriáveis de verdade (`"puladas":
+  200"`, 0 retriáveis). Corrigido filtrando por código DIRETO no banco
+  via a RPC (mesma lição já aprendida várias vezes neste projeto sobre
+  filtro jsonb complexo via PostgREST client-side).
+- **Backfill pontual pro lote histórico**: as 312 falhas de `131042` já
+  existentes foram gravadas ANTES de `whatsapp-send` guardar
+  `template_nome` — sem esse dado, `montarCorpoReenvio()` devolvia
+  `null` (`"sem_dado_suficiente": 312`). Como as 312 usavam o MESMO
+  template (`contato_inicial`, confirmado por regex batendo 100% contra
+  `corpo_texto`), os parâmetros (`nome`/`atendente`/`filial`) foram
+  reconstruídos via `regexp_match()` sobre o texto já renderizado e
+  gravados retroativamente em `payload_bruto`. Só serviu pra ESTE lote
+  específico — reenvios futuros já nascem com o dado certo, sem precisar
+  de backfill nenhum.
+- **Testado ao vivo, ponta a ponta, contra produção**: rodando a
+  function depois do backfill, **30 das 312 mensagens foram reenviadas
+  com sucesso de verdade** (confirmado no banco, `wa_status='reenviada'`
+  na linha original + uma linha nova com `wa_status='enviado'`) — as
+  outras 282 falharam de novo com o mesmo código (fatura ainda em
+  aberto na Meta) e continuam na fila, tentando de novo a cada 3h até o
+  limite de 5 tentativas ou 7 dias.
 
 ## Vídeo/figurinha/localização, leitura ativa, busca, priorização e IA com contexto do CRM (2026-09-29)
 
