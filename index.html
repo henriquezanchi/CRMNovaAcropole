@@ -381,6 +381,9 @@
                         <label style="display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text-muted); margin-bottom:6px; cursor:pointer;">
                             <input type="checkbox" id="wppFiltroSoJanelaAberta" onchange="filtrarContatosWpp(document.getElementById('wppSearch').value)"> Só dentro da janela de 24h
                         </label>
+                        <label style="display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text-muted); margin-bottom:6px; cursor:pointer;">
+                            <input type="checkbox" id="wppVerArquivadas" onchange="filtrarContatosWpp(document.getElementById('wppSearch').value)"> Ver arquivadas
+                        </label>
                         <button class="btn-toggle" style="width:100%; font-size:11px; padding:6px;" onclick="iniciarConviteJanelaAberta()" title="Manda um convite pra próxima Abertura de Turma da própria filial de cada lead com conversa aberta agora"><i class="fa-solid fa-bolt"></i> Convidar (Janela Aberta)</button>
                     </div>
                     <div class="wpp-contact-list" id="wppContactList"></div>

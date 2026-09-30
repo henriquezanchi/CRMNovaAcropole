@@ -797,6 +797,60 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .wpp-timer-fechada { background: #e2e8f0; color: #64748b; }
 @keyframes wppTimerPulsar { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 
+/* Pin/fixar e arquivar conversa (pedido do usuário, 2026-09-30: "igual no
+   whatsapp real") — ícones só ficam bem visíveis no hover, exceto quando
+   já ativos (fixada/arquivada), que ficam sempre visíveis pra dar sinal
+   permanente do estado. */
+.wpp-contact-acoes { display: flex; flex-direction: column; gap: 4px; opacity: 0; transition: 0.15s; flex-shrink: 0; }
+.wpp-contact-item:hover .wpp-contact-acoes, .wpp-contact-acoes:has(.ativo) { opacity: 1; }
+.wpp-pin-btn, .wpp-archive-btn {
+    background: none; border: none; cursor: pointer; color: #94a3b8; font-size: 11px; padding: 3px;
+    border-radius: 4px; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center;
+}
+.wpp-pin-btn:hover, .wpp-archive-btn:hover { background: #e2e8f0; color: #475569; }
+.wpp-pin-btn.ativo { color: var(--na-green-dark); }
+.wpp-archive-btn.ativo { color: #b45309; }
+
+/* Busca com destaque + navegação entre resultados (pedido do usuário,
+   2026-09-30) — <mark> nas ocorrências, resultado atual com contorno
+   extra pra achar rápido entre vários destacados na tela. */
+.wpp-busca-mark { background: #fef08a; color: inherit; border-radius: 2px; padding: 0 1px; }
+.msg.msg-busca-ativa { outline: 2px solid #f59e0b; outline-offset: 1px; }
+.wpp-busca-bar .wpp-busca-prev, .wpp-busca-bar .wpp-busca-next {
+    background: none; border: none; cursor: pointer; color: #64748b; font-size: 12px; padding: 3px 5px;
+}
+.wpp-busca-bar .wpp-busca-prev:disabled, .wpp-busca-bar .wpp-busca-next:disabled { opacity: 0.3; cursor: default; }
+
+/* "Ocultar" mensagem enviada (pedido do usuário, 2026-09-30) — mesmo
+   padrão visual dos outros botões de ação no hover do balão. */
+.wpp-ocultar-btn {
+    position: absolute; top: -12px; background: white; border: 1px solid #e2e8f0; border-radius: 50%;
+    width: 22px; height: 22px; font-size: 10px; color: #b91c1c; cursor: pointer; display: none;
+    align-items: center; justify-content: center; box-shadow: 0 1px 2px rgba(0,0,0,0.15); padding: 0;
+}
+.msg:hover .wpp-ocultar-btn { display: flex; }
+.msg-out .wpp-ocultar-btn { left: 70px; }
+.msg-in .wpp-ocultar-btn { right: 70px; }
+
+/* Emoji picker pra DIGITAR (pedido do usuário, 2026-09-30) — mesmo
+   espírito visual do picker de reação, só que em grade (mais opções). */
+.wpp-emoji-digitar-picker {
+    display: none; position: fixed; z-index: 3000; background: white; border-radius: 10px;
+    padding: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); grid-template-columns: repeat(6, 1fr);
+    gap: 2px; width: 240px;
+}
+.wpp-emoji-opcao { background: none; border: none; font-size: 19px; padding: 4px; border-radius: 6px; cursor: pointer; line-height: 1; }
+.wpp-emoji-opcao:hover { background: #f0f2f5; }
+
+/* Gravar áudio no navegador (pedido do usuário, 2026-09-30) — botão vira
+   "parar" + cronômetro enquanto grava, mesmo padrão de urgência visual
+   (vermelho pulsante) do timer de janela crítico. */
+.btn-audio-toggle {
+    background: none; border: none; font-size: 18px; color: var(--text-muted); cursor: pointer;
+    display: flex; align-items: center; gap: 4px; white-space: nowrap;
+}
+.btn-audio-toggle.gravando { color: #dc2626; font-size: 13px; font-weight: 700; animation: wppTimerPulsar 1.5s ease-in-out infinite; }
+
 /* ==========================================
    ABA: RELATÓRIOS (FUNIL DE CONVERSÃO)
 ========================================== */

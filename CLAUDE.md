@@ -384,6 +384,12 @@ migracao_rpc_duplicados_entre_filiais.sql → função duplicados_entre_filiais(
                                      telefone em 2+ filiais diferentes, seção "Duplicados
                                      Entre Filiais" em Leads a Tratar; JÁ RODADA nesta sessão
                                      via `supabase db query --linked`
+migracao_whatsapp_pin_arquivar_ocultar.sql → colunas wpp_fixado/wpp_arquivado em
+                                     leads_inscricoes + oculta_em em mensagens_whatsapp
+                                     (+ policy de UPDATE nova) — pin/arquivar conversa e
+                                     ocultar mensagem enviada, ver seção "WhatsApp — últimos
+                                     itens de paridade com o app real"; JÁ RODADA nesta sessão
+                                     via `supabase db query --linked`
 ```
 
 ## Ferramentas locais (fora do site publicado)
@@ -7505,6 +7511,117 @@ acima, opção b) precisa conseguir abrir o CRM de fora da rede local.
 - Repositório Git local iniciado nesta sessão (antes não existia nenhum)
   — necessário tanto pra publicar via Vercel quanto pro GitHub Actions do
   scraper rodar.
+
+## WhatsApp — últimos itens de paridade com o app real (2026-09-30)
+
+Pedido do usuário: "implemente tudo que falta, e seja possível implementar
+agora, incluindo o plano maior" — depois de confirmar que **as 5 frentes
+do plano maior da reunião com a Ediliene já estavam TODAS implementadas**
+em rodadas anteriores desta mesma sessão (convite em massa por segmento/
+tag — `iniciarConviteApiEmMassa()`/`leads_por_tag_filial()`; classificação
+de resposta de convite por IA — `classificar-resposta-convite`; timer de
+24h — `htmlTimerJanelaWpp()`; tags no card de duplicado — "Leads a
+Tratar"; inscrição assistida no Ulisses Etapa 1 —
+`abrir-inscricao-assistida.js`), o trabalho novo desta rodada focou nos 5
+itens que realmente faltavam da lista "falta implementar" (comparativo
+WhatsApp real vs. CRM). 2 continuam de fora, por impossibilidade real da
+API (não código): **lista de transmissão nativa** (Cloud API não tem
+conceito de broadcast list) e **grupos/chamadas/Status/foto de perfil/
+"digitando.../presença** (já documentado antes, reconfirmado).
+
+- **Gravar áudio no navegador** (`alternarGravacaoAudioWpp()`,
+  `js/whatsapp.js`, dentro de `criarChatController()` — cobre WhatsApp
+  Unificado e gaveta do lead de uma vez): botão de microfone no compose
+  bar, ao lado do de enviar. Clique começa a gravar (`MediaRecorder`,
+  `getUserMedia({audio:true})`), o próprio botão vira "⏹ 0:0N" enquanto
+  grava; clicar de novo para e entra no MESMO fluxo de anexo já existente
+  (`selecionarAnexo(file, 'audio')` → preview com `<audio controls>` →
+  `enviarComAnexo()`, que já sabia mandar `tipo:'audio'` pro
+  `whatsapp-send` desde a feature de encaminhar áudio recebido — nenhuma
+  mudança de backend precisou existir). Trocar de conversa no meio de
+  uma gravação DESCARTA ela (`pararGravacaoSeAtiva(true)`, chamada em
+  `abrir()`/`fechar()`) — nunca manda áudio de uma conversa errada.
+  **Limitação real, não escondida**: o formato gravado depende do que o
+  NAVEGADOR sabe gravar via `MediaRecorder.isTypeSupported()` — tenta, em
+  ordem, `audio/mp4` → `audio/ogg;codecs=opus` → `audio/webm;codecs=opus`
+  → `audio/webm` (o que a Graph API mais aceita de verdade primeiro). Se
+  o navegador só souber `webm` (comum em Chrome/Edge), a Meta pode não
+  tocar como voice note de verdade no celular do lead — **não testado
+  contra a Graph API real nesta sessão** (só a gravação/preview no
+  navegador foi validada por leitura de código; enviar de propósito
+  dependeria de microfone real disponível neste ambiente de execução).
+- **"Apagar" mensagem enviada — na real, só dá pra OCULTAR** (pedido do
+  usuário, item "editar/apagar mensagem enviada"): confirmado que a Meta
+  Cloud API **não tem nenhum endpoint pra editar ou apagar uma mensagem
+  já entregue** pelo número de negócio — isso é um recurso do app
+  PESSOAL do WhatsApp, nunca exposto pela Business Platform. Implementar
+  uma "edição" falsa seria enganoso (o CRM mostraria um texto diferente
+  do que o lead recebeu de verdade). O que foi construído, honesto: botão
+  de lixeira (`htmlBotaoOcultarWpp()`, só em mensagens de SAÍDA, hover do
+  balão) que OCULTA a mensagem só na nossa tela
+  (`mensagens_whatsapp.oculta_em`, `migracao_whatsapp_pin_arquivar_ocultar.sql`)
+  — o `confirm()` antes de ocultar já avisa isso explicitamente. O lead
+  continua vendo a mensagem normalmente no celular dele; é só limpeza da
+  NOSSA visualização (ex: some um envio de teste feito por engano).
+  Precisou de uma policy de UPDATE nova em `mensagens_whatsapp` (a única
+  que já existia só liberava linha com `pessoaIdentificador` nulo, pra
+  vincular conversa não identificada) — mesmo modelo de acesso público já
+  usado no resto do projeto.
+- **Pin/fixar e arquivar conversa** (`alternarFixarConversaWpp()`/
+  `alternarArquivarConversaWpp()`, `js/whatsapp.js`; colunas
+  `wpp_fixado`/`wpp_arquivado` em `leads_inscricoes`,
+  `migracao_whatsapp_pin_arquivar_ocultar.sql` — cada lead tem no máximo
+  1 conversa de WhatsApp, então o estado vive direto no lead, mesmo
+  padrão de qualquer outro campo simples dele; herdou a RLS pública já
+  existente na tabela, sem policy nova). Ícones de alfinete/caixa no
+  hover de cada linha da lista de contatos (sempre visíveis quando já
+  ativos). Fixada sempre sube pro TOPO da lista, **independente do modo
+  de ordenação escolhido** (`#wppOrdenarSelect`) — feito com uma 2ª
+  passada de `.sort()` só pela flag `wpp_fixado` depois do sort principal
+  (`Array.prototype.sort` é estável no spec ECMAScript, então só reagrupa
+  em 2 blocos preservando a ordem interna de cada um). Arquivada some da
+  lista principal por padrão — checkbox novo "Ver arquivadas"
+  (`index.html`) revela de volta.
+- **Busca com destaque + navegação entre resultados** (pedido do
+  usuário: "igual no whatsapp real" — a versão anterior, de 2026-09-29,
+  só filtrava/escondia quem não batia). Reescrito: a busca dentro da
+  conversa aberta (lupa no cabeçalho) agora **nunca esconde o resto da
+  conversa** — destaca cada ocorrência com `<mark>`
+  (`destacarTermoBuscaWpp()`, aplicado sobre o texto JÁ ESCAPADO, então só
+  funciona pra termos sem caracteres HTML especiais — suficiente pra
+  busca de texto comum) e mostra "posição/total" na barra, com botões
+  ⌃/⌄ (ou Enter/Shift+Enter no campo) pra navegar — o resultado atual
+  ganha um contorno extra (`.msg-busca-ativa`) e a tela rola até ele
+  (`scrollIntoView`). Contador reseta pro resultado mais recente
+  (`buscaIndiceAtual = null` → resolvido pro último match) toda vez que o
+  termo muda.
+- **Emoji picker pra digitar** (`abrirEmojiPickerDigitarWpp()`,
+  `js/whatsapp.js`) — o ícone de carinha já existia no compose bar desde
+  a feature de anexos, mas não abria nada. Agora abre um picker flutuante
+  (~30 emojis comuns, grade) que insere no CURSOR do `<textarea>` (não só
+  no fim do texto) — diferente do picker de REAÇÃO (que já existia,
+  callback fixo por mensagem), este é genérico, reaproveitado pelos dois
+  chats (unificado e gaveta) por estar dentro de `renderizarAreaInput()`.
+- **Bug real evitado (achado revisando, não relatado pelo usuário)**: o
+  botão de ocultar (acima) é desenhado por `htmlMensagemWpp()`, que
+  também é usada pelo mini-chat de "não identificado"
+  (`carregarERenderizarChatNaoIdentificado()`, compartilha o MESMO
+  container DOM `wppMessages` com `chatWpp`) — sem guarda, clicar
+  "ocultar" ali chamaria `renderizarMensagens()` do controller `chatWpp`
+  (com `leadId` nulo nesse momento), que apagaria a visualização do
+  mini-chat sozinho (mostrando "Nenhuma mensagem ainda" por engano).
+  Corrigido com a MESMA guarda já usada no botão de reagir
+  (`if (btnOcultar && leadId)`) — ocultar simplesmente não funciona
+  enquanto a conversa ainda não foi vinculada a um lead (vincular
+  primeiro, depois ocultar normalmente).
+- **Não testado ao vivo pela UI** nesta sessão (sem Playwright disponível
+  neste ambiente, mesma limitação de sempre) — migração já rodada e
+  confirmada contra produção (`wpp_fixado`/`wpp_arquivado`/`oculta_em` +
+  a policy nova, todos verificados por `information_schema`/`pg_policies`
+  direto); a lógica em si foi revisada por leitura de código com cuidado
+  extra nos pontos de estado compartilhado (ver bug evitado acima), mas
+  clicar de verdade (gravar áudio, fixar/arquivar, navegar resultados de
+  busca, inserir emoji) fica pra confirmar na próxima sessão de uso real.
 
 ## Convenções de código
 

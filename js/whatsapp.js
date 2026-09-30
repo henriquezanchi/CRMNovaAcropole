@@ -217,8 +217,25 @@ function statusIconHTML(m) {
 // que tem linha em branco entre parágrafos) aparecem espaçados igual ao
 // modelo aprovado na Meta (bug real relatado pelo usuário, comparando
 // print da Meta com o balão renderizado no CRM).
-function textoComQuebrasDeLinha(texto) {
-    return escapeHTML(texto || '').replace(/\n/g, '<br>');
+//
+// `termoBusca` (opcional, pedido do usuário 2026-09-30: "busca com
+// destaque + navegação entre resultados, igual no whatsapp real") — quando
+// preenchido, envolve cada ocorrência do termo com <mark>. Roda sobre o
+// texto JÁ ESCAPADO (não o original), então só encontra o termo se ele não
+// contiver caracteres HTML especiais (&<>"') — suficiente pra busca de
+// texto comum, que é o caso de uso real.
+function escapeRegExpWpp(s) {
+    return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+function destacarTermoBuscaWpp(textoEscapado, termoBusca) {
+    if (!termoBusca) return textoEscapado;
+    const re = new RegExp(escapeRegExpWpp(termoBusca), 'gi');
+    return textoEscapado.replace(re, (m) => `<mark class="wpp-busca-mark">${m}</mark>`);
+}
+function textoComQuebrasDeLinha(texto, termoBusca) {
+    let escapado = escapeHTML(texto || '');
+    if (termoBusca) escapado = destacarTermoBuscaWpp(escapado, termoBusca);
+    return escapado.replace(/\n/g, '<br>');
 }
 
 // ==========================================================
@@ -317,6 +334,20 @@ function htmlBotaoEncaminharWpp(m) {
     return `<button type="button" class="wpp-encaminhar-btn" data-msg-id="${m.id}" title="Encaminhar"><i class="fa-solid fa-share"></i></button>`;
 }
 
+// "Apagar/editar mensagem enviada" (pedido do usuário, 2026-09-30) — a
+// Meta Cloud API NÃO tem endpoint pra editar ou apagar uma mensagem já
+// enviada pelo número de negócio (isso é um recurso do app pessoal do
+// WhatsApp, nunca exposto pela Business Platform) — então "editar" de
+// verdade não existe, e implementar um fake seria enganoso. O que dá pra
+// fazer, honestamente: OCULTAR a mensagem só na nossa tela (a mensagem
+// continua entregue/visível pro lead no celular dele) — útil pra limpar um
+// envio de teste/engano da nossa própria visualização. Só em mensagens de
+// SAÍDA (nunca teria sentido "ocultar" o que o lead mandou).
+function htmlBotaoOcultarWpp(m) {
+    if (m.direcao !== 'saida') return '';
+    return `<button type="button" class="wpp-ocultar-btn" data-msg-id="${m.id}" title="Ocultar esta mensagem só na nossa tela (o WhatsApp não permite apagar/editar algo já enviado — o lead continua vendo normalmente)"><i class="fa-solid fa-trash-can"></i></button>`;
+}
+
 // Citação dentro do balão (pedido do usuário, "igual no whatsapp real")
 // — `quotedInfo` já vem resolvida por htmlMensagemWpp(): `{texto,
 // propria}` (`propria` true = a mensagem citada era NOSSA, false = do
@@ -353,9 +384,9 @@ function htmlReacoesWpp(m) {
     return `<div class="wpp-reacao-badge">${distintos.map(e => escapeHTML(e)).join('')}</div>`;
 }
 
-function htmlMensagemWpp(m, quotedInfo) {
+function htmlMensagemWpp(m, quotedInfo, termoBusca, ativoBusca) {
     const classeDirecao = m.direcao === 'saida' ? 'msg-out' : 'msg-in';
-    const classeExtra = m.wa_status === 'falhou' ? 'msg-falhou' : '';
+    const classeExtra = (m.wa_status === 'falhou' ? 'msg-falhou' : '') + (ativoBusca ? ' msg-busca-ativa' : '');
     const classeReacao = (m.reacoes && (m.reacoes.lead || m.reacoes.atendente)) ? 'msg-com-reacao' : '';
     // Mensagem trazida de fora do CRM (js/importar-conversa-whatsapp.js,
     // enquanto a API do WhatsApp está bloqueada) — badge visível pra nunca
@@ -389,16 +420,16 @@ function htmlMensagemWpp(m, quotedInfo) {
     const stickerUrl = m.tipo === 'sticker' ? (m.payload_bruto && m.payload_bruto.sticker_url) : null;
     const localizacao = m.tipo === 'localizacao' ? (m.payload_bruto && m.payload_bruto.location) : null;
     const corpoHTML = imagemUrl
-        ? `<img src="${escapeHTML(imagemUrl)}" alt="Imagem" style="max-width:100%; border-radius:6px; display:block; margin-bottom:${m.corpo_texto ? '4px' : '0'};">${m.corpo_texto ? textoComQuebrasDeLinha(m.corpo_texto) : ''}`
+        ? `<img src="${escapeHTML(imagemUrl)}" alt="Imagem" style="max-width:100%; border-radius:6px; display:block; margin-bottom:${m.corpo_texto ? '4px' : '0'};">${m.corpo_texto ? textoComQuebrasDeLinha(m.corpo_texto, termoBusca) : ''}`
         : documento
         ? `<a href="${escapeHTML(documento.documento_url || '#')}" target="_blank" rel="noopener" style="display:flex; align-items:center; gap:8px; padding:8px; background:rgba(0,0,0,0.04); border-radius:8px; text-decoration:none; color:inherit; margin-bottom:${m.corpo_texto ? '4px' : '0'};">
             <i class="fa-solid fa-file-arrow-down" style="font-size:22px; color:var(--na-green-dark);"></i>
             <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; font-size:12px;">${escapeHTML(documento.nome_arquivo || 'Documento')}</span>
-          </a>${m.corpo_texto ? textoComQuebrasDeLinha(m.corpo_texto) : ''}`
+          </a>${m.corpo_texto ? textoComQuebrasDeLinha(m.corpo_texto, termoBusca) : ''}`
         : audioUrl
         ? `<audio controls preload="none" style="max-width:220px; height:38px;"><source src="${escapeHTML(audioUrl)}"></audio>`
         : videoUrl
-        ? `<video controls preload="metadata" style="max-width:100%; border-radius:6px; display:block; max-height:260px;"><source src="${escapeHTML(videoUrl)}"></video>${m.corpo_texto ? textoComQuebrasDeLinha(m.corpo_texto) : ''}`
+        ? `<video controls preload="metadata" style="max-width:100%; border-radius:6px; display:block; max-height:260px;"><source src="${escapeHTML(videoUrl)}"></video>${m.corpo_texto ? textoComQuebrasDeLinha(m.corpo_texto, termoBusca) : ''}`
         : stickerUrl
         ? `<img src="${escapeHTML(stickerUrl)}" alt="Figurinha" style="max-width:120px; display:block;">`
         : localizacao
@@ -406,7 +437,7 @@ function htmlMensagemWpp(m, quotedInfo) {
             <i class="fa-solid fa-location-dot" style="font-size:22px; color:#dc2626;"></i>
             <span style="font-size:12px;"><strong>${escapeHTML(localizacao.name || 'Localização compartilhada')}</strong>${localizacao.address ? `<br><span style="color:#64748b;">${escapeHTML(localizacao.address)}</span>` : ''}</span>
           </a>`
-        : textoComQuebrasDeLinha(m.corpo_texto);
+        : textoComQuebrasDeLinha(m.corpo_texto, termoBusca);
     // Nome do usuário logado (js/usuarios.js) que enviou esta mensagem —
     // pedido do usuário ("no whatsapp precisa aparecer o nome do usuário
     // que está logado"). Só existe em mensagens de SAÍDA a partir da
@@ -416,10 +447,11 @@ function htmlMensagemWpp(m, quotedInfo) {
         ? `<div class="msg-atendente">${escapeHTML(m.atendente_nome)}</div>`
         : '';
     return `
-        <div class="msg ${classeDirecao} ${classeExtra} ${classeReacao}">
+        <div class="msg ${classeDirecao} ${classeExtra} ${classeReacao}" data-msg-db-id="${m.id}">
             ${htmlBotaoReagirWpp(m)}
             ${htmlBotaoResponderWpp(m)}
             ${htmlBotaoEncaminharWpp(m)}
+            ${htmlBotaoOcultarWpp(m)}
             ${htmlCitacaoWpp(quotedInfo)}
             ${corpoHTML}
             ${atendenteHTML}
@@ -472,6 +504,54 @@ function abrirSeletorReacaoWpp(botaoEl, reacaoAtual, aoEscolher) {
         });
     });
     setTimeout(() => document.addEventListener('click', fecharSeletorReacaoWpp, { once: true }), 0);
+}
+
+// ==========================================================
+// Emoji picker pra DIGITAR (diferente do de reação acima) — pedido do
+// usuário (2026-09-30): o botão de carinha já existia no compose bar, mas
+// não abria nada. Insere no cursor do <textarea>, não só no fim do texto.
+// ==========================================================
+const EMOJIS_DIGITAR_WPP = ['😀', '😂', '😍', '😊', '🙏', '👍', '👏', '🎉', '❤️', '🔥', '😢', '😮', '🤔', '😉', '🙌', '💪', '✅', '⭐', '📌', '📅', '☕', '🦉', '🌟', '😅', '🥳', '👋', '🤝', '💬', '📞', '📷'];
+
+function _containerEmojiDigitarWpp() {
+    let el = document.getElementById('wppEmojiDigitarPicker');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'wppEmojiDigitarPicker';
+        el.className = 'wpp-emoji-digitar-picker';
+        document.body.appendChild(el);
+    }
+    return el;
+}
+function fecharEmojiDigitarWpp() {
+    const el = document.getElementById('wppEmojiDigitarPicker');
+    if (el) el.style.display = 'none';
+}
+function inserirEmojiNoInputWpp(inputEl, emoji) {
+    if (!inputEl) return;
+    const inicio = inputEl.selectionStart ?? inputEl.value.length;
+    const fim = inputEl.selectionEnd ?? inputEl.value.length;
+    inputEl.value = inputEl.value.slice(0, inicio) + emoji + inputEl.value.slice(fim);
+    const novaPos = inicio + emoji.length;
+    inputEl.focus();
+    inputEl.setSelectionRange(novaPos, novaPos);
+    if (typeof ajustarAlturaTextareaWpp === 'function') ajustarAlturaTextareaWpp(inputEl);
+    fecharEmojiDigitarWpp();
+}
+function abrirEmojiPickerDigitarWpp(botaoEl, inputEl) {
+    const picker = _containerEmojiDigitarWpp();
+    picker.innerHTML = EMOJIS_DIGITAR_WPP.map(e => `<button type="button" class="wpp-emoji-opcao" data-emoji="${e}">${e}</button>`).join('');
+    const rect = botaoEl.getBoundingClientRect();
+    picker.style.display = 'grid';
+    picker.style.top = `${Math.max(8, rect.top - 190)}px`;
+    picker.style.left = `${Math.min(window.innerWidth - 260, Math.max(8, rect.left - 40))}px`;
+    picker.querySelectorAll('.wpp-emoji-opcao').forEach(btn => {
+        btn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            inserirEmojiNoInputWpp(inputEl, btn.dataset.emoji);
+        });
+    });
+    setTimeout(() => document.addEventListener('click', fecharEmojiDigitarWpp, { once: true }), 0);
 }
 
 // ==========================================================
@@ -636,18 +716,22 @@ function criarChatController({ messagesId, inputAreaId }) {
     let leadId = null;
     let mensagens = [];
     let canal = null;
-    let anexoPendente = null; // { file, tipo: 'imagem'|'documento' } — ver selecionarAnexo()
+    let anexoPendente = null; // { file, tipo: 'imagem'|'documento'|'audio' } — ver selecionarAnexo()
     // "Responder a uma mensagem específica" (pedido do usuário, 2026-09-29:
     // "igual no whatsapp real") — { waId, preview, remetente: 'saida'|'entrada' }
     // do balão clicado; null = não está respondendo nada em particular.
     let respondendoA = null;
-    // Busca dentro da conversa aberta (pedido do usuário, 2026-09-29:
-    // "implemente tudo que for possível") — filtra os balões já
-    // carregados (mesmo limite de 200 de carregarHistoricoMensagens(),
-    // não busca no banco inteiro); diferente do WhatsApp real (que
-    // destaca e pula entre resultados sem escondar o resto), aqui é uma
-    // versão mais simples — só mostra quem bate, com contador.
+    // Busca dentro da conversa aberta — pedido do usuário (2026-09-29:
+    // "implemente tudo que for possível"; refinado 2026-09-30: "busca com
+    // destaque + navegação entre resultados, igual no whatsapp real").
+    // Só sobre os balões já carregados (mesmo limite de 200 de
+    // carregarHistoricoMensagens(), não busca no banco inteiro) — mas
+    // agora igual o app real: NUNCA esconde o resto da conversa, só
+    // destaca cada ocorrência (<mark>) e deixa navegar entre elas com
+    // ⌃/⌄, mostrando "posição/total".
     let termoBusca = '';
+    let buscaMatches = []; // mensagens (na ordem cronológica) que batem com termoBusca
+    let buscaIndiceAtual = null; // índice dentro de buscaMatches — null = ainda não escolhido nesta busca
     // Paginação de mensagens antigas (pedido do usuário, 2026-09-30: "o
     // que pode melhorar" — histórico sem paginação, corta em 200). `true`
     // até um carregamento devolver MENOS que uma página cheia (sinal de
@@ -692,8 +776,37 @@ function criarChatController({ messagesId, inputAreaId }) {
             if (btnCarregarAntigas) {
                 e.stopPropagation();
                 carregarMaisAntigas();
+                return;
+            }
+            // `leadId` (não `mensagens.find`) — mesma cautela já usada no
+            // botão de reagir acima: este container (`wppMessages`) é
+            // compartilhado com o mini-chat de "não identificado"
+            // (carregarERenderizarChatNaoIdentificado(), fora deste
+            // controller); sem essa guarda, ocultar uma mensagem ali
+            // chamaria renderizarMensagens() DESTE controller (chatWpp,
+            // com leadId nulo nesse momento) e apagaria a visualização do
+            // mini-chat por engano.
+            const btnOcultar = e.target.closest('.wpp-ocultar-btn');
+            if (btnOcultar && leadId) {
+                e.stopPropagation();
+                ocultarMensagemWpp(Number(btnOcultar.dataset.msgId));
             }
         });
+    }
+
+    // "Ocultar" (ver htmlBotaoOcultarWpp() acima) — só na nossa tela, nunca
+    // no WhatsApp do lead. `mensagens_whatsapp` ganhou a coluna
+    // `oculta_em` (migracao_whatsapp_pin_arquivar_ocultar.sql) + uma
+    // policy de UPDATE pública pra isso, mesmo modelo de acesso do resto
+    // do projeto.
+    async function ocultarMensagemWpp(msgId) {
+        if (!confirm('Ocultar esta mensagem só na nossa tela?\n\nO WhatsApp da Meta não permite apagar ou editar uma mensagem já enviada — o lead continua vendo ela normalmente no celular dele. Isso só limpa a nossa visualização no CRM.')) return;
+        const agora = new Date().toISOString();
+        const { error } = await window.supabaseClient.from('mensagens_whatsapp').update({ oculta_em: agora }).eq('id', msgId);
+        if (error) { alert('Erro ao ocultar: ' + error.message); return; }
+        const idx = mensagens.findIndex(m => m.id === msgId);
+        if (idx >= 0) mensagens[idx] = { ...mensagens[idx], oculta_em: agora };
+        renderizarMensagens(true);
     }
 
     // "Carregar mensagens anteriores" (pedido do usuário, 2026-09-30) —
@@ -749,38 +862,67 @@ function criarChatController({ messagesId, inputAreaId }) {
     function renderizarMensagens(preservarScroll) {
         const container = el(messagesId);
         if (!container) return;
-        if (mensagens.length === 0) {
+        // "Ocultar mensagem" (ver ocultarMensagemWpp()) — nunca desenhada,
+        // mas continua em `mensagens` (referência/citação de outra
+        // mensagem ainda precisa achar ela em mapaPorWaId).
+        const visiveis = mensagens.filter(m => !m.oculta_em);
+        if (visiveis.length === 0) {
             container.innerHTML = '<div style="text-align:center; font-size:11px; color:#64748b; margin-top:20px;">Nenhuma mensagem ainda. Envie a primeira abaixo.</div>';
+            atualizarContadorBusca();
             return;
         }
         const mapaPorWaId = new Map(mensagens.filter(x => x.wa_message_id).map(x => [x.wa_message_id, x]));
-        // Busca dentro da conversa (ver `termoBusca` acima) — filtra pra só
-        // quem bate, sem perder a numeração/contador da barra de busca.
-        const listaVisivel = termoBusca
-            ? mensagens.filter(m => (m.corpo_texto || '').toLowerCase().includes(termoBusca))
-            : mensagens;
-        atualizarContadorBusca(listaVisivel.length);
-        if (termoBusca && listaVisivel.length === 0) {
-            container.innerHTML = '<div style="text-align:center; font-size:11px; color:#64748b; margin-top:20px;">Nenhuma mensagem encontrada com esse termo.</div>';
-            return;
+
+        // Busca dentro da conversa: NUNCA esconde o resto (diferente da
+        // versão anterior) — destaca cada ocorrência e permite navegar
+        // entre elas, igual o WhatsApp real.
+        if (termoBusca) {
+            buscaMatches = visiveis.filter(m => (m.corpo_texto || '').toLowerCase().includes(termoBusca));
+            if (buscaIndiceAtual === null || buscaIndiceAtual >= buscaMatches.length) buscaIndiceAtual = buscaMatches.length - 1;
+        } else {
+            buscaMatches = [];
+            buscaIndiceAtual = null;
         }
+        atualizarContadorBusca();
+
         // "Carregar mensagens anteriores" (pedido do usuário, 2026-09-30)
-        // — só aparece sem busca ativa (a busca já filtra sobre o que já
-        // está carregado; paginar pra trás no meio de uma busca confundiria).
+        // — só aparece sem busca ativa (não faz sentido paginar pra trás
+        // no meio de uma navegação por resultados).
         let html = (!termoBusca && temMaisAntigas)
             ? `<div style="text-align:center; padding:6px 0 12px;"><button type="button" class="wpp-carregar-antigas-btn" style="background:none; border:1px solid var(--border-color); border-radius:14px; padding:5px 14px; font-size:11px; color:var(--text-muted); cursor:pointer;"><i class="fa-solid fa-arrow-up"></i> Carregar mensagens anteriores</button></div>`
             : '';
         let ultimoDia = null;
-        listaVisivel.forEach(m => {
+        const alvoAtivo = termoBusca && buscaMatches[buscaIndiceAtual] ? buscaMatches[buscaIndiceAtual].id : null;
+        visiveis.forEach(m => {
             const diaAtual = new Date(m.criado_em).toDateString();
             if (diaAtual !== ultimoDia) {
                 html += `<div class="wpp-date-divider"><span>${escapeHTML(rotuloDataSeparadorWpp(m.criado_em))}</span></div>`;
                 ultimoDia = diaAtual;
             }
-            html += htmlMensagemWpp(m, resolverCitacaoWpp(m, mapaPorWaId));
+            html += htmlMensagemWpp(m, resolverCitacaoWpp(m, mapaPorWaId), termoBusca, m.id === alvoAtivo);
         });
         container.innerHTML = html;
-        if (!termoBusca && !preservarScroll) container.scrollTop = container.scrollHeight;
+        if (termoBusca && buscaMatches.length > 0) {
+            rolarParaResultadoBusca();
+        } else if (!preservarScroll) {
+            container.scrollTop = container.scrollHeight;
+        }
+    }
+
+    // Rola até o resultado ATUAL da busca (buscaIndiceAtual) e navega
+    // entre resultados (⌃/⌄ na barra) — pedido do usuário (2026-09-30):
+    // "igual no whatsapp real".
+    function rolarParaResultadoBusca() {
+        const alvo = buscaMatches[buscaIndiceAtual];
+        if (!alvo) return;
+        const container = el(messagesId);
+        const elAlvo = container ? container.querySelector(`[data-msg-db-id="${alvo.id}"]`) : null;
+        if (elAlvo) elAlvo.scrollIntoView({ block: 'center' });
+    }
+    function irParaResultadoBusca(delta) {
+        if (buscaMatches.length === 0) return;
+        buscaIndiceAtual = (buscaIndiceAtual + delta + buscaMatches.length) % buscaMatches.length;
+        renderizarMensagens(true);
     }
 
     // Barra de busca dentro da conversa — injetada/removida ACIMA de
@@ -790,7 +932,7 @@ function criarChatController({ messagesId, inputAreaId }) {
     // cabeçalhos, WhatsApp Unificado e gaveta).
     function toggleBuscaConversa() {
         const barraExistente = document.getElementById(messagesId + '-busca-bar');
-        if (barraExistente) { barraExistente.remove(); termoBusca = ''; renderizarMensagens(); return; }
+        if (barraExistente) { barraExistente.remove(); termoBusca = ''; buscaIndiceAtual = null; renderizarMensagens(); return; }
 
         const container = el(messagesId);
         if (!container || !container.parentElement) return;
@@ -800,27 +942,41 @@ function criarChatController({ messagesId, inputAreaId }) {
         barra.innerHTML = `
             <i class="fa-solid fa-magnifying-glass" style="color:var(--text-muted); font-size:12px;"></i>
             <input type="text" class="wpp-busca-input" placeholder="Buscar nesta conversa...">
+            <button type="button" class="wpp-busca-prev" title="Resultado anterior"><i class="fa-solid fa-chevron-up"></i></button>
             <span class="wpp-busca-contador"></span>
+            <button type="button" class="wpp-busca-next" title="Próximo resultado"><i class="fa-solid fa-chevron-down"></i></button>
             <button type="button" class="wpp-busca-fechar"><i class="fa-solid fa-xmark"></i></button>
         `;
         container.parentElement.insertBefore(barra, container);
         const input = barra.querySelector('.wpp-busca-input');
         input.addEventListener('input', () => {
             termoBusca = input.value.trim().toLowerCase();
+            buscaIndiceAtual = null; // busca nova — volta pro resultado mais recente
             renderizarMensagens();
         });
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); irParaResultadoBusca(e.shiftKey ? -1 : 1); }
+        });
+        barra.querySelector('.wpp-busca-prev').addEventListener('click', () => irParaResultadoBusca(-1));
+        barra.querySelector('.wpp-busca-next').addEventListener('click', () => irParaResultadoBusca(1));
         barra.querySelector('.wpp-busca-fechar').addEventListener('click', () => {
             barra.remove();
             termoBusca = '';
+            buscaIndiceAtual = null;
             renderizarMensagens();
         });
         input.focus();
     }
 
-    function atualizarContadorBusca(total) {
-        if (!termoBusca) return;
+    function atualizarContadorBusca() {
         const contador = document.querySelector(`#${messagesId}-busca-bar .wpp-busca-contador`);
-        if (contador) contador.textContent = `${total} resultado(s)`;
+        if (!contador) return;
+        if (!termoBusca) { contador.textContent = ''; return; }
+        contador.textContent = buscaMatches.length === 0 ? 'Nenhum resultado' : `${buscaIndiceAtual + 1}/${buscaMatches.length}`;
+        const prevBtn = document.querySelector(`#${messagesId}-busca-bar .wpp-busca-prev`);
+        const nextBtn = document.querySelector(`#${messagesId}-busca-bar .wpp-busca-next`);
+        if (prevBtn) prevBtn.disabled = buscaMatches.length <= 1;
+        if (nextBtn) nextBtn.disabled = buscaMatches.length <= 1;
     }
 
     function htmlSeletorTemplate() {
@@ -902,8 +1058,11 @@ function criarChatController({ messagesId, inputAreaId }) {
     // `whatsapp-midia`, público — ver migracao_storage_whatsapp_midia.sql)
     // e manda de verdade via `whatsapp-send`. Some sozinho ao mudar de
     // conversa (não persiste entre leads).
-    function selecionarAnexo(file) {
-        anexoPendente = { file, tipo: file.type.startsWith('image/') ? 'imagem' : 'documento' };
+    // `tipoForcado` (opcional) — usado pela gravação de áudio abaixo, que
+    // já sabe que o resultado é 'audio' (não dá pra adivinhar isso pelo
+    // `file.type` de um Blob genérico do MediaRecorder).
+    function selecionarAnexo(file, tipoForcado) {
+        anexoPendente = { file, tipo: tipoForcado || (file.type.startsWith('image/') ? 'imagem' : 'documento') };
         atualizarPreviewAnexo();
     }
     function removerAnexo() {
@@ -916,12 +1075,97 @@ function criarChatController({ messagesId, inputAreaId }) {
         if (!previewEl) return;
         if (!anexoPendente) { previewEl.style.display = 'none'; previewEl.innerHTML = ''; return; }
         previewEl.style.display = 'flex';
+        if (anexoPendente.tipo === 'audio') {
+            previewEl.innerHTML = `<i class="fa-solid fa-microphone" style="font-size:18px; color:var(--na-green-dark); flex-shrink:0;"></i><audio controls src="${URL.createObjectURL(anexoPendente.file)}" style="height:32px; flex:1;"></audio><i class="fa-solid fa-xmark remover"></i>`;
+            previewEl.querySelector('.remover').addEventListener('click', removerAnexo);
+            return;
+        }
         const nomeArquivo = anexoPendente.file.name;
         const miniatura = anexoPendente.tipo === 'imagem'
             ? `<img src="${URL.createObjectURL(anexoPendente.file)}" alt="">`
             : `<i class="fa-solid fa-file-lines" style="font-size:22px; color:var(--text-muted); flex-shrink:0;"></i>`;
         previewEl.innerHTML = `${miniatura}<span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(nomeArquivo)}</span><i class="fa-solid fa-xmark remover"></i>`;
         previewEl.querySelector('.remover').addEventListener('click', removerAnexo);
+    }
+
+    // Gravar áudio no navegador (pedido do usuário, 2026-09-30) — clique
+    // pra começar, clique de novo pra parar; o resultado entra no MESMO
+    // fluxo de anexo (preview + enviarComAnexo(), ver mais abaixo), só com
+    // tipo forçado 'audio'. Reaproveita `whatsapp-send` tipo:'audio', que
+    // já existia (usado pra encaminhar áudio recebido).
+    //
+    // Limitação real, não escondida: o formato gravado depende do que o
+    // NAVEGADOR suporta via MediaRecorder — tentamos, em ordem de
+    // preferência, os formatos que a Graph API da Meta aceita de verdade
+    // pra áudio (mp4/ogg); se o navegador só souber gravar webm (comum no
+    // Chrome/Edge hoje), a Meta pode rejeitar ou não tocar como voice note
+    // de verdade no celular do lead — não testado contra todos os
+    // navegadores nesta sessão.
+    let mediaRecorder = null;
+    let mediaChunks = [];
+    let mediaStream = null;
+    let recordingTimer = null;
+    let recordingSeconds = 0;
+
+    function mimeTypeSuportadoAudioWpp() {
+        if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return '';
+        const candidatos = ['audio/mp4', 'audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm'];
+        return candidatos.find(t => MediaRecorder.isTypeSupported(t)) || '';
+    }
+
+    function atualizarBotaoGravacaoWpp(gravando) {
+        const container = el(inputAreaId);
+        const btn = container ? container.querySelector('.btn-audio-toggle') : null;
+        if (!btn) return;
+        btn.classList.toggle('gravando', gravando);
+        btn.innerHTML = gravando
+            ? '<i class="fa-solid fa-stop"></i> <span class="wpp-audio-timer">0:00</span>'
+            : '<i class="fa-solid fa-microphone"></i>';
+    }
+    function atualizarTimerGravacaoWpp() {
+        const container = el(inputAreaId);
+        const span = container ? container.querySelector('.wpp-audio-timer') : null;
+        if (!span) return;
+        const m = Math.floor(recordingSeconds / 60), s = recordingSeconds % 60;
+        span.textContent = `${m}:${String(s).padStart(2, '0')}`;
+    }
+    function pararGravacaoSeAtiva(descartar) {
+        if (recordingTimer) { clearInterval(recordingTimer); recordingTimer = null; }
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+            if (descartar) mediaChunks = [];
+            mediaRecorder.stop();
+        }
+    }
+    async function alternarGravacaoAudioWpp() {
+        if (mediaRecorder && mediaRecorder.state === 'recording') { pararGravacaoSeAtiva(false); return; }
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            alert('Este navegador não permite gravar áudio (getUserMedia indisponível).');
+            return;
+        }
+        try {
+            mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (e) {
+            alert('Não foi possível acessar o microfone: ' + (e.message || e));
+            return;
+        }
+        const mimeType = mimeTypeSuportadoAudioWpp();
+        mediaRecorder = mimeType ? new MediaRecorder(mediaStream, { mimeType }) : new MediaRecorder(mediaStream);
+        mediaChunks = [];
+        recordingSeconds = 0;
+        mediaRecorder.addEventListener('dataavailable', (e) => { if (e.data.size > 0) mediaChunks.push(e.data); });
+        mediaRecorder.addEventListener('stop', () => {
+            if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+            atualizarBotaoGravacaoWpp(false);
+            if (mediaChunks.length === 0) return; // gravação descartada (troca de conversa) ou vazia
+            const tipoFinal = mediaRecorder.mimeType || 'audio/webm';
+            const blob = new Blob(mediaChunks, { type: tipoFinal });
+            const extensao = tipoFinal.includes('mp4') ? 'm4a' : tipoFinal.includes('ogg') ? 'ogg' : 'webm';
+            const file = new File([blob], `audio-${Date.now()}.${extensao}`, { type: tipoFinal });
+            selecionarAnexo(file, 'audio');
+        });
+        mediaRecorder.start();
+        atualizarBotaoGravacaoWpp(true);
+        recordingTimer = setInterval(() => { recordingSeconds++; atualizarTimerGravacaoWpp(); }, 1000);
     }
 
     function renderizarAreaInput() {
@@ -935,8 +1179,9 @@ function criarChatController({ messagesId, inputAreaId }) {
                 <div class="chat-input-row">
                     <button type="button" class="btn-anexo-toggle" style="background: none; border: none; font-size: 18px; color: var(--text-muted); cursor: pointer;" title="Anexar foto ou documento"><i class="fa-solid fa-paperclip"></i></button>
                     <input type="file" class="wpp-anexo-input" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" hidden>
-                    <button type="button" style="background: none; border: none; font-size: 20px; color: var(--text-muted); cursor: pointer;"><i class="fa-regular fa-face-smile"></i></button>
+                    <button type="button" class="btn-emoji-toggle" style="background: none; border: none; font-size: 20px; color: var(--text-muted); cursor: pointer;" title="Emojis"><i class="fa-regular fa-face-smile"></i></button>
                     <textarea class="chat-input" rows="1" placeholder="Digite uma mensagem... (Ctrl+Enter pra nova linha)"></textarea>
+                    <button type="button" class="btn-audio-toggle" title="Gravar áudio"><i class="fa-solid fa-microphone"></i></button>
                     <button type="button" class="btn-send"><i class="fa-solid fa-paper-plane"></i></button>
                 </div>
             `;
@@ -944,6 +1189,8 @@ function criarChatController({ messagesId, inputAreaId }) {
             const botao = container.querySelector('.btn-send');
             const anexoBtn = container.querySelector('.btn-anexo-toggle');
             const anexoInput = container.querySelector('.wpp-anexo-input');
+            const emojiBtn = container.querySelector('.btn-emoji-toggle');
+            const audioBtn = container.querySelector('.btn-audio-toggle');
             const disparar = () => enviarMensagem(input);
             botao.addEventListener('click', disparar);
             // Enter sozinho envia (mesmo comportamento de sempre); Ctrl+Enter
@@ -958,6 +1205,8 @@ function criarChatController({ messagesId, inputAreaId }) {
                 if (anexoInput.files[0]) selecionarAnexo(anexoInput.files[0]);
                 anexoInput.value = ''; // permite escolher o MESMO arquivo de novo depois de remover
             });
+            emojiBtn.addEventListener('click', () => abrirEmojiPickerDigitarWpp(emojiBtn, input));
+            audioBtn.addEventListener('click', () => alternarGravacaoAudioWpp());
         } else {
             renderizarAreaInputTemplate();
             return;
@@ -1029,8 +1278,16 @@ function criarChatController({ messagesId, inputAreaId }) {
             const url = urlData.publicUrl;
 
             const contextoBody = contexto ? { contextoMessageId: contexto.waId, contextoPreview: contexto.preview, contextoRemetente: contexto.remetente } : {};
+            // Áudio (gravado no navegador, ver alternarGravacaoAudioWpp()) —
+            // a Graph API não aceita legenda em mensagem de áudio, então
+            // `legenda` (o que a pessoa digitou por engano na caixa
+            // enquanto o player de preview aparecia) é simplesmente
+            // ignorada aqui, igual o WhatsApp real (voice note não tem
+            // legenda).
             const body = anexo.tipo === 'imagem'
                 ? { pessoaIdentificador: leadId, tipo: 'imagem', imagemUrl: url, caption: legenda || undefined, atendenteNome: obterNomeAtendente(), ...contextoBody }
+                : anexo.tipo === 'audio'
+                ? { pessoaIdentificador: leadId, tipo: 'audio', audioUrl: url, atendenteNome: obterNomeAtendente(), ...contextoBody }
                 : { pessoaIdentificador: leadId, tipo: 'documento', documentoUrl: url, nomeArquivo: anexo.file.name, caption: legenda || undefined, atendenteNome: obterNomeAtendente(), ...contextoBody };
 
             const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', { body });
@@ -1080,10 +1337,12 @@ function criarChatController({ messagesId, inputAreaId }) {
 
     async function abrir(pessoaIdentificador, templateNomeForcado) {
         if (canal) { window.supabaseClient.removeChannel(canal); canal = null; }
+        pararGravacaoSeAtiva(true); // trocar de conversa no meio de uma gravação descarta ela
         leadId = pessoaIdentificador;
         mensagens = [];
         respondendoA = null; // trocar de conversa cancela qualquer "respondendo a" pendente
         termoBusca = '';
+        buscaIndiceAtual = null;
         const barraBuscaAntiga = document.getElementById(messagesId + '-busca-bar');
         if (barraBuscaAntiga) barraBuscaAntiga.remove();
 
@@ -1119,6 +1378,7 @@ function criarChatController({ messagesId, inputAreaId }) {
 
     function fechar() {
         if (canal) { window.supabaseClient.removeChannel(canal); canal = null; }
+        pararGravacaoSeAtiva(true);
         leadId = null;
         mensagens = [];
     }
@@ -2666,10 +2926,18 @@ function htmlTimerJanelaWpp(conversa) {
     return `<div class="wpp-timer-janela ${classe}" title="Tempo restante antes da janela de 24h da Meta fechar — depois disso só um modelo aprovado reabre a conversa"><i class="fa-solid fa-clock"></i> ${horas}h${String(minutos).padStart(2, '0')} restantes</div>`;
 }
 
+// Pin/fixar e arquivar (pedido do usuário, 2026-09-30: "igual no whatsapp
+// real") — colunas novas em `leads_inscricoes` (migracao_whatsapp_pin_arquivar_ocultar.sql),
+// já que cada lead tem no máximo 1 conversa de WhatsApp (1:1). Fixada
+// sempre sobe pro topo (ver ordenação em renderizarContatosWpp()),
+// independente do modo de ordenação escolhido; arquivada some da lista
+// principal por padrão (checkbox "Ver arquivadas").
 function htmlContatoWpp(lead, conversa, temSugestaoIa) {
     const id = lead.pessoaIdentificador;
     const ativo = String(id) === String(wppContatoAtivoId) ? 'active' : '';
     const naoLida = conversaNaoLidaWpp(conversa);
+    const fixado = !!lead.wpp_fixado;
+    const arquivado = !!lead.wpp_arquivado;
     const preview = conversa
         ? `${conversa.ultima_direcao === 'saida' ? 'Você: ' : ''}${(conversa.ultimo_texto || '').slice(0, 40)}`
         : 'Toque para iniciar conversa';
@@ -2677,14 +2945,44 @@ function htmlContatoWpp(lead, conversa, temSugestaoIa) {
         <div class="wpp-contact-item ${ativo} ${naoLida ? 'nao-lida' : ''}" onclick="abrirChatWpp('${id}')">
             <div class="wpp-contact-avatar"><i class="fa-solid fa-user"></i></div>
             <div class="wpp-contact-info" style="flex:1;">
-                <div class="wpp-contact-name">${escapeHTML(lead.pessoaNome || 'Sem nome')}${temSugestaoIa ? ' <i class="fa-solid fa-wand-magic-sparkles" style="color:#1d4ed8; font-size:10px;" title="Sugestão de resposta da IA pronta pra revisar"></i>' : ''}</div>
+                <div class="wpp-contact-name">${fixado ? '<i class="fa-solid fa-thumbtack" style="font-size:9px; color:var(--na-green-dark);" title="Fixada"></i> ' : ''}${escapeHTML(lead.pessoaNome || 'Sem nome')}${temSugestaoIa ? ' <i class="fa-solid fa-wand-magic-sparkles" style="color:#1d4ed8; font-size:10px;" title="Sugestão de resposta da IA pronta pra revisar"></i>' : ''}</div>
                 <div class="wpp-contact-phone">${escapeHTML(preview)}</div>
                 ${lead.filial ? `<div style="font-size:9px; color:var(--text-muted);"><i class="fa-solid fa-building"></i> ${escapeHTML(lead.filial)}</div>` : ''}
                 ${htmlTimerJanelaWpp(conversa)}
             </div>
+            <div class="wpp-contact-acoes">
+                <button type="button" class="wpp-pin-btn ${fixado ? 'ativo' : ''}" title="${fixado ? 'Desafixar' : 'Fixar'} conversa" onclick="event.stopPropagation(); alternarFixarConversaWpp('${id}', ${fixado})"><i class="fa-solid fa-thumbtack"></i></button>
+                <button type="button" class="wpp-archive-btn ${arquivado ? 'ativo' : ''}" title="${arquivado ? 'Desarquivar' : 'Arquivar'} conversa" onclick="event.stopPropagation(); alternarArquivarConversaWpp('${id}', ${arquivado})"><i class="fa-solid fa-box-archive"></i></button>
+            </div>
             ${naoLida ? '<div class="wpp-contact-nao-lida-dot"></div>' : ''}
         </div>
     `;
+}
+
+async function alternarFixarConversaWpp(leadId, estavaFixado) {
+    const novoValor = !estavaFixado;
+    const { error } = await window.supabaseClient
+        .from(typeof NOME_TABELA !== 'undefined' ? NOME_TABELA : 'leads_inscricoes')
+        .update({ wpp_fixado: novoValor })
+        .eq('pessoaIdentificador', leadId);
+    if (error) { alert('Erro ao ' + (novoValor ? 'fixar' : 'desafixar') + ': ' + error.message); return; }
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
+    if (lead) lead.wpp_fixado = novoValor;
+    const searchEl = document.getElementById('wppSearch');
+    renderizarContatosWpp(searchEl ? searchEl.value : '');
+}
+
+async function alternarArquivarConversaWpp(leadId, estavaArquivado) {
+    const novoValor = !estavaArquivado;
+    const { error } = await window.supabaseClient
+        .from(typeof NOME_TABELA !== 'undefined' ? NOME_TABELA : 'leads_inscricoes')
+        .update({ wpp_arquivado: novoValor })
+        .eq('pessoaIdentificador', leadId);
+    if (error) { alert('Erro ao ' + (novoValor ? 'arquivar' : 'desarquivar') + ': ' + error.message); return; }
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
+    if (lead) lead.wpp_arquivado = novoValor;
+    const searchEl = document.getElementById('wppSearch');
+    renderizarContatosWpp(searchEl ? searchEl.value : '');
 }
 
 function htmlContatoNaoIdentificadoWpp(m) {
@@ -3074,7 +3372,7 @@ async function renderizarContatosWpp(filtro = '') {
     if (idsFaltando.length > 0) {
         const { data: extras } = await window.supabaseClient
             .from('leads_inscricoes')
-            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, filial')
+            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, filial, wpp_fixado, wpp_arquivado')
             .in('pessoaIdentificador', idsFaltando);
         (extras || []).forEach(l => mapaLeads.set(String(l.pessoaIdentificador), l));
     }
@@ -3083,6 +3381,13 @@ async function renderizarContatosWpp(filtro = '') {
         .map(c => ({ conversa: c, lead: mapaLeads.get(String(c.pessoaIdentificador)) }))
         .filter(c => c.lead)
         .filter(c => !termo || (c.lead.pessoaNome || '').toLowerCase().includes(termo));
+
+    // Pin/arquivar (pedido do usuário, 2026-09-30) — arquivada some da
+    // lista principal por padrão, só volta com "Ver arquivadas" marcado.
+    const selectVerArquivadas = document.getElementById('wppVerArquivadas');
+    if (!(selectVerArquivadas && selectVerArquivadas.checked)) {
+        contatosExistentes = contatosExistentes.filter(c => !c.lead.wpp_arquivado);
+    }
 
     // Ordenar/filtrar (pedido do usuário, 2026-09-29): "coloque uma forma
     // de ordenar e filtrar as conversas (não lidas, respostas mais
@@ -3156,6 +3461,13 @@ async function renderizarContatosWpp(filtro = '') {
         });
     }
     // 'recentes' — mantém a ordem já vinda da query (ultima_mensagem_em desc).
+
+    // Fixada sempre sobe pro topo, INDEPENDENTE do modo de ordenação
+    // escolhido acima (pedido do usuário, 2026-09-30: "igual no whatsapp
+    // real") — `.sort()` é estável (spec ECMAScript), então essa 2ª
+    // passada só reagrupa em 2 blocos (fixadas / não-fixadas) preservando
+    // a ordem relativa que cada bloco já tinha do modo escolhido.
+    contatosExistentes.sort((a, b) => (b.lead.wpp_fixado ? 1 : 0) - (a.lead.wpp_fixado ? 1 : 0));
 
     // "Iniciar nova conversa" — busca em TODA a base (respeitando o
     // filtro de filial escolhido, se houver), não só nos leads já
