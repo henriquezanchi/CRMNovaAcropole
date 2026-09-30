@@ -2265,6 +2265,14 @@ function voltarEscolhaConviteApi() {
 // é só um convite, não uma inscrição confirmada no Ulisses, mesmo
 // princípio de gerarLinksConviteLote()) e registra em log_atividade.
 const TAMANHO_LOTE_CONVITE_API = 5;
+// Pausa entre lotes de disparo em massa (pedido do usuário, 2026-09-30:
+// "o que pode melhorar" — "sem controle de throughput no disparo em
+// massa além do lote de 5"). Não é uma garantia formal de taxa (a Meta
+// tem seus próprios limites por número/qualidade, ver `messaging_limit`
+// no WhatsApp Manager), só um respiro pra não bater dezenas de lotes de
+// 5 em sequência imediata sem pausa nenhuma.
+const PAUSA_ENTRE_LOTES_MS = 400;
+function pausarWpp(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 async function confirmarEnviarConviteApiLote() {
     const { templateIndice, linhas } = conviteApiPreviaAtual;
@@ -2305,6 +2313,7 @@ async function confirmarEnviarConviteApiLote() {
         }));
         resultados.push(...respostas);
         resultadoEl.innerHTML = `<p style="font-size:12px; color:var(--text-muted);">Enviando... (${resultados.length}/${linhas.length})</p>`;
+        if (i + TAMANHO_LOTE_CONVITE_API < linhas.length) await pausarWpp(PAUSA_ENTRE_LOTES_MS);
     }
 
     const sucesso = resultados.filter(r => r.ok);
@@ -2527,6 +2536,7 @@ async function confirmarConviteJanelaAberta() {
         }));
         resultados.push(...respostas);
         if (corpoEl) corpoEl.innerHTML = `<p style="font-size:12px; color:var(--text-muted);">Enviando... (${resultados.length}/${candidatos.length})</p>`;
+        if (i + TAMANHO_LOTE < candidatos.length) await pausarWpp(PAUSA_ENTRE_LOTES_MS);
     }
 
     const sucesso = resultados.filter(r => r.ok);

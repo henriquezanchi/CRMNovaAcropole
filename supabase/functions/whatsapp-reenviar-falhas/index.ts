@@ -120,6 +120,10 @@ Deno.serve(async (req) => {
                 falharamDeNovo++;
             }
         }));
+        // Pausa entre lotes (pedido do usuário, 2026-09-30: "sem controle
+        // de throughput no disparo em massa além do lote de 5") — mesmo
+        // espírito das pausas adicionadas em js/whatsapp.js.
+        if (i + TAMANHO_LOTE < candidatasRetriaveis.length) await new Promise((r) => setTimeout(r, 400));
     }
 
     return json({ ok: true, reenviadas, falharam_de_novo: falharamDeNovo, sem_dado_suficiente: semDadoSuficiente, total_candidatas: candidatasRetriaveis.length });

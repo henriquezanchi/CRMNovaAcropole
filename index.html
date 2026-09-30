@@ -466,6 +466,25 @@
                 </div>
                 <div class="agenda-lista" id="leadsATratarLista"></div>
 
+                <!-- Duplicados ENTRE filiais (pedido do usuário, 2026-09-30:
+                     "o que pode melhorar" — telefone idêntico em 2+ filiais
+                     diferentes, gap já documentado, achado real com a
+                     "Giorgia Tomitão Mário"). Só leitura + botão de mesclar
+                     manual — nunca mescla sozinho (pessoas diferentes podem
+                     legitimamente compartilhar telefone). Sob demanda (não
+                     roda sozinho ao abrir a aba — consulta a base inteira,
+                     todas as filiais de uma vez). -->
+                <div style="margin-top:24px; border-top:1px solid var(--border-color); padding-top:16px;">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px;">
+                        <div>
+                            <h3 style="font-size:15px; color:var(--na-green-dark);"><i class="fa-solid fa-building-circle-exclamation"></i> Duplicados Entre Filiais</h3>
+                            <p class="report-sub">Mesmo telefone cadastrado em 2 ou mais filiais diferentes — pode ser a mesma pessoa (revise e mescle se fizer sentido) ou coincidência (ex: telefone de casal). Nunca mescla sozinho.</p>
+                        </div>
+                        <button class="btn-secondary" id="btnVerificarDuplicadosEntreFiliais" style="white-space:nowrap;" onclick="carregarDuplicadosEntreFiliais()"><i class="fa-solid fa-magnifying-glass"></i> Verificar</button>
+                    </div>
+                    <div id="duplicadosEntreFiliaisLista" style="margin-top:8px;"></div>
+                </div>
+
                 <!-- Conversas de WhatsApp importadas em lote (.zip) sem lead
                      identificado com confiança — js/importar-conversa-whatsapp.js -->
                 <div style="margin-top:24px; border-top:1px solid var(--border-color); padding-top:16px;">

@@ -819,6 +819,73 @@ async function abrirModalMesclar(grupo) {
 // não tem um "grupo" detectado pelo sistema pra limpar de leads_a_tratar
 // depois (grupoEmMesclagem fica null, e confirmarMesclagem() já lida bem
 // com isso — só não encontra nada pra apagar).
+// ==========================================================
+// Duplicados ENTRE filiais (pedido do usuário, 2026-09-30: "o que pode
+// melhorar" — "Duplicados cross-filial residuais... ainda depende do
+// histórico de mensagem pra desambiguar sozinho", gap já documentado no
+// CLAUDE.md, achado real com a "Giorgia Tomitão Mário"/"Giorgia Tomitao
+// Mario" em 2 filiais diferentes). Diferente do resto desta tela
+// (`leads_a_tratar`, escopado a 1 filial, roda sozinho a cada
+// importação), esta detecção é CROSS-FILIAL de propósito — sob demanda
+// (botão "Verificar", não recarrega ao abrir a aba), sem tabela própria
+// nem "Ignorar" persistente (é uma consulta ao vivo via RPC,
+// migracao_rpc_duplicados_entre_filiais.sql — não uma varredura salva).
+// Nunca mescla sozinho: pessoas diferentes podem legitimamente
+// compartilhar telefone (ex: casal) — só reaproveita
+// `abrirModalMesclarManual()`, já existente, pra revisão humana.
+// ==========================================================
+let duplicadosEntreFiliaisAtuais = [];
+
+async function carregarDuplicadosEntreFiliais() {
+    const container = document.getElementById('duplicadosEntreFiliaisLista');
+    const botao = document.getElementById('btnVerificarDuplicadosEntreFiliais');
+    if (!container) return;
+    if (botao) botao.disabled = true;
+    container.innerHTML = '<div class="agenda-vazio"><i class="fa-solid fa-circle-notch fa-spin"></i> Consultando todas as filiais...</div>';
+
+    const { data, error } = await window.supabaseClient.rpc('duplicados_entre_filiais', { p_limite: 300 });
+    if (botao) botao.disabled = false;
+    if (error) {
+        console.warn('Não foi possível consultar duplicados entre filiais (rode migracao_rpc_duplicados_entre_filiais.sql se ainda não rodou).', error);
+        container.innerHTML = '<div class="agenda-vazio">Indisponível — rode migracao_rpc_duplicados_entre_filiais.sql no Supabase.</div>';
+        return;
+    }
+    duplicadosEntreFiliaisAtuais = data || [];
+    renderizarDuplicadosEntreFiliais();
+}
+
+function renderizarDuplicadosEntreFiliais() {
+    const container = document.getElementById('duplicadosEntreFiliaisLista');
+    if (!container) return;
+    if (duplicadosEntreFiliaisAtuais.length === 0) {
+        container.innerHTML = '<div class="agenda-vazio">Nenhum duplicado entre filiais encontrado.</div>';
+        return;
+    }
+    container.innerHTML = duplicadosEntreFiliaisAtuais.map(htmlCardDuplicadoEntreFiliais).join('');
+}
+
+function htmlCardDuplicadoEntreFiliais(g) {
+    const totalFiliais = new Set(g.membros.map(m => m.filial)).size;
+    const membrosHtml = g.membros.map(m => {
+        const tags = (typeof parseTags === 'function' ? parseTags(m.tags) : []).map(t => t.trim()).filter(Boolean);
+        const tagsHtml = tags.map(t => `<span class="tag ${typeof classeVisualTag === 'function' ? classeVisualTag(t) : ''}" style="font-size:9.5px; padding:2px 6px;">${escapeHTML(t)}</span>`).join(' ');
+        return `
+            <div style="padding:6px 0; border-bottom:1px dashed var(--border-color);">
+                <div style="cursor:pointer; font-weight:600; font-size:12.5px;" onclick="abrirResultadoBuscaGlobal('${m.pessoaIdentificador}')">${escapeHTML(m.pessoaNome || 'Sem nome')}</div>
+                <div style="font-size:10.5px; color:var(--text-muted);"><i class="fa-solid fa-building"></i> ${escapeHTML(m.filial || 'sem filial')} · <i class="fa-brands fa-whatsapp"></i> ${escapeHTML(m.telefone || '')}</div>
+                ${tagsHtml ? `<div style="margin-top:3px; display:flex; gap:3px; flex-wrap:wrap;">${tagsHtml}</div>` : ''}
+            </div>`;
+    }).join('');
+    const idsJs = g.membros.map(m => `'${m.pessoaIdentificador}'`).join(',');
+    return `
+        <div style="margin-bottom:10px; padding:10px 12px; border:1px solid var(--border-color); border-radius:8px; background:#fff;">
+            <div style="font-size:10.5px; color:var(--text-muted); margin-bottom:4px; text-transform:uppercase; font-weight:700;">Mesmo telefone — ${g.total_membros} cadastro(s) em ${totalFiliais} filiais diferentes</div>
+            ${membrosHtml}
+            <button class="btn-mini btn-primary-mini" style="margin-top:8px;" onclick="abrirModalMesclarManual([${idsJs}])"><i class="fa-solid fa-code-merge"></i> Revisar / Mesclar</button>
+        </div>
+    `;
+}
+
 async function abrirModalMesclarManual(pessoaIds) {
     if (!pessoaIds || pessoaIds.length < 2) { alert('Selecione pelo menos 2 leads (marque o checkbox de cada card) pra mesclar.'); return; }
     grupoEmMesclagem = null;
