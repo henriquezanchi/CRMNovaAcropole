@@ -210,6 +210,12 @@ Deno.serve(async (req) => {
         ...(tipo === "imagem" ? { imagem_url: imagemUrl } : {}),
         ...(tipo === "documento" ? { documento_url: documentoUrl, nome_arquivo: nomeArquivo } : {}),
         ...(tipo === "audio" ? { audio_url: audioUrl } : {}),
+        // Guarda os parâmetros originais do template — necessário pra um
+        // reenvio automático futuro conseguir reconstruir a MESMA chamada
+        // (ver whatsapp-reenviar-falhas) — sem isso, só teríamos o texto
+        // já renderizado (corpo_texto), que não dá pra mandar de volta
+        // como template de verdade pra Graph API.
+        ...(tipo === "template" ? { template_nome: templateNome, template_idioma: templateIdioma || "pt_BR", template_params: templateParams || [] } : {}),
         ...(contextoMessageId ? { contexto_preview: contextoPreview || null, contexto_remetente: contextoRemetente || null } : {}),
     };
 
