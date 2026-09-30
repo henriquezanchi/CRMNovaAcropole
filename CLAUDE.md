@@ -380,6 +380,22 @@ migracao_rpc_falhas_retriaveis.sql → função mensagens_falhas_retriaveis(), r
                                      `supabase db query --linked`
 migracao_agendamento_reenvio_falhas.sql → cron job que roda whatsapp-reenviar-falhas a cada
                                      3h; JÁ RODADA nesta sessão via `supabase db query --linked`
+migracao_rpc_duplicados_entre_filiais.sql → função duplicados_entre_filiais() — mesmo
+                                     telefone em 2+ filiais diferentes, seção "Duplicados
+                                     Entre Filiais" em Leads a Tratar; JÁ RODADA nesta sessão
+                                     via `supabase db query --linked`
+```
+
+## Ferramentas locais (fora do site publicado)
+
+```
+tools/lint/verificar-globais.mjs  → verificador estático sem dependências (npm install não
+                                     funciona neste drive) — pega variável indefinida dentro
+                                     de template literals (${nome}); ver seção "'O que pode
+                                     melhorar' — rodada de dívida técnica". Roda com
+                                     `node tools/lint/verificar-globais.mjs`, sem instalar nada.
+                                     Pasta ISOLADA de propósito — nunca um package.json na
+                                     raiz do repo (mudaria a detecção zero-config do Vercel).
 ```
 
 ## Banco de dados (Supabase)
@@ -6876,6 +6892,121 @@ ilegível, pergunta sobre foto de perfil).
   Meta por privacidade, não algo que dê pra contornar com código. Não
   construído, e não há solução conhecida enquanto essa restrição da API
   existir.
+
+## "O que pode melhorar" — rodada de dívida técnica (2026-09-30)
+
+Pedido do usuário depois de uma auditoria (comparativo WhatsApp real vs.
+CRM) que terminou com 3 listas — o que temos, o que falta, o que pode
+melhorar: "siga com tudo o que pode melhorar, e depois vamos reavaliar o
+que falta".
+
+### `tools/lint/verificar-globais.mjs` — verificador estático sem dependências
+
+Motivação: um bug real (`abrirChatWpp()`, `js/whatsapp.js` — referenciava
+`${id}` dentro de um botão novo, mas a variável se chamava `leadId`;
+`ReferenceError` síncrono no meio da função, sem nenhum erro visível pro
+usuário) só foi achado porque o usuário reportou "estou clicando nos
+leads no whatsapp unificado, e não consigo acessar às conversas" — um
+linter de verdade (ESLint) pegaria isso na hora, antes de chegar em
+produção. **`npm install` não funciona neste drive** (`G:\`,
+streaming do Google Drive — mesma limitação já documentada pra
+`scraper/`, confirmado de novo tentando instalar ESLint: `EPERM`/`EBADF`
+no meio da instalação). Solução: um script Node **sem nenhuma
+dependência** (`tools/lint/verificar-globais.mjs`), numa pasta ISOLADA
+de propósito — nunca um `package.json` na raiz do repositório, porque
+isso mudaria a detecção zero-config do Vercel (hoje funciona só porque
+não existe nenhum `package.json` lá) e podia quebrar o deploy estático
+que já está no ar.
+
+- **Como funciona** (heurística, não um parser de verdade — documentado
+  no próprio arquivo): calcula a lista de "globais do projeto" lendo os
+  14 arquivos de `js/` (toda função/const/let/var na COLUNA 0 — os
+  scripts são `<script>` clássicos, sem `type="module"`, compartilhando
+  1 escopo só); pra cada função de nível superior, extrai o corpo
+  inteiro (brace-aware) e confere se todo `${identificador}` dentro de
+  template literals está declarado em algum lugar (global, parâmetro,
+  const/let/var do próprio corpo, parâmetro de arrow function) — se não
+  estiver em NENHUM desses, reporta como suspeito.
+- **2 bugs reais no PRÓPRIO verificador, achados testando contra o
+  código de verdade** (documentados extensamente nos comentários do
+  arquivo):
+  1. Literal de regex com aspa dentro (`csvEscapeCampo()`, `js/app.js`:
+     `if (/[",\n;]/.test(str))`) — sem reconhecer regex, o `"` DENTRO do
+     regex era interpretado como início de STRING nova, desincronizando
+     o parser pro resto do arquivo inteiro.
+  2. Template literal ANINHADO (`abrirChatWpp()`, `js/whatsapp.js`:
+     `` `${x ? \`texto ${y}\` : ''}` ``) — um simples toggle "entrei/saí
+     de template" nunca dá conta disso; reescrito com uma PILHA de
+     contextos (`BRACE`/`INTERP`/`TEMPLATE`/`STRING1`/`STRING2`/`REGEX`/
+     `REGEX_CLASSE`) em vez de um `modo` único.
+  3. Múltiplos declaradores numa linha (`let a = 0, b = 1;`) e
+     destructuring (`const { count, error } = ...`, `const [ano, mes,
+     dia] = ...`) geravam falso-positivo (regex não-guloso só capturava
+     o 1º nome, ou a vírgula sobrava no meio do nome depois de tirar só
+     `{}[]`).
+- **Testado**: reintroduzindo o bug real `${id}` de propósito, o
+  verificador ACHA (linha e função certas); revertendo, fica limpo (0
+  suspeitas nos 14 arquivos). Rodar: `node tools/lint/verificar-globais.mjs`
+  (sem instalar nada) — vale rodar depois de qualquer edição em `js/*.js`.
+
+### Paginação de histórico do WhatsApp (bug real + feature nova)
+
+`carregarHistoricoMensagens()` (`js/whatsapp.js`) buscava com
+`.order('criado_em', {ascending: true}).limit(200)` — ou seja, as 200
+mensagens MAIS ANTIGAS da conversa, não as mais recentes. Numa conversa
+com mais de 200 mensagens, isso mostraria o início de anos atrás em vez
+do que aconteceu ontem. Corrigido (`ascending: false` + `.reverse()` no
+fim) + botão **"Carregar mensagens anteriores"** no topo da lista
+(`carregarMaisAntigas()`, dentro de `criarChatController()` — cobre
+WhatsApp Unificado e gaveta de uma vez) que pagina pra trás
+(`.lt('criado_em', primeiraJaCarregada)`) preservando a posição de
+rolagem (calcula `scrollHeight` antes/depois do prepend).
+
+### Gatilho 9 na Central de Notificações — taxa de falha por pagamento
+
+`verificarNotificacoesFalhasPagamento()` (`js/notificacoes.js`) — avisa
+quando 5+ mensagens falharam na última hora com código `131042`
+("Business eligibility payment issue"). Antes só se descobria porque
+alguém notava (foi exatamente o que aconteceu com o lote de 453
+falhas). Dedup por HORA (não por linha — o interesse é "a taxa está
+alta agora"), poll de 15 min (mesma cadência do reenvio automático).
+Clicar leva direto pro billing hub da Meta.
+
+### Throughput pacing nos disparos em massa
+
+Pausa de 400ms (`pausarWpp()`/`PAUSA_ENTRE_LOTES_MS`, `js/whatsapp.js`;
+equivalente inline em `whatsapp-reenviar-falhas`) entre cada lote de 5
+— nos 3 pontos que disparam em lote (Convidar API, Convidar Janela
+Aberta, reenvio automático). Não é uma garantia formal de taxa (a Meta
+tem seus próprios limites por número/qualidade), só um respiro.
+
+### Detecção de duplicados ENTRE filiais (gap já documentado, resolvido)
+
+Nova RPC `duplicados_entre_filiais(p_limite)`
+(`migracao_rpc_duplicados_entre_filiais.sql`) — mesmo telefone
+cadastrado em 2+ FILIAIS diferentes (normaliza o 9º dígito de celular
+antes de agrupar, mesma lógica de `normalizarTelefoneParaChave()`).
+Nova seção **"Duplicados Entre Filiais"** na aba Leads a Tratar
+(`carregarDuplicadosEntreFiliais()`, `js/leads-a-tratar.js`) — sob
+demanda (botão "Verificar", consulta a base INTEIRA, não roda sozinho
+ao abrir a aba), só leitura, nunca mescla automaticamente (reaproveita
+`abrirModalMesclarManual()` já existente pra revisão humana — pessoas
+diferentes podem legitimamente compartilhar telefone, ex: casal).
+**Testado contra produção**: 243 grupos reais / 507 leads confirmados
+(nomes batendo de verdade entre filiais — ex: "Gleison Batista dos
+Santos" em Jardim América e Goiânia II). **Achado ruído real no
+caminho**: telefone "000000000" (placeholder de "sem telefone de
+verdade" usado numa das planilhas antigas) juntava 4 pessoas sem
+relação nenhuma — filtro adicionado na própria RPC
+(`!~ '^(\d)\1*$'`, exclui número com todos os dígitos iguais).
+
+### Itens deliberadamente NÃO tocados nesta rodada
+
+- **Pesos do modo "Prioridade"** (sugestão de IA > janela > Lead Forte >
+  não lida) — ficam como estão até uso real mostrar se a ordem bate com
+  o que o time acha certo; não há o que "melhorar" sem esse feedback.
+- **Credencial da Anthropic quebrada** — ação externa do usuário
+  (Console da Anthropic), fora do alcance de qualquer mudança de código.
 
 ## Reenvio automático de falhas de WhatsApp (2026-09-29/30)
 
