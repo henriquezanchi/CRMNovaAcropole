@@ -577,16 +577,28 @@ async function enviarReacaoWpp(leadId, mensagemAlvoId, emoji) {
     }
 }
 
-async function carregarHistoricoMensagens(pessoaIdentificador) {
+// Bug real corrigido (2026-09-30, "o que pode melhorar" — histórico
+// limitado a 200 mensagens sem paginação): a query original ordenava
+// ASCENDENTE + limit(200) — ou seja, buscava as 200 mensagens MAIS
+// ANTIGAS da conversa, não as mais recentes. Numa conversa com mais de
+// 200 mensagens, isso mostraria o início de anos atrás em vez do que
+// aconteceu ontem. Corrigido: busca as mais RECENTES (`ascending:
+// false` + limit) e inverte no fim pra devolver em ordem cronológica
+// normal. `antesDe` (opcional) pagina pra trás — ver
+// `carregarMaisAntigas()` em criarChatController().
+const TAMANHO_PAGINA_HISTORICO_WPP = 200;
+async function carregarHistoricoMensagens(pessoaIdentificador, antesDe) {
     if (!pessoaIdentificador) return [];
-    const { data, error } = await window.supabaseClient
+    let query = window.supabaseClient
         .from('mensagens_whatsapp')
         .select('*')
         .eq('pessoaIdentificador', pessoaIdentificador)
-        .order('criado_em', { ascending: true })
-        .limit(200);
+        .order('criado_em', { ascending: false })
+        .limit(TAMANHO_PAGINA_HISTORICO_WPP);
+    if (antesDe) query = query.lt('criado_em', antesDe);
+    const { data, error } = await query;
     if (error) { console.error('Erro ao carregar histórico do WhatsApp:', error); return []; }
-    return data || [];
+    return (data || []).reverse();
 }
 
 // ==========================================================
@@ -636,6 +648,11 @@ function criarChatController({ messagesId, inputAreaId }) {
     // destaca e pula entre resultados sem escondar o resto), aqui é uma
     // versão mais simples — só mostra quem bate, com contador.
     let termoBusca = '';
+    // Paginação de mensagens antigas (pedido do usuário, 2026-09-30: "o
+    // que pode melhorar" — histórico sem paginação, corta em 200). `true`
+    // até um carregamento devolver MENOS que uma página cheia (sinal de
+    // que chegou ao início da conversa).
+    let temMaisAntigas = true;
 
     const el = (id) => document.getElementById(id);
 
@@ -669,8 +686,33 @@ function criarChatController({ messagesId, inputAreaId }) {
                 e.stopPropagation();
                 const msg = mensagens.find(x => String(x.id) === btnEncaminhar.dataset.msgId);
                 if (msg) abrirSeletorEncaminharWpp(msg);
+                return;
+            }
+            const btnCarregarAntigas = e.target.closest('.wpp-carregar-antigas-btn');
+            if (btnCarregarAntigas) {
+                e.stopPropagation();
+                carregarMaisAntigas();
             }
         });
+    }
+
+    // "Carregar mensagens anteriores" (pedido do usuário, 2026-09-30) —
+    // busca a PRÓXIMA página pra trás (mensagens mais antigas que a
+    // primeira já carregada) e prepende, preservando a posição visual de
+    // rolagem (sem isso, o navegador rolaria pro topo/fundo sozinho ao
+    // crescer o conteúdo ACIMA do que já estava visível).
+    async function carregarMaisAntigas() {
+        if (!leadId || mensagens.length === 0 || !temMaisAntigas) return;
+        const container = el(messagesId);
+        const alturaAntes = container ? container.scrollHeight : 0;
+        const scrollAntes = container ? container.scrollTop : 0;
+
+        const maisAntigas = await carregarHistoricoMensagens(leadId, mensagens[0].criado_em);
+        temMaisAntigas = maisAntigas.length === TAMANHO_PAGINA_HISTORICO_WPP;
+        mensagens = [...maisAntigas, ...mensagens];
+        renderizarMensagens(true);
+
+        if (container) container.scrollTop = scrollAntes + (container.scrollHeight - alturaAntes);
     }
 
     // Injeta/remove a barra "Respondendo a..." acima da caixa de texto,
@@ -704,7 +746,7 @@ function criarChatController({ messagesId, inputAreaId }) {
     // "Fidelidade ao WhatsApp real" (pedido do usuário, 2026-09-28) — o
     // real separa o dia entre grupos de mensagens com um "pill" central
     // ("HOJE"/"ONTEM"/data). Calculado aqui, não guardado — é só leitura.
-    function renderizarMensagens() {
+    function renderizarMensagens(preservarScroll) {
         const container = el(messagesId);
         if (!container) return;
         if (mensagens.length === 0) {
@@ -722,7 +764,12 @@ function criarChatController({ messagesId, inputAreaId }) {
             container.innerHTML = '<div style="text-align:center; font-size:11px; color:#64748b; margin-top:20px;">Nenhuma mensagem encontrada com esse termo.</div>';
             return;
         }
-        let html = '';
+        // "Carregar mensagens anteriores" (pedido do usuário, 2026-09-30)
+        // — só aparece sem busca ativa (a busca já filtra sobre o que já
+        // está carregado; paginar pra trás no meio de uma busca confundiria).
+        let html = (!termoBusca && temMaisAntigas)
+            ? `<div style="text-align:center; padding:6px 0 12px;"><button type="button" class="wpp-carregar-antigas-btn" style="background:none; border:1px solid var(--border-color); border-radius:14px; padding:5px 14px; font-size:11px; color:var(--text-muted); cursor:pointer;"><i class="fa-solid fa-arrow-up"></i> Carregar mensagens anteriores</button></div>`
+            : '';
         let ultimoDia = null;
         listaVisivel.forEach(m => {
             const diaAtual = new Date(m.criado_em).toDateString();
@@ -733,7 +780,7 @@ function criarChatController({ messagesId, inputAreaId }) {
             html += htmlMensagemWpp(m, resolverCitacaoWpp(m, mapaPorWaId));
         });
         container.innerHTML = html;
-        if (!termoBusca) container.scrollTop = container.scrollHeight;
+        if (!termoBusca && !preservarScroll) container.scrollTop = container.scrollHeight;
     }
 
     // Barra de busca dentro da conversa — injetada/removida ACIMA de
@@ -1010,6 +1057,7 @@ function criarChatController({ messagesId, inputAreaId }) {
     async function recarregarHistorico() {
         if (!leadId) return;
         mensagens = await carregarHistoricoMensagens(leadId);
+        temMaisAntigas = mensagens.length === TAMANHO_PAGINA_HISTORICO_WPP;
         renderizarMensagens();
         renderizarAreaInput();
     }
@@ -1043,6 +1091,7 @@ function criarChatController({ messagesId, inputAreaId }) {
         if (containerMsgs) containerMsgs.innerHTML = '<div style="text-align:center; font-size:11px; color:#64748b; margin-top:20px;">Carregando conversa...</div>';
 
         mensagens = await carregarHistoricoMensagens(leadId);
+        temMaisAntigas = mensagens.length === TAMANHO_PAGINA_HISTORICO_WPP;
         renderizarMensagens();
         renderizarAreaInput();
         if (templateNomeForcado) selecionarTemplatePorNome(templateNomeForcado);

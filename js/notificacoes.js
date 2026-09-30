@@ -509,6 +509,62 @@ async function verificarNotificacoesRespostasConvite() {
 }
 
 // ==========================================
+// GATILHO 9: Taxa de falha de envio subindo (pedido do usuário,
+// 2026-09-30, "o que pode melhorar" — "sem alerta proativo pra pendência
+// de pagamento na Meta... hoje só se descobre porque alguém nota"). Um
+// disparo real em massa gerou 453 falhas (312 por "Business eligibility
+// payment issue", fatura em aberto) antes de o usuário notar sozinho —
+// este gatilho detecta ISSO de propósito, sem esperar alguém reparar.
+// GLOBAL (a fatura é da conta toda, não de 1 filial), dedup por HORA
+// (não por linha — o interesse é "a taxa está alta AGORA", não listar
+// mensagem por mensagem) pra não repetir o mesmo aviso a cada poll
+// enquanto o problema persistir.
+// ==========================================
+const LIMIAR_FALHAS_PAGAMENTO = 5; // a partir de quantas falhas na última hora já vale avisar
+const CHAVE_LS_FALHAS_PAGAMENTO_NOTIFICADAS = 'crm_na_falhas_pagamento_notificadas';
+function carregarFalhasPagamentoJaNotificadas() {
+    try {
+        const arr = JSON.parse(localStorage.getItem(CHAVE_LS_FALHAS_PAGAMENTO_NOTIFICADAS) || '[]');
+        return new Set(Array.isArray(arr) ? arr : []);
+    } catch { return new Set(); }
+}
+function salvarFalhasPagamentoJaNotificadas(set) {
+    try { localStorage.setItem(CHAVE_LS_FALHAS_PAGAMENTO_NOTIFICADAS, JSON.stringify([...set].slice(-50))); } catch { /* ignora */ }
+}
+let falhasPagamentoJaNotificadas = carregarFalhasPagamentoJaNotificadas(); // chave = hora arredondada (ex: "2026-09-30T14") — 1 aviso por hora corrida, no máximo, enquanto o problema persistir.
+
+async function verificarNotificacoesFalhasPagamento() {
+    if (typeof window.supabaseClient === 'undefined') return;
+    const desde = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { data, error } = await window.supabaseClient
+        .from('mensagens_whatsapp')
+        .select('id, wa_status_erro')
+        .eq('direcao', 'saida')
+        .eq('wa_status', 'falhou')
+        .gte('criado_em', desde)
+        .limit(500);
+    if (error || !data) return;
+
+    const comPendenciaPagamento = data.filter(m => {
+        const codigo = m.wa_status_erro?.[0]?.code ?? m.wa_status_erro?.code;
+        return Number(codigo) === 131042;
+    });
+    if (comPendenciaPagamento.length < LIMIAR_FALHAS_PAGAMENTO) return;
+
+    const chaveHora = new Date().toISOString().slice(0, 13); // "AAAA-MM-DDTHH" — no máximo 1 aviso por hora
+    if (falhasPagamentoJaNotificadas.has(chaveHora)) return;
+    falhasPagamentoJaNotificadas.add(chaveHora);
+    salvarFalhasPagamentoJaNotificadas(falhasPagamentoJaNotificadas);
+
+    adicionarNotificacao({
+        icone: 'fa-solid fa-file-invoice-dollar',
+        titulo: 'Envios de WhatsApp falhando por pendência de pagamento',
+        mensagem: `${comPendenciaPagamento.length} mensagem(ns) falharam na última hora com "fatura em aberto" na Meta. O reenvio automático (a cada 3h) vai tentar de novo sozinho, mas a fatura precisa ser paga pra funcionar de verdade.`,
+        aoClicar: () => window.open('https://business.facebook.com/billing_hub/accounts/details/?business_id=1510384940854530&asset_id=2208270893051018&wizard_name=PAY_NOW&account_type=whatsapp-business-account', '_blank'),
+    });
+}
+
+// ==========================================
 // TROCA DE FILIAL — reseta os gatilhos que dependem de qual filial está
 // ativa (baseline de Lead Forte, eventos já notificados, canal do WhatsApp).
 // Chamada de dentro de carregarLeads() (js/app.js) sempre que resetar=true
@@ -540,3 +596,7 @@ setInterval(() => { if (typeof verificarNotificacoesJanelaFechando === 'function
 // novo pouco depois de cada rodada) + 1 checagem imediata ao carregar.
 verificarNotificacoesRespostasConvite();
 setInterval(() => { if (typeof verificarNotificacoesRespostasConvite === 'function') verificarNotificacoesRespostasConvite(); }, 10 * 60 * 1000);
+// Falhas por pendência de pagamento — poll de 15 min (mesmo cadência do
+// reenvio automático, ver whatsapp-reenviar-falhas) + 1 checagem imediata.
+verificarNotificacoesFalhasPagamento();
+setInterval(() => { if (typeof verificarNotificacoesFalhasPagamento === 'function') verificarNotificacoesFalhasPagamento(); }, 15 * 60 * 1000);
