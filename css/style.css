@@ -851,6 +851,32 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 }
 .btn-audio-toggle.gravando { color: #dc2626; font-size: 13px; font-weight: 700; animation: wppTimerPulsar 1.5s ease-in-out infinite; }
 
+/* Menções (@usuário) no Resumo/Anotações do lead (pedido do usuário,
+   2026-09-30). */
+.mencao-usuario { background: #dbeafe; color: #1d4ed8; font-weight: 600; padding: 0 3px; border-radius: 3px; }
+
+/* Silenciar conversa + badge de atendente responsável (pedido do usuário,
+   2026-09-30). */
+.wpp-silenciar-menu {
+    display: none; position: fixed; z-index: 3000; background: white; border-radius: 8px;
+    padding: 4px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); flex-direction: column; min-width: 150px;
+}
+.wpp-silenciar-opcao { background: none; border: none; text-align: left; padding: 7px 10px; font-size: 12px; border-radius: 5px; cursor: pointer; }
+.wpp-silenciar-opcao:hover { background: #f0f2f5; }
+.wpp-atendente-badge {
+    display: inline-flex; align-items: center; gap: 3px; font-size: 9px; font-weight: 600;
+    color: #475569; background: #f1f5f9; padding: 1px 6px; border-radius: 8px;
+}
+
+/* Respostas rápidas (canned responses) — pedido do usuário, 2026-09-30. */
+.wpp-respostas-rapidas-picker {
+    display: none; position: fixed; z-index: 3000; background: white; border-radius: 8px;
+    padding: 4px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); flex-direction: column; min-width: 200px; max-width: 260px;
+}
+.wpp-resposta-rapida-item { background: none; border: none; text-align: left; padding: 8px 10px; font-size: 12px; border-radius: 5px; cursor: pointer; }
+.wpp-resposta-rapida-item:hover { background: #f0f2f5; }
+.wpp-resposta-rapida-gerenciar { color: var(--text-muted); border-top: 1px solid #e2e8f0; margin-top: 2px; }
+
 /* ==========================================
    ABA: RELATÓRIOS (FUNIL DE CONVERSÃO)
 ========================================== */

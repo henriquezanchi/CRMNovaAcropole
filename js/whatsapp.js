@@ -461,6 +461,42 @@ function htmlMensagemWpp(m, quotedInfo, termoBusca, ativoBusca) {
     `;
 }
 
+// Exportar conversa (.txt) — pedido do usuário (2026-09-30): "útil pra
+// LGPD, auditoria ou repasse formal de atendimento". Busca o HISTÓRICO
+// INTEIRO (não só os 200 já carregados na tela) e gera um arquivo no
+// MESMO formato que "Importar Conversa" já sabe ler de volta (`DD/MM/AAAA
+// HH:MM - Remetente: texto`) — simetria de propósito, o export de um CRM
+// já é o import válido pro outro. Mensagens ocultadas (ver
+// ocultarMensagemWpp()) NÃO entram — já que a intenção de ocultar é
+// "sumir da nossa visualização".
+async function exportarConversaWppTxt(leadId, nomeLead) {
+    const { data, error } = await window.supabaseClient
+        .from('mensagens_whatsapp')
+        .select('direcao, corpo_texto, criado_em, tipo, oculta_em, atendente_nome')
+        .eq('pessoaIdentificador', leadId)
+        .order('criado_em', { ascending: true });
+    if (error) { alert('Erro ao exportar: ' + error.message); return; }
+    const mensagens = (data || []).filter(m => !m.oculta_em);
+    if (mensagens.length === 0) { alert('Esta conversa não tem mensagens pra exportar.'); return; }
+
+    const linhas = mensagens.map(m => {
+        const data = new Date(m.criado_em);
+        const carimbo = `${String(data.getDate()).padStart(2, '0')}/${String(data.getMonth() + 1).padStart(2, '0')}/${data.getFullYear()} ${String(data.getHours()).padStart(2, '0')}:${String(data.getMinutes()).padStart(2, '0')}`;
+        const remetente = m.direcao === 'saida' ? (m.atendente_nome || 'Atendente') : (nomeLead || 'Lead');
+        return `${carimbo} - ${remetente}: ${m.corpo_texto || `[${m.tipo || 'mensagem'}]`}`;
+    });
+
+    const blob = new Blob([linhas.join('\n')], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `conversa-${(nomeLead || 'lead').replace(/[^a-zA-Z0-9]/g, '_')}-${leadId}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
 // ==========================================================
 // Reações (emoji) — mesmo conjunto de reação rápida que o WhatsApp
 // mostra por padrão. Reagir de novo com o MESMO emoji remove a reação
@@ -527,16 +563,155 @@ function fecharEmojiDigitarWpp() {
     const el = document.getElementById('wppEmojiDigitarPicker');
     if (el) el.style.display = 'none';
 }
-function inserirEmojiNoInputWpp(inputEl, emoji) {
+// Insere texto no CURSOR de um <textarea> (não só no fim) — compartilhado
+// entre o emoji picker e as Respostas Rápidas (ver abaixo).
+function inserirTextoNoInputWpp(inputEl, texto) {
     if (!inputEl) return;
     const inicio = inputEl.selectionStart ?? inputEl.value.length;
     const fim = inputEl.selectionEnd ?? inputEl.value.length;
-    inputEl.value = inputEl.value.slice(0, inicio) + emoji + inputEl.value.slice(fim);
-    const novaPos = inicio + emoji.length;
+    inputEl.value = inputEl.value.slice(0, inicio) + texto + inputEl.value.slice(fim);
+    const novaPos = inicio + texto.length;
     inputEl.focus();
     inputEl.setSelectionRange(novaPos, novaPos);
     if (typeof ajustarAlturaTextareaWpp === 'function') ajustarAlturaTextareaWpp(inputEl);
+}
+function inserirEmojiNoInputWpp(inputEl, emoji) {
+    inserirTextoNoInputWpp(inputEl, emoji);
     fecharEmojiDigitarWpp();
+}
+
+// ==========================================================
+// Respostas rápidas prontas (canned responses) — pedido do usuário
+// (2026-09-30): frases de FAQ pra colar com 1 clique, sem precisar de
+// template aprovado pela Meta (lento pra editar). Catálogo compartilhado
+// (respostas_rapidas_whatsapp, migracao_respostas_rapidas_whatsapp.sql),
+// com placeholders resolvidos na hora de inserir (não gravados
+// resolvidos no catálogo) — mesmo espírito de {nome}/{atendente}/{filial}
+// já usados em outros textos do app.
+// ==========================================================
+let respostasRapidasCache = null;
+function resolverRespostaRapida(texto, leadId) {
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
+    if (!lead) return texto;
+    const filialObj = (typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : []).find(f => f.nome === lead.filial) || {};
+    return texto
+        .replaceAll('{nome}', typeof nomeParaChamar === 'function' ? nomeParaChamar(lead) : (lead.pessoaNome || ''))
+        .replaceAll('{atendente}', (typeof obterNomeAtendente === 'function' ? obterNomeAtendente() : '') || '')
+        .replaceAll('{filial}', nomeFilialComPreposicao(lead.filial))
+        .replaceAll('{endereco}', filialObj.endereco || '(endereço ainda não cadastrado em Gerenciar Filiais)')
+        .replaceAll('{valor_mensalidade}', filialObj.valor_mensalidade != null ? String(filialObj.valor_mensalidade) : '(valor não cadastrado)');
+}
+function _containerRespostasRapidasWpp() {
+    let el = document.getElementById('wppRespostasRapidasPicker');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'wppRespostasRapidasPicker';
+        el.className = 'wpp-respostas-rapidas-picker';
+        document.body.appendChild(el);
+    }
+    return el;
+}
+function fecharRespostasRapidasWpp() {
+    const el = document.getElementById('wppRespostasRapidasPicker');
+    if (el) el.style.display = 'none';
+}
+async function abrirRespostasRapidasWpp(botaoEl, inputEl, leadId) {
+    if (respostasRapidasCache === null) {
+        const { data } = await window.supabaseClient.from('respostas_rapidas_whatsapp').select('*').order('ordem');
+        respostasRapidasCache = data || [];
+    }
+    const picker = _containerRespostasRapidasWpp();
+    picker.innerHTML = (respostasRapidasCache.length === 0 ? '<div style="padding:8px 10px; font-size:11px; color:var(--text-muted);">Nenhuma resposta cadastrada.</div>' : '')
+        + respostasRapidasCache.map(r => `<button type="button" class="wpp-resposta-rapida-item" data-id="${r.id}">${escapeHTML(r.atalho)}</button>`).join('')
+        + `<button type="button" class="wpp-resposta-rapida-item wpp-resposta-rapida-gerenciar"><i class="fa-solid fa-gear"></i> Gerenciar respostas</button>`;
+    const rect = botaoEl.getBoundingClientRect();
+    picker.style.display = 'flex';
+    picker.style.top = `${Math.max(8, rect.top - Math.min(280, 36 * (respostasRapidasCache.length + 1) + 40))}px`;
+    picker.style.left = `${Math.min(window.innerWidth - 260, Math.max(8, rect.left - 60))}px`;
+    picker.querySelectorAll('.wpp-resposta-rapida-item:not(.wpp-resposta-rapida-gerenciar)').forEach(btn => {
+        btn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            const r = respostasRapidasCache.find(x => String(x.id) === btn.dataset.id);
+            fecharRespostasRapidasWpp();
+            if (r) inserirTextoNoInputWpp(inputEl, resolverRespostaRapida(r.texto, leadId));
+        });
+    });
+    const btnGerenciar = picker.querySelector('.wpp-resposta-rapida-gerenciar');
+    if (btnGerenciar) btnGerenciar.addEventListener('click', (ev) => { ev.stopPropagation(); fecharRespostasRapidasWpp(); abrirGerenciarRespostasRapidasWpp(); });
+    setTimeout(() => document.addEventListener('click', fecharRespostasRapidasWpp, { once: true }), 0);
+}
+
+// "Gerenciar Respostas Rápidas" — reaproveita o mesmo overlay+caixa
+// flutuante já usado por "Encaminhar mensagem" (.wpp-encaminhar-panel),
+// em vez de criar markup estático novo em index.html.
+function _containerGerenciarRespostasRapidasWpp() {
+    let el = document.getElementById('wppGerenciarRespostasPanel');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'wppGerenciarRespostasPanel';
+        el.className = 'wpp-encaminhar-panel';
+        document.body.appendChild(el);
+    }
+    return el;
+}
+function fecharGerenciarRespostasRapidasWpp() {
+    const el = document.getElementById('wppGerenciarRespostasPanel');
+    if (el) el.remove();
+}
+async function abrirGerenciarRespostasRapidasWpp() {
+    fecharGerenciarRespostasRapidasWpp();
+    const { data } = await window.supabaseClient.from('respostas_rapidas_whatsapp').select('*').order('ordem');
+    respostasRapidasCache = data || [];
+    const panel = _containerGerenciarRespostasRapidasWpp();
+    panel.innerHTML = `
+        <div class="wpp-encaminhar-overlay"></div>
+        <div class="wpp-encaminhar-caixa" style="width:420px; max-height:80vh; overflow-y:auto;">
+            <div class="wpp-encaminhar-titulo">Gerenciar Respostas Rápidas <button type="button" class="wpp-encaminhar-fechar"><i class="fa-solid fa-xmark"></i></button></div>
+            <p style="font-size:11px; color:var(--text-muted); margin:0 0 8px;">Placeholders disponíveis: <code>{nome}</code> <code>{atendente}</code> <code>{filial}</code> <code>{endereco}</code> <code>{valor_mensalidade}</code></p>
+            <div id="wppRespostasRapidasLista" style="display:flex; flex-direction:column; gap:8px;"></div>
+            <button type="button" class="btn-secondary" style="margin-top:10px; width:100%;" onclick="adicionarRespostaRapidaWpp()"><i class="fa-solid fa-plus"></i> Nova resposta</button>
+        </div>
+    `;
+    panel.querySelector('.wpp-encaminhar-overlay').addEventListener('click', fecharGerenciarRespostasRapidasWpp);
+    panel.querySelector('.wpp-encaminhar-fechar').addEventListener('click', fecharGerenciarRespostasRapidasWpp);
+    renderizarListaRespostasRapidasWpp();
+}
+function renderizarListaRespostasRapidasWpp() {
+    const lista = document.getElementById('wppRespostasRapidasLista');
+    if (!lista) return;
+    lista.innerHTML = respostasRapidasCache.length === 0 ? '<p style="font-size:12px; color:var(--text-muted);">Nenhuma resposta cadastrada ainda.</p>' : respostasRapidasCache.map(r => `
+        <div style="border:1px solid var(--border-color); border-radius:6px; padding:8px;">
+            <input type="text" value="${escapeHTML(r.atalho)}" data-id="${r.id}" class="resposta-rapida-atalho" style="width:100%; margin-bottom:4px; padding:5px; border:1px solid #cbd5e1; border-radius:4px; font-size:12px; font-weight:600; box-sizing:border-box;">
+            <textarea data-id="${r.id}" class="resposta-rapida-texto" style="width:100%; height:60px; padding:5px; border:1px solid #cbd5e1; border-radius:4px; font-size:12px; font-family:inherit; box-sizing:border-box;">${escapeHTML(r.texto)}</textarea>
+            <div style="display:flex; justify-content:flex-end; gap:6px; margin-top:4px;">
+                <button class="btn-add-tag" onclick="salvarRespostaRapidaWpp('${r.id}')"><i class="fa-solid fa-floppy-disk"></i> Salvar</button>
+                <button class="btn-add-tag" style="color:#b91c1c;" onclick="removerRespostaRapidaWpp('${r.id}')"><i class="fa-solid fa-trash"></i> Remover</button>
+            </div>
+        </div>
+    `).join('');
+}
+async function salvarRespostaRapidaWpp(id) {
+    const atalho = document.querySelector(`.resposta-rapida-atalho[data-id="${id}"]`).value.trim();
+    const texto = document.querySelector(`.resposta-rapida-texto[data-id="${id}"]`).value.trim();
+    if (!atalho || !texto) { alert('Preencha o atalho e o texto.'); return; }
+    const { error } = await window.supabaseClient.from('respostas_rapidas_whatsapp').update({ atalho, texto }).eq('id', id);
+    if (error) { alert('Erro ao salvar: ' + error.message); return; }
+    const r = respostasRapidasCache.find(x => String(x.id) === String(id));
+    if (r) { r.atalho = atalho; r.texto = texto; }
+}
+async function removerRespostaRapidaWpp(id) {
+    if (!confirm('Remover esta resposta rápida?')) return;
+    const { error } = await window.supabaseClient.from('respostas_rapidas_whatsapp').delete().eq('id', id);
+    if (error) { alert('Erro: ' + error.message); return; }
+    respostasRapidasCache = respostasRapidasCache.filter(x => String(x.id) !== String(id));
+    renderizarListaRespostasRapidasWpp();
+}
+async function adicionarRespostaRapidaWpp() {
+    const ordem = respostasRapidasCache.length;
+    const { data, error } = await window.supabaseClient.from('respostas_rapidas_whatsapp').insert({ atalho: 'Nova resposta', texto: '', ordem }).select().single();
+    if (error) { alert('Erro: ' + error.message); return; }
+    respostasRapidasCache.push(data);
+    renderizarListaRespostasRapidasWpp();
 }
 function abrirEmojiPickerDigitarWpp(botaoEl, inputEl) {
     const picker = _containerEmojiDigitarWpp();
@@ -1180,6 +1355,7 @@ function criarChatController({ messagesId, inputAreaId }) {
                     <button type="button" class="btn-anexo-toggle" style="background: none; border: none; font-size: 18px; color: var(--text-muted); cursor: pointer;" title="Anexar foto ou documento"><i class="fa-solid fa-paperclip"></i></button>
                     <input type="file" class="wpp-anexo-input" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" hidden>
                     <button type="button" class="btn-emoji-toggle" style="background: none; border: none; font-size: 20px; color: var(--text-muted); cursor: pointer;" title="Emojis"><i class="fa-regular fa-face-smile"></i></button>
+                    <button type="button" class="btn-resposta-rapida-toggle" style="background: none; border: none; font-size: 17px; color: var(--text-muted); cursor: pointer;" title="Respostas rápidas"><i class="fa-solid fa-bolt"></i></button>
                     <textarea class="chat-input" rows="1" placeholder="Digite uma mensagem... (Ctrl+Enter pra nova linha)"></textarea>
                     <button type="button" class="btn-audio-toggle" title="Gravar áudio"><i class="fa-solid fa-microphone"></i></button>
                     <button type="button" class="btn-send"><i class="fa-solid fa-paper-plane"></i></button>
@@ -1190,6 +1366,7 @@ function criarChatController({ messagesId, inputAreaId }) {
             const anexoBtn = container.querySelector('.btn-anexo-toggle');
             const anexoInput = container.querySelector('.wpp-anexo-input');
             const emojiBtn = container.querySelector('.btn-emoji-toggle');
+            const respostaRapidaBtn = container.querySelector('.btn-resposta-rapida-toggle');
             const audioBtn = container.querySelector('.btn-audio-toggle');
             const disparar = () => enviarMensagem(input);
             botao.addEventListener('click', disparar);
@@ -1206,6 +1383,7 @@ function criarChatController({ messagesId, inputAreaId }) {
                 anexoInput.value = ''; // permite escolher o MESMO arquivo de novo depois de remover
             });
             emojiBtn.addEventListener('click', () => abrirEmojiPickerDigitarWpp(emojiBtn, input));
+            respostaRapidaBtn.addEventListener('click', () => abrirRespostasRapidasWpp(respostaRapidaBtn, input, leadId));
             audioBtn.addEventListener('click', () => alternarGravacaoAudioWpp());
         } else {
             renderizarAreaInputTemplate();
@@ -2938,6 +3116,7 @@ function htmlContatoWpp(lead, conversa, temSugestaoIa) {
     const naoLida = conversaNaoLidaWpp(conversa);
     const fixado = !!lead.wpp_fixado;
     const arquivado = !!lead.wpp_arquivado;
+    const silenciado = !!(lead.wpp_silenciado_ate && new Date(lead.wpp_silenciado_ate) > new Date());
     const preview = conversa
         ? `${conversa.ultima_direcao === 'saida' ? 'Você: ' : ''}${(conversa.ultimo_texto || '').slice(0, 40)}`
         : 'Toque para iniciar conversa';
@@ -2945,13 +3124,17 @@ function htmlContatoWpp(lead, conversa, temSugestaoIa) {
         <div class="wpp-contact-item ${ativo} ${naoLida ? 'nao-lida' : ''}" onclick="abrirChatWpp('${id}')">
             <div class="wpp-contact-avatar"><i class="fa-solid fa-user"></i></div>
             <div class="wpp-contact-info" style="flex:1;">
-                <div class="wpp-contact-name">${fixado ? '<i class="fa-solid fa-thumbtack" style="font-size:9px; color:var(--na-green-dark);" title="Fixada"></i> ' : ''}${escapeHTML(lead.pessoaNome || 'Sem nome')}${temSugestaoIa ? ' <i class="fa-solid fa-wand-magic-sparkles" style="color:#1d4ed8; font-size:10px;" title="Sugestão de resposta da IA pronta pra revisar"></i>' : ''}</div>
+                <div class="wpp-contact-name">${fixado ? '<i class="fa-solid fa-thumbtack" style="font-size:9px; color:var(--na-green-dark);" title="Fixada"></i> ' : ''}${silenciado ? '<i class="fa-solid fa-bell-slash" style="font-size:9px; color:var(--text-muted);" title="Silenciada"></i> ' : ''}${escapeHTML(lead.pessoaNome || 'Sem nome')}${temSugestaoIa ? ' <i class="fa-solid fa-wand-magic-sparkles" style="color:#1d4ed8; font-size:10px;" title="Sugestão de resposta da IA pronta pra revisar"></i>' : ''}</div>
                 <div class="wpp-contact-phone">${escapeHTML(preview)}</div>
-                ${lead.filial ? `<div style="font-size:9px; color:var(--text-muted);"><i class="fa-solid fa-building"></i> ${escapeHTML(lead.filial)}</div>` : ''}
+                <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+                    ${lead.filial ? `<div style="font-size:9px; color:var(--text-muted);"><i class="fa-solid fa-building"></i> ${escapeHTML(lead.filial)}</div>` : ''}
+                    ${htmlBadgeAtendenteWpp(lead)}
+                </div>
                 ${htmlTimerJanelaWpp(conversa)}
             </div>
             <div class="wpp-contact-acoes">
                 <button type="button" class="wpp-pin-btn ${fixado ? 'ativo' : ''}" title="${fixado ? 'Desafixar' : 'Fixar'} conversa" onclick="event.stopPropagation(); alternarFixarConversaWpp('${id}', ${fixado})"><i class="fa-solid fa-thumbtack"></i></button>
+                <button type="button" class="wpp-pin-btn ${silenciado ? 'ativo' : ''}" title="Silenciar/reativar notificações" onclick="event.stopPropagation(); abrirMenuSilenciarWpp(this, '${id}', ${silenciado})"><i class="fa-solid ${silenciado ? 'fa-bell-slash' : 'fa-bell'}"></i></button>
                 <button type="button" class="wpp-archive-btn ${arquivado ? 'ativo' : ''}" title="${arquivado ? 'Desarquivar' : 'Arquivar'} conversa" onclick="event.stopPropagation(); alternarArquivarConversaWpp('${id}', ${arquivado})"><i class="fa-solid fa-box-archive"></i></button>
             </div>
             ${naoLida ? '<div class="wpp-contact-nao-lida-dot"></div>' : ''}
@@ -2983,6 +3166,72 @@ async function alternarArquivarConversaWpp(leadId, estavaArquivado) {
     if (lead) lead.wpp_arquivado = novoValor;
     const searchEl = document.getElementById('wppSearch');
     renderizarContatosWpp(searchEl ? searchEl.value : '');
+}
+
+// "Silenciar" conversa (pedido do usuário, 2026-09-30) — snooze de
+// NOTIFICAÇÃO, diferente de arquivar: enquanto `wpp_silenciado_ate` está
+// no futuro, o sino/popup de "mensagem recebida" não dispara pra esse
+// lead (ver iniciarNotificacoesWhatsAppGlobais(), js/notificacoes.js),
+// mas o indicador de "não lida" continua normal — mesmo comportamento do
+// WhatsApp real (silenciado ≠ lido).
+const OPCOES_SILENCIAR_WPP = [
+    { rotulo: '1 hora', horas: 1 },
+    { rotulo: '8 horas', horas: 8 },
+    { rotulo: '24 horas', horas: 24 },
+    { rotulo: '7 dias', horas: 24 * 7 },
+];
+function _containerMenuSilenciarWpp() {
+    let el = document.getElementById('wppSilenciarMenu');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'wppSilenciarMenu';
+        el.className = 'wpp-silenciar-menu';
+        document.body.appendChild(el);
+    }
+    return el;
+}
+function fecharMenuSilenciarWpp() {
+    const el = document.getElementById('wppSilenciarMenu');
+    if (el) el.style.display = 'none';
+}
+function abrirMenuSilenciarWpp(botaoEl, leadId, jaSilenciado) {
+    const menu = _containerMenuSilenciarWpp();
+    const opcoes = jaSilenciado
+        ? [{ rotulo: 'Reativar notificações', horas: 0 }]
+        : OPCOES_SILENCIAR_WPP;
+    menu.innerHTML = opcoes.map(o => `<button type="button" class="wpp-silenciar-opcao" data-horas="${o.horas}">${escapeHTML(o.rotulo)}</button>`).join('');
+    const rect = botaoEl.getBoundingClientRect();
+    menu.style.display = 'flex';
+    menu.style.top = `${rect.bottom + 4}px`;
+    menu.style.left = `${Math.min(window.innerWidth - 160, rect.left)}px`;
+    menu.querySelectorAll('.wpp-silenciar-opcao').forEach(btn => {
+        btn.addEventListener('click', async (ev) => {
+            ev.stopPropagation();
+            fecharMenuSilenciarWpp();
+            const horas = Number(btn.dataset.horas);
+            const novoValor = horas > 0 ? new Date(Date.now() + horas * 3600000).toISOString() : null;
+            const { error } = await window.supabaseClient
+                .from(typeof NOME_TABELA !== 'undefined' ? NOME_TABELA : 'leads_inscricoes')
+                .update({ wpp_silenciado_ate: novoValor })
+                .eq('pessoaIdentificador', leadId);
+            if (error) { alert('Erro: ' + error.message); return; }
+            const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
+            if (lead) lead.wpp_silenciado_ate = novoValor;
+            const searchEl = document.getElementById('wppSearch');
+            renderizarContatosWpp(searchEl ? searchEl.value : '');
+        });
+    });
+    setTimeout(() => document.addEventListener('click', fecharMenuSilenciarWpp, { once: true }), 0);
+}
+
+// "Minhas conversas" (pedido do usuário, 2026-09-30: fila/distribuição
+// automática entre atendentes) — filtro client-side sobre
+// `wpp_atendente_responsavel` (atribuído automaticamente pelo
+// whatsapp-webhook, por menor carga, na 1ª mensagem de cada lead novo —
+// nunca reatribui uma conversa já em andamento sozinho).
+function htmlBadgeAtendenteWpp(lead) {
+    if (!lead.wpp_atendente_responsavel) return '';
+    return `<span class="wpp-atendente-badge" title="Responsável por esta conversa"><i class="fa-solid fa-user"></i> ${escapeHTML(lead.wpp_atendente_responsavel)}</span>`;
 }
 
 function htmlContatoNaoIdentificadoWpp(m) {
@@ -3372,7 +3621,7 @@ async function renderizarContatosWpp(filtro = '') {
     if (idsFaltando.length > 0) {
         const { data: extras } = await window.supabaseClient
             .from('leads_inscricoes')
-            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, filial, wpp_fixado, wpp_arquivado')
+            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, filial, wpp_fixado, wpp_arquivado, wpp_silenciado_ate, wpp_atendente_responsavel')
             .in('pessoaIdentificador', idsFaltando);
         (extras || []).forEach(l => mapaLeads.set(String(l.pessoaIdentificador), l));
     }
@@ -3387,6 +3636,16 @@ async function renderizarContatosWpp(filtro = '') {
     const selectVerArquivadas = document.getElementById('wppVerArquivadas');
     if (!(selectVerArquivadas && selectVerArquivadas.checked)) {
         contatosExistentes = contatosExistentes.filter(c => !c.lead.wpp_arquivado);
+    }
+
+    // "Minhas conversas" (pedido do usuário, 2026-09-30, fila/distribuição
+    // automática) — filtra por quem está logado (obterNomeAtendente()),
+    // comparando com wpp_atendente_responsavel (atribuído sozinho pelo
+    // whatsapp-webhook na 1ª mensagem de cada lead novo).
+    const selectMinhasConversas = document.getElementById('wppMinhasConversas');
+    if (selectMinhasConversas && selectMinhasConversas.checked) {
+        const meuNome = typeof obterNomeAtendente === 'function' ? obterNomeAtendente() : null;
+        contatosExistentes = contatosExistentes.filter(c => meuNome && c.lead.wpp_atendente_responsavel === meuNome);
     }
 
     // Ordenar/filtrar (pedido do usuário, 2026-09-29): "coloque uma forma
@@ -3581,6 +3840,7 @@ async function abrirChatWpp(leadId) {
                 <div style="font-size: 11px; color: var(--na-green); display:flex; align-items:center; gap:4px;"><i class="fa-brands fa-whatsapp"></i> ${escapeHTML(lead.pessoaTelefoneDDD || '')} ${escapeHTML(lead.pessoaTelefoneNumero || '')}${lead.filial ? ` · <i class="fa-solid fa-building"></i> ${escapeHTML(lead.filial)}` : ''}</div>
             </div>
             <button class="icon-btn" title="Buscar nesta conversa" onclick="chatWpp.toggleBuscaConversa()"><i class="fa-solid fa-magnifying-glass"></i></button>
+            <button class="icon-btn" title="Exportar conversa (.txt) — auditoria/LGPD" onclick="exportarConversaWppTxt('${leadId}', '${escapeHTML(lead.pessoaNome || 'lead').replace(/'/g, '')}')"><i class="fa-solid fa-file-export"></i></button>
             <button class="btn-toggle" style="font-size:10px;" title="Abre a ficha completa do lead (eventos, tags, resumo, lembrete, histórico, etc.)" onclick="abrirFichaCompletaDoWpp('${leadId}')"><i class="fa-solid fa-address-card"></i> Ficha completa</button>
         `;
     }

@@ -7,6 +7,11 @@
 -- com uma função SQL simples (roda com o privilégio de quem chama —
 -- RLS de leads_inscricoes já libera SELECT público, então funciona pela
 -- chave publishable igual qualquer outra consulta).
+-- 2026-09-30: acrescentado `ultimo_contato_em` (coluna nova, ver
+-- migracao_whatsapp_snooze_fila_ultimo_contato.sql) — pedido do usuário:
+-- "organizar os novos contatos com base, entre outras coisas, nisso" (não
+-- insistir em quem já foi contatado hoje). Filtro em si fica no FRONTEND
+-- (js/visao-geral.js), aqui só devolve o dado.
 create or replace function leads_agenda_geral_prioritarios()
 returns table (
     "pessoaIdentificador" text,
@@ -14,12 +19,13 @@ returns table (
     filial text,
     tags jsonb,
     historico_eventos jsonb,
-    funil_agencia text
+    funil_agencia text,
+    ultimo_contato_em timestamptz
 )
 language sql
 stable
 as $$
-    select "pessoaIdentificador", "pessoaNome", filial, tags, historico_eventos, funil_agencia
+    select "pessoaIdentificador", "pessoaNome", filial, tags, historico_eventos, funil_agencia, ultimo_contato_em
     from leads_inscricoes
     where tags::text ilike '%Inscrito: Abertura de Turma%'
        or tags::text ilike '%Jornada: Engajado%'

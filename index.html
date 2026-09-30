@@ -384,6 +384,9 @@
                         <label style="display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text-muted); margin-bottom:6px; cursor:pointer;">
                             <input type="checkbox" id="wppVerArquivadas" onchange="filtrarContatosWpp(document.getElementById('wppSearch').value)"> Ver arquivadas
                         </label>
+                        <label style="display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text-muted); margin-bottom:6px; cursor:pointer;">
+                            <input type="checkbox" id="wppMinhasConversas" onchange="filtrarContatosWpp(document.getElementById('wppSearch').value)"> Só minhas conversas
+                        </label>
                         <button class="btn-toggle" style="width:100%; font-size:11px; padding:6px;" onclick="iniciarConviteJanelaAberta()" title="Manda um convite pra próxima Abertura de Turma da própria filial de cada lead com conversa aberta agora"><i class="fa-solid fa-bolt"></i> Convidar (Janela Aberta)</button>
                     </div>
                     <div class="wpp-contact-list" id="wppContactList"></div>
@@ -451,6 +454,40 @@
                     <h3 style="font-size:16px; color:var(--na-green-dark);">Comparação entre Filiais</h3>
                     <p class="report-sub">Total de leads e matrículas (data_matricula preenchido) de cada filial ativa — busca direta no banco.</p>
                     <div id="relatorioComparacaoFiliais"></div>
+                </div>
+
+                <!-- Desempenho e volume de WhatsApp (pedido do usuário, 2026-09-30) -->
+                <div style="margin-top:30px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                        <div>
+                            <h3 style="font-size:16px; color:var(--na-green-dark);">WhatsApp — SLA, Desempenho e Volume</h3>
+                            <p class="report-sub">Últimos 30 dias, filial atual. SLA = tempo até a PRIMEIRA resposta nossa depois de uma mensagem recebida (diferente do timer de 24h da Meta).</p>
+                        </div>
+                        <button class="btn-secondary" onclick="carregarRelatoriosWhatsApp()"><i class="fa-solid fa-rotate"></i> Atualizar</button>
+                    </div>
+                    <div id="relatorioSlaWhatsApp" style="margin-bottom:16px;"></div>
+                    <div id="relatorioDesempenhoAtendentes" style="margin-bottom:16px;"></div>
+                    <div id="relatorioVolumeWhatsApp"></div>
+                </div>
+
+                <!-- Resumo do Trabalho na tela (pedido do usuário, 2026-09-30:
+                     "só falta expor como tela/relatório dentro do próprio CRM") -->
+                <div style="margin-top:30px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                        <div>
+                            <h3 style="font-size:16px; color:var(--na-green-dark);">Resumo do Trabalho</h3>
+                            <p class="report-sub">Mesma lógica do "Resumo Semanal pro Chefe" (log de atividade), só que na tela em vez de mandar WhatsApp.</p>
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            <select id="resumoTrabalhoDiasSelect" onchange="carregarResumoTrabalho()" style="padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px;">
+                                <option value="7" selected>Últimos 7 dias</option>
+                                <option value="15">Últimos 15 dias</option>
+                                <option value="30">Últimos 30 dias</option>
+                            </select>
+                            <button class="btn-secondary" onclick="carregarResumoTrabalho()"><i class="fa-solid fa-rotate"></i> Atualizar</button>
+                        </div>
+                    </div>
+                    <div id="resumoTrabalhoContainer"></div>
                 </div>
             </div>
         </div>
@@ -626,12 +663,17 @@
                     </div>
                 </div>
 
-                <!-- MÓDULO DE RESUMO DE IA -->
+                <!-- RESUMO / ANOTAÇÕES — pedido do usuário (2026-09-30): "tire a
+                     informação que o resumo é feito com ia" (o texto é sempre
+                     digitado/editado pela equipe; a IA só ajuda a complementar,
+                     opcionalmente, via o botão "Sugerir com IA" abaixo). Suporta
+                     @Menção de outro usuário — ver registrarMencoesResumo(). -->
                 <div class="drawer-gaveta">
                     <div class="drawer-gaveta-header" onclick="toggleGavetaLead('resumo')">
-                        <span class="drawer-gaveta-titulo"><i class="fa-solid fa-chevron-right" id="drawer-gaveta-seta-resumo"></i> <i class="fa-solid fa-wand-magic-sparkles" style="color:#8b5cf6;"></i> Resumo da Conversa (IA)</span>
-                        <span style="display:flex; gap:6px;">
+                        <span class="drawer-gaveta-titulo"><i class="fa-solid fa-chevron-right" id="drawer-gaveta-seta-resumo"></i> <i class="fa-solid fa-note-sticky" style="color:#8b5cf6;"></i> Resumo / Anotações</span>
+                        <span style="display:flex; gap:6px; flex-wrap:wrap;">
                             <button class="btn-add-tag" onclick="event.stopPropagation(); enviarResumoParaChefeFilial()" style="color:#166534; border-color:#a7f3d0; background:#ecfdf5;" title="Manda este resumo pro WhatsApp do chefe de filial"><i class="fa-brands fa-whatsapp"></i> Enviar pro Chefe</button>
+                            <button class="btn-add-tag" onclick="event.stopPropagation(); sugerirComplementoResumoIA()" style="color:#1d4ed8; border-color:#bfdbfe; background:#eff6ff;" title="A IA lê as últimas mensagens de WhatsApp e sugere um complemento (ou um resumo do zero, se ainda estiver vazio) — você decide se usa"><i class="fa-solid fa-wand-magic-sparkles"></i> Sugerir com IA</button>
                             <button class="btn-add-tag" onclick="event.stopPropagation(); editarResumoIA()" style="color: #8b5cf6; border-color: #ddd6fe; background: #f5f3ff;"><i class="fa-solid fa-pen"></i> Editar</button>
                         </span>
                     </div>
@@ -639,6 +681,22 @@
                         <div id="drawer-ai-summary" class="info-box" style="background: #f8fafc; border-color: #bfdbfe; font-size: 11px; color: #334155;">
                             <!-- O resumo editável vai aparecer aqui -->
                         </div>
+                        <div id="drawer-resumo-sugestao-ia"></div>
+                    </div>
+                </div>
+
+                <!-- ÚLTIMO CONTATO — pedido do usuário (2026-09-30): "criar uma
+                     interação que permita marcar: último contato de forma
+                     automática". Já é carimbado sozinho a cada envio real de
+                     WhatsApp (whatsapp-send); este botão cobre contato feito
+                     por FORA do WhatsApp (ligação, presencial). -->
+                <div class="drawer-gaveta">
+                    <div class="drawer-gaveta-header" onclick="toggleGavetaLead('ultimoContato')">
+                        <span class="drawer-gaveta-titulo"><i class="fa-solid fa-chevron-right" id="drawer-gaveta-seta-ultimoContato"></i> <i class="fa-solid fa-phone"></i> Último Contato</span>
+                        <button class="btn-add-tag" onclick="event.stopPropagation(); registrarContatoManual()" title="Marca hoje como último contato (ligação, presencial — o WhatsApp já marca sozinho)"><i class="fa-solid fa-check"></i> Registrar Contato</button>
+                    </div>
+                    <div class="drawer-gaveta-body" id="drawer-gaveta-body-ultimoContato" style="display:none;">
+                        <div id="drawer-ultimo-contato" class="info-box"></div>
                     </div>
                 </div>
 
@@ -786,6 +844,7 @@
                 <button class="btn-toggle" style="font-size:10px;" title="Preenche o chat com um convite padrão pra um evento (Ativo ou Não-Aluno, conforme a tag do lead)" onclick="abrirSeletorConviteEvento()"><i class="fa-solid fa-envelope-open-text"></i> Convidar pra Evento</button>
                 <button class="btn-toggle" id="btnConviteAberturaTurma" style="display:none; font-size:10px;" title="Acha sozinho a próxima Abertura de Turma desta filial e já manda foto + link, pronta pra ela encaminhar pros contatos e grupos dela" onclick="enviarConviteAberturaTurmaFilial()"><i class="fa-solid fa-graduation-cap"></i> Nova Turma</button>
                 <button class="icon-btn" title="Buscar nesta conversa" onclick="chatDrawer.toggleBuscaConversa()"><i class="fa-solid fa-magnifying-glass"></i></button>
+                <button class="icon-btn" title="Exportar conversa (.txt) — auditoria/LGPD" onclick="exportarConversaWppTxt(currentLeadId, (leadsAtuais.find(l => String(l.pessoaIdentificador) === String(currentLeadId)) || {}).pessoaNome || 'lead')"><i class="fa-solid fa-file-export"></i></button>
                 <button class="btn-toggle" style="font-size:10px;" title="Abre esta conversa na aba WhatsApp Unificado (ordenar/filtrar, sugestão de IA, etc.)" onclick="abrirConversaNoWppUnificado(currentLeadId)"><i class="fa-brands fa-whatsapp"></i> Ver no WhatsApp Unificado</button>
                 <button class="icon-btn" title="Alterar seu nome (aparece nos convites)" onclick="alterarNomeAtendente()"><i class="fa-solid fa-user-pen"></i></button>
             </div>
@@ -1666,6 +1725,8 @@
     <script src="js/notificacoes.js"></script>
     <!-- 3f2. Agenda do Dia — Todas as Filiais (topo da aba Visão Geral/Dashboard) -->
     <script src="js/visao-geral.js"></script>
+    <!-- 3f2b. Relatórios de WhatsApp (SLA, desempenho por atendente, volume) + Resumo do Trabalho na tela -->
+    <script src="js/relatorios-whatsapp.js"></script>
     <!-- 3f3. Contas de usuário (login nominal + permissão por módulo) -->
     <script src="js/usuarios.js"></script>
     <script src="js/tarefas.js"></script>

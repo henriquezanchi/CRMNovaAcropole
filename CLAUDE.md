@@ -54,6 +54,9 @@ js/usuarios.js       → módulo separado: tela "Gerenciar Usuários" (só admin
 js/visao-geral.js    → módulo separado: "Agenda do Dia — Todas as Filiais", bloco no topo da
                         aba Visão Geral/Dashboard que cruza TODAS as filiais de uma vez,
                         independente da filial selecionada — ver seção própria
+js/relatorios-whatsapp.js → módulo separado: 3 relatórios de WhatsApp (SLA de 1ª resposta,
+                        desempenho por atendente, volume por período) + "Resumo do Trabalho"
+                        na tela, todos na aba Relatórios — ver "Segunda rodada de incrementos"
 js/tarefas.js        → módulo separado: aba "Tarefas" (quem faz o quê, até quando) +
                         "Gerenciar Equipes" — responsável de uma tarefa é um usuário OU uma
                         equipe, e o status sincroniza nos 2 sentidos com a coluna do Kanban
@@ -80,6 +83,10 @@ supabase/functions/ia-diagnostico-saude/ → Edge Function: detecta erro de impo
 supabase/functions/ia-recomendar-contatos/ → Edge Function: recebe leads já priorizados por
                                      regra fixa (js/tarefas.js) e escreve, por lead, motivo +
                                      sugestão de abordagem humanizada — mesma seção acima
+supabase/functions/ia-sugerir-resumo/ → Edge Function: complementa (ou sugere do zero) o
+                                     Resumo/Anotações do lead a partir das últimas mensagens
+                                     de WhatsApp — nunca salva sozinho; ver seção "Segunda
+                                     rodada de incrementos"
 supabase/functions/classificar-resposta-convite/ → Edge Function: classifica resposta de
                                      convite de evento por IA (categoria fixa + texto
                                      sugerido), chamada por cron; ver seção "Classificação
@@ -390,6 +397,27 @@ migracao_whatsapp_pin_arquivar_ocultar.sql → colunas wpp_fixado/wpp_arquivado 
                                      ocultar mensagem enviada, ver seção "WhatsApp — últimos
                                      itens de paridade com o app real"; JÁ RODADA nesta sessão
                                      via `supabase db query --linked`
+migracao_whatsapp_snooze_fila_ultimo_contato.sql → colunas wpp_silenciado_ate/
+                                     wpp_atendente_responsavel/ultimo_contato_em em
+                                     leads_inscricoes — silenciar conversa, fila de
+                                     distribuição automática e "último contato"; ver seção
+                                     "Segunda rodada de incrementos"; JÁ RODADA nesta sessão
+                                     via `supabase db query --linked`
+migracao_respostas_rapidas_whatsapp.sql → tabela respostas_rapidas_whatsapp (canned
+                                     responses, com seed de 3 modelos); JÁ RODADA nesta
+                                     sessão via `supabase db query --linked`
+migracao_mencoes_resumo.sql       → tabela mencoes_resumo (@menção de usuário no
+                                     Resumo/Anotações do lead); JÁ RODADA nesta sessão via
+                                     `supabase db query --linked`
+migracao_auto_arquivar_conversas_whatsapp.sql → função
+                                     arquivar_conversas_whatsapp_inativas() + cron job diário
+                                     (08:30 Brasília); JÁ RODADA nesta sessão via
+                                     `supabase db query --linked`
+migracao_rpc_relatorios_whatsapp.sql → funções sla_primeira_resposta_whatsapp()/
+                                     desempenho_atendentes_whatsapp()/
+                                     volume_whatsapp_por_periodo() — 3 relatórios novos na
+                                     aba Relatórios; JÁ RODADA nesta sessão via
+                                     `supabase db query --linked`
 ```
 
 ## Ferramentas locais (fora do site publicado)
@@ -7622,6 +7650,180 @@ conceito de broadcast list) e **grupos/chamadas/Status/foto de perfil/
   extra nos pontos de estado compartilhado (ver bug evitado acima), mas
   clicar de verdade (gravar áudio, fixar/arquivar, navegar resultados de
   busca, inserir emoji) fica pra confirmar na próxima sessão de uso real.
+
+## Segunda rodada de incrementos (2026-09-30) — "o que falta" + ideias novas
+
+Depois de fechar os últimos itens de paridade com o WhatsApp real, o
+usuário pediu uma lista nova ("o que falta implementar, o que podemos
+incrementar que ainda não pensamos") e respondeu item por item. Esta
+seção documenta o que foi CONSTRUÍDO nesta rodada; itens que o usuário só
+pediu pra EXPLICAR (não construir) estão no histórico da conversa, não
+repetidos aqui.
+
+### "Último Contato" (automático + manual)
+
+Pedido do usuário: "precisamos criar uma interação que permita marcar:
+último contato... de forma automática pelo crm, e organizar os novos
+contatos com base, entre outras coisas, nisso".
+
+- **Coluna `leads_inscricoes.ultimo_contato_em`**
+  (`migracao_whatsapp_snooze_fila_ultimo_contato.sql`).
+- **Automático**: `whatsapp-send` (Edge Function) carimba sozinho, em
+  TODO envio real bem-sucedido (texto, template, imagem, documento,
+  áudio) — é o ÚNICO ponto por onde todo envio passa (individual, convite
+  em massa, aniversário, etc.), então nenhum chamador precisou mudar.
+  Testado ao vivo contra o lead de teste (904000019): envio real
+  confirmado, coluna carimbada, depois revertida (não era contato real).
+- **Manual**: botão "Registrar Contato" (gaveta do lead,
+  `registrarContatoManual()`, `js/app.js`) — cobre contato por FORA do
+  WhatsApp (ligação, presencial). Grava em `log_atividade`
+  (`acao='contato_manual_registrado'`).
+- **"Organizar novos contatos com base nisso"**: `leads_agenda_geral_prioritarios()`
+  (RPC, `migracao_rpc_leads_agenda_geral.sql`, recriada com
+  `drop function` primeiro — mudou o tipo de retorno) agora também devolve
+  `ultimo_contato_em`; a lista "50 Leads Prioritários" (Agenda do Dia,
+  `js/visao-geral.js`) filtra fora quem já foi contatado HOJE (não
+  insiste 2x no mesmo dia) e, em empate nos critérios de sempre, prioriza
+  quem está há MAIS tempo sem contato (ou nunca contatado) — badge
+  "Contatado há Nd"/"Nunca contatado" em cada item da lista.
+
+### Menções (@usuário) no Resumo/Anotações + IA complementando
+
+Pedido do usuário: "crie uma forma de mencionar outros perfis de usuários
+lá no resumo (tire a informação que o resumo é feito com ia, mas permita
+que a ia complemente o resumo, ou sugira a criação de um resumo)".
+
+- **Renomeado** "Resumo da Conversa (IA)" → **"Resumo / Anotações"**
+  (`index.html`, gaveta do lead) — é sempre texto digitado pela equipe; a
+  IA só ajuda opcionalmente (botão próprio, nunca automático).
+- **Bug de segurança evitado, achado revisando (não relatado pelo
+  usuário)**: `renderAISummary()` jogava `lead.resumo_ia` direto no
+  `innerHTML` **sem `escapeHTML()`** — um texto com `<script>`/tags HTML
+  executaria no navegador de quem abrisse o lead depois. Corrigido
+  (`renderizarResumoComMencoes()`, `js/app.js`) — escapa sempre, e só
+  DEPOIS disso destaca `@Nome` (nunca o inverso, senão a menção
+  escaparia a própria marcação HTML de destaque).
+- **`nomesUsuariosAtivos`** (`js/acesso.js`) — lista global de nomes
+  ativos, carregada de carona dentro de `popularSeletorNomesAcesso()`
+  (já fazia essa mesma busca pro seletor de login, só não guardava o
+  resultado em lugar nenhum) — usada pra reconhecer `@Nome` válido.
+- **`mencoes_resumo`** (`migracao_mencoes_resumo.sql`) — grava 1 linha
+  por menção NOVA (`registrarMencoesResumo()`, comparando o texto ANTES e
+  DEPOIS do salvamento — só quem é novo no texto notifica, editar o
+  resumo sem tirar/pôr uma menção não renotifica ninguém). Central de
+  Notificações ganhou o **gatilho 10** (`verificarNotificacoesMencoes()`,
+  poll de 3 min) — diferente de todos os outros gatilhos (globais/por
+  navegador), este é **por PESSOA** (filtrado pelo usuário logado,
+  `lida` gravada no banco, não localStorage — faz sentido "ler" de
+  qualquer navegador que a pessoa usar).
+- **"Sugerir com IA"** (`sugerirComplementoResumoIA()`/nova Edge Function
+  `ia-sugerir-resumo`) — junta o resumo atual + últimas 10 mensagens de
+  WhatsApp do lead, pede um COMPLEMENTO (ou um resumo do zero, se ainda
+  vazio) à Claude Haiku. **Nunca salva sozinho** — mostra a sugestão com
+  "Usar esta sugestão"/"Descartar". Testado ao vivo (`curl`): a
+  detecção/montagem de prompt funciona perfeitamente, mas a ESCRITA
+  falha com a mesma limitação de crédito da Anthropic já documentada
+  (`"Your credit balance is too low..."`) — nada a corrigir no código.
+
+### Resumo do Trabalho na tela
+
+Pedido do usuário: "ok, siga" (expor como tela/relatório, além do
+WhatsApp pro chefe). `resumo-semanal-chefe` ganhou `modoPreview: true` +
+`dias` configurável — devolve os dados já computados (mesma busca em
+`log_atividade`) SEM mandar nada pro WhatsApp. Nova seção na aba
+Relatórios ("Resumo do Trabalho", `js/relatorios-whatsapp.js`,
+`carregarResumoTrabalho()`) com seletor de período (7/15/30 dias) — lista
+clicável de leads tocados, mesma UX de outras listas do app
+(`abrirResultadoBuscaGlobal()`).
+
+### Pin/fixar, arquivar, silenciar, fila de atendentes, respostas rápidas, exportar (WhatsApp Unificado)
+
+- **Auto-arquivar conversas inativas** (`arquivar_conversas_whatsapp_inativas()`,
+  `migracao_auto_arquivar_conversas_whatsapp.sql`, cron diário 08:30
+  Brasília) — 30+ dias sem mensagem, nunca toca em conversa FIXADA.
+- **"Silenciar" conversa** (`abrirMenuSilenciarWpp()`, coluna
+  `wpp_silenciado_ate`) — menu com 1h/8h/24h/7 dias; enquanto no futuro,
+  o sino/popup de "mensagem recebida" não dispara pra esse lead
+  (checado dentro de `iniciarNotificacoesWhatsAppGlobais()`,
+  `js/notificacoes.js`), mas o indicador de "não lida" continua normal —
+  mesmo comportamento do WhatsApp real (silenciado ≠ lido).
+- **Fila de distribuição automática** (`wpp_atendente_responsavel`) —
+  `whatsapp-webhook` atribui sozinho, só na 1ª mensagem de um lead
+  NOVO (nunca reatribui uma conversa em andamento), escolhendo entre os
+  usuários com módulo `tab-whatsapp` ativo quem tem MENOS conversas
+  abertas atribuídas (menor carga, não round-robin cego). Badge "👤
+  Fulano" em cada card da lista + checkbox "Só minhas conversas"
+  (filtro client-side por `obterNomeAtendente()`). **Não testado ao
+  vivo** (exigiria forjar uma assinatura HMAC de webhook real da Meta,
+  que só o servidor consegue calcular) — revisão cuidadosa de código no
+  lugar, mesmo risco residual baixo já aceito outras vezes no projeto
+  pro mesmo motivo.
+- **Respostas rápidas prontas** (`respostas_rapidas_whatsapp`, botão "⚡"
+  no compose bar) — insere no CURSOR do texto (não só no fim, reaproveita
+  `inserirTextoNoInputWpp()`, compartilhada com o emoji picker).
+  Placeholders `{nome}`/`{atendente}`/`{filial}`/`{endereco}`/
+  `{valor_mensalidade}` resolvidos na hora (nunca gravados resolvidos no
+  catálogo). Tela "Gerenciar Respostas" embutida no próprio picker
+  (reaproveita o overlay flutuante já usado por "Encaminhar mensagem",
+  sem markup novo em `index.html`).
+- **Exportar conversa (.txt)** (`exportarConversaWppTxt()`) — busca o
+  HISTÓRICO INTEIRO (não só as 200 mensagens já carregadas na tela),
+  gera um arquivo no MESMO formato que "Importar Conversa" já lê de
+  volta (`DD/MM/AAAA HH:MM - Remetente: texto`) — simetria proposital.
+  Mensagens ocultadas (`ocultarMensagemWpp()`) nunca entram no export.
+
+### Relatórios de WhatsApp — SLA, desempenho por atendente, volume
+
+3 RPCs novas (`migracao_rpc_relatorios_whatsapp.sql`), só leitura, nova
+seção na aba Relatórios (`js/relatorios-whatsapp.js`,
+`carregarRelatoriosWhatsApp()`):
+- **SLA de 1ª resposta** — diferente do timer de 24h (janela da Meta) e
+  do SLA de coluna fria (tempo sem mover): quanto tempo até a PRIMEIRA
+  resposta nossa depois de uma mensagem recebida. Window function
+  (`lag()`) pra achar o início de cada "período aguardando resposta".
+- **Bug real achado testando, corrigido antes de qualquer uso real**:
+  a 1ª versão de `desempenho_atendentes_whatsapp()` fazia
+  `JOIN ... ON t.atendente_nome = e.atendente_nome` — como
+  `atendente_nome` não é único, isso multiplicou linhas (produto
+  cartesiano): "Henrique" apareceu com **1,3 MILHÃO** de "mensagens
+  enviadas" (o real era 1149). Corrigido calculando o tempo de resposta
+  DENTRO da mesma CTE por linha de mensagem (nunca precisando de JOIN
+  nenhum depois) — testado de novo, confirmado 1149.
+- **Volume por dia** — enviadas/recebidas/falhas, gráfico de barras
+  simples (CSS puro, sem lib de gráfico) últimos 30 dias.
+
+### Inscrição Assistida no Ulisses — Etapa 2 PARCIAL
+
+O usuário mandou print real (DevTools) da tela "Selecione a unidade de
+interesse" do formulário público de inscrição — confirmou que cada rádio
+usa `<input type="radio" name="selecao" id="{filialId}">`, onde
+`{filialId}` é o MESMO id interno do Ulisses já mapeado em
+`scraper/importar-ulisses-api.js` (ex: `id="14"` = Ap. de Goiânia -
+Garavelo). Como isso é só NAVEGAÇÃO + CLIQUE num rádio (nunca digitar em
+campo nenhum), deu pra automatizar com segurança, sem violar o princípio
+de "nunca escrever seletor no chute" — `scraper/abrir-inscricao-assistida.js`
+agora recebe a filial do lead (`&filial=` na URL do protocolo
+`abririnscricao://`, preenchida por `atualizarLinkInscreverEvento()`,
+`js/eventos.js`) e marca a unidade certa sozinho, quando reconhecida.
+**Preenchimento dos campos PESSOAIS (nome/telefone/e-mail) continua
+travado** — ainda não vimos o HTML real desse formulário especificamente
+(só da tela de unidade), então o SDR continua colando esses 3 campos na
+mão (já tem o clipboard pronto, `copiarDadosInscreverEvento()`). Nunca
+clica em "Inscrever" sozinho, nunca vai clicar.
+
+### Testado ao vivo nesta rodada (resumo)
+
+Confirmado contra produção via `curl` (chave publishable, como o
+navegador chamaria): as 3 RPCs de relatório, `leads_por_tag_filial`
+(sanity check), `respostas_rapidas_whatsapp` (seed + leitura pública),
+`mencoes_resumo` (insert/select, depois limpo), `ia-sugerir-resumo`
+(chegou até a chamada real da Anthropic, barrada só pelo crédito),
+`whatsapp-send` (envio real ao lead de teste 904000019, `ultimo_contato_em`
+carimbado e depois revertido). **Não testado clicando pela UI** (sem
+Playwright neste ambiente) — silenciar/arquivar/pin, respostas rápidas,
+export .txt, "Sugerir com IA" e a fila de atendentes (esta última,
+estruturalmente impossível de testar sem um webhook real assinado)
+ficam pra confirmar na próxima sessão de uso real.
 
 ## Convenções de código
 

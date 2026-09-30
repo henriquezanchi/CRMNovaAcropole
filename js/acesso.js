@@ -16,6 +16,12 @@
 // (usuarios_crm.senha_hash).
 const CHAVE_USUARIO_LOGADO = 'crm_na_usuario_logado';
 
+// Lista de nomes de usuário ATIVOS, carregada 1x no boot (dentro de
+// popularSeletorNomesAcesso(), que já busca exatamente isso) — usada pra
+// @menção no Resumo/Anotações do lead (js/app.js, registrarMencoesResumo()/
+// renderizarResumoComMencoes()) e pro datalist de autocomplete.
+let nomesUsuariosAtivos = [];
+
 async function calcularHashSenha(texto) {
     const buffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(texto));
     return Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -92,6 +98,7 @@ async function popularSeletorNomesAcesso() {
         select.innerHTML = '<option value="">Nenhum usuário cadastrado ainda</option>';
         return;
     }
+    nomesUsuariosAtivos = data.map(u => u.nome);
     select.innerHTML = '<option value="">Selecione seu nome...</option>' +
         data.map(u => `<option value="${u.nome.replace(/"/g, '&quot;')}">${u.nome}</option>`).join('');
 }

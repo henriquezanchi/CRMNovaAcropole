@@ -3087,6 +3087,8 @@ function atualizarRelatorios() {
     renderizarRelatorioMatriculasPorMes();
     renderizarRelatorioComparacaoFiliais();
     renderizarRelatorioJornadaBase();
+    if (typeof carregarRelatoriosWhatsApp === 'function') carregarRelatoriosWhatsApp();
+    if (typeof carregarResumoTrabalho === 'function') carregarResumoTrabalho();
     renderizarRelatorioMotivosPerda();
 }
 
@@ -3754,7 +3756,7 @@ function nomeParaChamar(lead) {
 // persiste entre leads — cada abrirGaveta() recalcula os padrões do zero:
 // tudo fechado, exceto Contato, que abre sozinho quando falta telefone ou
 // e-mail (pra chamar atenção pra um cadastro incompleto sem precisar clicar).
-const SECOES_GAVETA_LEAD = ['eventos', 'abordagem', 'resumo', 'lembrete', 'tags', 'contato', 'vinculo', 'historico'];
+const SECOES_GAVETA_LEAD = ['eventos', 'abordagem', 'resumo', 'ultimoContato', 'lembrete', 'tags', 'contato', 'vinculo', 'historico'];
 let gavetaLeadAberta = {};
 
 function aplicarEstadoGavetasLead() {
@@ -3787,6 +3789,7 @@ function abrirGaveta(id, opcoes = {}) {
         eventos: true, // aberta por padrão (pedido do usuário, 2026-09-14) — ver de cara em quais eventos futuros o lead está inscrito
         abordagem: false,
         resumo: false,
+        ultimoContato: false,
         lembrete: false,
         tags: true, // aberta por padrão (pedido do usuário) — ver as características/tags do lead de cara, sem precisar clicar
         contato: !temTelefone || !temEmail,
@@ -3913,6 +3916,7 @@ function abrirGaveta(id, opcoes = {}) {
 
     renderAISummary();
     renderAbordagemSugerida();
+    renderUltimoContato();
     renderDrawerTags();
     aplicarEstadoGavetasLead();
     carregarVinculoFamiliar(id);
@@ -4079,14 +4083,38 @@ async function removerDoGrupoFamiliar(idMembro) {
     carregarVinculoFamiliar(currentLeadId);
 }
 
+// Escapa o texto e, dentro dele, destaca "@Nome" — pedido do usuário
+// (2026-09-30): "crie uma forma de mencionar outros perfis de usuários lá
+// no resumo". `nomesUsuariosAtivos` (js/acesso.js, carregado no boot) é a
+// lista de nomes válidos pra menção — @palavra que não bate com ninguém
+// fica como texto normal (não vira menção "fantasma").
+// Bug de segurança evitado (não era um bug relatado, achado revisando):
+// a versão anterior desta função jogava `lead.resumo_ia` direto no
+// innerHTML, SEM escapeHTML — um texto digitado com `<script>`/tags HTML
+// executaria no navegador de quem abrisse esse lead depois. Corrigido
+// escapando sempre antes de destacar.
+function renderizarResumoComMencoes(texto) {
+    let escapado = escapeHTML(texto || '');
+    const nomes = typeof nomesUsuariosAtivos !== 'undefined' ? nomesUsuariosAtivos : [];
+    nomes.forEach(nome => {
+        const nomeEscapado = escapeHTML(nome).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp('@' + nomeEscapado + '(?!\\w)', 'g');
+        escapado = escapado.replace(re, `<span class="mencao-usuario">@${escapeHTML(nome)}</span>`);
+    });
+    return escapado.replace(/\n/g, '<br>');
+}
 function renderAISummary() {
     const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(currentLeadId));
-    document.getElementById('drawer-ai-summary').innerHTML = lead.resumo_ia || "Nenhum resumo adicionado.";
+    document.getElementById('drawer-ai-summary').innerHTML = lead.resumo_ia
+        ? renderizarResumoComMencoes(lead.resumo_ia)
+        : "Nenhum resumo adicionado.";
+    const sugestaoBox = document.getElementById('drawer-resumo-sugestao-ia');
+    if (sugestaoBox) sugestaoBox.innerHTML = '';
 }
 function editarResumoIA() {
     const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(currentLeadId));
     document.getElementById('drawer-ai-summary').innerHTML = `
-        <textarea id="ai-summary-input" style="width: 100%; height: 80px; padding: 8px; border: 1px solid #8b5cf6; border-radius: 6px; font-size: 11px; outline: none; font-family: inherit;">${lead.resumo_ia || ""}</textarea>
+        <textarea id="ai-summary-input" style="width: 100%; height: 80px; padding: 8px; border: 1px solid #8b5cf6; border-radius: 6px; font-size: 11px; outline: none; font-family: inherit;" placeholder="Dica: use @Nome pra mencionar alguém da equipe">${escapeHTML(lead.resumo_ia || "")}</textarea>
         <div style="text-align: right; margin-top: 8px;">
             <button style="background: #8b5cf6; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 10px; cursor: pointer; font-weight: 600;" onclick="salvarResumoIA()">
                 <i class="fa-solid fa-floppy-disk"></i> Salvar no Banco
@@ -4096,9 +4124,30 @@ function editarResumoIA() {
     gavetaLeadAberta.resumo = true;
     aplicarEstadoGavetasLead();
 }
+// Menções (@usuário) — pedido do usuário (2026-09-30). Só notifica nomes
+// que são NOVOS no texto (não estavam na versão anterior do resumo) —
+// evita renotificar a cada pequena edição que mantém a mesma menção.
+async function registrarMencoesResumo(leadId, leadNome, textoAntigo, textoNovo) {
+    const nomes = typeof nomesUsuariosAtivos !== 'undefined' ? nomesUsuariosAtivos : [];
+    if (nomes.length === 0) return;
+    const autor = typeof obterNomeAtendente === 'function' ? obterNomeAtendente() : '';
+    const mencionadosAntes = new Set(nomes.filter(n => textoAntigo.includes('@' + n)));
+    const mencionadosAgora = nomes.filter(n => textoNovo.includes('@' + n) && !mencionadosAntes.has(n));
+    if (mencionadosAgora.length === 0) return;
+
+    const linhas = mencionadosAgora.map(usuario_mencionado => ({
+        pessoaIdentificador: String(leadId),
+        lead_nome: leadNome || null,
+        usuario_mencionado,
+        autor: autor || null,
+        trecho: textoNovo.slice(0, 200),
+    }));
+    await window.supabaseClient.from('mencoes_resumo').insert(linhas);
+}
 async function salvarResumoIA() {
     const newText = document.getElementById('ai-summary-input').value;
     const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(currentLeadId));
+    const textoAntigo = leadsAtuais[leadIndex].resumo_ia || '';
     leadsAtuais[leadIndex].resumo_ia = newText;
     renderAISummary();
 
@@ -4106,6 +4155,96 @@ async function salvarResumoIA() {
         .from(NOME_TABELA)
         .update({ resumo_ia: newText })
         .eq('pessoaIdentificador', currentLeadId);
+
+    registrarMencoesResumo(currentLeadId, leadsAtuais[leadIndex].pessoaNome, textoAntigo, newText)
+        .catch(e => console.warn('Erro ao registrar menções:', e.message));
+}
+
+// "Sugerir com IA" (pedido do usuário, 2026-09-30) — NUNCA salva sozinho:
+// só mostra a sugestão (complemento, ou resumo do zero se ainda vazio)
+// pra equipe decidir se usa. Reaproveita as últimas mensagens de
+// WhatsApp já gravadas (mesma tabela do chat, sem depender do chat estar
+// aberto) pra dar contexto real à IA — a Edge Function em si nunca
+// consulta o banco (mesmo padrão de ia-recomendar-contatos).
+async function sugerirComplementoResumoIA() {
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(currentLeadId));
+    if (!lead) return;
+    const box = document.getElementById('drawer-resumo-sugestao-ia');
+    if (box) box.innerHTML = '<div style="font-size:11px; color:var(--text-muted); margin-top:6px;"><i class="fa-solid fa-spinner fa-spin"></i> Pensando...</div>';
+
+    const { data: msgs } = await window.supabaseClient
+        .from('mensagens_whatsapp')
+        .select('direcao, corpo_texto')
+        .eq('pessoaIdentificador', currentLeadId)
+        .not('corpo_texto', 'is', null)
+        .order('criado_em', { ascending: false })
+        .limit(10);
+    const mensagens = (msgs || []).reverse().map(m => ({ direcao: m.direcao, texto: m.corpo_texto }));
+
+    const { data, error } = await window.supabaseClient.functions.invoke('ia-sugerir-resumo', {
+        body: { nomeLead: lead.pessoaNome, resumoAtual: lead.resumo_ia || '', mensagens }
+    });
+
+    if (error || !data || data.ok === false) {
+        if (box) box.innerHTML = `<div style="font-size:11px; color:#b91c1c; margin-top:6px;">Não consegui gerar uma sugestão: ${escapeHTML((data && data.erro) || (error && error.message) || 'erro desconhecido')}</div>`;
+        return;
+    }
+    if (!data.sugestao) {
+        if (box) box.innerHTML = '<div style="font-size:11px; color:var(--text-muted); margin-top:6px;">A IA não encontrou nada de novo pra acrescentar (ou não há mensagens de WhatsApp suficientes).</div>';
+        return;
+    }
+    if (box) {
+        box.innerHTML = `
+            <div style="margin-top:8px; padding:8px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:6px; font-size:11px;">
+                <div style="font-weight:600; color:#1d4ed8; margin-bottom:4px;"><i class="fa-solid fa-wand-magic-sparkles"></i> Sugestão da IA</div>
+                <div style="color:#334155; white-space:pre-line;">${escapeHTML(data.sugestao)}</div>
+                <div style="text-align:right; margin-top:6px; display:flex; gap:6px; justify-content:flex-end;">
+                    <button class="btn-add-tag" onclick="usarSugestaoResumoIA(${JSON.stringify(data.sugestao)})">Usar esta sugestão</button>
+                    <button class="btn-add-tag" onclick="document.getElementById('drawer-resumo-sugestao-ia').innerHTML=''">Descartar</button>
+                </div>
+            </div>
+        `;
+    }
+}
+function usarSugestaoResumoIA(sugestao) {
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(currentLeadId));
+    const textoBase = (lead.resumo_ia || '').trim();
+    editarResumoIA();
+    const textarea = document.getElementById('ai-summary-input');
+    if (textarea) textarea.value = textoBase ? `${textoBase}\n\n${sugestao}` : sugestao;
+    const box = document.getElementById('drawer-resumo-sugestao-ia');
+    if (box) box.innerHTML = '';
+}
+
+// "Último Contato" (pedido do usuário, 2026-09-30) — ver
+// migracao_whatsapp_snooze_fila_ultimo_contato.sql. Carimbado sozinho a
+// cada envio real de WhatsApp (whatsapp-send); este botão cobre contato
+// por FORA do WhatsApp.
+function renderUltimoContato() {
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(currentLeadId));
+    const box = document.getElementById('drawer-ultimo-contato');
+    if (!lead || !box) return;
+    if (!lead.ultimo_contato_em) { box.innerHTML = '<span style="color:var(--text-muted);">Nenhum contato registrado ainda.</span>'; return; }
+    const data = new Date(lead.ultimo_contato_em);
+    box.innerHTML = `Último contato: <strong>${data.toLocaleDateString('pt-BR')} às ${data.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</strong>`;
+}
+async function registrarContatoManual() {
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(currentLeadId));
+    if (!lead) return;
+    if (!confirm(`Marcar hoje como último contato com "${lead.pessoaNome}"? (use pra ligação/contato presencial — o WhatsApp já marca isso sozinho a cada envio)`)) return;
+    const agora = new Date().toISOString();
+    const { error } = await window.supabaseClient
+        .from(NOME_TABELA)
+        .update({ ultimo_contato_em: agora })
+        .eq('pessoaIdentificador', currentLeadId);
+    if (error) { alert('Erro ao registrar: ' + error.message); return; }
+    lead.ultimo_contato_em = agora;
+    renderUltimoContato();
+    gavetaLeadAberta.ultimoContato = true;
+    aplicarEstadoGavetasLead();
+    if (typeof registrarLogAtividade === 'function') {
+        registrarLogAtividade('contato_manual_registrado', { pessoaIds: [String(currentLeadId)] });
+    }
 }
 
 // "Enviar pro Chefe" — pedido explícito do time de SDR: avisar o

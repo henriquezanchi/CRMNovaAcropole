@@ -32,8 +32,14 @@ function json(body: unknown, status = 200) {
     });
 }
 
-async function montarResumoDaFilial(filial: string): Promise<string | null> {
-    const desde = new Date(Date.now() - DIAS_JANELA * 24 * 60 * 60 * 1000).toISOString();
+type LeadResumo = { pessoaIdentificador: string; pessoaNome: string | null; tags: string[]; funil_agencia: string | null };
+
+// Extraído da lógica original (só busca/agrega, sem formatar texto ainda)
+// pra reaproveitar tanto no envio via WhatsApp quanto no "Resumo do
+// Trabalho" DENTRO do CRM (pedido do usuário, 2026-09-30: "só falta expor
+// como tela/relatório" — modoPreview abaixo, ver Deno.serve).
+async function buscarLeadsTocados(filial: string, dias: number): Promise<LeadResumo[] | null> {
+    const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
 
     const { data: entradas, error: erroLog } = await supabaseAdmin
         .from("log_atividade")
@@ -56,17 +62,21 @@ async function montarResumoDaFilial(filial: string): Promise<string | null> {
     if (erroLeads) throw new Error(`leads_inscricoes: ${erroLeads.message}`);
     if (!leads || leads.length === 0) return null;
 
-    const linhas = leads.slice(0, LIMITE_LEADS_NA_MENSAGEM).map((l) => {
+    return leads.map((l) => {
         let tags: string[] = [];
         try { tags = typeof l.tags === "string" ? JSON.parse(l.tags) : (l.tags || []); } catch { /* ignora */ }
-        const tagsTxt = tags.filter((t) => t && t.trim()).join(", ");
+        return { pessoaIdentificador: l.pessoaIdentificador, pessoaNome: l.pessoaNome, tags: tags.filter((t) => t && t.trim()), funil_agencia: l.funil_agencia };
+    });
+}
+
+function montarTextoResumo(filial: string, leads: LeadResumo[], dias: number): string {
+    const linhas = leads.slice(0, LIMITE_LEADS_NA_MENSAGEM).map((l) => {
+        const tagsTxt = l.tags.join(", ");
         return `• ${l.pessoaNome || "Lead sem nome"} — coluna: ${l.funil_agencia || "?"}${tagsTxt ? ` (${tagsTxt})` : ""}`;
     });
-
     const restante = leads.length - linhas.length;
     const rodape = restante > 0 ? `\n...e mais ${restante} lead(s).` : "";
-
-    return `📊 *Resumo semanal — ${filial}*\n${leads.length} lead(s) contatado(s)/atualizado(s) nos últimos ${DIAS_JANELA} dias:\n\n${linhas.join("\n")}${rodape}`;
+    return `📊 *Resumo ${dias === 7 ? "semanal" : `(${dias} dias)`} — ${filial}*\n${leads.length} lead(s) contatado(s)/atualizado(s) nos últimos ${dias} dias:\n\n${linhas.join("\n")}${rodape}`;
 }
 
 async function enviarParaChefe(filial: string, texto: string) {
@@ -88,16 +98,28 @@ Deno.serve(async (req) => {
 
     if (req.method !== "POST") return json({ ok: false, erro: "method_not_allowed" }, 405);
 
-    let corpoReq: { filial?: string };
+    // `modoPreview` (pedido do usuário, 2026-09-30) — devolve os dados já
+    // computados (sem mandar nada pro WhatsApp), pra alimentar a tela
+    // "Resumo do Trabalho" dentro do próprio CRM, reaproveitando 100% a
+    // mesma busca/agregação já usada pro envio real. `dias` deixa de ser
+    // fixo em 7 — a tela permite escolher o período.
+    let corpoReq: { filial?: string; modoPreview?: boolean; dias?: number };
     try {
         corpoReq = await req.json().catch(() => ({}));
     } catch {
         corpoReq = {};
     }
+    const dias = Number(corpoReq.dias) > 0 ? Number(corpoReq.dias) : DIAS_JANELA;
 
     const filiaisAlvo: string[] = [];
     if (corpoReq.filial) {
         filiaisAlvo.push(corpoReq.filial);
+    } else if (corpoReq.modoPreview) {
+        // Preview sem filial = todas as filiais ATIVAS (não exige
+        // whatsapp_chefe_numero, já que não vai mandar nada por ali).
+        const { data: filiais, error } = await supabaseAdmin.from("filiais").select("nome").eq("ativo", true);
+        if (error) return json({ ok: false, erro: "erro_buscar_filiais", detalhe: error.message }, 500);
+        (filiais || []).forEach((f) => filiaisAlvo.push(f.nome));
     } else {
         const { data: filiais, error } = await supabaseAdmin
             .from("filiais")
@@ -111,8 +133,13 @@ Deno.serve(async (req) => {
     const resultados: Record<string, unknown> = {};
     for (const filial of filiaisAlvo) {
         try {
-            const texto = await montarResumoDaFilial(filial);
-            if (!texto) { resultados[filial] = { ok: true, semAtividade: true }; continue; }
+            const leads = await buscarLeadsTocados(filial, dias);
+            if (!leads || leads.length === 0) { resultados[filial] = { ok: true, semAtividade: true }; continue; }
+            if (corpoReq.modoPreview) {
+                resultados[filial] = { ok: true, total: leads.length, leads };
+                continue;
+            }
+            const texto = montarTextoResumo(filial, leads, dias);
             resultados[filial] = await enviarParaChefe(filial, texto);
         } catch (e) {
             resultados[filial] = { ok: false, erro: String(e instanceof Error ? e.message : e) };

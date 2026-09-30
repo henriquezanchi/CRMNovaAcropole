@@ -1333,7 +1333,13 @@ function atualizarLinkInscreverEvento() {
         // navegação — o preenchimento automático dos campos depende de
         // ainda confirmarmos o HTML real do formulário, ver CLAUDE.md).
         if (linkAssistido) {
-            linkAssistido.href = 'abririnscricao://rodar?url=' + encodeURIComponent(ev.link_inscricao);
+            // Filial do lead — usada pra seleção automática da unidade
+            // certa na página pública (ver abrir-inscricao-assistida.js,
+            // 2026-09-30, mapa FILIAL_ID_ULISSES_POR_NOME_CRM).
+            const leadAtual = (typeof leadsAtuais !== 'undefined' && typeof pessoaIdGavetaEventos !== 'undefined')
+                ? leadsAtuais.find(l => String(l.pessoaIdentificador) === String(pessoaIdGavetaEventos)) : null;
+            linkAssistido.href = 'abririnscricao://rodar?url=' + encodeURIComponent(ev.link_inscricao)
+                + (leadAtual && leadAtual.filial ? '&filial=' + encodeURIComponent(leadAtual.filial) : '');
             linkAssistido.style.pointerEvents = '';
             linkAssistido.style.opacity = '1';
         }

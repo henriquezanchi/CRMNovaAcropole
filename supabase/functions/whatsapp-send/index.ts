@@ -281,5 +281,18 @@ Deno.serve(async (req) => {
         atendente_nome: atendenteNome || null,
     });
 
+    // "Último contato" (pedido do usuário, 2026-09-30) — carimbado
+    // automaticamente aqui, ÚNICO ponto por onde todo envio real de
+    // WhatsApp passa (individual, template, convite em massa, aniversário
+    // etc.) — evita duplicar essa lógica em cada chamador do frontend.
+    // Best-effort: nunca falha o envio (que já aconteceu de verdade) por
+    // causa disso.
+    if (pessoaIdentificador) {
+        await supabaseAdmin.from(NOME_TABELA_LEADS)
+            .update({ ultimo_contato_em: new Date().toISOString() })
+            .eq("pessoaIdentificador", pessoaIdentificador)
+            .then(() => {}, () => {});
+    }
+
     return json({ ok: true, wa_message_id: waMessageId });
 });

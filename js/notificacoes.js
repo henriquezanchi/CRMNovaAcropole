@@ -252,9 +252,23 @@ function iniciarNotificacoesWhatsAppGlobais() {
 
     canalWppNotificacoesGlobais = window.supabaseClient
         .channel('wpp-notificacoes-global')
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mensagens_whatsapp' }, (payload) => {
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mensagens_whatsapp' }, async (payload) => {
             const msg = payload.new;
             if (msg.direcao !== 'entrada') return;
+
+            // "Silenciar" conversa (pedido do usuário, 2026-09-30) —
+            // mesmo espírito do mute do WhatsApp real: a mensagem continua
+            // marcando "não lida" normalmente na lista, só não dispara
+            // sino/popup enquanto silenciada (ver alternarSilenciarConversaWpp(),
+            // js/whatsapp.js).
+            if (msg.pessoaIdentificador) {
+                const { data: leadSilencio } = await window.supabaseClient
+                    .from('leads_inscricoes')
+                    .select('wpp_silenciado_ate')
+                    .eq('pessoaIdentificador', msg.pessoaIdentificador)
+                    .maybeSingle();
+                if (leadSilencio?.wpp_silenciado_ate && new Date(leadSilencio.wpp_silenciado_ate) > new Date()) return;
+            }
 
             const lead = (typeof leadsAtuais !== 'undefined')
                 ? leadsAtuais.find(l => String(l.pessoaIdentificador) === String(msg.pessoaIdentificador))
@@ -565,6 +579,41 @@ async function verificarNotificacoesFalhasPagamento() {
 }
 
 // ==========================================
+// GATILHO 10: Menção (@usuário) no Resumo/Anotações de um lead — pedido
+// do usuário (2026-09-30). Filtrado pelo usuário LOGADO (diferente de
+// todos os outros gatilhos, que são globais/por navegador, não por
+// pessoa) — `mencoes_resumo.lida` é gravado no BANCO (não localStorage),
+// já que faz sentido "marcar como lida" de qualquer navegador que essa
+// pessoa usar depois.
+// ==========================================
+async function verificarNotificacoesMencoes() {
+    if (typeof window.supabaseClient === 'undefined') return;
+    const logado = typeof usuarioLogado === 'function' ? usuarioLogado() : null;
+    if (!logado || !logado.nome) return;
+
+    const { data, error } = await window.supabaseClient
+        .from('mencoes_resumo')
+        .select('id, "pessoaIdentificador", lead_nome, autor, trecho')
+        .eq('usuario_mencionado', logado.nome)
+        .eq('lida', false)
+        .order('criado_em', { ascending: false })
+        .limit(20);
+    if (error || !data) return;
+
+    data.forEach(m => {
+        adicionarNotificacao({
+            icone: 'fa-solid fa-at',
+            titulo: `${m.autor || 'Alguém'} te mencionou`,
+            mensagem: `${m.lead_nome || 'Um lead'}: "${(m.trecho || '').slice(0, 100)}"`,
+            aoClicar: async () => {
+                await window.supabaseClient.from('mencoes_resumo').update({ lida: true }).eq('id', m.id);
+                if (typeof abrirResultadoBuscaGlobal === 'function') abrirResultadoBuscaGlobal(m.pessoaIdentificador);
+            },
+        });
+    });
+}
+
+// ==========================================
 // TROCA DE FILIAL — reseta os gatilhos que dependem de qual filial está
 // ativa (baseline de Lead Forte, eventos já notificados, canal do WhatsApp).
 // Chamada de dentro de carregarLeads() (js/app.js) sempre que resetar=true
@@ -600,3 +649,8 @@ setInterval(() => { if (typeof verificarNotificacoesRespostasConvite === 'functi
 // reenvio automático, ver whatsapp-reenviar-falhas) + 1 checagem imediata.
 verificarNotificacoesFalhasPagamento();
 setInterval(() => { if (typeof verificarNotificacoesFalhasPagamento === 'function') verificarNotificacoesFalhasPagamento(); }, 15 * 60 * 1000);
+// Menções (@usuário) — por pessoa, não por navegador; poll de 3 min (é
+// rápido de checar — 1 query pequena filtrada pelo nome do usuário
+// logado) + 1 checagem imediata ao carregar.
+verificarNotificacoesMencoes();
+setInterval(() => { if (typeof verificarNotificacoesMencoes === 'function') verificarNotificacoesMencoes(); }, 3 * 60 * 1000);

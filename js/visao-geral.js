@@ -403,19 +403,32 @@ async function carregarAgendaGeralLeadsPrioritarios() {
         return;
     }
 
-    const candidatos = (data || []).filter(l => !/matricul/i.test(l.funil_agencia || ''));
+    // "Último contato" (pedido do usuário, 2026-09-30) — não insistir em
+    // quem JÁ foi contatado hoje (carimbado automaticamente a cada envio
+    // real de WhatsApp, whatsapp-send; ou manualmente via "Registrar
+    // Contato" na gaveta, js/app.js) — some da lista de "quem contatar
+    // hoje" até virar amanhã. Empate nos critérios de sempre desempata
+    // por quem está há MAIS tempo sem contato (ou nunca contatado).
+    const hojeISO = new Date().toISOString().slice(0, 10);
+    const candidatos = (data || [])
+        .filter(l => !/matricul/i.test(l.funil_agencia || ''))
+        .filter(l => !l.ultimo_contato_em || l.ultimo_contato_em.slice(0, 10) !== hojeISO);
 
     candidatos.forEach(l => {
         l._diasAbertura = _diasParaAberturaTurma(l);
         l._rankForte = rankLeadForte(l);
         l._rankJornada = _rankJornadaAgendaGeral(l);
+        l._diasSemContato = l.ultimo_contato_em
+            ? Math.floor((Date.now() - new Date(l.ultimo_contato_em).getTime()) / 86400000)
+            : Infinity;
     });
 
     candidatos.sort((a, b) => {
         if (a._diasAbertura !== b._diasAbertura) return a._diasAbertura - b._diasAbertura;
         if (a._rankForte !== b._rankForte) return a._rankForte - b._rankForte;
         if (a._rankJornada !== b._rankJornada) return a._rankJornada - b._rankJornada;
-        return contarTags(b) - contarTags(a);
+        if (contarTags(b) !== contarTags(a)) return contarTags(b) - contarTags(a);
+        return b._diasSemContato - a._diasSemContato;
     });
 
     const top50 = candidatos.slice(0, LIMITE_AGENDA_GERAL_LEADS);
@@ -429,12 +442,13 @@ async function carregarAgendaGeralLeadsPrioritarios() {
         const motivo = l._diasAbertura !== Infinity
             ? `<span class="tag-inscrito-turma" style="display:inline-block; padding:1px 6px; border-radius:4px; font-size:10px;">Turma em ${l._diasAbertura === 0 ? 'HOJE' : `${l._diasAbertura}d`}</span>`
             : (l._rankForte < 99 ? `<span class="tag-strong tag-strong-${l._rankForte}" style="display:inline-block; padding:1px 6px; border-radius:4px; font-size:10px;">Lead Forte ${l._rankForte}</span>` : '');
+        const contatoTxt = l._diasSemContato === Infinity ? 'Nunca contatado' : `Contatado há ${l._diasSemContato}d`;
         return `
             <div class="activity-item" style="cursor:pointer;" onclick="abrirResultadoBuscaGlobal('${l.pessoaIdentificador}')">
                 <div class="activity-dot"></div>
                 <div>
                     <div><strong>${escapeHTML(l.pessoaNome || 'Lead sem nome')}</strong> ${motivo}</div>
-                    <div class="activity-time">${escapeHTML(l.filial || '')}</div>
+                    <div class="activity-time">${escapeHTML(l.filial || '')} · ${contatoTxt}</div>
                 </div>
             </div>`;
     }).join('');

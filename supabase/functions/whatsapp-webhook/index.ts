@@ -166,6 +166,52 @@ async function resolverAmbiguidadePorHistorico(matches: any[]): Promise<any | nu
     return matches.find((m: any) => String(m.pessoaIdentificador) === idResolvido) ?? null;
 }
 
+// Distribuição automática de conversas novas entre atendentes (pedido do
+// usuário, 2026-09-30: "toda mensagem cai pra quem abrir primeiro, não
+// existe fila") — só decide QUEM vira responsável (menor carga atual de
+// conversas abertas entre quem tem acesso ao WhatsApp Unificado), nunca
+// TRAVA a conversa pra outros verem/responderem — é só uma sugestão
+// persistida (`leads_inscricoes.wpp_atendente_responsavel`), mostrada como
+// badge + filtro "Minhas conversas" no frontend (js/whatsapp.js). Só
+// atribui quando o lead AINDA NÃO tem responsável — nunca reatribui uma
+// conversa já em andamento sozinho.
+async function atribuirAtendenteSeNecessario(pessoaIdentificador: string) {
+    const { data: lead } = await supabaseAdmin
+        .from(NOME_TABELA_LEADS)
+        .select("wpp_atendente_responsavel")
+        .eq("pessoaIdentificador", pessoaIdentificador)
+        .maybeSingle();
+    if (!lead || lead.wpp_atendente_responsavel) return;
+
+    const { data: usuarios } = await supabaseAdmin
+        .from("usuarios_crm")
+        .select("nome, modulos")
+        .eq("ativo", true);
+    const candidatos = (usuarios || [])
+        .filter((u: any) => Array.isArray(u.modulos) && u.modulos.includes("tab-whatsapp"))
+        .map((u: any) => u.nome as string);
+    if (candidatos.length === 0) return;
+
+    const { data: cargas } = await supabaseAdmin
+        .from(NOME_TABELA_LEADS)
+        .select("wpp_atendente_responsavel")
+        .in("wpp_atendente_responsavel", candidatos)
+        .eq("wpp_arquivado", false);
+    const contagem = new Map<string, number>(candidatos.map((c) => [c, 0]));
+    (cargas || []).forEach((r: any) => contagem.set(r.wpp_atendente_responsavel, (contagem.get(r.wpp_atendente_responsavel) || 0) + 1));
+
+    let escolhido = candidatos[0];
+    let menorCarga = Infinity;
+    for (const c of candidatos) {
+        const carga = contagem.get(c) || 0;
+        if (carga < menorCarga) { menorCarga = carga; escolhido = c; }
+    }
+
+    await supabaseAdmin.from(NOME_TABELA_LEADS)
+        .update({ wpp_atendente_responsavel: escolhido })
+        .eq("pessoaIdentificador", pessoaIdentificador);
+}
+
 Deno.serve(async (req) => {
     const url = new URL(req.url);
 
@@ -280,6 +326,12 @@ Deno.serve(async (req) => {
                 }, { onConflict: "wa_message_id", ignoreDuplicates: true });
 
                 if (error) console.error("Erro ao gravar mensagem recebida:", error);
+
+                if (match?.pessoaIdentificador) {
+                    await atribuirAtendenteSeNecessario(String(match.pessoaIdentificador)).catch((e) =>
+                        console.warn("Erro ao atribuir atendente responsável:", e)
+                    );
+                }
             }
 
             for (const status of value.statuses ?? []) {
