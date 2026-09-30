@@ -23,7 +23,7 @@ import { chromium } from 'playwright';
 import { supabaseAdmin, lerCredencial, registrarStatusSincronizacao, atualizarProgresso } from './lib/supabaseAdmin.js';
 import { abrirCrmNaFilialParaMatricula, importarMatriculaViaTexto } from './importar-matricula-no-crm.js';
 import { importarNoCrm } from './importar-no-crm.js';
-import { sincronizarEventosUlissesApi, sincronizarInscricoesFilialViaApi, resolverFilialIdUlisses } from './importar-ulisses-api.js';
+import { sincronizarEventosUlissesApi, sincronizarInscricoesFilialViaApi, sincronizarComparecimentoViaApi, resolverFilialIdUlisses } from './importar-ulisses-api.js';
 import { filiaisAtivas as filiaisAtivasUlisses } from './ulisses-api.js';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -1718,6 +1718,16 @@ export async function executarSomenteUlissesApi() {
                 fs.mkdirSync('debug', { recursive: true });
                 await pageCrm.screenshot({ path: `debug/ulisses-api-somente-${filialCrm.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
             }
+            // Comparecimento — RESOLVIDO via API (2026-09-30, ver
+            // CLAUDE.md "Comparecimento via API do Ulisses — RESOLVIDO").
+            // Isolado (nunca trava Inscrições, que já rodaram acima).
+            try {
+                const logComparecimento = await sincronizarComparecimentoViaApi(filialCrm, filialIdUlisses);
+                console.log(`[ulisses-api] Comparecimento sincronizado — ${filialCrm}: ${logComparecimento}`);
+            } catch (e) {
+                algumaFalha = true;
+                console.error(`[ulisses-api] Falha ao sincronizar comparecimento via API de "${filialCrm}":`, e.message);
+            }
         }
 
         const sufixoFiltro = filtro ? ` (filtro: "${filtro}")` : '';
@@ -1977,6 +1987,15 @@ async function main() {
                         console.error(`[ulisses-api] Falha ao importar Inscrições via API de "${filialCrm}":`, e.message);
                         fs.mkdirSync('debug', { recursive: true });
                         await pageCrm.screenshot({ path: `debug/ulisses-api-inscricoes-${label.replace(/[^a-z0-9]/gi, '_')}.png`, fullPage: true }).catch(() => {});
+                    }
+                    // Comparecimento — RESOLVIDO via API (2026-09-30).
+                    // Isolado (nunca trava o resto da rodada diária).
+                    try {
+                        const logComparecimento = await sincronizarComparecimentoViaApi(filialCrm, filialIdUlisses);
+                        console.log(`[ulisses-api] Comparecimento sincronizado — ${filialCrm}: ${logComparecimento}`);
+                    } catch (e) {
+                        algumaFalha = true;
+                        console.error(`[ulisses-api] Falha ao sincronizar comparecimento via API de "${filialCrm}":`, e.message);
                     }
                 } else {
                     console.warn(`[ulisses-api] Filial "${filialCrm}" sem correspondência no sistema do Ulisses — pulando Inscrições via API pra ela.`);

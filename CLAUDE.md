@@ -418,6 +418,11 @@ migracao_rpc_relatorios_whatsapp.sql → funções sla_primeira_resposta_whatsap
                                      volume_whatsapp_por_periodo() — 3 relatórios novos na
                                      aba Relatórios; JÁ RODADA nesta sessão via
                                      `supabase db query --linked`
+migracao_evento_id_ulisses.sql    → coluna evento_id_ulisses em eventos — resolve
+                                     comparecimento via API oficial do Ulisses (antes só
+                                     Playwright/ulisses-local.js); ver seção "Comparecimento
+                                     via API do Ulisses — RESOLVIDO"; JÁ RODADA nesta sessão
+                                     via `supabase db query --linked`
 ```
 
 ## Ferramentas locais (fora do site publicado)
@@ -5364,16 +5369,60 @@ precisar mexer em nada do lado do agendamento/Edge Functions.
     sem relação nenhuma com a nossa — isso seria efetivamente escanear
     dado de terceiros fora do nosso escopo de autorização, não uma
     consulta legítima. Não fiz isso.
-  - **Conclusão pro usuário**: comparecimento continua exigindo
-    `npm run ulisses-local` (Playwright, tela Recepção) — mas agora com
+  - **Conclusão na época**: comparecimento continuava exigindo
+    `npm run ulisses-local` (Playwright, tela Recepção) — mas com
     diagnóstico preciso o bastante pra levar ao Célio como um bug de
     verdade (não um pedido vago de "mais acesso"): *"`GET
     /facade/emails/{eventoId}` quebra com NullPointerException pra
     token M2M (emailClaim null) — dá pra tratar esse caso, ou expor um
     jeito de listar `emailEventoId` por evento sem depender desse
-    endpoint?"*. Diferente da permissão do Setor Oeste (resolvida na
-    hora), isso é uma correção de CÓDIGO do lado deles, não só uma
-    configuração — pode levar mais tempo, ou nunca ser priorizado.
+    endpoint?"*.
+  - **RESOLVIDO (2026-09-30)** — o usuário levou a pergunta ao Célio, que
+    respondeu: *"Todas as APIs estão disponíveis. Ou seja, tem jeito."* +
+    *"Provavelmente algo como filtrarEmails"*. Relendo o Swagger completo
+    de novo à procura desse nome: existe `POST /facade/filtrarEmails`
+    (corpo `FiltroDTO`), **testado ao vivo contra produção e confirmado
+    funcionando perfeitamente via token M2M** — sem o NullPointerException
+    do `GET /facade/emails/{eventoId}`. 2 detalhes não-documentados no
+    Swagger, achados por tentativa e erro controlada:
+    1. `filialId` é OBRIGATÓRIO no corpo (sem ele, 403 — mesmo erro de
+       permissão de sempre, não um bug novo).
+    2. Os 3 arrays de filtro (`alunos`/`comparecimentos`/`ligacoes`)
+       precisam ter PELO MENOS 1 valor cada (400 "Selecione pelo menos um
+       filtro..." se vazio) — mas testado com vários valores arbitrários
+       (`TODOS`, `SIM`, `PENDENTE` etc.), a maioria devolve o MESMO
+       resultado completo (só `COMPARECEU` filtrou de verdade, devolvendo
+       0 — sinal de que o enum real é outro, nunca confirmado). Decisão:
+       usar `["TODOS"]` nos 3 e filtrar `compareceu` DO NOSSO LADO (pelo
+       campo `emailEventos[].compareceu` de cada pessoa devolvida), em vez
+       de arriscar um valor de enum nunca documentado.
+  - **Implementado**: `ulisses-api.js` ganhou `filtrarEmails(eventoId,
+    filialId)`; nova coluna `eventos.evento_id_ulisses`
+    (`migracao_evento_id_ulisses.sql`, preenchida por
+    `sincronizarEventosUlissesApi()` — sem ela, cada sincronização de
+    comparecimento precisaria redescobrir o eventoId do zero) + nova
+    função `sincronizarComparecimentoViaApi(filialCrm, filialIdUlisses)`
+    (`importar-ulisses-api.js`) — reaproveita 100% a MESMA lógica de
+    casamento (telefone > e-mail, checagem de sanidade por primeiro-nome
+    via Levenshtein, "evento futuro nunca confirma presença sozinho") já
+    validada em `sincronizarComparecimentoNoCrm()` (Playwright/ulisses.js),
+    só que mais simples — já sabemos o `eventoId` exato, não precisa
+    reconstruir identidade de evento por nome+data. Encadeada em
+    `mercurio.js` (nos 2 pontos que já chamavam Inscrições via API —
+    `executarSomenteUlissesApi()` e o loop diário principal), isolada por
+    filial (nunca trava o resto da rodada).
+  - **Testado ao vivo, ponta a ponta, contra produção** (Goiânia - Setor
+    Oeste): `sincronizarEventosUlissesApi()` preencheu `evento_id_ulisses`
+    em 2 eventos recentes (24344/"Novas turmas...", 24343/"Aula
+    Experimental..."); `sincronizarComparecimentoViaApi()` gravou **3
+    vínculos novos + 25 atualizados (compareceu)**, de 2 eventos — e a
+    checagem de sanidade funcionou de verdade num caso real (1 vínculo
+    corretamente IGNORADO: telefone batendo com "CECILIA REIS" no CRM,
+    mas o nome do Ulisses era "Luiz Cláudio Ferreira" — mesmo padrão de
+    telefone compartilhado entre parentes já documentado antes). **Não é
+    mais verdade que comparecimento "continua exigindo Playwright"** —
+    só continua valendo como alternativa pra eventos antigos sem
+    `evento_id_ulisses` ainda gravado (nunca removida do projeto).
 - **LIMITAÇÃO REAL #2, item 1 RESOLVIDO (2026-09-21)** — `filialId=132`
   (Goiânia - Setor Oeste) dava 403 em qualquer endpoint que dependesse de
   "listar a partir dessa filial" (`listarTodosEventos`/`csvInscricoes`/

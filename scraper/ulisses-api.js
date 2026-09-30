@@ -63,11 +63,15 @@ async function obterTokenUlissesApi() {
 // que a resposta não for 2xx (inclusive 401 — o chamador decide o que
 // fazer, ex: testar-ulisses-api.js trata 401 como "esperado, ainda
 // bloqueado" em vez de falha).
-async function chamarApi(path, { method = 'GET', esperado, texto = false } = {}) {
+async function chamarApi(path, { method = 'GET', esperado, texto = false, corpo } = {}) {
     const token = await obterTokenUlissesApi();
     const resp = await fetch(`${API_BASE_URL}${path}`, {
         method,
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+            Authorization: `Bearer ${token}`,
+            ...(corpo ? { 'content-type': 'application/json' } : {}),
+        },
+        ...(corpo ? { body: JSON.stringify(corpo) } : {}),
     });
     if (!resp.ok) {
         const corpo = await resp.text().catch(() => '');
@@ -96,6 +100,31 @@ export const participantesEvento = (eventoId) => chamarApi(`/facade/participante
 // `emailEventos[]` — cada item tem `evento.id`/`compareceu`/`data`, dá
 // pra achar a entrada certa filtrando por `evento.id === eventoId`.
 export const emailsDoEvento = (eventoId) => chamarApi(`/facade/emails/${eventoId}`, { esperado: 'precisa de scope autorizado pela Acrópole Brasil' });
+// RESOLVIDO (2026-09-30) — o Célio sugeriu "algo como filtrarEmails" como
+// alternativa ao `emailsDoEvento()` acima (que quebra com
+// NullPointerException pra token M2M, ver comentário dela). Achado no
+// Swagger: `POST /facade/filtrarEmails`, corpo `FiltroDTO`. Testado ao
+// vivo contra produção (eventoId=24343, filialId=132): funciona
+// perfeitamente via M2M e devolve exatamente os mesmos dados
+// (nome/telefone/e-mail + `emailEventos[].compareceu`/`.id`) que
+// `emailsDoEvento()` deveria ter devolvido. 2 detalhes não-óbvios,
+// confirmados por tentativa e erro (a API não documenta valores válidos
+// pros 3 arrays de filtro no Swagger):
+// 1. `filialId` é OBRIGATÓRIO — sem ele, 403 "Este usuário não tem
+//    permissão de acesso à esta filial" (mesmo erro de permissão já
+//    visto em outros endpoints, não um bug novo).
+// 2. `alunos`/`comparecimentos`/`ligacoes` precisam ter PELO MENOS 1
+//    valor cada (400 "Selecione pelo menos um filtro..." se vier vazio)
+//    — mas o valor em si não parece validado contra um enum de verdade:
+//    `["TODOS"]` funciona e devolve TODO MUNDO inscrito no evento,
+//    então filtramos o `compareceu` real DO NOSSO LADO (por
+//    `emailEventos[].compareceu`), em vez de confiar em valores de enum
+//    que nunca foram confirmados contra a documentação real.
+export const filtrarEmails = (eventoId, filialId) => chamarApi('/facade/filtrarEmails', {
+    method: 'POST',
+    esperado: 'precisa de scope autorizado pela Acrópole Brasil',
+    corpo: { eventoId, filialId, alunos: ['TODOS'], comparecimentos: ['TODOS'], ligacoes: ['TODOS'], ordenacao: '', pesquisa: '' },
+});
 export const emailPorId = (id) => chamarApi(`/facade/email/${id}`, { esperado: 'precisa de scope autorizado pela Acrópole Brasil' });
 export const csvInscricoes = (filialId) => chamarApi(`/facade/csvInscricoes/${filialId}`, { esperado: 'precisa de scope autorizado pela Acrópole Brasil', texto: true });
 export const marcarCompareceu = (emailEventoId, compareceu) =>

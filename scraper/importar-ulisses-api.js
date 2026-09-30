@@ -24,16 +24,18 @@
 // (dedicado, headless, sem login nenhum). Ver CLAUDE.md, seção
 // "CORREÇÃO GRAVE... a API do Ulisses TAMBÉM é bloqueada".
 //
-// LIMITAÇÃO REAL, confirmada testando ao vivo (2026-09-18): o endpoint
-// que traria comparecimento de verdade (`GET /facade/emails/{eventoId}`)
-// quebra pra token M2M com erro 500 do lado deles ("Cannot invoke
-// Claim.asString() because emailClaim is null" — o endpoint espera um
-// JWT de usuário humano, com claim de e-mail, que client_credentials não
-// tem). Por isso este módulo só sincroniza INSCRIÇÕES (quem se
-// inscreveu) e o CATÁLOGO de eventos (nome/data/imagem/vagas por
-// filial) — comparecimento (quem de fato compareceu) continua exigindo
-// `ulisses-local.js` (Playwright, tela Recepção) até a Acrópole Brasil
-// corrigir esse bug do lado deles.
+// LIMITAÇÃO REAL, confirmada testando ao vivo (2026-09-18) — RESOLVIDA em
+// 2026-09-30: o endpoint que traria comparecimento de verdade
+// (`GET /facade/emails/{eventoId}`) quebra pra token M2M com erro 500 do
+// lado deles ("Cannot invoke Claim.asString() because emailClaim is
+// null"). O Célio sugeriu "algo como filtrarEmails" como alternativa —
+// achado no Swagger e TESTADO AO VIVO contra produção
+// (`POST /facade/filtrarEmails`, ver ulisses-api.js/filtrarEmails() e
+// sincronizarComparecimentoViaApi() abaixo): funciona perfeitamente via
+// M2M. Comparecimento via API já não depende mais de `ulisses-local.js`
+// pra quem já tem `evento_id_ulisses` salvo (ver migracao_evento_id_ulisses.sql)
+// — ainda assim, mantido como alternativa (Playwright continua existindo,
+// nunca foi removido) pra eventos antigos sem esse id ainda gravado.
 //
 // LIMITAÇÃO REAL #2: `filialId=132` (Goiânia - Setor Oeste) devolve 403
 // em qualquer endpoint protegido — as outras filiais funcionam. Isolado
@@ -46,6 +48,7 @@ import {
     distanciaLevenshteinUlisses,
     carregarTiposEventoUlisses,
     classificarTipoEventoUlisses,
+    primeiroNomeParecidoUlisses,
 } from './ulisses.js';
 import * as ulissesApi from './ulisses-api.js';
 
@@ -229,7 +232,7 @@ export async function sincronizarEventosUlissesApi() {
             const linkInscricao = ev.linkFinal || null;
 
             let { data: existente } = await supabaseAdmin
-                .from('eventos').select('id, hora, capacidade, imagem_url, ingresso, descricao, tipo, link_inscricao')
+                .from('eventos').select('id, hora, capacidade, imagem_url, ingresso, descricao, tipo, link_inscricao, evento_id_ulisses')
                 .eq('filial', filialCrmNome).eq('nome', nome).eq('data', data)
                 .maybeSingle();
 
@@ -299,6 +302,11 @@ export async function sincronizarEventosUlissesApi() {
                     link_inscricao: linkInscricao || existente.link_inscricao,
                     tipo: existente.tipo || tipo,
                     ativo: true,
+                    // Sempre grava — estamos DENTRO do loop por `eventoId`
+                    // real, então isto nunca é um chute; alimenta
+                    // sincronizarComparecimentoViaApi() (não precisa mais
+                    // redescobrir o eventoId escaneando de novo).
+                    evento_id_ulisses: eventoId,
                 };
                 if (corrigirData) {
                     patch.data = data;
@@ -310,6 +318,7 @@ export async function sincronizarEventosUlissesApi() {
                 await supabaseAdmin.from('eventos').insert({
                     filial: filialCrmNome, nome, data, hora, capacidade,
                     imagem_url: imagemUrl, descricao, link_inscricao: linkInscricao, tipo, ativo: true,
+                    evento_id_ulisses: eventoId,
                 });
                 criados++;
             }
@@ -343,6 +352,145 @@ export async function sincronizarInscricoesFilialViaApi(pageCrm, filialCrm, fili
     // Importador — "Inscrições vem em UTF-8").
     fs.writeFileSync(caminho, csv, 'utf-8');
     return importarNoCrm(pageCrm, filialCrm, { caminhoAtivos: null, caminhoInativos: null, caminhoInscricoes: caminho });
+}
+
+// ============================================================
+// Comparecimento — RESOLVIDO via API (2026-09-30). A limitação documentada
+// no topo do arquivo ("comparecimento continua exigindo ulisses-local.js")
+// NÃO é mais verdade pra quem já tem evento_id_ulisses salvo: o Célio
+// sugeriu "algo como filtrarEmails" como alternativa ao endpoint quebrado
+// — achado no Swagger (`POST /facade/filtrarEmails`) e TESTADO AO VIVO
+// contra produção (ver comentário completo em ulisses-api.js). Usa a MESMA
+// lógica de casamento (telefone > e-mail, checagem de sanidade por
+// primeiro-nome, "evento futuro nunca confirma sozinho") já validada em
+// `sincronizarComparecimentoNoCrm()` (ulisses.js) — só a FONTE dos dados
+// muda (API em vez de Playwright+JSON exportado), e fica bem mais simples
+// porque já sabemos o `eventoId` exato (nunca precisa reconstruir
+// identidade de evento por nome+data como a versão Playwright precisava).
+// ============================================================
+export async function sincronizarComparecimentoViaApi(filialCrm, filialIdUlisses) {
+    // Só eventos com o eventoId do Ulisses já conhecido (gravado por
+    // sincronizarEventosUlissesApi()) — e dentro de uma janela razoável
+    // (mesmo espírito de JANELA_PASSADO_MS: não vale a pena gastar 1
+    // chamada de API por dia pra um evento de anos atrás que não muda
+    // mais; eventos futuros entram sempre, sem limite).
+    const hojeISOFiltro = dataBrasilia(Date.now());
+    const desdeISO = dataBrasilia(Date.now() - JANELA_PASSADO_MS);
+    const { data: eventosFilial, error: erroEventos } = await supabaseAdmin
+        .from('eventos')
+        .select('id, nome, data, evento_id_ulisses')
+        .eq('filial', filialCrm)
+        .not('evento_id_ulisses', 'is', null)
+        .or(`data.gte.${desdeISO},data.gte.${hojeISOFiltro}`);
+    if (erroEventos) throw new Error('Erro ao buscar eventos da filial: ' + erroEventos.message);
+    if (!eventosFilial || eventosFilial.length === 0) {
+        return '0 evento(s) com eventoId do Ulisses conhecido (dentro da janela) nesta filial — rode a sincronização de eventos primeiro, ou não há evento recente/futuro.';
+    }
+
+    const normalizarTelefone = (ddd, numero) => {
+        const d = String(ddd || '').replace(/\D/g, '');
+        let n = String(numero || '').replace(/\D/g, '');
+        if (!d || !n) return null;
+        if (n.length === 9 && n.startsWith('9')) n = n.slice(1);
+        if (n.length !== 8) return null;
+        return d + n;
+    };
+
+    // Mesma técnica paginada de sincronizarComparecimentoNoCrm() (ulisses.js).
+    const porTelefone = new Map();
+    const porEmail = new Map();
+    const TAMANHO_PAGINA = 1000;
+    for (let de = 0; ; de += TAMANHO_PAGINA) {
+        const { data: pagina, error } = await supabaseAdmin
+            .from('leads_inscricoes')
+            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail')
+            .eq('filial', filialCrm)
+            .order('pessoaIdentificador', { ascending: true })
+            .range(de, de + TAMANHO_PAGINA - 1);
+        if (error) throw new Error('Erro ao buscar leads da filial: ' + error.message);
+        for (const lead of pagina || []) {
+            const chaveTel = normalizarTelefone(lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero);
+            if (chaveTel && !porTelefone.has(chaveTel)) porTelefone.set(chaveTel, { id: lead.pessoaIdentificador, nome: lead.pessoaNome });
+            const email = (lead.pessoaEmail || '').trim().toLowerCase();
+            if (email && !porEmail.has(email)) porEmail.set(email, { id: lead.pessoaIdentificador, nome: lead.pessoaNome });
+        }
+        if (!pagina || pagina.length < TAMANHO_PAGINA) break;
+    }
+
+    const vinculos = [];
+    let semLead = 0, nomeDivergente = 0, eventosComErro = 0;
+    for (const evento of eventosFilial) {
+        let pessoas;
+        try {
+            pessoas = await ulissesApi.filtrarEmails(evento.evento_id_ulisses, filialIdUlisses);
+        } catch (e) {
+            eventosComErro++;
+            console.warn(`[ulisses-api] Falha ao buscar comparecimento do evento "${evento.nome}" (id=${evento.id}, eventoIdUlisses=${evento.evento_id_ulisses}):`, e.message);
+            continue;
+        }
+        const eventoFuturo = evento.data >= hojeISOFiltro;
+        for (const pessoa of pessoas || []) {
+            const inscricoesDesteEvento = (pessoa.emailEventos || []).filter(ee => ee.evento?.id === evento.evento_id_ulisses);
+            if (inscricoesDesteEvento.length === 0) continue;
+
+            let leadCandidato = normalizarTelefone(pessoa.ddd, pessoa.telefone) ? porTelefone.get(normalizarTelefone(pessoa.ddd, pessoa.telefone)) : null;
+            if (!leadCandidato && pessoa.email) leadCandidato = porEmail.get(pessoa.email.trim().toLowerCase()) || null;
+            if (!leadCandidato) { semLead++; continue; }
+
+            if (!primeiroNomeParecidoUlisses(pessoa.nome, leadCandidato.nome)) {
+                nomeDivergente++;
+                console.warn(`[ulisses-api] Vínculo IGNORADO (${filialCrm}) — telefone/e-mail bateu, mas o nome não: API disse "${pessoa.nome}", lead casado é "${leadCandidato.nome}" (id=${leadCandidato.id}). Evento "${evento.nome}".`);
+                continue;
+            }
+
+            // Mesma regra de sempre: evento futuro nunca confirma
+            // presença sozinho (ver sincronizarComparecimentoNoCrm()).
+            const compareceuReal = inscricoesDesteEvento.some(ee => ee.compareceu === true);
+            vinculos.push({
+                evento_id: evento.id,
+                pessoaIdentificador: leadCandidato.id,
+                compareceu: eventoFuturo && !compareceuReal ? null : compareceuReal,
+                futuro: eventoFuturo,
+            });
+        }
+    }
+
+    if (vinculos.length === 0) {
+        return `0 vínculo(s) — ${eventosFilial.length} evento(s) verificado(s) (${semLead} sem lead achado por telefone/e-mail${nomeDivergente ? `, ${nomeDivergente} descartado(s) por nome divergente` : ''}${eventosComErro ? `, ${eventosComErro} evento(s) com erro na API` : ''}).`;
+    }
+
+    // Dedup (mesma pessoa pode aparecer 2x pro mesmo evento — prioriza
+    // compareceu=true) + nunca sobrescreve resposta_convite/nota de um
+    // vínculo já existente (mesma lógica de sincronizarComparecimentoNoCrm()).
+    const vinculosPorChave = new Map();
+    for (const v of vinculos) {
+        const chave = `${v.evento_id}|||${v.pessoaIdentificador}`;
+        const atual = vinculosPorChave.get(chave);
+        if (!atual || (v.compareceu === true && atual.compareceu !== true)) vinculosPorChave.set(chave, v);
+    }
+    const vinculosUnicos = [...vinculosPorChave.values()];
+
+    const eventoIds = [...new Set(vinculosUnicos.map(v => v.evento_id))];
+    const { data: existentes } = await supabaseAdmin.from('evento_leads').select('evento_id, pessoaIdentificador').in('evento_id', eventoIds);
+    const jaExiste = new Set((existentes || []).map(e => `${e.evento_id}|||${e.pessoaIdentificador}`));
+
+    const novos = vinculosUnicos
+        .filter(v => !jaExiste.has(`${v.evento_id}|||${v.pessoaIdentificador}`))
+        .map(v => ({ evento_id: v.evento_id, pessoaIdentificador: v.pessoaIdentificador, resposta_convite: v.futuro ? 'pendente' : 'confirmado', compareceu: v.compareceu, origem: 'ulisses' }));
+    const paraAtualizar = vinculosUnicos.filter(v => jaExiste.has(`${v.evento_id}|||${v.pessoaIdentificador}`));
+
+    let novosGravados = 0;
+    if (novos.length > 0) {
+        const { error } = await supabaseAdmin.from('evento_leads').insert(novos);
+        if (error) console.warn('[ulisses-api] Falha ao inserir novos vínculos evento_leads:', error.message);
+        else novosGravados = novos.length;
+    }
+    const resultadosAtualizacao = await Promise.all(paraAtualizar.map(v =>
+        supabaseAdmin.from('evento_leads').update({ compareceu: v.compareceu }).eq('evento_id', v.evento_id).eq('pessoaIdentificador', v.pessoaIdentificador)
+    ));
+    const atualizadosGravados = resultadosAtualizacao.filter(r => !r.error).length;
+
+    return `${novosGravados} vínculo(s) novo(s), ${atualizadosGravados} atualizado(s) (compareceu), de ${eventosFilial.length} evento(s) verificado(s) (${semLead} sem lead achado, ${nomeDivergente} nome divergente${eventosComErro ? `, ${eventosComErro} evento(s) com erro na API` : ''}).`;
 }
 
 export { resolverFilialIdUlisses };
