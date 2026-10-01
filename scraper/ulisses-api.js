@@ -111,20 +111,31 @@ export const emailsDoEvento = (eventoId) => chamarApi(`/facade/emails/${eventoId
 // `filialId` é OBRIGATÓRIO — sem ele, 403 "Este usuário não tem
 // permissão de acesso à esta filial" (mesmo erro de permissão já visto
 // em outros endpoints, não um bug novo).
-// `ligacoes: []` — o Célio reportou de volta, direto do lado dele
-// (2026-09-30, 22:24-22:25): `FiltroDTO.getLigacoes() is null`, com a
-// instrução explícita "Passa um array vazio na propriedade 'ligacoes'".
-// Ou seja: `['TODOS']` (testado antes, funcionando pro caso específico
-// de eventoId=24343) não é universalmente seguro — em outras chamadas,
-// o valor "TODOS" nesse array específico acaba virando `null` do lado
-// deles (não um enum reconhecido) e quebra com NullPointerException.
-// Corrigido só pra `ligacoes` (a única que ele reportou) — `alunos`/
-// `comparecimentos` continuam `['TODOS']`, já confirmados funcionando.
-export const filtrarEmails = (eventoId, filialId) => chamarApi('/facade/filtrarEmails', {
-    method: 'POST',
-    esperado: 'precisa de scope autorizado pela Acrópole Brasil',
-    corpo: { eventoId, filialId, alunos: ['TODOS'], comparecimentos: ['TODOS'], ligacoes: [], ordenacao: '', pesquisa: '' },
-});
+// Histórico de idas e vindas nesse campo específico (`ligacoes`), API
+// claramente inconsistente/frágil do lado deles:
+// - Original: `['TODOS']` — funcionava.
+// - 2026-09-30: Célio reportou `FiltroDTO.getLigacoes() is null` com
+//   `['TODOS']` em ALGUNS casos, pediu pra mandar `[]`.
+// - 2026-10-01: `[]` passou a dar 400 "Selecione pelo menos um filtro
+//   para cada tipo" — e `['TODOS']` voltou a funcionar (200, dados reais)
+//   nos mesmos testes. O lado deles mudou de novo, sem aviso.
+// Em vez de ficar alternando o valor fixo toda vez que isso quebrar de
+// novo, agora tenta `['TODOS']` primeiro (o caso mais comum/testado) e,
+// SÓ se a resposta falhar especificamente por causa de `ligacoes`
+// (400 "para cada tipo" ou 500/NullPointerException), cai pra `[]` — o
+// outro valor já visto funcionando em algum momento. Cobre os 2
+// comportamentos já observados em produção sem exigir código novo da
+// próxima vez que a API mudar de novo.
+export async function filtrarEmails(eventoId, filialId) {
+    const base = { eventoId, filialId, alunos: ['TODOS'], comparecimentos: ['TODOS'], ordenacao: '', pesquisa: '' };
+    try {
+        return await chamarApi('/facade/filtrarEmails', { method: 'POST', esperado: 'precisa de scope autorizado pela Acrópole Brasil', corpo: { ...base, ligacoes: ['TODOS'] } });
+    } catch (e) {
+        const msg = String(e.message || '');
+        if (!/ligaç|NullPointerException|getLigacoes/i.test(msg)) throw e;
+        return await chamarApi('/facade/filtrarEmails', { method: 'POST', esperado: 'precisa de scope autorizado pela Acrópole Brasil', corpo: { ...base, ligacoes: [] } });
+    }
+}
 export const emailPorId = (id) => chamarApi(`/facade/email/${id}`, { esperado: 'precisa de scope autorizado pela Acrópole Brasil' });
 export const csvInscricoes = (filialId) => chamarApi(`/facade/csvInscricoes/${filialId}`, { esperado: 'precisa de scope autorizado pela Acrópole Brasil', texto: true });
 export const marcarCompareceu = (emailEventoId, compareceu) =>
