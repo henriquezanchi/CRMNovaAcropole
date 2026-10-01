@@ -75,7 +75,7 @@ function fecharGerenciarUsuarios() {
 async function carregarUsuariosCrm() {
     const { data, error } = await window.supabaseClient
         .from('usuarios_crm')
-        .select('id, nome, modulos, eh_admin, ativo, criado_em, equipe_id')
+        .select('id, nome, modulos, eh_admin, ativo, criado_em, equipe_id, persona_tom, persona_notas')
         .order('criado_em');
     if (error) { alert('Erro ao carregar usuários: ' + error.message); return; }
     usuariosCrmCache = data || [];
@@ -118,6 +118,18 @@ function renderizarListaUsuariosCrm() {
                     </div>
                 </div>
                 <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap:4px;">${checkboxes}</div>
+                <div style="margin-top:10px; padding-top:10px; border-top:1px dashed var(--border-color); display:flex; gap:8px; align-items:flex-start;">
+                    <div style="flex:0 0 150px;">
+                        <div style="font-size:10px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:4px;">Persona (IA)</div>
+                        <select style="width:100%; font-size:11px; padding:5px 6px;" title="Tom de voz usado pela IA nas sugestões de resposta pra conversas deste atendente" onchange="salvarPersonaUsuarioCrm('${u.id}', 'persona_tom', this.value || null)">
+                            <option value="" ${!u.persona_tom ? 'selected' : ''}>Padrão (sem persona)</option>
+                            <option value="formal" ${u.persona_tom === 'formal' ? 'selected' : ''}>Formal</option>
+                            <option value="neutro" ${u.persona_tom === 'neutro' ? 'selected' : ''}>Neutro</option>
+                            <option value="descontraido" ${u.persona_tom === 'descontraido' ? 'selected' : ''}>Descontraído</option>
+                        </select>
+                    </div>
+                    <textarea style="flex:1; font-size:11px; padding:6px 8px; min-height:38px; resize:vertical;" placeholder="Observações livres sobre como você gosta que a IA sugira as respostas (ex: 'nunca use emoji de coração', 'prefira frases curtas')..." onchange="salvarPersonaUsuarioCrm('${u.id}', 'persona_notas', this.value.trim() || null)">${escapeHTML(u.persona_notas || '')}</textarea>
+                </div>
             </div>`;
     }).join('');
 }
@@ -138,6 +150,20 @@ async function salvarModulosUsuarioCrm(idUsuario) {
             aplicarPermissoesModulosUsuario();
         }
     }
+}
+
+// Persona por atendente (pedido do usuário, 2026-10-01): tom de voz +
+// observações livres injetados nas IAs de sugestão de resposta
+// (sugerir-resposta-whatsapp/classificar-resposta-convite), ver
+// supabase/functions/_shared/persona.ts — resolvido por
+// leads_inscricoes.wpp_atendente_responsavel (quem de fato responde a
+// conversa), não pela filial. Mesmo padrão instantâneo-ao-mudar de
+// salvarEquipeUsuarioCrm().
+async function salvarPersonaUsuarioCrm(idUsuario, campo, valor) {
+    const { error } = await window.supabaseClient.from('usuarios_crm').update({ [campo]: valor }).eq('id', idUsuario);
+    if (error) { alert('Erro ao salvar persona: ' + error.message); return; }
+    const u = usuariosCrmCache.find(u => u.id === idUsuario);
+    if (u) u[campo] = valor;
 }
 
 async function salvarEquipeUsuarioCrm(idUsuario, equipeId) {

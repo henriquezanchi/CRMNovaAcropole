@@ -28,6 +28,7 @@ import { supabaseAdmin, NOME_TABELA_LEADS } from "../_shared/supabaseAdmin.ts";
 import { buscarExemplosEstilo } from "../_shared/exemplosEstilo.ts";
 import { buscarListaFiliais } from "../_shared/filiaisInfo.ts";
 import { montarTabelaDiasSemana, adicionarMeses } from "../_shared/calendario.ts";
+import { buscarPersonaAtendente } from "../_shared/persona.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const MODELO = "claude-haiku-4-5-20251001";
@@ -94,13 +95,19 @@ async function montarContextoCRM(pessoaIdentificador: string, filial: string | n
 
     const { data: lead } = await supabaseAdmin
         .from("leads_inscricoes")
-        .select("pessoaNome, tags, historico_eventos, resumo_ia, abordagem_sugerida, como_prefere_ser_chamado")
+        .select("pessoaNome, tags, historico_eventos, resumo_ia, abordagem_sugerida, como_prefere_ser_chamado, wpp_atendente_responsavel")
         .eq("pessoaIdentificador", pessoaIdentificador)
         .maybeSingle();
 
     if (lead) {
         const nome = lead.como_prefere_ser_chamado || (lead.pessoaNome || "").split(" ")[0];
         if (nome) partes.push(`Nome do lead (pra chamar): ${nome}`);
+
+        // Pedido do usuário (2026-10-01): "cada SDR teria a sua persona" —
+        // ver _shared/persona.ts. Resolvida pelo atendente REALMENTE
+        // responsável por esta conversa (não pela filial).
+        const persona = await buscarPersonaAtendente(lead.wpp_atendente_responsavel);
+        if (persona) partes.push(persona);
 
         let tags: string[] = [];
         try {
@@ -187,6 +194,7 @@ ${contexto}
 A última mensagem do lead (a que precisa de resposta agora) foi: "${ultimaMensagem}"
 
 Escreva um rascunho de resposta em português, curto (1-5 frases), caloroso, natural — NUNCA robótico, NUNCA insistente/vendedor logo de cara. Regras:
+- Se os "Dados já cadastrados" acima tiverem um bloco "Persona configurada por...", siga o tom E as observações dali À RISCA (tem prioridade sobre o estilo padrão) — mas nunca sobre as regras de segurança abaixo (nunca inventar fato, nunca "confirmo você", etc.).
 - Responda considerando TODO o histórico acima (pode ter mais de uma mensagem do lead em sequência) — nunca ignore o que ela já disse antes só porque a "última mensagem" é curta (ex: "pode sim", "sim", "pode mandar").
 - Se os "Dados já cadastrados" acima tiverem a resposta exata pra pergunta (endereço, valor, evento, link de inscrição), ENTREGUE esse dado real na resposta — nunca diga só "vou te mandar os detalhes"/"estou enviando agora" se o dado já está disponível aqui; escreva o dado de verdade na mensagem.
 - NUNCA invente fato concreto que não esteja nos dados acima (endereço, valor, data, nome de evento específico, horário) — se a pergunta exigir um dado que não está listado ali, só reconheça a pergunta e diga que alguém vai confirmar em breve.

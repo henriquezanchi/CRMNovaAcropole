@@ -26,6 +26,7 @@ import { supabaseAdmin, NOME_TABELA_LEADS } from "../_shared/supabaseAdmin.ts";
 import { buscarExemplosEstilo } from "../_shared/exemplosEstilo.ts";
 import { buscarListaFiliais } from "../_shared/filiaisInfo.ts";
 import { montarTabelaDiasSemana, adicionarMeses } from "../_shared/calendario.ts";
+import { buscarPersonaAtendente } from "../_shared/persona.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const MODELO = "claude-haiku-4-5-20251001";
@@ -144,10 +145,11 @@ async function buscarDadosEvento(eventoId: number, textoConversa: string): Promi
     return { hora: evento.hora || null, endereco, linkInscricao: evento.link_inscricao || null, filialFalada, proximoEventoNome, proximoEventoData, listaFiliais };
 }
 
-function montarPrompt(item: Candidata, historico: string, dados: DadosEvento, exemplos: string, hojeISO: string): string {
+function montarPrompt(item: Candidata, historico: string, dados: DadosEvento, exemplos: string, hojeISO: string, persona: string): string {
     const blocoExemplos = exemplos
         ? `\nExemplos REAIS de como o time já respondeu perguntas/objeções parecidas (siga o MESMO TOM — caloroso, direto, sem ser robótico, sem insistir — mas nunca copie o dado concreto de lá, use sempre os "Dados reais do evento" acima):\n${exemplos}\n`
         : "";
+    const blocoPersona = persona ? `\n${persona}\n` : "";
     const infoEvento = [
         `Nome: ${item.evento_nome}`,
         `Data: ${item.evento_data}`,
@@ -168,7 +170,7 @@ ${montarTabelaDiasSemana(hojeISO)}
 Dados reais do evento (use pra responder com precisão — nunca invente nada que não esteja aqui):
 ${infoEvento}${infoProximoEvento}
 ${dados.listaFiliais ? "\n" + dados.listaFiliais + "\n" : ""}
-${blocoExemplos}
+${blocoPersona}${blocoExemplos}
 Histórico recente da conversa (mais antiga primeiro, pode ter mais de uma mensagem do lead em sequência):
 ${historico}
 
@@ -182,6 +184,7 @@ Classifique a ÚLTIMA mensagem do lead (a de baixo) em EXATAMENTE UMA destas cat
 Se tiver qualquer dúvida real, prefira "ambiguo" — nunca force uma categoria só pra escolher algo.
 
 Além da categoria, escreva "sugestao_resposta": um rascunho de mensagem de acompanhamento em português, curto (2-5 frases), caloroso e natural (não robótico), que responda considerando TODA a conversa acima (nunca ignore o que a pessoa já disse antes na mesma troca). Regras da sugestão:
+- Se houver um bloco "Persona configurada por..." acima, siga o tom E as observações dali À RISCA (tem prioridade sobre o estilo padrão) — mas nunca sobre as regras de segurança abaixo (nunca inventar fato, nunca "confirmo você", etc.).
 - Se "nao_pode_ir": agradeça; se houver uma próxima Abertura de Turma listada acima, pergunte se ela gostaria de ir nessa (cite nome e data reais); senão, diga que vamos avisar sobre os próximos eventos, sem inventar nome/data.
 - Se "pediu_informacao": responda com os dados REAIS acima que fizerem sentido pra pergunta dela (endereço, horário, link de inscrição) — NUNCA diga só "vou te mandar os detalhes" se o dado já está disponível aqui, entregue de verdade. Só diga "alguém vai confirmar" pro que realmente não está listado acima (ex: valor, se não vier).
 - Se "sem_interesse": uma despedida breve e respeitosa, sem insistir.
@@ -211,13 +214,13 @@ function aplicarLembretePadraoNaoPodeIrSemPrazo(resultado: { categoria: string; 
     }
 }
 
-async function classificarUma(item: Candidata, historico: string, dados: DadosEvento, exemplos: string, hojeISO: string): Promise<{ categoria: string; sugestao_resposta: string | null; lembreteData: string | null; lembreteMotivo: string | null; debugBruto?: string; debugErro?: string }> {
+async function classificarUma(item: Candidata, historico: string, dados: DadosEvento, exemplos: string, hojeISO: string, persona: string): Promise<{ categoria: string; sugestao_resposta: string | null; lembreteData: string | null; lembreteMotivo: string | null; debugBruto?: string; debugErro?: string }> {
     if (!ANTHROPIC_API_KEY) return { categoria: "ambiguo", sugestao_resposta: null, lembreteData: null, lembreteMotivo: null, debugErro: "sem_anthropic_api_key" };
     try {
         const resp = await fetch("https://api.anthropic.com/v1/messages", {
             method: "POST",
             headers: { "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-            body: JSON.stringify({ model: MODELO, max_tokens: 500, messages: [{ role: "user", content: montarPrompt(item, historico, dados, exemplos, hojeISO) }] }),
+            body: JSON.stringify({ model: MODELO, max_tokens: 500, messages: [{ role: "user", content: montarPrompt(item, historico, dados, exemplos, hojeISO, persona) }] }),
         });
         const data = await resp.json();
         if (!resp.ok) return { categoria: "ambiguo", sugestao_resposta: null, lembreteData: null, lembreteMotivo: null, debugErro: "resp_nao_ok: " + JSON.stringify(data?.error || data) };
@@ -235,6 +238,19 @@ async function classificarUma(item: Candidata, historico: string, dados: DadosEv
         // fallback mais seguro (precisa de revisão humana, sem sugestão).
         return { categoria: "ambiguo", sugestao_resposta: null, lembreteData: null, lembreteMotivo: null, debugErro: String(e) };
     }
+}
+
+// Pedido do usuário (2026-10-01): "cada SDR teria a sua persona" — ver
+// _shared/persona.ts. Resolvida pelo atendente REALMENTE responsável
+// por esta conversa (leads_inscricoes.wpp_atendente_responsavel), não
+// pela filial do evento.
+async function buscarPersonaDoLead(pessoaIdentificador: string): Promise<string> {
+    const { data: lead } = await supabaseAdmin
+        .from(NOME_TABELA_LEADS)
+        .select("wpp_atendente_responsavel")
+        .eq("pessoaIdentificador", pessoaIdentificador)
+        .maybeSingle();
+    return buscarPersonaAtendente(lead?.wpp_atendente_responsavel);
 }
 
 async function aplicarTagConvite(pessoaIdentificador: string, tagNova: string) {
@@ -273,7 +289,8 @@ Deno.serve(async (req) => {
         for (const item of candidatas as Candidata[]) {
             const historico = await montarHistorico(item.pessoaIdentificador);
             const dados = await buscarDadosEvento(item.evento_id, `${historico}\n${item.corpo_texto}`);
-            const resultadoDebug = await classificarUma(item, historico, dados, exemplos, hojeISO);
+            const persona = await buscarPersonaDoLead(item.pessoaIdentificador);
+            const resultadoDebug = await classificarUma(item, historico, dados, exemplos, hojeISO, persona);
             aplicarLembretePadraoNaoPodeIrSemPrazo(resultadoDebug, hojeISO);
             resultadosDebug.push({ corpo_texto: item.corpo_texto, ...resultadoDebug });
         }
@@ -284,7 +301,8 @@ Deno.serve(async (req) => {
     for (const item of candidatas as Candidata[]) {
         const historico = await montarHistorico(item.pessoaIdentificador);
         const dados = await buscarDadosEvento(item.evento_id, `${historico}\n${item.corpo_texto}`);
-        const resultado = await classificarUma(item, historico, dados, exemplos, hojeISO);
+        const persona = await buscarPersonaDoLead(item.pessoaIdentificador);
+        const resultado = await classificarUma(item, historico, dados, exemplos, hojeISO, persona);
 
         // Mesmo fix de sugerir-resposta-whatsapp (2026-10-01): distingue
         // "ambiguo" porque a IA genuinamente decidiu (fica gravado, é um
