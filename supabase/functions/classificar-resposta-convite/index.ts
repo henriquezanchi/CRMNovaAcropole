@@ -24,6 +24,7 @@
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin, NOME_TABELA_LEADS } from "../_shared/supabaseAdmin.ts";
 import { buscarExemplosEstilo } from "../_shared/exemplosEstilo.ts";
+import { buscarListaFiliais } from "../_shared/filiaisInfo.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const MODELO = "claude-haiku-4-5-20251001";
@@ -89,6 +90,7 @@ type DadosEvento = {
     filialFalada: string | null; // ex: "Setor Oeste" já com a preposição certa pronta pra usar
     proximoEventoNome: string | null; // pra quando a pessoa não pode ir a ESTE — próxima Abertura de Turma da mesma filial, se houver
     proximoEventoData: string | null;
+    listaFiliais: string; // bug real corrigido (2026-10-01) — ver _shared/filiaisInfo.ts
 };
 
 // Busca os dados REAIS do evento (endereço/horário/link) pra que a
@@ -99,7 +101,7 @@ type DadosEvento = {
 // despedir. Nunca inventa nada — se não achar, os campos ficam null e o
 // prompt é instruído a não inventar.
 async function buscarDadosEvento(eventoId: number): Promise<DadosEvento> {
-    const vazio: DadosEvento = { hora: null, endereco: null, linkInscricao: null, filialFalada: null, proximoEventoNome: null, proximoEventoData: null };
+    const vazio: DadosEvento = { hora: null, endereco: null, linkInscricao: null, filialFalada: null, proximoEventoNome: null, proximoEventoData: null, listaFiliais: "" };
     const { data: evento } = await supabaseAdmin
         .from("eventos")
         .select("hora, link_inscricao, filial, data, tipo")
@@ -136,7 +138,9 @@ async function buscarDadosEvento(eventoId: number): Promise<DadosEvento> {
         if (proximo) { proximoEventoNome = proximo.nome; proximoEventoData = proximo.data; }
     }
 
-    return { hora: evento.hora || null, endereco, linkInscricao: evento.link_inscricao || null, filialFalada, proximoEventoNome, proximoEventoData };
+    const listaFiliais = await buscarListaFiliais(evento.filial || null);
+
+    return { hora: evento.hora || null, endereco, linkInscricao: evento.link_inscricao || null, filialFalada, proximoEventoNome, proximoEventoData, listaFiliais };
 }
 
 function montarPrompt(item: Candidata, historico: string, dados: DadosEvento, exemplos: string, hojeISO: string): string {
@@ -160,6 +164,7 @@ function montarPrompt(item: Candidata, historico: string, dados: DadosEvento, ex
 
 Dados reais do evento (use pra responder com precisão — nunca invente nada que não esteja aqui):
 ${infoEvento}${infoProximoEvento}
+${dados.listaFiliais ? "\n" + dados.listaFiliais + "\n" : ""}
 ${blocoExemplos}
 Histórico recente da conversa (mais antiga primeiro, pode ter mais de uma mensagem do lead em sequência):
 ${historico}
@@ -177,9 +182,10 @@ Além da categoria, escreva "sugestao_resposta": um rascunho de mensagem de acom
 - Se "nao_pode_ir": agradeça; se houver uma próxima Abertura de Turma listada acima, pergunte se ela gostaria de ir nessa (cite nome e data reais); senão, diga que vamos avisar sobre os próximos eventos, sem inventar nome/data.
 - Se "pediu_informacao": responda com os dados REAIS acima que fizerem sentido pra pergunta dela (endereço, horário, link de inscrição) — NUNCA diga só "vou te mandar os detalhes" se o dado já está disponível aqui, entregue de verdade. Só diga "alguém vai confirmar" pro que realmente não está listado acima (ex: valor, se não vier).
 - Se "sem_interesse": uma despedida breve e respeitosa, sem insistir.
-- Se "confirmou": confirme o registro da presença dela com entusiasmo, e inclua o link de inscrição acima se ela ainda não tiver se inscrito oficialmente (sem inventar se não tiver).
+- Se "confirmou": confirme o registro da presença dela com entusiasmo, e inclua o link de inscrição acima se ela ainda não tiver se inscrito oficialmente (sem inventar se não tiver). O evento JÁ TEM data/horário FIXOS (acima) — NUNCA pergunte "qual dia você pode" ou algo do tipo, como se houvesse escolha de data; é só confirmar a data/horário que já convidamos e, se fizer sentido, o endereço.
 - Se "ambiguo": deixe "sugestao_resposta" como null — não force um texto sem saber o que responder.
 - NUNCA invente evento, data, endereço, valor, ou qualquer fato que não foi dado aqui.
+- Se o lead mencionar ou perguntar sobre uma unidade/filial DIFERENTE da do evento (ver lista de unidades acima, se houver), responda com os dados REAIS daquela unidade que ele mencionou — nunca confunda com a filial deste evento.
 - ATENÇÃO a datas abreviadas no formato "NN/NN" (ex: "01/27", "após 01/27"): o formato brasileiro é DIA/MÊS, então o SEGUNDO número só pode ser mês válido se for de 1 a 12. Se o SEGUNDO número for MAIOR que 12 (como em "01/27", onde 27 não é mês), não é dia/mês — é quase certamente MÊS/ANO abreviado: "01/27" = janeiro de 2027, NUNCA "27 de janeiro". Se usar essa data na sugestão, escreva por extenso COM O ANO (ex: "em janeiro de 2027"), nunca deixe o ano implícito quando o lead mencionou um.
 
 Além disso, verifique se o LEAD mencionou explicitamente um período/data FUTURA específica pra ser recontatado (ex: "me chama em julho de 2027", "só depois do carnaval", "no mês que vem", "após 01/27") — diferente de uma recusa vaga ("mais tarde"/"outro dia", que NÃO conta). Se houver data/período específico o suficiente pra converter numa data real (aplicando a regra de data abreviada acima quando for o caso):

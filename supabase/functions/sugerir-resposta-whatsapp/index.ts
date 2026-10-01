@@ -26,6 +26,7 @@
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin, NOME_TABELA_LEADS } from "../_shared/supabaseAdmin.ts";
 import { buscarExemplosEstilo } from "../_shared/exemplosEstilo.ts";
+import { buscarListaFiliais } from "../_shared/filiaisInfo.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const MODELO = "claude-haiku-4-5-20251001";
@@ -133,6 +134,15 @@ async function montarContextoCRM(pessoaIdentificador: string, filial: string | n
         }
     }
 
+    // Bug real corrigido (2026-10-01, achado pelo usuário): lead de uma
+    // filial mencionou OUTRA unidade ("descobri que tem uma perto de
+    // casa, no Goiânia 2") e a IA respondeu com o endereço da filial de
+    // CADASTRO dele (Setor Oeste), ignorando a unidade que ele realmente
+    // citou. Lista todas as filiais pra IA conseguir identificar e usar
+    // os dados certos quando isso acontecer.
+    const listaFiliais = await buscarListaFiliais(filial);
+    if (listaFiliais) partes.push(listaFiliais);
+
     // Pedido do usuário (2026-10-01): se o lead tem um convite de evento
     // ainda PENDENTE (ainda não confirmou nem recusou), a IA precisa
     // saber os dados reais (data/hora/link) pra poder ENTREGAR a
@@ -181,6 +191,8 @@ Escreva um rascunho de resposta em português, curto (1-5 frases), caloroso, nat
 - NUNCA invente fato concreto que não esteja nos dados acima (endereço, valor, data, nome de evento específico, horário) — se a pergunta exigir um dado que não está listado ali, só reconheça a pergunta e diga que alguém vai confirmar em breve.
 - Se a mensagem for só um agradecimento/despedida, uma resposta breve e cordial já basta.
 - Se o lead disser uma OBJEÇÃO (não pode agora, está sem tempo, já é/foi aluno e não quer voltar agora, etc.), use o mesmo tom empático e sem insistência dos exemplos acima — nunca insista ou tente reverter a objeção à força.
+- Se o lead disser que QUER IR a um evento que já tem um convite PENDENTE listado acima (data/horário já FIXOS, já comunicados antes), NUNCA pergunte "qual dia você pode" como se houvesse escolha — é só confirmar a data/horário que já convidamos e, se fizer sentido, o endereço/link.
+- Se o lead mencionar ou perguntar sobre uma unidade/filial DIFERENTE da "filial de cadastro" (ver lista de unidades acima), responda com os dados REAIS daquela unidade que ele mencionou — nunca confunda com a filial de cadastro dele.
 - Se não der pra saber o que responder com confiança (mensagem ambígua, fora de contexto, ou perigosa de responder sem saber mais), devolva "sugestao": null — não force um texto.
 - ATENÇÃO a datas abreviadas no formato "NN/NN" (ex: "01/27", "depois de 03/28"): o formato brasileiro é DIA/MÊS, então o SEGUNDO número só pode ser mês válido se for de 1 a 12. Se o SEGUNDO número for MAIOR que 12 (como em "01/27", onde 27 não é mês nenhum), não é dia/mês — é quase certamente MÊS/ANO abreviado: "01/27" = janeiro de 2027, NUNCA "27 de janeiro". Se for usar essa data na resposta, escreva por extenso COM O ANO (ex: "em janeiro de 2027"), nunca deixe o ano implícito quando o lead mencionou um.
 
