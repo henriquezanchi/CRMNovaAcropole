@@ -27,7 +27,7 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin, NOME_TABELA_LEADS } from "../_shared/supabaseAdmin.ts";
 import { buscarExemplosEstilo } from "../_shared/exemplosEstilo.ts";
 import { buscarListaFiliais } from "../_shared/filiaisInfo.ts";
-import { montarTabelaDiasSemana } from "../_shared/calendario.ts";
+import { montarTabelaDiasSemana, adicionarMeses } from "../_shared/calendario.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const MODELO = "claude-haiku-4-5-20251001";
@@ -212,6 +212,18 @@ Por fim, classifique o ANDAMENTO desta conversa em UMA destas categorias, só se
 Responda SOMENTE com um JSON válido, sem texto antes ou depois, no formato exato: {"sugestao": "..." ou null, "lembrete_sugerido": {"data": "...", "motivo": "..."} ou null, "tag_sugerida": "interessado"|"objecao"|"sem_interesse"|"ja_aluno"|null}`;
 }
 
+// Pedido do usuário (2026-10-01): "quando a pessoa disser que não pode
+// agora, mas não der um prazo, crie um lembrete para 6 meses" — a IA só
+// decide a CATEGORIA (ela já faz isso); a data em si nunca é calculada
+// pela IA, sempre por código (ver adicionarMeses(), _shared/calendario.ts).
+const MESES_LEMBRETE_PADRAO_OBJECAO = 6;
+function aplicarLembretePadraoObjecaoSemPrazo(resultado: { lembreteData: string | null; lembreteMotivo: string | null; tagSugerida: string | null }, hojeISO: string) {
+    if (resultado.tagSugerida === "objecao" && !resultado.lembreteData) {
+        resultado.lembreteData = adicionarMeses(hojeISO, MESES_LEMBRETE_PADRAO_OBJECAO);
+        resultado.lembreteMotivo = "Disse que não pode participar agora, sem dar um prazo — lembrete padrão de 6 meses pra tentar de novo.";
+    }
+}
+
 async function sugerirUma(contexto: string, contextoCRM: string, ultimaMensagem: string, exemplos: string, hojeISO: string): Promise<{ sugestao: string | null; lembreteData: string | null; lembreteMotivo: string | null; tagSugerida: string | null; erro?: string; debugBruto?: string }> {
     if (!ANTHROPIC_API_KEY) return { sugestao: null, lembreteData: null, lembreteMotivo: null, tagSugerida: null, erro: "sem_anthropic_api_key" };
     let bruto = "";
@@ -268,7 +280,9 @@ Deno.serve(async (req) => {
             if (setJaClassificadas.has(item.mensagem_id)) continue;
             const contexto = await montarContexto(item.pessoaIdentificador);
             const contextoCRM = await montarContextoCRM(item.pessoaIdentificador, item.filial, `${contexto}\n${item.corpo_texto}`);
-            resultadosDebug.push({ corpo_texto: item.corpo_texto, contextoCRM, ...(await sugerirUma(contexto, contextoCRM, item.corpo_texto, exemplos, hojeISO)) });
+            const resultadoDebug = await sugerirUma(contexto, contextoCRM, item.corpo_texto, exemplos, hojeISO);
+            aplicarLembretePadraoObjecaoSemPrazo(resultadoDebug, hojeISO);
+            resultadosDebug.push({ corpo_texto: item.corpo_texto, contextoCRM, ...resultadoDebug });
         }
         return json({ ok: true, debug: resultadosDebug });
     }
@@ -295,6 +309,7 @@ Deno.serve(async (req) => {
             console.warn("Sugestão não gerada (erro técnico, vai tentar de novo na próxima rodada):", resultado.erro);
             continue;
         }
+        aplicarLembretePadraoObjecaoSemPrazo(resultado, hojeISO);
 
         const { error: erroInsert } = await supabaseAdmin.from("sugestoes_resposta_wpp").insert({
             pessoaIdentificador: item.pessoaIdentificador,

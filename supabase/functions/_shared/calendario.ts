@@ -43,3 +43,17 @@ export function montarTabelaDiasSemana(hojeISO: string, dias = 14): string {
 
     return `Hoje é ${diaSemanaHoje}, ${hojeISO}. Calendário dos próximos ${dias} dias, JÁ CALCULADO — use esta tabela pra QUALQUER referência de dia da semana (ex: "próxima quinta", "sexta que vem", "semana que vem", inclusive uma promessa vaga feita numa mensagem ANTERIOR da conversa, tipo "teremos outra oportunidade na próxima quinta", que o lead só confirmou agora com um "sim"). NUNCA calcule dia da semana de cabeça — é fácil errar por alguns dias, use SEMPRE a linha certa desta tabela:\n${linhas.join("\n")}`;
 }
+
+// Pedido do usuário (2026-10-01): "quando a pessoa disser que não pode
+// agora, mas não der um prazo, crie um lembrete para 6 meses" — mesmo
+// princípio de sempre (nunca deixar a IA calcular data sozinha): o
+// código soma os meses de forma determinística, a IA só precisa DECIDIR
+// a categoria (objeção/não pode ir SEM prazo específico), nunca a conta.
+// `new Date(Date.UTC(...))` já normaliza mês/dia fora do intervalo
+// normal sozinho (ex: mês 13 vira janeiro do ano seguinte), então somar
+// meses é só deslocar o índice do mês, sem precisar de laço nenhum.
+export function adicionarMeses(hojeISO: string, meses: number): string {
+    const [ano, mes, dia] = hojeISO.split("-").map(Number);
+    const d = new Date(Date.UTC(ano, mes - 1 + meses, dia, 12));
+    return d.toISOString().slice(0, 10);
+}

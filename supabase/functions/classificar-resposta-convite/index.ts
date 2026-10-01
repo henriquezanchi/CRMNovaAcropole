@@ -25,7 +25,7 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin, NOME_TABELA_LEADS } from "../_shared/supabaseAdmin.ts";
 import { buscarExemplosEstilo } from "../_shared/exemplosEstilo.ts";
 import { buscarListaFiliais } from "../_shared/filiaisInfo.ts";
-import { montarTabelaDiasSemana } from "../_shared/calendario.ts";
+import { montarTabelaDiasSemana, adicionarMeses } from "../_shared/calendario.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const MODELO = "claude-haiku-4-5-20251001";
@@ -199,6 +199,18 @@ Além disso, verifique se o LEAD mencionou explicitamente um período/data FUTUR
 Responda SOMENTE com um JSON válido, sem texto antes ou depois, no formato exato: {"categoria": "...", "sugestao_resposta": "..." ou null, "lembrete_sugerido": {"data": "...", "motivo": "..."} ou null}`;
 }
 
+// Pedido do usuário (2026-10-01): "quando a pessoa disser que não pode
+// agora, mas não der um prazo, crie um lembrete para 6 meses" — mesmo
+// fix de sugerir-resposta-whatsapp, a data é SEMPRE calculada por código
+// (adicionarMeses(), _shared/calendario.ts), nunca pela IA.
+const MESES_LEMBRETE_PADRAO_NAO_PODE_IR = 6;
+function aplicarLembretePadraoNaoPodeIrSemPrazo(resultado: { categoria: string; lembreteData: string | null; lembreteMotivo: string | null }, hojeISO: string) {
+    if (resultado.categoria === "nao_pode_ir" && !resultado.lembreteData) {
+        resultado.lembreteData = adicionarMeses(hojeISO, MESES_LEMBRETE_PADRAO_NAO_PODE_IR);
+        resultado.lembreteMotivo = "Disse que não pode ir a este evento, sem dar um prazo pra retomar contato — lembrete padrão de 6 meses.";
+    }
+}
+
 async function classificarUma(item: Candidata, historico: string, dados: DadosEvento, exemplos: string, hojeISO: string): Promise<{ categoria: string; sugestao_resposta: string | null; lembreteData: string | null; lembreteMotivo: string | null; debugBruto?: string; debugErro?: string }> {
     if (!ANTHROPIC_API_KEY) return { categoria: "ambiguo", sugestao_resposta: null, lembreteData: null, lembreteMotivo: null, debugErro: "sem_anthropic_api_key" };
     try {
@@ -261,7 +273,9 @@ Deno.serve(async (req) => {
         for (const item of candidatas as Candidata[]) {
             const historico = await montarHistorico(item.pessoaIdentificador);
             const dados = await buscarDadosEvento(item.evento_id, `${historico}\n${item.corpo_texto}`);
-            resultadosDebug.push({ corpo_texto: item.corpo_texto, ...(await classificarUma(item, historico, dados, exemplos, hojeISO)) });
+            const resultadoDebug = await classificarUma(item, historico, dados, exemplos, hojeISO);
+            aplicarLembretePadraoNaoPodeIrSemPrazo(resultadoDebug, hojeISO);
+            resultadosDebug.push({ corpo_texto: item.corpo_texto, ...resultadoDebug });
         }
         return json({ ok: true, debug: resultadosDebug });
     }
@@ -283,6 +297,7 @@ Deno.serve(async (req) => {
             console.warn("Classificação não gerada (erro técnico, vai tentar de novo na próxima rodada):", resultado.debugErro);
             continue;
         }
+        aplicarLembretePadraoNaoPodeIrSemPrazo(resultado, hojeISO);
 
         const { error: erroInsert } = await supabaseAdmin.from("classificacoes_resposta_convite").insert({
             pessoaIdentificador: item.pessoaIdentificador,
