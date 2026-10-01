@@ -5624,6 +5624,65 @@ filial — não pelo cron).
   AMBIENTE REAL onde vai rodar (aqui, GitHub Actions) antes de assumir
   que "funciona" — testar só localmente (`C:\Scrapper`) não basta.
 
+#### Agendamento real do Ulisses via API — 2 Tarefas Agendadas do Windows (2026-10-01)
+
+Pedido do usuário: "queria criar um cron pra rodar diariamente (acho que
+já temos isso) e outro para rodar a cada 6 horas na semana do evento,
+sem a cada hora nos dois dias que antecedem o evento. Isso ajuda a
+manter o SDR acompanhando o resultado do trabalho em tempo real".
+
+**Corrigindo a suposição "já temos isso"**: o cron diário de 5h (pg_cron,
+`migracao_agendamento_mercurio_pgcron.sql`) só cobre o MERCÚRIO —
+Inscrições via API do Ulisses foi DESLIGADA de dentro do GitHub Actions
+(ver bloco acima, "CORREÇÃO GRAVE") porque o Cloudflare bloqueia IP de
+datacenter até pra chamada HTTPS pura. Até esta sessão, "diário" pro
+Ulisses só acontecia se alguém clicasse manualmente (botão no CRM, `.bat`,
+ou `npm run ulisses-api-local`) — nunca foi automático de verdade.
+
+- **Quanto tempo leva** (medido com dado real, 2 rodadas completas no
+  mesmo dia): sincronizar as 5 filiais (catálogo de eventos + Inscrições +
+  comparecimento + dedupe de Leads a Tratar) leva entre **~3 e ~5
+  minutos** — rodar isso a cada 6h (ou mesmo a cada hora) é um custo
+  desprezível de tempo/API.
+- **2 Tarefas Agendadas do Windows criadas em `C:\Scrapper`**
+  (`Register-ScheduledTask`, rodam como o usuário logado — "Run only
+  when user is logged on", sem senha armazenada):
+  1. **"CRM - Ulisses Diario"** — todo dia às 05:30 (logo depois do
+     Mercúrio), roda `sincronizar-ulisses-api-local.mjs` incondicional,
+     todas as filiais. Preenche a lacuna do "diário" que faltava.
+  2. **"CRM - Ulisses 6h Semana Evento"** — dispara a cada 6h, o ano
+     inteiro, rodando o script NOVO `scraper/ulisses-api-se-evento-proximo.mjs`.
+- **`ulisses-api-se-evento-proximo.mjs`, NOVO**: em vez de tentar fazer o
+  Windows Task Scheduler decidir dinamicamente "estamos perto de um
+  evento?" (ele não enxerga nosso banco), o AGENDAMENTO fica fixo e
+  simples (sempre a cada 6h) e é o PRÓPRIO SCRIPT que decide, a cada
+  disparo, se vale a pena sincronizar de verdade: consulta `eventos`
+  (`ativo=true`, `data` entre hoje e hoje+7 dias, qualquer filial) — sem
+  nenhum evento na janela, é um no-op quase instantâneo (1 query leve);
+  achando, roda a MESMA sincronização completa de sempre
+  (`executarSomenteUlissesApi()`, reaproveitada). Janela de **7 dias**
+  cobre "a semana do evento" inteira, INCLUINDO os 2 dias finais — que
+  continuam em 6h, nunca escalando pra hora em hora (pedido explícito do
+  usuário: "sem a cada hora nos dois dias que antecedem o evento").
+  Considera QUALQUER evento ativo (não só "Abertura de Turma") — o pedido
+  é acompanhar captação em geral, não um tipo específico.
+- **Testado ao vivo, ponta a ponta, em produção**: a lógica da janela de
+  7 dias foi confirmada por SQL direto (achou corretamente os eventos de
+  HOJE, 01/10, em 3 filiais); o script novo foi rodado de verdade em
+  `C:\Scrapper` — detectou o evento próximo e disparou a sincronização
+  completa das 5 filiais com sucesso (mesmo resultado dos 2 testes reais
+  anteriores do dia). As 2 Tarefas Agendadas foram registradas e
+  confirmadas com `Get-ScheduledTask`/`Get-ScheduledTaskInfo`
+  (`NextRunTime` correto nas duas).
+- **Achado incidental, não corrigido nesta rodada**: `filtrarEmails()`
+  (comparecimento) voltou a falhar com `400 "Selecione pelo menos um
+  filtro..."` numa das 3 rodadas reais de hoje (a de 14:13), mas funcionou
+  normal 8 minutos depois (14:21, 32-50 "atualizado(s) compareceu" por
+  filial) — mesmo padrão de instabilidade do backend do Ulisses já
+  documentado antes (ver seção "RESOLVIDO (2026-09-30)" acima); as
+  Inscrições em si (o que importa pro acompanhamento em tempo real pedido
+  aqui) funcionaram nas 3 rodadas, sem exceção.
+
 #### Bug real: evento duplicado quando a data antiga estava ERRADA (2026-09-21)
 
 Achado pelo usuário comparando 3 números diferentes pra "Novas turmas do
