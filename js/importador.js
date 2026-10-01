@@ -1629,7 +1629,7 @@ async function confirmarEnviarImportacao() {
     while (true) {
         const { data, error } = await window.supabaseClient
             .from(NOME_TABELA)
-            .select('pessoaIdentificador, pessoaNome, tags, funil_agencia, resumo_ia, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, pessoaStatus, telemarketingStatus, eventoNome, eventoData, historico_eventos, motivo_saida, data_saida, matricula_mercurio')
+            .select('pessoaIdentificador, pessoaNome, tags, funil_agencia, resumo_ia, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, pessoaStatus, telemarketingStatus, eventoNome, eventoData, historico_eventos, motivo_saida, data_saida, matricula_mercurio, data_matricula')
             .eq('filial', resultadoImportacao.filial)
             .order('pessoaIdentificador', { ascending: true })
             .range(inicio, inicio + passo - 1);
@@ -1810,6 +1810,7 @@ async function confirmarEnviarImportacao() {
     // seria detectada de novo — mas a tag antiga continua lá).
     const TAG_RECUPERADO = 'Recuperado';
     let contRecuperados = 0;
+    let contNovasMatriculasDetectadas = 0;
 
     // Leads NOVOS (sem registro anterior) vão todos pra primeira coluna do
     // funil, COM ou SEM telefone — quem não tem telefone não fica mais
@@ -1882,6 +1883,29 @@ async function confirmarEnviarImportacao() {
                 contRecuperados++;
             }
 
+            // Bug real GRAVE achado numa avaliação de conversão
+            // (2026-10-01): 505 de 507 Ativos reais não tinham
+            // `data_matricula` preenchida — esse campo só era setado pelo
+            // fluxo manual (marcar "Matriculado" no modal de Participantes,
+            // ou a importação de matrícula via print), NUNCA pela
+            // importação automática diária do Mercúrio, que é o caminho
+            // real por onde quase toda matrícula entra. Resultado: o
+            // relatório "Matrículas por Mês" e o KPI "Novas Matrículas" do
+            // Dashboard ficavam cegos pra quase tudo que acontece de
+            // verdade — sem como saber se a conversão está melhorando ou
+            // piorando. Mesmo princípio de "Recuperado" acima (comparar
+            // tags ANTES/DEPOIS desta importação): quem NÃO estava "Ativo"
+            // antes (nem novo nem recuperando de Inativo) e passa a estar
+            // agora ganha `data_matricula = hoje`, SÓ se ainda não tiver
+            // nenhuma data gravada (nunca sobrescreve uma data mais
+            // precisa já capturada pelo fluxo manual/print).
+            const estavaAtivo = tagsAntigas.includes('Ativo') || tagsAntigas.includes('Aluno Ativo');
+            let dataMatriculaFinal = existente.data_matricula || null;
+            if (!estavaAtivo && agoraAtivo && !dataMatriculaFinal) {
+                dataMatriculaFinal = new Date().toISOString().slice(0, 10);
+                contNovasMatriculasDetectadas++;
+            }
+
             return {
                 ...leadFinal,
                 tags: JSON.stringify(tagsFinais),
@@ -1892,6 +1916,7 @@ async function confirmarEnviarImportacao() {
                 // não tiver uma nova pra contribuir — nunca reseta pra
                 // null só porque a planilha desta vez não tinha a coluna.
                 matricula_mercurio: leadFinal.matricula_mercurio || existente.matricula_mercurio || null,
+                data_matricula: dataMatriculaFinal,
             };
         }
 
@@ -1900,6 +1925,9 @@ async function confirmarEnviarImportacao() {
 
     if (contRecuperados > 0) {
         logImport(`${contRecuperados} lead(s) estavam Inativos e voltaram a ser Ativos nesta importação — marcados com a tag "Recuperado".`, 'ok');
+    }
+    if (contNovasMatriculasDetectadas > 0) {
+        logImport(`${contNovasMatriculasDetectadas} lead(s) viraram Ativo pela 1ª vez nesta importação — "data_matricula" gravada como hoje (alimenta o relatório "Matrículas por Mês").`, 'ok');
     }
 
     // Rede de segurança: um upsert com `pessoaIdentificador` REPETIDO no
