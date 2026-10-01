@@ -14,6 +14,7 @@
     "testar-ulisses-api": "node --env-file-if-exists=.env testar-ulisses-api.js",
     "ulisses-api-local": "node sincronizar-ulisses-api-local.mjs",
     "ulisses-api-se-evento-proximo": "node ulisses-api-se-evento-proximo.mjs",
+    "ulisses-api-reta-final": "node ulisses-api-reta-final-evento.mjs",
     "abrir-inscricao-assistida": "node abrir-inscricao-assistida.js",
     "run": "node run.js"
   },
