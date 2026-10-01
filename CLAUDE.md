@@ -3264,9 +3264,14 @@ uso principal do CRM é resgate de leads frios.
   (5 variáveis: nome/atendente/filial/tipo-do-evento/nome-do-evento —
   quem participou de algo pelo Ulisses e nunca foi aluno),
   `resgate_ex_aluno` (3 variáveis: nome/atendente/filial — ex-aluno
-  inativo) e `contato_aluno_ativo` (4 variáveis: nome/atendente/filial/
+  inativo), `contato_aluno_ativo` (4 variáveis: nome/atendente/filial/
   evento — convite geral pro aluno atual, atualizados/confirmados
-  2026-09-10 a partir do texto exato submetido na Meta).
+  2026-09-10 a partir do texto exato submetido na Meta) e
+  `convite_palestra` (5 variáveis: nome/atendente/filial/evento/data —
+  NOVO 2026-10-01, cadastrado a partir de print do usuário; **enviado
+  pra análise na Meta mas ainda NÃO confirmado como aprovado** — pode
+  falhar com "template não encontrado" até a aprovação sair; conferir
+  status em "Gerenciar modelos" antes de usar em produção).
   - **`idioma` por template** (campo novo em cada entrada de
     `TEMPLATES_WHATSAPP`, padrão `'pt_BR'` quando omitido) — precisa
     bater EXATO com o "Selecione o idioma" registrado na criação do
@@ -5396,6 +5401,18 @@ precisar mexer em nada do lado do agendamento/Edge Functions.
        usar `["TODOS"]` nos 3 e filtrar `compareceu` DO NOSSO LADO (pelo
        campo `emailEventos[].compareceu` de cada pessoa devolvida), em vez
        de arriscar um valor de enum nunca documentado.
+  - **Correção real do Célio (2026-09-30, 22:24-22:25)**: `["TODOS"]`
+    pra `ligacoes` não é seguro em toda chamada — ele reportou de volta,
+    direto do próprio servidor: `"FiltroDTO.getLigacoes() is null"`, com
+    a instrução explícita `"Passa um array vazio na propriedade
+    'ligacoes'"`. Ou seja, em pelo menos alguma combinação de
+    evento/filial, o valor `"TODOS"` especificamente nesse array não é
+    reconhecido como enum válido do lado deles e vira `null`, quebrando
+    com `NullPointerException` (mesma classe de erro do
+    `/facade/emails/{eventoId}` original). Corrigido só pra `ligacoes`
+    (único array que ele reportou) — `filtrarEmails()` agora manda
+    `ligacoes: []`, mantendo `alunos`/`comparecimentos` como `["TODOS"]`
+    (já confirmados funcionando). Sincronizado em `C:\Scrapper` também.
   - **Implementado**: `ulisses-api.js` ganhou `filtrarEmails(eventoId,
     filialId)`; nova coluna `eventos.evento_id_ulisses`
     (`migracao_evento_id_ulisses.sql`, preenchida por

@@ -104,6 +104,26 @@ const TEMPLATES_WHATSAPP = [
             { chave: null, label: 'evento/motivo (com artigo, ex: uma Palestra)' },
         ],
     },
+    // Enviado pra análise na Meta em 2026-10-01 — AINDA NÃO APROVADO no
+    // momento em que foi cadastrado aqui (print do usuário mostrava o
+    // botão "Enviar para análise" ainda visível). Convite genérico pra
+    // evento (não só "Palestra", apesar do nome técnico — {{4}}/{{5}} são
+    // livres, cobrem qualquer tipo/data), próximo da estrutura de
+    // `contato_inicial`. Pode continuar falhando com "template não
+    // encontrado" até a Meta aprovar — reconferir status em "Gerenciar
+    // modelos" no Business Manager antes de usar em produção.
+    {
+        nome: 'convite_palestra',
+        label: 'Convite para evento',
+        corpoAprovado: 'Olá, {{1}}!\n\nAqui quem fala é {{2}}, da Nova Acrópole {{3}}. Tudo bem?\n\nEstou entrando em contato para te convidar para {{4}} que deve acontecer no próximo dia {{5}}.\n\nPosso enviar mais detalhes sobre isso?',
+        variaveis: [
+            { chave: 'nome', label: 'nome do lead' },
+            { chave: 'atendente', label: 'atendente' },
+            { chave: 'filial', label: 'filial (com preposição)' },
+            { chave: null, label: 'evento (com artigo, ex: a Abertura de Turma)' },
+            { chave: null, label: 'data (ex: 01/10)' },
+        ],
+    },
 ];
 
 // Devolve "do Jardim América"/"de Barra do Garças" pra uma filial

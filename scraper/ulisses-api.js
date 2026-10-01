@@ -107,23 +107,23 @@ export const emailsDoEvento = (eventoId) => chamarApi(`/facade/emails/${eventoId
 // vivo contra produção (eventoId=24343, filialId=132): funciona
 // perfeitamente via M2M e devolve exatamente os mesmos dados
 // (nome/telefone/e-mail + `emailEventos[].compareceu`/`.id`) que
-// `emailsDoEvento()` deveria ter devolvido. 2 detalhes não-óbvios,
-// confirmados por tentativa e erro (a API não documenta valores válidos
-// pros 3 arrays de filtro no Swagger):
-// 1. `filialId` é OBRIGATÓRIO — sem ele, 403 "Este usuário não tem
-//    permissão de acesso à esta filial" (mesmo erro de permissão já
-//    visto em outros endpoints, não um bug novo).
-// 2. `alunos`/`comparecimentos`/`ligacoes` precisam ter PELO MENOS 1
-//    valor cada (400 "Selecione pelo menos um filtro..." se vier vazio)
-//    — mas o valor em si não parece validado contra um enum de verdade:
-//    `["TODOS"]` funciona e devolve TODO MUNDO inscrito no evento,
-//    então filtramos o `compareceu` real DO NOSSO LADO (por
-//    `emailEventos[].compareceu`), em vez de confiar em valores de enum
-//    que nunca foram confirmados contra a documentação real.
+// `emailsDoEvento()` deveria ter devolvido.
+// `filialId` é OBRIGATÓRIO — sem ele, 403 "Este usuário não tem
+// permissão de acesso à esta filial" (mesmo erro de permissão já visto
+// em outros endpoints, não um bug novo).
+// `ligacoes: []` — o Célio reportou de volta, direto do lado dele
+// (2026-09-30, 22:24-22:25): `FiltroDTO.getLigacoes() is null`, com a
+// instrução explícita "Passa um array vazio na propriedade 'ligacoes'".
+// Ou seja: `['TODOS']` (testado antes, funcionando pro caso específico
+// de eventoId=24343) não é universalmente seguro — em outras chamadas,
+// o valor "TODOS" nesse array específico acaba virando `null` do lado
+// deles (não um enum reconhecido) e quebra com NullPointerException.
+// Corrigido só pra `ligacoes` (a única que ele reportou) — `alunos`/
+// `comparecimentos` continuam `['TODOS']`, já confirmados funcionando.
 export const filtrarEmails = (eventoId, filialId) => chamarApi('/facade/filtrarEmails', {
     method: 'POST',
     esperado: 'precisa de scope autorizado pela Acrópole Brasil',
-    corpo: { eventoId, filialId, alunos: ['TODOS'], comparecimentos: ['TODOS'], ligacoes: ['TODOS'], ordenacao: '', pesquisa: '' },
+    corpo: { eventoId, filialId, alunos: ['TODOS'], comparecimentos: ['TODOS'], ligacoes: [], ordenacao: '', pesquisa: '' },
 });
 export const emailPorId = (id) => chamarApi(`/facade/email/${id}`, { esperado: 'precisa de scope autorizado pela Acrópole Brasil' });
 export const csvInscricoes = (filialId) => chamarApi(`/facade/csvInscricoes/${filialId}`, { esperado: 'precisa de scope autorizado pela Acrópole Brasil', texto: true });
