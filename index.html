@@ -810,7 +810,7 @@
                 <!-- HISTÓRICO — saída (só aparece pra leads Inativos) + histórico escolar de eventos -->
                 <div class="drawer-gaveta">
                     <div class="drawer-gaveta-header" onclick="toggleGavetaLead('historico')">
-                        <span class="drawer-gaveta-titulo"><i class="fa-solid fa-chevron-right" id="drawer-gaveta-seta-historico"></i> <i class="fa-solid fa-clock-rotate-left"></i> Histórico Escolar</span>
+                        <span class="drawer-gaveta-titulo"><i class="fa-solid fa-chevron-right" id="drawer-gaveta-seta-historico"></i> <i class="fa-solid fa-clock-rotate-left"></i> Histórico</span>
                     </div>
                     <div class="drawer-gaveta-body" id="drawer-gaveta-body-historico" style="display:none;">
                         <div id="drawer-motivo-bloco" style="display:none; margin-bottom:10px;">
@@ -828,6 +828,12 @@
                             </div>
                         </div>
                         <div class="info-box"><ul id="drawer-history" style="padding-left: 14px; color: var(--text-muted); font-size: 11px; line-height: 1.6;"></ul></div>
+                        <!-- Convites/vínculos de evento ANTIGOS (> 3 meses) — saíram da
+                             gaveta "Eventos (Convites)" pra cá, pedido do usuário
+                             (2026-10-01): "tem muitos eventos, vamos mostrar só os
+                             futuros [e recentes]. Os anteriores então no histórico".
+                             Populado por renderizarEventosAntigosDoLead() (js/eventos.js). -->
+                        <div id="drawer-eventos-antigos-lista" style="display:none;"></div>
                     </div>
                 </div>
             </div>

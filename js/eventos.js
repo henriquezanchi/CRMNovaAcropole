@@ -1077,11 +1077,24 @@ async function removerParticipantesEmMassa() {
 // Diferente do modal de Participantes (por evento), aqui é a mesma
 // informação vista pela ótica do lead.
 // ==========================================
-let eventosDoLeadAtual = []; // linhas de evento_leads (com o evento embutido) do lead na gaveta
+let eventosDoLeadAtual = []; // futuros + recentes (últimos 3 meses) — mostrados na gaveta "Eventos (Convites)"
+let eventosAntigosDoLeadAtual = []; // passados há mais de 3 meses — mostrados dentro da gaveta "Histórico"
 let pessoaIdGavetaEventos = null;
 
 const ROTULOS_RESPOSTA_CONVITE = { pendente: 'Pendente', confirmado: 'Confirmado', recusado: 'Recusado' };
 const CLASSES_RESPOSTA_CONVITE = { pendente: 'tag-warning', confirmado: 'tag-ativo', recusado: 'tag-error' };
+
+// Corte de "recente" — pedido do usuário (2026-10-01): "nesse tela tem
+// muitos eventos, vamos mostrar só os futuros. Os anteriores então no
+// histórico" + logo em seguida "deixe os eventos dos últimos meses ali,
+// para ficar mais fácil ver se a pessoa está frequentando a escola
+// ultimamente" — ou seja, a gaveta principal continua mostrando
+// FUTUROS + RECENTES (não só futuros puro), e só o que é realmente
+// antigo (mais de ~3 meses) sai de lá e vai pra gaveta "Histórico".
+// 90 dias — mesmo corte de "recência" já usado em outro lugar do projeto
+// (sincronizarEventosUlissesApi(), filtro de eventos "recentes demais pra
+// valer a pena processar").
+const DIAS_EVENTO_RECENTE_GAVETA = 90;
 
 async function carregarEventosDoLead(pessoaId) {
     const container = document.getElementById('drawer-eventos-lista');
@@ -1099,6 +1112,7 @@ async function carregarEventosDoLead(pessoaId) {
         console.warn('Não foi possível carregar eventos do lead (rode migracao_evento_leads.sql se ainda não rodou).', error);
         container.innerHTML = '<span style="font-size:11px; color:var(--text-muted);">Indisponível — rode migracao_evento_leads.sql.</span>';
         eventosDoLeadAtual = [];
+        eventosAntigosDoLeadAtual = [];
         return;
     }
 
@@ -1106,16 +1120,64 @@ async function carregarEventosDoLead(pessoaId) {
     // o lead está inscrito — a ordem antiga (só por criado_em) misturava
     // tudo, um evento futuro relevante podia ficar escondido embaixo de
     // vários passados vinculados há mais tempo. Futuros primeiro (o mais
-    // próximo no topo), depois passados (o mais recente primeiro) — mesmo
-    // padrão já usado em renderizarListaEventos() na Agenda.
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    // próximo no topo), depois recentes (o mais recente primeiro) — mesmo
+    // padrão já usado em renderizarListaEventos() na Agenda. Eventos
+    // antigos (> DIAS_EVENTO_RECENTE_GAVETA) saem desta lista por
+    // completo — ver renderizarEventosAntigosDoLead(), gaveta "Histórico".
+    const hoje = new Date();
+    const hojeISO = hoje.toISOString().slice(0, 10);
+    const limiteRecenteISO = new Date(hoje.getTime() - DIAS_EVENTO_RECENTE_GAVETA * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const todos = data || [];
     const futuros = todos.filter(el => el.eventos && el.eventos.data >= hojeISO)
         .sort((a, b) => a.eventos.data.localeCompare(b.eventos.data));
-    const passados = todos.filter(el => !el.eventos || el.eventos.data < hojeISO)
+    const recentes = todos.filter(el => el.eventos && el.eventos.data < hojeISO && el.eventos.data >= limiteRecenteISO)
         .sort((a, b) => (b.eventos?.data || '').localeCompare(a.eventos?.data || ''));
-    eventosDoLeadAtual = [...futuros, ...passados];
+    const antigos = todos.filter(el => !el.eventos || el.eventos.data < limiteRecenteISO)
+        .sort((a, b) => (b.eventos?.data || '').localeCompare(a.eventos?.data || ''));
+    eventosDoLeadAtual = [...futuros, ...recentes];
+    eventosAntigosDoLeadAtual = antigos;
     renderizarEventosDoLead();
+    renderizarEventosAntigosDoLead();
+}
+
+// Compartilhado entre a lista principal (futuros+recentes) e a lista de
+// antigos dentro de "Histórico" — mesmo item, mesmas ações (editar
+// resposta/remover continuam funcionando pelo `el.id`, independente de
+// em qual das 2 gavetas o item está sendo mostrado agora).
+function htmlItemEventoDoLead(el, hojeISO) {
+    const ev = el.eventos;
+    const nome = ev ? ev.nome : `Evento ${el.evento_id} (removido)`;
+    const data = ev ? formatarDataEvento(ev.data) : '';
+    const ehFuturo = !!(ev && ev.data >= hojeISO);
+    const compareceuTxt = el.compareceu === true ? ' · Compareceu' : (el.compareceu === false ? ' · Não compareceu' : '');
+    const matriculadoTxt = el.matriculado === true ? ' · Matriculado 🎉' : '';
+    // Só dá pra "acessar" o evento se ele ainda existir (não removido) —
+    // pedido do usuário (2026-09-17): clicar no nome abre a Agenda já
+    // no modal de Participantes DESTE evento, em vez de só mostrar texto.
+    const nomeHtml = ev
+        ? `<a href="javascript:void(0)" onclick="abrirEventoDaGavetaLead(${el.evento_id})" title="Abrir este evento na Agenda"><strong>${escapeHTML(nome)}</strong></a>`
+        : `<strong>${escapeHTML(nome)}</strong>`;
+    return `
+        <div class="drawer-evento-item">
+            <div class="drawer-evento-item-info">
+                ${ehFuturo ? '<span class="tag tag-jornada" style="margin-right:4px;" title="Ainda vai acontecer"><i class="fa-solid fa-calendar-day"></i> Futuro</span>' : ''}
+                ${el.origem === 'ulisses'
+                    ? '<span class="tag part-inscrito-ulisses" style="margin-right:4px;" title="Inscrição real, confirmada pelo Ulisses"><i class="fa-solid fa-check-double"></i> Inscrito no Ulisses</span>'
+                    : '<span class="tag part-convidado-crm" style="margin-right:4px;" title="Convite/pendência criada por NÓS aqui no CRM — a pessoa ainda NÃO se inscreveu de verdade no Ulisses"><i class="fa-solid fa-clock"></i> Convite do CRM</span>'}
+                ${nomeHtml}
+                ${data ? `<span style="color:#94a3b8;"> — ${escapeHTML(data)}</span>` : ''}
+            </div>
+            <div class="drawer-evento-item-status">
+                <select class="participante-resposta" onchange="alterarRespostaConviteNaGaveta(${el.id}, this.value)">
+                    <option value="pendente" ${el.resposta_convite === 'pendente' ? 'selected' : ''}>Não confirmado</option>
+                    <option value="confirmado" ${el.resposta_convite === 'confirmado' ? 'selected' : ''}>Confirmado</option>
+                    <option value="recusado" ${el.resposta_convite === 'recusado' ? 'selected' : ''}>Recusado</option>
+                </select>
+                ${compareceuTxt}${matriculadoTxt}
+                <button class="icon-btn danger" title="Remover convite" onclick="removerEventoDoLeadNaGaveta(${el.id})"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+        </div>
+    `;
 }
 
 function renderizarEventosDoLead() {
@@ -1123,46 +1185,35 @@ function renderizarEventosDoLead() {
     if (!container) return;
 
     if (eventosDoLeadAtual.length === 0) {
-        container.innerHTML = '<span style="font-size:11px; color:var(--text-muted);">Nenhum evento vinculado ainda.</span>';
+        container.innerHTML = '<span style="font-size:11px; color:var(--text-muted);">Nenhum evento futuro ou recente (últimos 3 meses) vinculado — veja a gaveta "Histórico" pra ver eventos mais antigos.</span>';
         return;
     }
 
     const hojeISO = new Date().toISOString().slice(0, 10);
-    container.innerHTML = eventosDoLeadAtual.map(el => {
-        const ev = el.eventos;
-        const nome = ev ? ev.nome : `Evento ${el.evento_id} (removido)`;
-        const data = ev ? formatarDataEvento(ev.data) : '';
-        const ehFuturo = !!(ev && ev.data >= hojeISO);
-        const compareceuTxt = el.compareceu === true ? ' · Compareceu' : (el.compareceu === false ? ' · Não compareceu' : '');
-        const matriculadoTxt = el.matriculado === true ? ' · Matriculado 🎉' : '';
-        // Só dá pra "acessar" o evento se ele ainda existir (não removido) —
-        // pedido do usuário (2026-09-17): clicar no nome abre a Agenda já
-        // no modal de Participantes DESTE evento, em vez de só mostrar texto.
-        const nomeHtml = ev
-            ? `<a href="javascript:void(0)" onclick="abrirEventoDaGavetaLead(${el.evento_id})" title="Abrir este evento na Agenda"><strong>${escapeHTML(nome)}</strong></a>`
-            : `<strong>${escapeHTML(nome)}</strong>`;
-        return `
-            <div class="drawer-evento-item">
-                <div class="drawer-evento-item-info">
-                    ${ehFuturo ? '<span class="tag tag-jornada" style="margin-right:4px;" title="Ainda vai acontecer"><i class="fa-solid fa-calendar-day"></i> Futuro</span>' : ''}
-                    ${el.origem === 'ulisses'
-                        ? '<span class="tag part-inscrito-ulisses" style="margin-right:4px;" title="Inscrição real, confirmada pelo Ulisses"><i class="fa-solid fa-check-double"></i> Inscrito no Ulisses</span>'
-                        : '<span class="tag part-convidado-crm" style="margin-right:4px;" title="Convite/pendência criada por NÓS aqui no CRM — a pessoa ainda NÃO se inscreveu de verdade no Ulisses"><i class="fa-solid fa-clock"></i> Convite do CRM</span>'}
-                    ${nomeHtml}
-                    ${data ? `<span style="color:#94a3b8;"> — ${escapeHTML(data)}</span>` : ''}
-                </div>
-                <div class="drawer-evento-item-status">
-                    <select class="participante-resposta" onchange="alterarRespostaConviteNaGaveta(${el.id}, this.value)">
-                        <option value="pendente" ${el.resposta_convite === 'pendente' ? 'selected' : ''}>Não confirmado</option>
-                        <option value="confirmado" ${el.resposta_convite === 'confirmado' ? 'selected' : ''}>Confirmado</option>
-                        <option value="recusado" ${el.resposta_convite === 'recusado' ? 'selected' : ''}>Recusado</option>
-                    </select>
-                    ${compareceuTxt}${matriculadoTxt}
-                    <button class="icon-btn danger" title="Remover convite" onclick="removerEventoDoLeadNaGaveta(${el.id})"><i class="fa-solid fa-xmark"></i></button>
-                </div>
-            </div>
-        `;
-    }).join('');
+    container.innerHTML = eventosDoLeadAtual.map(el => htmlItemEventoDoLead(el, hojeISO)).join('');
+}
+
+// Pedido do usuário (2026-10-01): eventos antigos (> 3 meses) saem da
+// gaveta principal "Eventos (Convites)" e passam a aparecer aqui dentro,
+// na gaveta "Histórico" (renomeada de "Histórico Escolar") — mesmo
+// template de item da lista principal, só que num container próprio
+// (#drawer-eventos-antigos-lista), separado da lista de
+// eventoNome/eventoData legada (#drawer-history, formato antigo " | ").
+function renderizarEventosAntigosDoLead() {
+    const container = document.getElementById('drawer-eventos-antigos-lista');
+    if (!container) return;
+
+    if (eventosAntigosDoLeadAtual.length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+    container.style.display = 'block';
+
+    const hojeISO = new Date().toISOString().slice(0, 10);
+    container.innerHTML = `
+        <div class="info-label" style="margin-top:10px;"><i class="fa-solid fa-calendar-xmark"></i> Convites de Eventos Antigos</div>
+        ${eventosAntigosDoLeadAtual.map(el => htmlItemEventoDoLead(el, hojeISO)).join('')}
+    `;
 }
 
 // Abre a Agenda já no modal de Participantes deste evento — pedido do
@@ -1192,9 +1243,13 @@ async function alterarRespostaConviteNaGaveta(id, valor) {
         .eq('id', id);
     if (error) { alert('Erro ao atualizar resposta: ' + error.message); return; }
 
-    const el = eventosDoLeadAtual.find(x => x.id === id);
+    // Pedido do usuário (2026-10-01): a lista agora é dividida em 2
+    // gavetas (futuros+recentes / antigos) — o item editado pode estar
+    // em qualquer uma das duas, então procura/atualiza/renderiza as duas.
+    const el = eventosDoLeadAtual.find(x => x.id === id) || eventosAntigosDoLeadAtual.find(x => x.id === id);
     if (el) el.resposta_convite = valor;
     renderizarEventosDoLead();
+    renderizarEventosAntigosDoLead();
     await carregarResumoParticipantes(eventosAtuais);
     renderizarListaEventos();
 }
@@ -1204,7 +1259,9 @@ async function removerEventoDoLeadNaGaveta(id) {
     const { error } = await window.supabaseClient.from(NOME_TABELA_EVENTO_LEADS).delete().eq('id', id);
     if (error) { alert('Erro ao remover: ' + error.message); return; }
     eventosDoLeadAtual = eventosDoLeadAtual.filter(el => el.id !== id);
+    eventosAntigosDoLeadAtual = eventosAntigosDoLeadAtual.filter(el => el.id !== id);
     renderizarEventosDoLead();
+    renderizarEventosAntigosDoLead();
 }
 
 // Bug real relatado pelo usuário (2026-09-17): lead novo (manual, por
@@ -1229,7 +1286,11 @@ async function abrirFormConvidarEventoNaGaveta() {
     // inscrição preenchida continua aparecendo aqui até essa data, mesmo
     // que a data do evento em si já tenha passado.
     const hojeISO = new Date().toISOString().slice(0, 10);
-    const jaVinculados = new Set(eventosDoLeadAtual.map(el => el.evento_id));
+    // Inclui eventosAntigosDoLeadAtual também (2026-10-01) — senão um
+    // evento antigo (fora da lista principal agora, ver gaveta
+    // "Histórico") deixaria de ser filtrado aqui, oferecendo "convidar"
+    // de novo pra um evento ao qual o lead já está vinculado.
+    const jaVinculados = new Set([...eventosDoLeadAtual, ...eventosAntigosDoLeadAtual].map(el => el.evento_id));
     const disponiveis = eventosAtuais
         .filter(ev => !jaVinculados.has(ev.id) && dataEfetivaLimite(ev) >= hojeISO)
         .slice()
@@ -1297,7 +1358,7 @@ async function abrirModalInscreverEvento() {
     } else {
         // Pré-seleciona o evento já vinculado (pendência nossa) mais
         // próximo, se houver algum — poupa 1 clique no caso mais comum.
-        const jaVinculadoCrm = eventosDoLeadAtual.find(el => el.origem !== 'ulisses' && disponiveis.some(d => d.id === el.evento_id));
+        const jaVinculadoCrm = [...eventosDoLeadAtual, ...eventosAntigosDoLeadAtual].find(el => el.origem !== 'ulisses' && disponiveis.some(d => d.id === el.evento_id));
         select.innerHTML = disponiveis.map(ev => `<option value="${ev.id}" ${jaVinculadoCrm && jaVinculadoCrm.evento_id === ev.id ? 'selected' : ''}>${escapeHTML(ev.nome)} — ${formatarDataEvento(ev.data)}</option>`).join('');
     }
     select.onchange = atualizarLinkInscreverEvento;
