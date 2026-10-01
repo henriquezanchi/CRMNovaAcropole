@@ -22,6 +22,15 @@
 // caso comum (>90% das conversas nunca mencionam outra unidade).
 import { supabaseAdmin } from "./supabaseAdmin.ts";
 
+// Pedido do usuário (2026-10-01): "quando colocar o endereço, coloque
+// sempre o link da localização do google maps" — mesma função usada em
+// {link_maps} nas respostas rápidas do WhatsApp Unificado
+// (resolverRespostaRapida(), js/whatsapp.js), replicada aqui pro lado
+// das Edge Functions (Deno não compartilha módulo com o navegador).
+export function linkMapsEndereco(endereco: string | null | undefined): string | null {
+    return endereco ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(endereco)}` : null;
+}
+
 function normalizarTextoDeteccaoFilial(s: string): string {
     return (s || "")
         .normalize("NFD").replace(/[̀-ͯ]/g, "")
@@ -66,7 +75,7 @@ export async function buscarListaFiliais(filialDoLead: string | null, textoParaC
     }
 
     const linhas = data
-        .map((f: any) => `- ${f.nome}${f.nome === filialDoLead ? " (filial de CADASTRO deste lead)" : ""}: ${f.nome_com_preposicao ? `fala-se "${f.nome_com_preposicao}"` : ""}${f.endereco ? `, endereço ${f.endereco}` : " (endereço não cadastrado)"}`)
+        .map((f: any) => `- ${f.nome}${f.nome === filialDoLead ? " (filial de CADASTRO deste lead)" : ""}: ${f.nome_com_preposicao ? `fala-se "${f.nome_com_preposicao}"` : ""}${f.endereco ? `, endereço ${f.endereco} (link do mapa: ${linkMapsEndereco(f.endereco)})` : " (endereço não cadastrado)"}`)
         .join("\n");
     return `Todas as unidades ativas da Nova Acrópole (use isto se o lead mencionar ou perguntar sobre uma unidade DIFERENTE da filial de cadastro dele — responda com os dados REAIS da unidade que ELE mencionou, nunca confunda com a filial de cadastro):\n${linhas}`;
 }

@@ -24,6 +24,7 @@
 // aprovado só pra isso.
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
+import { linkMapsEndereco } from "../_shared/filiaisInfo.ts";
 
 const TAMANHO_LOTE = 5;
 
@@ -85,10 +86,15 @@ Deno.serve(async (req) => {
             const nome = lead.como_prefere_ser_chamado || (lead.pessoaNome || "").split(" ")[0] || "";
             const filialInfo = mapaFiliais.get(lead.filial) || {};
             const filialFalada = filialInfo.nome_com_preposicao ? `na Nova Acrópole ${filialInfo.nome_com_preposicao}` : `na Nova Acrópole${lead.filial ? ` ${lead.filial}` : ""}`;
+            // Pedido do usuário (2026-10-01): "quando colocar o endereço,
+            // coloque sempre o link da localização do google maps" — texto
+            // livre, sem link clicável separado, então o link entra como
+            // uma frase própria logo depois do endereço.
             const endereco = filialInfo.endereco ? ` — ${filialInfo.endereco}` : "";
+            const linkMaps = filialInfo.endereco ? `\nLocalização: ${linkMapsEndereco(filialInfo.endereco)}` : "";
             const horaTxt = evento.hora ? ` às ${String(evento.hora).slice(0, 5)}` : "";
 
-            const texto = `Oi${nome ? `, ${nome}` : ""}! Passando só pra lembrar: amanhã é o dia da "${evento.nome}"${horaTxt}, aqui ${filialFalada}${endereco}. Te esperamos! 🙏`;
+            const texto = `Oi${nome ? `, ${nome}` : ""}! Passando só pra lembrar: amanhã é o dia da "${evento.nome}"${horaTxt}, aqui ${filialFalada}${endereco}.${linkMaps}\nTe esperamos! 🙏`;
 
             // Marca ANTES de saber o resultado — nunca reenvia pra sempre
             // se a chamada falhar (mesmo princípio do resto do projeto).

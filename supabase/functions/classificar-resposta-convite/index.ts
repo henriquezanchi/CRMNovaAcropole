@@ -24,7 +24,7 @@
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin, NOME_TABELA_LEADS } from "../_shared/supabaseAdmin.ts";
 import { buscarExemplosEstilo } from "../_shared/exemplosEstilo.ts";
-import { buscarListaFiliais } from "../_shared/filiaisInfo.ts";
+import { buscarListaFiliais, linkMapsEndereco } from "../_shared/filiaisInfo.ts";
 import { montarTabelaDiasSemana, adicionarMeses } from "../_shared/calendario.ts";
 import { buscarPersonaAtendente } from "../_shared/persona.ts";
 
@@ -154,7 +154,7 @@ function montarPrompt(item: Candidata, historico: string, dados: DadosEvento, ex
         `Nome: ${item.evento_nome}`,
         `Data: ${item.evento_data}`,
         dados.hora ? `Horário: ${dados.hora}` : null,
-        dados.endereco ? `Endereço: ${dados.endereco}` : null,
+        dados.endereco ? `Endereço: ${dados.endereco} (link do Google Maps: ${linkMapsEndereco(dados.endereco)} — sempre que mencionar o endereço na resposta, inclua também este link)` : null,
         dados.linkInscricao ? `Link de inscrição: ${dados.linkInscricao}` : null,
         dados.filialFalada ? `Como falar da filial: "aqui na Nova Acrópole ${dados.filialFalada}" (nunca comece a frase com "aqui do"/"aqui da")` : null,
     ].filter(Boolean).join("\n");
