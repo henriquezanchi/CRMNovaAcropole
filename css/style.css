@@ -394,7 +394,20 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .drawer-gaveta-body .info-box:not(:last-child) { margin-bottom: 10px; }
 
 /* Estrutura do Chat na Gaveta */
-.drawer-chat { display: flex; flex-direction: column; background: #efeae2; position: relative; padding: 0 !important; flex: 1; }
+/* min-width:0 (2026-10-01, bug real relatado pelo usuário: "a gaveta do
+   lead está cortando a mensagem") — sem isso, um flex item (.drawer-chat,
+   dentro da linha .drawer-info + .drawer-chat) nunca encolhe abaixo do
+   tamanho "automático" do próprio conteúdo (min-width:auto é o padrão do
+   CSS pra item de flex-row) — e uma URL bem longa sem espaço nenhum
+   (ex: link de inscrição do Ulisses com querystring) tem um "tamanho
+   mínimo de conteúdo" enorme, maior que os ~450px que sobram pro chat
+   dentro da gaveta (800px - 350px de .drawer-info). Isso empurrava
+   .drawer-chat (e a mensagem dentro dele) pra fora da gaveta e da
+   própria tela, cortando o texto sem nenhum aviso visual (sem barra de
+   rolagem, sem erro). word-wrap:break-word no próprio balão (.msg)
+   nunca resolvia sozinho, porque o problema era o CONTAINER não encolher,
+   não o balão não quebrar linha. */
+.drawer-chat { display: flex; flex-direction: column; background: #efeae2; position: relative; padding: 0 !important; flex: 1; min-width: 0; }
 /* flex-wrap (2026-09-29) — a gaveta do lead acumulou muitos botões neste
    cabeçalho (Importar Conversa/Convidar pra Evento/Nova Turma/Ver no
    WhatsApp Unificado/alterar nome) e a coluna do chat dentro da gaveta é
@@ -403,7 +416,7 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
    invisíveis à direita. Inofensivo pro cabeçalho do WhatsApp Unificado
    (painel bem mais largo, raramente chega a quebrar linha). */
 .chat-header { background: #f0f2f5; padding: 12px 20px; display: flex; align-items: center; gap: 8px 12px; border-bottom: 1px solid var(--border-color); flex-wrap: wrap; row-gap: 8px; }
-.chat-messages { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+.chat-messages { flex: 1; padding: 20px; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 /* Virou coluna (2026-09-28) pra caber a prévia de anexo (.wpp-anexo-preview)
    ACIMA da linha de ícones/input/botão — essa linha em si continua um flex
    row de sempre, só que agora dentro de um wrapper próprio (.chat-input-row),
@@ -669,7 +682,14 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .wpp-date-divider { display: flex; justify-content: center; margin: 10px 0; }
 .wpp-date-divider span { background: #e2e8f0; color: #475569; font-size: 10.5px; font-weight: 600; padding: 4px 12px; border-radius: 8px; text-transform: uppercase; }
 
-.msg { max-width: 65%; padding: 8px 12px; border-radius: 10px; font-size: 12px; line-height: 1.4; position: relative; word-wrap: break-word; }
+/* overflow-wrap:anywhere (2026-10-01) — além do min-width:0 acima (que
+   resolve o container), reforça a quebra dentro do PRÓPRIO balão: uma
+   URL longuíssima sem espaço nenhum é 1 "palavra" só pro CSS, e
+   word-wrap:break-word (sozinho) só quebra quando não há OUTRA opção de
+   quebra na linha — overflow-wrap:anywhere força a quebra em qualquer
+   ponto, garantindo que a URL fique legível (várias linhas) em vez de
+   só evitar o vazamento. */
+.msg { max-width: 65%; padding: 8px 12px; border-radius: 10px; font-size: 12px; line-height: 1.4; position: relative; word-wrap: break-word; overflow-wrap: anywhere; }
 /* Formatação de texto do WhatsApp (*negrito*/_itálico_/~tachado~/```monospace```) — ver aplicarFormatacaoWhatsApp(), js/whatsapp.js */
 .msg code { background: rgba(0,0,0,0.08); padding: 1px 4px; border-radius: 3px; font-family: "Courier New", monospace; font-size: 11px; }
 .msg-in { background: white; align-self: flex-start; border-bottom-left-radius: 2px; box-shadow: 0 1px 1px rgba(0,0,0,0.06); }
