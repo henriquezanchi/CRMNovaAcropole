@@ -14,6 +14,41 @@
 * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
 body { background-color: var(--bg-color); color: var(--text-dark); display: flex; height: 100vh; overflow: hidden; }
 
+/* Identidade visual unificada de TODOS os <select> do CRM (pedido do
+   usuário, 2026-10-01: "esses dropdown que estão mais quadrados e
+   escuros" — vários selects (filial no topbar, filtros do WhatsApp
+   Unificado, etc.) só tinham largura/padding inline, sem borda nem
+   raio definidos, caindo no visual NATIVO do navegador — quadrado,
+   cinza-escuro, sem harmonia com o resto do app, que já usa cantos
+   arredondados e bordas claras em tudo mais). Regra de ELEMENTO (baixa
+   especificidade de propósito): qualquer classe mais específica
+   (.col-ordenar-select, .filter-group select, etc.) continua
+   sobrescrevendo cor/raio/padding próprios sem conflito — aqui só
+   entra a BASE comum (arredondado, claro) + a seta customizada
+   (appearance:none esconde a seta nativa, então toda select, mesmo já
+   estilizado, precisa de uma seta própria pra não ficar sem nenhuma). */
+select {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-color: white;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='5 8 10 13 15 8'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 9px center;
+    background-size: 11px;
+    padding: 8px 28px 8px 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: inherit;
+    color: var(--text-dark);
+    outline: none;
+    cursor: pointer;
+    transition: 0.2s;
+}
+select:focus { border-color: var(--na-green); box-shadow: 0 0 0 2px rgba(0, 90, 75, 0.12); }
+select:hover { border-color: #94a3b8; }
+
 /* Sidebar */
 .sidebar { width: 70px; background: var(--na-green-dark); display: flex; flex-direction: column; align-items: center; padding: 20px 0; z-index: 10; }
 .sidebar-icon { color: rgba(255,255,255,0.6); font-size: 20px; margin-bottom: 30px; cursor: pointer; transition: 0.2s; position: relative; }
@@ -164,11 +199,12 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 /* "Organizar Quadro" por coluna (2026-09-11) — mesmo visual compacto do
    resto dos controles do cabeçalho da coluna. */
 .col-ordenar-select {
-    width: 100%; padding: 5px 8px; border: 1px solid #e2e8f0; border-radius: 6px;
-    font-size: 10px; font-weight: 600; color: var(--text-dark); background: #f8fafc;
+    width: 100%; padding: 5px 24px 5px 8px; border: 1px solid #e2e8f0; border-radius: 8px;
+    font-size: 10px; font-weight: 600; color: var(--text-dark); background-color: #f8fafc;
+    background-size: 9px; background-position: right 7px center;
     outline: none; cursor: pointer; transition: 0.2s;
 }
-.col-ordenar-select:focus { border-color: var(--na-green); background: white; }
+.col-ordenar-select:focus { border-color: var(--na-green); background-color: white; }
 .col-import-matricula-btn {
     background: #fffbeb; border: 1px dashed #fbbf24; color: #92400e; font-size: 10px; font-weight: 700;
     cursor: pointer; padding: 6px 8px; border-radius: 6px; display: flex; align-items: center; gap: 6px;
@@ -286,7 +322,7 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
     padding: 14px 24px; display: flex; align-items: center; gap: 14px; z-index: 40; flex-wrap: wrap;
     box-shadow: 0 -4px 16px rgba(0,0,0,0.15); font-size: 12px; font-weight: 600;
 }
-.bulk-action-bar select { padding: 8px 10px; border-radius: 6px; border: none; font-size: 12px; cursor: pointer; }
+.bulk-action-bar select { padding: 8px 26px 8px 10px; border-radius: 8px; border: none; font-size: 12px; cursor: pointer; }
 .bulk-action-bar .btn-secondary { background: rgba(255,255,255,0.15); color: white; border: 1px solid rgba(255,255,255,0.3); }
 .bulk-action-bar .btn-secondary:hover { background: rgba(255,255,255,0.25); }
 
@@ -448,7 +484,8 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 /* Seletor de template (janela de 24h fechada) */
 .wpp-template-picker { display: flex; flex-direction: column; gap: 8px; flex: 1; width: 100%; }
 .wpp-template-hint { font-size: 10px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
-.wpp-template-picker select, .wpp-template-picker input { padding: 8px 10px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 12px; background: white; }
+.wpp-template-picker select, .wpp-template-picker input { padding: 8px 10px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 12px; background-color: white; }
+.wpp-template-picker select { padding-right: 28px; }
 .wpp-template-vars { display: flex; flex-direction: column; gap: 6px; }
 
 /* ==========================================
@@ -586,7 +623,7 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 
 /* Barra de ações em massa do modal de Participantes — some quando nada selecionado */
 .participantes-bulk-bar { display: flex; align-items: center; gap: 10px; padding: 10px 20px; background: #f0fdf4; border-top: 1px solid #bbf7d0; flex-wrap: wrap; }
-.participantes-bulk-bar select { padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 11px; background: white; cursor: pointer; }
+.participantes-bulk-bar select { padding: 6px 24px 6px 8px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 11px; background-color: white; background-size: 9px; background-position: right 7px center; cursor: pointer; }
 
 /* Eventos (Convites) na gaveta do lead — evento_leads pela ótica do lead */
 .drawer-evento-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #f1f5f9; flex-wrap: wrap; font-size: 11px; }
@@ -1021,8 +1058,9 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .filter-group label { font-size: 11px; font-weight: 600; color: var(--text-muted); }
 .filter-group input[type="number"], .filter-group input[type="text"], .filter-group input[type="date"],
 .filter-group input[type="time"], .filter-group select {
-    padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px; outline: none; background: white; cursor: pointer;
+    padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 13px; outline: none; background-color: white; cursor: pointer;
 }
+.filter-group select { padding-right: 28px; }
 .filter-group input[type="number"], .filter-group input[type="text"], .filter-group input[type="date"], .filter-group input[type="time"] { cursor: text; }
 .filter-group input:focus, .filter-group select:focus { border-color: var(--na-green); }
 
@@ -1031,7 +1069,7 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
     border-radius: 8px; margin-bottom: 8px; background: #fafafa;
 }
 .coluna-row input[type="text"], .coluna-row input[type="email"], .coluna-row input[type="password"] { flex: 1; padding: 7px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 12px; outline: none; }
-.coluna-row select { padding: 7px 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 11px; background: white; cursor: pointer; }
+.coluna-row select { padding: 7px 24px 7px 8px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 11px; background-color: white; background-size: 9px; background-position: right 7px center; cursor: pointer; }
 .coluna-row input[type="color"] { width: 32px; height: 32px; border: none; border-radius: 6px; cursor: pointer; background: none; padding: 0; }
 .icon-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 13px; padding: 6px; border-radius: 4px; transition: 0.2s; }
 .icon-btn:hover { background: #e2e8f0; color: var(--text-dark); }
