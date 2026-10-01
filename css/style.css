@@ -662,6 +662,11 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .wpp-sidebar-header { padding: 12px; border-bottom: 1px solid var(--border-color); }
 .wpp-sidebar-header input { width: 100%; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 12px; outline: none; }
 .wpp-sidebar-header input:focus { border-color: var(--na-green); }
+/* "x" apagadinho pra limpar a busca do WhatsApp Unificado (pedido do
+   usuário, 2026-10-01) — só aparece com texto digitado
+   (atualizarBotaoLimparBuscaWpp(), js/whatsapp.js). */
+.wpp-search-limpar-btn { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: none; border: none; color: #cbd5e1; cursor: pointer; font-size: 12px; padding: 4px; line-height: 1; }
+.wpp-search-limpar-btn:hover { color: #94a3b8; }
 .wpp-contact-list { flex: 1; overflow-y: auto; }
 .wpp-contact-item { display: flex; gap: 10px; padding: 12px 14px; border-bottom: 1px solid #f1f5f9; cursor: pointer; transition: 0.15s; align-items: center; }
 .wpp-contact-item:hover { background: #f8fafc; }

@@ -4170,6 +4170,23 @@ function filtrarContatosWpp(valor) {
     renderizarContatosWpp(valor);
 }
 
+// "x" pra limpar a busca do WhatsApp Unificado (pedido do usuário,
+// 2026-10-01) — só aparece com texto digitado.
+function atualizarBotaoLimparBuscaWpp() {
+    const input = document.getElementById('wppSearch');
+    const btn = document.getElementById('wppSearchLimparBtn');
+    if (!input || !btn) return;
+    btn.style.display = input.value ? 'flex' : 'none';
+}
+function limparBuscaWpp() {
+    const input = document.getElementById('wppSearch');
+    if (!input) return;
+    input.value = '';
+    input.focus();
+    atualizarBotaoLimparBuscaWpp();
+    filtrarContatosWpp('');
+}
+
 // Bug real (2026-09-28): antes só olhava `leadsAtuais` (escopado à filial
 // selecionada no topo) — abrir a conversa de um lead de OUTRA filial (a
 // unificação de verdade pede isso) deixava `lead` undefined, quebrando o

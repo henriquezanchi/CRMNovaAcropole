@@ -365,7 +365,10 @@
             <div class="wpp-layout">
                 <div class="wpp-sidebar">
                     <div class="wpp-sidebar-header" style="display:flex; gap:6px;">
-                        <input type="text" id="wppSearch" placeholder="Buscar conversa ou nome de lead p/ iniciar..." oninput="filtrarContatosWpp(this.value)" style="flex:1;">
+                        <div style="position:relative; flex:1;">
+                            <input type="text" id="wppSearch" placeholder="Buscar conversa ou nome de lead p/ iniciar..." oninput="filtrarContatosWpp(this.value); atualizarBotaoLimparBuscaWpp();" style="width:100%; box-sizing:border-box; padding-right:26px;">
+                            <button type="button" id="wppSearchLimparBtn" class="wpp-search-limpar-btn" style="display:none;" onclick="limparBuscaWpp()" title="Limpar busca"><i class="fa-solid fa-xmark"></i></button>
+                        </div>
                         <button class="btn-toggle" onclick="abrirImportarConversasLote()" title="Importar várias conversas de uma vez (.zip exportados do WhatsApp)"><i class="fa-solid fa-file-zipper"></i></button>
                     </div>
                     <div style="padding:0 10px 8px;">
