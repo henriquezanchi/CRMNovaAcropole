@@ -666,6 +666,61 @@ function resolverRespostaRapida(texto, leadId) {
         // funciona em qualquer endereço de texto livre.
         .replaceAll('{link_maps}', filialObj.endereco ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(filialObj.endereco)}` : '(endereço ainda não cadastrado em Gerenciar Filiais)');
 }
+
+// ==========================================================
+// Consultar mensalidade de todas as filiais, sem sair do WhatsApp
+// Unificado (pedido do usuário, 2026-10-01: "preciso saber o valor de
+// contribuição da filial do lead (e pode consultar de outra filial) com
+// facilidade no whatsapp unificado... como mandamos mensagens em massa,
+// não faz sentido ficar indo de um em um responder" via a gaveta). Usa o
+// mesmo `filiaisDisponiveis` já carregado (resolverRespostaRapida() acima
+// já lê de lá) — nenhuma consulta nova ao banco. Reaproveita o MESMO
+// painel flutuante (overlay+caixa) já usado por "Encaminhar mensagem"/
+// "Gerenciar Respostas Rápidas".
+// ==========================================================
+function _containerMensalidadesWpp() {
+    let el = document.getElementById('wppMensalidadesPanel');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'wppMensalidadesPanel';
+        el.className = 'wpp-encaminhar-panel';
+        document.body.appendChild(el);
+    }
+    return el;
+}
+function fecharMensalidadesWpp() {
+    const el = document.getElementById('wppMensalidadesPanel');
+    if (el) el.remove();
+}
+function abrirMensalidadesFiliaisWpp(leadId) {
+    fecharMensalidadesWpp();
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
+    const lista = (typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : []);
+    const panel = _containerMensalidadesWpp();
+    panel.innerHTML = `
+        <div class="wpp-encaminhar-overlay"></div>
+        <div class="wpp-encaminhar-caixa" style="width:360px; max-height:80vh; overflow-y:auto;">
+            <div class="wpp-encaminhar-titulo">Mensalidade por Filial <button type="button" class="wpp-encaminhar-fechar"><i class="fa-solid fa-xmark"></i></button></div>
+            <div style="display:flex; flex-direction:column; gap:6px;">
+                ${lista.length === 0 ? '<p style="font-size:12px; color:var(--text-muted);">Nenhuma filial cadastrada.</p>' : lista.map(f => {
+                    const ehFilialDoLead = !!(lead && lead.filial === f.nome);
+                    const valor = f.valor_mensalidade != null
+                        ? `R$ ${Number(f.valor_mensalidade).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+                        : '<span style="color:var(--text-muted);">não cadastrado</span>';
+                    return `
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:6px 8px; border-radius:6px; ${ehFilialDoLead ? 'background:#ecfdf5; border:1px solid var(--na-green);' : 'border:1px solid var(--border-color);'}">
+                            <span style="font-size:12px; font-weight:${ehFilialDoLead ? '700' : '500'};">${escapeHTML(f.nome)}${ehFilialDoLead ? ' <span style="font-size:10px; color:var(--na-green);">(filial deste lead)</span>' : ''}</span>
+                            <span style="font-size:12px; font-weight:600; white-space:nowrap;">${valor}</span>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        </div>
+    `;
+    panel.querySelector('.wpp-encaminhar-overlay').addEventListener('click', fecharMensalidadesWpp);
+    panel.querySelector('.wpp-encaminhar-fechar').addEventListener('click', fecharMensalidadesWpp);
+}
+
 function _containerRespostasRapidasWpp() {
     let el = document.getElementById('wppRespostasRapidasPicker');
     if (!el) {
@@ -4158,12 +4213,25 @@ async function abrirChatWpp(leadId) {
 
     const header = document.getElementById('wppChatHeader');
     if (header && lead) {
+        // Pedido do usuário (2026-10-01): precisa ver o valor de contribuição
+        // (mensalidade) da filial do lead sem sair do WhatsApp Unificado —
+        // como o fluxo de trabalho aqui é por mensagem/lote (não dá pra ficar
+        // abrindo a gaveta de cada lead só pra ver isso), mostra direto no
+        // cabeçalho do chat + um botão pra consultar o valor de QUALQUER
+        // outra filial na hora (mesmo dado de filiaisDisponiveis já
+        // carregado, reaproveitado também pelas respostas rápidas
+        // {valor_mensalidade}).
+        const filialObjHeader = lead.filial ? ((typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : []).find(f => f.nome === lead.filial) || {}) : {};
+        const mensalidadeTexto = filialObjHeader.valor_mensalidade != null
+            ? `R$ ${Number(filialObjHeader.valor_mensalidade).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+            : 'não cadastrado';
         header.innerHTML = `
             <div style="width: 36px; height: 36px; background: #cbd5e1; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; color: white;"><i class="fa-solid fa-user"></i></div>
             <div style="flex:1;">
                 <div style="font-size: 13px; font-weight: 600;">${escapeHTML(lead.pessoaNome || 'Sem nome')}</div>
-                <div style="font-size: 11px; color: var(--na-green); display:flex; align-items:center; gap:4px;"><i class="fa-brands fa-whatsapp"></i> ${escapeHTML(lead.pessoaTelefoneDDD || '')} ${escapeHTML(lead.pessoaTelefoneNumero || '')}${lead.filial ? ` · <i class="fa-solid fa-building"></i> ${escapeHTML(lead.filial)}` : ''}</div>
+                <div style="font-size: 11px; color: var(--na-green); display:flex; align-items:center; gap:4px; flex-wrap:wrap;"><i class="fa-brands fa-whatsapp"></i> ${escapeHTML(lead.pessoaTelefoneDDD || '')} ${escapeHTML(lead.pessoaTelefoneNumero || '')}${lead.filial ? ` · <i class="fa-solid fa-building"></i> ${escapeHTML(lead.filial)}` : ''}${lead.filial ? ` · <i class="fa-solid fa-sack-dollar"></i> ${mensalidadeTexto}` : ''}</div>
             </div>
+            <button class="icon-btn" title="Consultar mensalidade de todas as filiais" onclick="abrirMensalidadesFiliaisWpp('${leadId}')"><i class="fa-solid fa-sack-dollar"></i></button>
             <button class="icon-btn" title="Buscar nesta conversa" onclick="chatWpp.toggleBuscaConversa()"><i class="fa-solid fa-magnifying-glass"></i></button>
             <button class="icon-btn" title="Exportar conversa (.txt) — auditoria/LGPD" onclick="exportarConversaWppTxt('${leadId}', '${escapeHTML(lead.pessoaNome || 'lead').replace(/'/g, '')}')"><i class="fa-solid fa-file-export"></i></button>
             <button class="btn-toggle" style="font-size:10px;" title="Abre a ficha completa do lead (eventos, tags, resumo, lembrete, histórico, etc.)" onclick="abrirFichaCompletaDoWpp('${leadId}')"><i class="fa-solid fa-address-card"></i> Ficha completa</button>
