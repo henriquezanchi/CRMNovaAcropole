@@ -59,6 +59,19 @@ Deno.serve(async (req) => {
         contextoMessageId?: string;
         contextoPreview?: string;
         contextoRemetente?: string;
+        // Pedido do usuário (2026-10-01): "quando for eu, coloque meu
+        // nome, quando for API, coloque API, e mude para o nome do SDR
+        // que assumir a conversa" — a fila automática antiga (round-robin
+        // entre qualquer usuário com módulo tab-whatsapp, mesmo quem
+        // nunca logou — ver bug real da Ediliene) foi substituída por
+        // isto: `wpp_atendente_responsavel` passa a refletir quem REALMENTE
+        // mandou a última mensagem. 'campanha' = disparo em massa
+        // (Convidar API/Janela Aberta) — grava "API", não o nome de quem
+        // clicou o botão (não é uma resposta pessoal a ESTA conversa).
+        // Omitido/'manual' = resposta de verdade de um atendente (1:1,
+        // inclusive sugestão de IA revisada e enviada) — grava o nome
+        // real de quem está logado.
+        origemEnvio?: "manual" | "campanha";
     };
     try {
         corpoReq = await req.json();
@@ -66,7 +79,7 @@ Deno.serve(async (req) => {
         return json({ ok: false, erro: "json_invalido" }, 400);
     }
 
-    const { pessoaIdentificador, telefoneWhatsapp, tipo, texto, templateNome, templateIdioma, templateParams, templatePreview, imagemUrl, documentoUrl, audioUrl, nomeArquivo, caption, atendenteNome, mensagemAlvoId, emoji, contextoMessageId, contextoPreview, contextoRemetente } = corpoReq;
+    const { pessoaIdentificador, telefoneWhatsapp, tipo, texto, templateNome, templateIdioma, templateParams, templatePreview, imagemUrl, documentoUrl, audioUrl, nomeArquivo, caption, atendenteNome, mensagemAlvoId, emoji, contextoMessageId, contextoPreview, contextoRemetente, origemEnvio } = corpoReq;
     if ((!pessoaIdentificador && !telefoneWhatsapp) || !tipo) return json({ ok: false, erro: "parametros_faltando" }, 400);
     if (!pessoaIdentificador && tipo !== "texto") return json({ ok: false, erro: "tipo_exige_lead" }, 400);
     if (tipo === "texto" && !texto?.trim()) return json({ ok: false, erro: "texto_vazio" }, 400);
@@ -288,8 +301,16 @@ Deno.serve(async (req) => {
     // Best-effort: nunca falha o envio (que já aconteceu de verdade) por
     // causa disso.
     if (pessoaIdentificador) {
+        const responsavel = origemEnvio === "campanha" ? "API" : (atendenteNome || null);
         await supabaseAdmin.from(NOME_TABELA_LEADS)
-            .update({ ultimo_contato_em: new Date().toISOString() })
+            .update({
+                ultimo_contato_em: new Date().toISOString(),
+                // Pedido do usuário (2026-10-01) — ver comentário no tipo
+                // `origemEnvio` acima. Só atualiza quando há um valor real
+                // pra gravar (nunca apaga um responsável já existente só
+                // porque este envio específico não trouxe atendenteNome).
+                ...(responsavel ? { wpp_atendente_responsavel: responsavel } : {}),
+            })
             .eq("pessoaIdentificador", pessoaIdentificador)
             .then(() => {}, () => {});
     }

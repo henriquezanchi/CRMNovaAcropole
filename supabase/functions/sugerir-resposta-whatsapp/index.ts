@@ -24,12 +24,42 @@
 //
 // Chamada por pg_cron a cada 15 min (migracao_agendamento_sugestao_resposta.sql).
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
-import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
+import { supabaseAdmin, NOME_TABELA_LEADS } from "../_shared/supabaseAdmin.ts";
 import { buscarExemplosEstilo } from "../_shared/exemplosEstilo.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const MODELO = "claude-haiku-4-5-20251001";
 const LIMITE_HISTORICO = 6;
+
+// "Marque tags automaticamente conforme o andamento da conversa" (pedido
+// do usuário, 2026-10-01) — mesmo princípio de classificar-resposta-
+// convite, mas pra QUALQUER conversa (não só quem tem convite de evento
+// pendente): categorias FIXAS, a IA nunca inventa uma tag livre. Família
+// "Conversa: X" (ver FAMILIAS_TAG, js/app.js) — convive com "Convite: X"
+// sem conflito, são famílias diferentes.
+const CATEGORIAS_CONVERSA_VALIDAS = ["interessado", "objecao", "sem_interesse", "ja_aluno"];
+const ROTULO_TAG_CONVERSA: Record<string, string> = {
+    interessado: "Conversa: Interessado",
+    objecao: "Conversa: Objeção",
+    sem_interesse: "Conversa: Sem Interesse",
+    ja_aluno: "Conversa: Já é Aluno",
+};
+
+// Mesma lógica de aplicarTagConvite() (classificar-resposta-convite) —
+// SUBSTITUI qualquer tag "Conversa: X" anterior (nunca acumula tag velha
+// se a pessoa mudar de ideia numa conversa longa).
+async function aplicarTagConversa(pessoaIdentificador: string, tagNova: string) {
+    const { data: lead } = await supabaseAdmin.from(NOME_TABELA_LEADS).select("tags").eq("pessoaIdentificador", pessoaIdentificador).maybeSingle();
+    if (!lead) return;
+    let tags: string[] = [];
+    try {
+        const parsed = JSON.parse(lead.tags || "[]");
+        if (Array.isArray(parsed)) tags = parsed;
+    } catch { /* tags malformada — trata como vazia, nunca trava */ }
+    tags = tags.filter((t) => !String(t).startsWith("Conversa: "));
+    tags.push(tagNova);
+    await supabaseAdmin.from(NOME_TABELA_LEADS).update({ tags: JSON.stringify(tags) }).eq("pessoaIdentificador", pessoaIdentificador);
+}
 
 function json(body: unknown, status = 200) {
     return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -158,11 +188,18 @@ Além disso, verifique se o LEAD mencionou explicitamente um período/data FUTUR
 - "lembrete_sugerido": {"data": "AAAA-MM-DD" (sua melhor estimativa da data mencionada, calculada a partir de hoje — ${hojeISO}; pra mês/ano sem dia específico, use o dia 01), "motivo": "1 frase curta resumindo o motivo, ex: 'Disse que não pode agora, mas quer ser contatada em janeiro de 2027'"}
 - Se não houver nenhuma data/período específico mencionado, "lembrete_sugerido": null.
 
-Responda SOMENTE com um JSON válido, sem texto antes ou depois, no formato exato: {"sugestao": "..." ou null, "lembrete_sugerido": {"data": "...", "motivo": "..."} ou null}`;
+Por fim, classifique o ANDAMENTO desta conversa em UMA destas categorias, só se tiver confiança real (nunca force):
+- "interessado": demonstrou interesse real em participar/saber mais/se inscrever.
+- "objecao": deu uma objeção específica (sem tempo, está caro, mora longe, etc.) sem recusar de vez.
+- "sem_interesse": recusou claramente ou pediu pra não ser mais contatado(a).
+- "ja_aluno": disse que já é aluno(a) atual da escola (não um ex-aluno nem alguém que só já foi num evento).
+- Se nada disso ficar claro, "tag_sugerida": null — não force.
+
+Responda SOMENTE com um JSON válido, sem texto antes ou depois, no formato exato: {"sugestao": "..." ou null, "lembrete_sugerido": {"data": "...", "motivo": "..."} ou null, "tag_sugerida": "interessado"|"objecao"|"sem_interesse"|"ja_aluno"|null}`;
 }
 
-async function sugerirUma(contexto: string, contextoCRM: string, ultimaMensagem: string, exemplos: string, hojeISO: string): Promise<{ sugestao: string | null; lembreteData: string | null; lembreteMotivo: string | null; erro?: string; debugBruto?: string }> {
-    if (!ANTHROPIC_API_KEY) return { sugestao: null, lembreteData: null, lembreteMotivo: null, erro: "sem_anthropic_api_key" };
+async function sugerirUma(contexto: string, contextoCRM: string, ultimaMensagem: string, exemplos: string, hojeISO: string): Promise<{ sugestao: string | null; lembreteData: string | null; lembreteMotivo: string | null; tagSugerida: string | null; erro?: string; debugBruto?: string }> {
+    if (!ANTHROPIC_API_KEY) return { sugestao: null, lembreteData: null, lembreteMotivo: null, tagSugerida: null, erro: "sem_anthropic_api_key" };
     let bruto = "";
     try {
         const resp = await fetch("https://api.anthropic.com/v1/messages", {
@@ -171,7 +208,7 @@ async function sugerirUma(contexto: string, contextoCRM: string, ultimaMensagem:
             body: JSON.stringify({ model: MODELO, max_tokens: 500, messages: [{ role: "user", content: montarPrompt(contexto, contextoCRM, ultimaMensagem, exemplos, hojeISO) }] }),
         });
         const respText = await resp.text();
-        if (!resp.ok) return { sugestao: null, lembreteData: null, lembreteMotivo: null, erro: "resp_nao_ok: " + respText, debugBruto: respText };
+        if (!resp.ok) return { sugestao: null, lembreteData: null, lembreteMotivo: null, tagSugerida: null, erro: "resp_nao_ok: " + respText, debugBruto: respText };
         const data = JSON.parse(respText);
         bruto = String(data.content?.[0]?.text ?? "");
         const texto = bruto.trim().replace(/^```(json)?/i, "").replace(/```$/, "").trim();
@@ -180,9 +217,10 @@ async function sugerirUma(contexto: string, contextoCRM: string, ultimaMensagem:
         const lembrete = parsed?.lembrete_sugerido;
         const lembreteData = lembrete && typeof lembrete.data === "string" && /^\d{4}-\d{2}-\d{2}$/.test(lembrete.data) ? lembrete.data : null;
         const lembreteMotivo = lembreteData && typeof lembrete.motivo === "string" && lembrete.motivo.trim() ? lembrete.motivo.trim() : null;
-        return { sugestao, lembreteData, lembreteMotivo: lembreteData ? lembreteMotivo : null, debugBruto: bruto };
+        const tagSugerida = CATEGORIAS_CONVERSA_VALIDAS.includes(parsed?.tag_sugerida) ? parsed.tag_sugerida : null;
+        return { sugestao, lembreteData, lembreteMotivo: lembreteData ? lembreteMotivo : null, tagSugerida, debugBruto: bruto };
     } catch (e) {
-        return { sugestao: null, lembreteData: null, lembreteMotivo: null, erro: String(e), debugBruto: bruto };
+        return { sugestao: null, lembreteData: null, lembreteMotivo: null, tagSugerida: null, erro: String(e), debugBruto: bruto };
     }
 }
 
@@ -228,7 +266,21 @@ Deno.serve(async (req) => {
         const contexto = await montarContexto(item.pessoaIdentificador);
         const contextoCRM = await montarContextoCRM(item.pessoaIdentificador, item.filial);
         const resultado = await sugerirUma(contexto, contextoCRM, item.corpo_texto, exemplos, hojeISO);
-        if (resultado.erro) console.warn("Sugestão não gerada (fallback sem texto):", resultado.erro);
+        // Bug real corrigido (2026-10-01, "não está gerando respostas,
+        // pq?"): uma falha TÉCNICA (rede, rate limit momentâneo da
+        // Anthropic, JSON malformado) sempre caía no mesmo "sugestao:
+        // null" de quando a IA genuinamente não tem confiança — e como o
+        // registro era sempre gravado, a mensagem nunca mais virava
+        // candidata de novo (a RPC só pega quem ainda não tem linha aqui).
+        // Reproduzido manualmente: o MESMO contexto, chamado de novo,
+        // gerou uma sugestão ótima — confirma que foi uma falha pontual,
+        // não a IA "decidindo" que não dava pra responder. Agora, com
+        // erro técnico, PULA sem gravar nada — a próxima rodada do cron
+        // (15 min) tenta de novo com a mesma mensagem.
+        if (resultado.erro) {
+            console.warn("Sugestão não gerada (erro técnico, vai tentar de novo na próxima rodada):", resultado.erro);
+            continue;
+        }
 
         const { error: erroInsert } = await supabaseAdmin.from("sugestoes_resposta_wpp").insert({
             pessoaIdentificador: item.pessoaIdentificador,
@@ -241,6 +293,14 @@ Deno.serve(async (req) => {
         // cron falha o insert (23505) e segue pra próxima, sem duplicar.
         if (erroInsert) { console.warn("Não gravou sugestão (provável corrida):", erroInsert.message); continue; }
         processadas++;
+
+        // Tag é aplicada direto (diferente da sugestão de texto/lembrete,
+        // que sempre esperam clique humano) — mesmo padrão já usado em
+        // classificar-resposta-convite: marcar uma tag é baixo risco,
+        // reversível a qualquer momento pela gaveta/WhatsApp Unificado.
+        if (resultado.tagSugerida) {
+            await aplicarTagConversa(item.pessoaIdentificador, ROTULO_TAG_CONVERSA[resultado.tagSugerida]);
+        }
     }
 
     return json({ ok: true, processadas });

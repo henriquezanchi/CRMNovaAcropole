@@ -470,7 +470,8 @@ function htmlMensagemWpp(m, quotedInfo, termoBusca, ativoBusca) {
                 <div style="flex:1; min-width:0;">
                     <div style="font-weight:600; font-size:12px;">${escapeHTML(nome)}</div>
                     <div style="font-size:11px; color:#64748b;">${escapeHTML(telefoneDigits || 'sem telefone')}</div>
-                    ${telefoneDigits ? `<div style="display:flex; gap:6px; margin-top:4px;">
+                    ${telefoneDigits ? `<div style="display:flex; gap:6px; margin-top:4px; flex-wrap:wrap;">
+                        <button class="btn-primary" style="font-size:10.5px; padding:3px 7px;" onclick="cadastrarContatoWppEConvidar('${escapeHTML(nome).replace(/'/g, "\\'")}', '${telefoneDigits}', '${escapeHTML(m.filial || '').replace(/'/g, "\\'")}', this)"><i class="fa-solid fa-paper-plane"></i> Cadastrar e Convidar</button>
                         <button class="btn-toggle" style="font-size:10.5px; padding:3px 7px;" onclick="salvarContatoWppComoLead('${escapeHTML(nome).replace(/'/g, "\\'")}', '${telefoneDigits}')"><i class="fa-solid fa-user-plus"></i> Salvar como Lead</button>
                         <button class="btn-secondary" style="font-size:10.5px; padding:3px 7px;" onclick="abrirChatNaoIdentificado('${telefoneDigits}')"><i class="fa-brands fa-whatsapp"></i> Abrir Conversa</button>
                     </div>` : ''}
@@ -657,7 +658,13 @@ function resolverRespostaRapida(texto, leadId) {
         .replaceAll('{atendente}', (typeof obterNomeAtendente === 'function' ? obterNomeAtendente() : '') || '')
         .replaceAll('{filial}', nomeFilialComPreposicao(lead.filial))
         .replaceAll('{endereco}', filialObj.endereco || '(endereço ainda não cadastrado em Gerenciar Filiais)')
-        .replaceAll('{valor_mensalidade}', filialObj.valor_mensalidade != null ? String(filialObj.valor_mensalidade) : '(valor não cadastrado)');
+        .replaceAll('{valor_mensalidade}', filialObj.valor_mensalidade != null ? String(filialObj.valor_mensalidade) : '(valor não cadastrado)')
+        // Pedido do usuário (2026-10-01): "coloque o link do maps na
+        // resposta rápida sobre o endereço, conforme cada filial" — gerado
+        // na hora a partir do PRÓPRIO endereço cadastrado (sem precisar de
+        // lat/long nem campo novo no banco): link de busca do Google Maps,
+        // funciona em qualquer endereço de texto livre.
+        .replaceAll('{link_maps}', filialObj.endereco ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(filialObj.endereco)}` : '(endereço ainda não cadastrado em Gerenciar Filiais)');
 }
 function _containerRespostasRapidasWpp() {
     let el = document.getElementById('wppRespostasRapidasPicker');
@@ -725,7 +732,7 @@ async function abrirGerenciarRespostasRapidasWpp() {
         <div class="wpp-encaminhar-overlay"></div>
         <div class="wpp-encaminhar-caixa" style="width:420px; max-height:80vh; overflow-y:auto;">
             <div class="wpp-encaminhar-titulo">Gerenciar Respostas Rápidas <button type="button" class="wpp-encaminhar-fechar"><i class="fa-solid fa-xmark"></i></button></div>
-            <p style="font-size:11px; color:var(--text-muted); margin:0 0 8px;">Placeholders disponíveis: <code>{nome}</code> <code>{atendente}</code> <code>{filial}</code> <code>{endereco}</code> <code>{valor_mensalidade}</code></p>
+            <p style="font-size:11px; color:var(--text-muted); margin:0 0 8px;">Placeholders disponíveis: <code>{nome}</code> <code>{atendente}</code> <code>{filial}</code> <code>{endereco}</code> <code>{valor_mensalidade}</code> <code>{link_maps}</code></p>
             <div id="wppRespostasRapidasLista" style="display:flex; flex-direction:column; gap:8px;"></div>
             <button type="button" class="btn-secondary" style="margin-top:10px; width:100%;" onclick="adicionarRespostaRapidaWpp()"><i class="fa-solid fa-plus"></i> Nova resposta</button>
         </div>
@@ -957,14 +964,22 @@ function criarChatController({ messagesId, inputAreaId }) {
     // Busca dentro da conversa aberta — pedido do usuário (2026-09-29:
     // "implemente tudo que for possível"; refinado 2026-09-30: "busca com
     // destaque + navegação entre resultados, igual no whatsapp real").
-    // Só sobre os balões já carregados (mesmo limite de 200 de
-    // carregarHistoricoMensagens(), não busca no banco inteiro) — mas
-    // agora igual o app real: NUNCA esconde o resto da conversa, só
-    // destaca cada ocorrência (<mark>) e deixa navegar entre elas com
-    // ⌃/⌄, mostrando "posição/total".
+    // NUNCA esconde o resto da conversa, só destaca cada ocorrência
+    // (<mark>) e deixa navegar entre elas com ⌃/⌄, mostrando "posição/total".
+    // Bug real corrigido (2026-10-01, "a pesquisa não está retornando
+    // palavras que sei que estão em algumas conversas"): a busca rodava
+    // só sobre os balões já carregados no navegador (limite de 200 de
+    // carregarHistoricoMensagens()) — uma palavra numa mensagem mais
+    // antiga, ainda não paginada, nunca era encontrada, embora existisse
+    // de verdade na conversa. `agendarBuscaCompletaBanco()` complementa
+    // isso buscando no BANCO (toda a conversa, sem limite de 200) e
+    // mesclando os resultados em `mensagens` antes de renderizar — a
+    // busca local (instantânea, sem round-trip) continua rodando
+    // primeiro, pra não travar a digitação.
     let termoBusca = '';
     let buscaMatches = []; // mensagens (na ordem cronológica) que batem com termoBusca
     let buscaIndiceAtual = null; // índice dentro de buscaMatches — null = ainda não escolhido nesta busca
+    let buscaTimeoutId = null;
     // Paginação de mensagens antigas (pedido do usuário, 2026-09-30: "o
     // que pode melhorar" — histórico sem paginação, corta em 200). `true`
     // até um carregamento devolver MENOS que uma página cheia (sinal de
@@ -1186,6 +1201,7 @@ function criarChatController({ messagesId, inputAreaId }) {
             termoBusca = input.value.trim().toLowerCase();
             buscaIndiceAtual = null; // busca nova — volta pro resultado mais recente
             renderizarMensagens();
+            agendarBuscaCompletaBanco();
         });
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') { e.preventDefault(); irParaResultadoBusca(e.shiftKey ? -1 : 1); }
@@ -1199,6 +1215,37 @@ function criarChatController({ messagesId, inputAreaId }) {
             renderizarMensagens();
         });
         input.focus();
+    }
+
+    // Debounce de 350ms (evita 1 query por tecla) — busca no banco a
+    // conversa INTEIRA (sem o limite de 200 do histórico carregado) e
+    // mescla em `mensagens` quem ainda não estava presente, na posição
+    // cronológica certa, antes de recalcular buscaMatches/renderizar.
+    function agendarBuscaCompletaBanco() {
+        if (buscaTimeoutId) clearTimeout(buscaTimeoutId);
+        if (!termoBusca || !leadId) return;
+        const termoDaVez = termoBusca;
+        buscaTimeoutId = setTimeout(async () => {
+            if (termoBusca !== termoDaVez || !leadId) return; // termo mudou/conversa trocou enquanto esperava
+            const { data, error } = await window.supabaseClient
+                .from('mensagens_whatsapp')
+                .select('*')
+                .eq('pessoaIdentificador', leadId)
+                .ilike('corpo_texto', `%${termoDaVez}%`)
+                .is('oculta_em', null)
+                .order('criado_em', { ascending: true })
+                .limit(200);
+            if (error || termoBusca !== termoDaVez || !leadId) return; // ainda válido depois do round-trip?
+            if (!data || data.length === 0) return;
+
+            const idsJaCarregados = new Set(mensagens.map(m => m.id));
+            const novas = data.filter(m => !idsJaCarregados.has(m.id));
+            if (novas.length === 0) return;
+
+            mensagens = [...mensagens, ...novas].sort((a, b) => new Date(a.criado_em) - new Date(b.criado_em));
+            buscaIndiceAtual = null; // resultados novos entraram — recomeça do mais recente
+            renderizarMensagens();
+        }, 350);
     }
 
     function atualizarContadorBusca() {
@@ -2809,6 +2856,7 @@ async function confirmarEnviarConviteApiLote() {
                         templateParams: l.params,
                         templatePreview: montarPreviewTemplate(tpl, l.params),
                         atendenteNome: (typeof obterNomeAtendente === 'function' ? obterNomeAtendente() : '') || '',
+                        origemEnvio: 'campanha',
                     },
                 });
                 if (error || !data || data.ok === false) {
@@ -3034,7 +3082,7 @@ async function confirmarConviteJanelaAberta() {
         const respostas = await Promise.all(lote.map(async (c) => {
             try {
                 const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
-                    body: { pessoaIdentificador: c.pessoaIdentificador, tipo: 'texto', texto: c.texto, atendenteNome: (typeof obterNomeAtendente === 'function' ? obterNomeAtendente() : '') || '' },
+                    body: { pessoaIdentificador: c.pessoaIdentificador, tipo: 'texto', texto: c.texto, atendenteNome: (typeof obterNomeAtendente === 'function' ? obterNomeAtendente() : '') || '', origemEnvio: 'campanha' },
                 });
                 if (error || !data || data.ok === false) return { ...c, ok: false, erro: (data && data.detalhe && data.detalhe.message) || data?.erro || error?.message || 'erro desconhecido' };
                 return { ...c, ok: true };
@@ -3530,6 +3578,80 @@ function renderizarTagsWpp(leadId) {
             <button class="btn-secondary" style="margin-left:auto; font-size:10.5px; padding:3px 8px; color:#991b1b;" onclick="excluirLeadWpp('${leadId}')" title="Mover pra Lixeira (30 dias pra restaurar)"><i class="fa-solid fa-trash"></i> Excluir Lead</button>
         </div>
     `;
+}
+
+// Pedido do usuário (2026-10-01): "preciso encaminhar contatos no crm...
+// importar os contatos ou cadastrar, e depois encaminhar para as
+// pessoas interessadas" — fluxo de 1 clique: cadastra o contato
+// compartilhado (vCard) direto como lead (sem passar pelo modal manual —
+// já temos nome/telefone confiáveis da própria Meta) e já entra no MESMO
+// fluxo de "Convidar (Link)" já existente (wa.me, zero risco de API,
+// ainda mais importante agora com o número sinalizado por spam — ver
+// conversa sobre o bloqueio da conta) pra mandar o convite de evento na
+// hora. Nunca cria duplicado: se já existir um lead com esse telefone,
+// reaproveita em vez de cadastrar de novo.
+async function cadastrarContatoWppEConvidar(nome, telefoneDigits, filial, botaoEl) {
+    if (botaoEl) { botaoEl.disabled = true; botaoEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
+
+    let resto = telefoneDigits || '';
+    if (resto.startsWith('55') && resto.length >= 12) resto = resto.slice(2);
+    const ddd = resto.slice(0, 2);
+    const numero = resto.slice(2);
+
+    try {
+        const { data: existente } = await window.supabaseClient
+            .from('leads_inscricoes')
+            .select('pessoaIdentificador, pessoaNome, filial')
+            .eq('pessoaTelefoneDDD', ddd)
+            .eq('pessoaTelefoneNumero', numero)
+            .is('lixeira_em', null)
+            .limit(1)
+            .maybeSingle();
+
+        let leadId;
+        if (existente) {
+            leadId = existente.pessoaIdentificador;
+        } else {
+            const idsExistentes = new Set((typeof leadsAtuais !== 'undefined' ? leadsAtuais : []).map(l => String(l.pessoaIdentificador)));
+            do { leadId = String((typeof BASE_ID_LEAD_MANUAL !== 'undefined' ? BASE_ID_LEAD_MANUAL : 985000000) + Math.floor(Math.random() * 4900000)); } while (idsExistentes.has(leadId));
+
+            const registro = {
+                pessoaIdentificador: leadId,
+                pessoaNome: nome || 'Sem nome',
+                pessoaTelefoneDDD: ddd,
+                pessoaTelefoneNumero: numero,
+                pessoaEmail: '',
+                pessoaStatus: '', telemarketingStatus: '', eventoNome: '', eventoData: '',
+                historico_eventos: [],
+                tags: JSON.stringify([typeof TAG_LEAD_MANUAL !== 'undefined' ? TAG_LEAD_MANUAL : 'CRM', 'Indicação de Aluno', 'Sem E-mail']),
+                funil_agencia: (typeof columnsConfig !== 'undefined' && columnsConfig[0]) ? columnsConfig[0].key : 'Frios',
+                filial: filial || (typeof filialAtual !== 'undefined' ? filialAtual : ''),
+            };
+            const { error } = await window.supabaseClient.from('leads_inscricoes').insert(registro);
+            if (error) { alert('Erro ao cadastrar o contato: ' + error.message); if (botaoEl) { botaoEl.disabled = false; botaoEl.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Cadastrar e Convidar'; } return; }
+
+            if (typeof leadsAtuais !== 'undefined') leadsAtuais = [...leadsAtuais, registro];
+            if (typeof registrarLogAtividade === 'function') registrarLogAtividade('criar_lead_manual', { pessoaIds: [leadId], detalhes: { nome, origem: 'contato_whatsapp_compartilhado' } });
+        }
+
+        if (typeof cardsSelecionados !== 'undefined') {
+            cardsSelecionados.clear();
+            cardsSelecionados.add(String(leadId));
+        }
+        // "Convidar (Link)" lista os eventos da filial SELECIONADA NO
+        // TOPO (filialAtual), não da filial deste lead especificamente —
+        // limitação pré-existente desse fluxo (pensado pra uso dentro do
+        // Kanban de 1 filial por vez). Como o WhatsApp Unificado é
+        // cross-filial, avisa quando as duas divergem, pra não escolher
+        // sem querer um evento de outra unidade.
+        const filialLead = filial || (typeof filialAtual !== 'undefined' ? filialAtual : '');
+        if (typeof filialAtual !== 'undefined' && filialLead && filialLead !== filialAtual) {
+            alert(`Atenção: esta pessoa é da filial "${filialLead}", mas a tela está mostrando eventos de "${filialAtual}" (a filial selecionada no topo). No próximo passo, confira se o evento escolhido é mesmo de "${filialLead}" antes de gerar o link.`);
+        }
+        if (typeof iniciarConvitesWhatsAppEmMassa === 'function') await iniciarConvitesWhatsAppEmMassa();
+    } finally {
+        if (botaoEl) { botaoEl.disabled = false; botaoEl.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Cadastrar e Convidar'; }
+    }
 }
 
 // Pedido do usuário (2026-10-01): "quando alguém compartilhar um

@@ -48,7 +48,10 @@ type Falha = {
 // payload_bruto (ver whatsapp-send: imagem_url/documento_url/audio_url/
 // template_nome+idioma+params, adicionados especificamente pra isso).
 function montarCorpoReenvio(f: Falha): Record<string, unknown> | null {
-    const base = { pessoaIdentificador: f.pessoaIdentificador, atendenteNome: f.atendente_nome || "Reenvio automático" };
+    // origemEnvio: 'campanha' — zero humano envolvido (cron puro), sempre
+    // vira "API" no responsável da conversa, nunca o nome de quem mandou
+    // a tentativa original que falhou.
+    const base = { pessoaIdentificador: f.pessoaIdentificador, atendenteNome: f.atendente_nome || "Reenvio automático", origemEnvio: "campanha" };
     const pb = f.payload_bruto || {};
     if (f.tipo === "template" && pb.template_nome) {
         return { ...base, tipo: "template", templateNome: pb.template_nome, templateIdioma: pb.template_idioma || "pt_BR", templateParams: pb.template_params || [], templatePreview: f.corpo_texto };

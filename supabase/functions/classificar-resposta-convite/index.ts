@@ -262,6 +262,18 @@ Deno.serve(async (req) => {
         const dados = await buscarDadosEvento(item.evento_id);
         const resultado = await classificarUma(item, historico, dados, exemplos, hojeISO);
 
+        // Mesmo fix de sugerir-resposta-whatsapp (2026-10-01): distingue
+        // "ambiguo" porque a IA genuinamente decidiu (fica gravado, é um
+        // resultado válido) de "ambiguo" porque a CHAMADA falhou (erro de
+        // rede/rate limit/JSON malformado — debugErro vem preenchido só
+        // nesse caso, nunca quando o modelo respondeu normalmente). Falha
+        // técnica pula sem gravar, pra virar candidata de novo na próxima
+        // rodada do cron.
+        if (resultado.debugErro) {
+            console.warn("Classificação não gerada (erro técnico, vai tentar de novo na próxima rodada):", resultado.debugErro);
+            continue;
+        }
+
         const { error: erroInsert } = await supabaseAdmin.from("classificacoes_resposta_convite").insert({
             pessoaIdentificador: item.pessoaIdentificador,
             evento_id: item.evento_id,

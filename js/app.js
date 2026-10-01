@@ -3664,6 +3664,24 @@ const FAMILIAS_TAG = [
             return 'tag-convite-neutro'; // Não Pode Ir / Ambíguo
         },
     },
+    // "Conversa: X" — mesma ideia de "Convite: X", mas pra QUALQUER
+    // conversa de WhatsApp (não só quem tem convite de evento pendente) —
+    // pedido do usuário (2026-10-01): "marque tags automaticamente
+    // conforme o andamento da conversa". Gerada pelo bot geral
+    // (sugerir-resposta-whatsapp), nunca pela classificação de convite
+    // (que usa a família "Convite" acima — as duas convivem, um lead pode
+    // ter as duas ao mesmo tempo se fizer sentido).
+    {
+        label: 'Conversa',
+        testar: t => /^Conversa: /i.test(t),
+        classe: t => {
+            if (/Interessado$/i.test(t)) return 'tag-convite-confirmou';
+            if (/J[áa] [ée] Aluno$/i.test(t)) return 'tag-convite-confirmou';
+            if (/Objeç[ãa]o$/i.test(t)) return 'tag-convite-info';
+            if (/Sem Interesse$/i.test(t)) return 'tag-convite-negativo';
+            return 'tag-convite-neutro';
+        },
+    },
     { label: 'Cadastro', testar: t => /^(Sem (Telefone|E-mail)|Conferir Telefone)$/i.test(t), classe: () => 'tag-warning' },
     { label: 'Engajamento / SDR', testar: t => /(n[ãa]o atende|caixa postal|n[ãa]o responde|inv[áa]lido|no-?show)/i.test(t), classe: () => 'tag-error' },
     { label: 'Objeções', testar: t => /^objeç[ãa]o/i.test(t), classe: () => 'tag-warning' },
