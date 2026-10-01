@@ -411,10 +411,10 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .chat-input-area { background: #f0f2f5; padding: 12px 20px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border-color); }
 .chat-input-row { display: flex; gap: 10px; align-items: flex-end; }
 /* Virou <textarea> (2026-09-29, pedido do usuário: "criar uma nova linha
-   na mensagem ao apertar ctrl+enter") — Enter sozinho continua enviando
-   (preventDefault no keydown, ver renderizarAreaInput()); Ctrl+Enter cai
-   no comportamento padrão do textarea (insere a quebra de linha). Cresce
-   sozinho até um limite (ver ajustarAlturaTextareaWpp()), depois rola. */
+   na mensagem"; corrigido 2026-10-01 pra Shift+Enter, padrão real do
+   WhatsApp) — Enter sozinho continua enviando (preventDefault no keydown,
+   ver renderizarAreaInput()); Shift+Enter insere a quebra de linha na mão.
+   Cresce sozinho até um limite (ver ajustarAlturaTextareaWpp()), depois rola. */
 .chat-input { flex: 1; padding: 10px 16px; border: none; border-radius: 21px; font-size: 13px; outline: none; background: white; box-shadow: 0 1px 1px rgba(0,0,0,0.06); font-family: inherit; resize: none; overflow-y: auto; max-height: 100px; line-height: 1.35; }
 .btn-send { background: var(--na-green); color: white; border: none; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 /* Prévia do anexo escolhido (foto ou documento), antes de enviar —
@@ -670,6 +670,8 @@ body { background-color: var(--bg-color); color: var(--text-dark); display: flex
 .wpp-date-divider span { background: #e2e8f0; color: #475569; font-size: 10.5px; font-weight: 600; padding: 4px 12px; border-radius: 8px; text-transform: uppercase; }
 
 .msg { max-width: 65%; padding: 8px 12px; border-radius: 10px; font-size: 12px; line-height: 1.4; position: relative; word-wrap: break-word; }
+/* Formatação de texto do WhatsApp (*negrito*/_itálico_/~tachado~/```monospace```) — ver aplicarFormatacaoWhatsApp(), js/whatsapp.js */
+.msg code { background: rgba(0,0,0,0.08); padding: 1px 4px; border-radius: 3px; font-family: "Courier New", monospace; font-size: 11px; }
 .msg-in { background: white; align-self: flex-start; border-bottom-left-radius: 2px; box-shadow: 0 1px 1px rgba(0,0,0,0.06); }
 .msg-out { background: var(--wpp-green); align-self: flex-end; border-bottom-right-radius: 2px; box-shadow: 0 1px 1px rgba(0,0,0,0.06); }
 /* "Rabinho" do balão — a mesma pontinha triangular do WhatsApp real,

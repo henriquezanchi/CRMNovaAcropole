@@ -268,7 +268,7 @@ async function carregarAgendaGeralRespostasConvite() {
 
     const { data, error } = await window.supabaseClient
         .from('classificacoes_resposta_convite')
-        .select('id, "pessoaIdentificador", evento_id, categoria, sugestao_resposta, criado_em')
+        .select('id, "pessoaIdentificador", evento_id, categoria, sugestao_resposta, lembrete_sugerido_data, lembrete_sugerido_motivo, criado_em')
         .eq('status', 'pendente')
         .order('criado_em', { ascending: false })
         .limit(50);
@@ -314,9 +314,41 @@ async function carregarAgendaGeralRespostasConvite() {
                         <div style="display:flex; gap:6px; margin-top:4px;">
                             <button class="btn-secondary" style="font-size:11px; padding:4px 8px;" onclick="event.stopPropagation(); descartarSugestaoRespostaConvite(${c.id}, this)">Marcar como revisado</button>
                         </div>`}
+                    ${c.lembrete_sugerido_data ? `
+                        <div style="margin-top:6px; padding:6px 8px; background:#fffbeb; border:1px solid #fde68a; border-radius:6px;" onclick="event.stopPropagation()">
+                            <div style="font-size:10.5px; font-weight:600; color:#92400e;"><i class="fa-solid fa-clock"></i> IA detectou data de retorno: <strong>${formatarDataBRAgendaGeral(c.lembrete_sugerido_data)}</strong></div>
+                            <div style="font-size:10.5px; color:#78350f; margin:2px 0 4px;">${escapeHTML(c.lembrete_sugerido_motivo || '')}</div>
+                            <button class="btn-toggle" style="font-size:10.5px; padding:3px 7px;" onclick="aplicarLembreteSugeridoConvite(${c.id}, '${c.pessoaIdentificador}', '${c.lembrete_sugerido_data}', '${escapeHTML(c.lembrete_sugerido_motivo || '').replace(/'/g, "\\'")}', this)"><i class="fa-solid fa-check"></i> Criar Lembrete</button>
+                        </div>` : ''}
                 </div>
             </div>`;
     }).join('');
+}
+
+function formatarDataBRAgendaGeral(dataISO) {
+    if (!dataISO) return '';
+    const d = new Date(dataISO + 'T00:00:00');
+    if (isNaN(d.getTime())) return dataISO;
+    return d.toLocaleDateString('pt-BR');
+}
+
+// Mesma feature de aplicarLembreteSugeridoWpp() (js/whatsapp.js), só que
+// pro painel de Respostas de Convite — pedido do usuário (2026-10-01):
+// "quero que a IA já crie um snooze para essa data, e registre o motivo
+// no resumo".
+async function aplicarLembreteSugeridoConvite(classificacaoId, pessoaIdentificador, data, motivo, botaoEl) {
+    const { data: lead } = await window.supabaseClient.from('leads_inscricoes').select('resumo_ia').eq('pessoaIdentificador', pessoaIdentificador).maybeSingle();
+    const resumoAtual = (lead && lead.resumo_ia) ? lead.resumo_ia.trim() : '';
+    const notaNova = `[IA, ${new Date().toLocaleDateString('pt-BR')}] ${motivo || 'Lembrete criado a partir de data mencionada na conversa.'}`;
+    const resumoFinal = resumoAtual ? `${resumoAtual}\n${notaNova}` : notaNova;
+
+    await window.supabaseClient.from('leads_inscricoes').update({ lembrete_em: data, lembrete_nota: motivo || null, resumo_ia: resumoFinal }).eq('pessoaIdentificador', pessoaIdentificador);
+    await window.supabaseClient.from('classificacoes_resposta_convite').update({ lembrete_sugerido_data: null, lembrete_sugerido_motivo: null }).eq('id', classificacaoId);
+
+    const leadIndex = (typeof leadsAtuais !== 'undefined') ? leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(pessoaIdentificador)) : -1;
+    if (leadIndex !== -1) { leadsAtuais[leadIndex].lembrete_em = data; leadsAtuais[leadIndex].lembrete_nota = motivo || null; leadsAtuais[leadIndex].resumo_ia = resumoFinal; }
+
+    if (botaoEl) { const bloco = botaoEl.closest('div[style*="fffbeb"]'); if (bloco) bloco.remove(); }
 }
 
 // Só ENVIA quando o SDR clica aqui (decisão confirmada com o usuário) —

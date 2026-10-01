@@ -252,8 +252,22 @@ function destacarTermoBuscaWpp(textoEscapado, termoBusca) {
     const re = new RegExp(escapeRegExpWpp(termoBusca), 'gi');
     return textoEscapado.replace(re, (m) => `<mark class="wpp-busca-mark">${m}</mark>`);
 }
+// Formatação de texto do WhatsApp real — pedido do usuário (2026-10-01):
+// "*negrito*", "_itálico_", "~tachado~", "```monospace```". Roda DEPOIS
+// do escapeHTML (os marcadores ficam como texto literal, nunca viram tag
+// HTML de verdade) e ANTES da quebra de linha/destaque de busca — ordem
+// importa: monospace primeiro, pra não conflitar com os outros 3.
+function aplicarFormatacaoWhatsApp(texto) {
+    return texto
+        .replace(/```([^`\n]+)```/g, '<code>$1</code>')
+        .replace(/\*([^*\n]+)\*/g, '<strong>$1</strong>')
+        .replace(/_([^_\n]+)_/g, '<em>$1</em>')
+        .replace(/~([^~\n]+)~/g, '<s>$1</s>');
+}
+
 function textoComQuebrasDeLinha(texto, termoBusca) {
     let escapado = escapeHTML(texto || '');
+    escapado = aplicarFormatacaoWhatsApp(escapado);
     if (termoBusca) escapado = destacarTermoBuscaWpp(escapado, termoBusca);
     return escapado.replace(/\n/g, '<br>');
 }
@@ -439,7 +453,31 @@ function htmlMensagemWpp(m, quotedInfo, termoBusca, ativoBusca) {
     const videoUrl = m.tipo === 'video' ? (m.payload_bruto && m.payload_bruto.video_url) : null;
     const stickerUrl = m.tipo === 'sticker' ? (m.payload_bruto && m.payload_bruto.sticker_url) : null;
     const localizacao = m.tipo === 'localizacao' ? (m.payload_bruto && m.payload_bruto.location) : null;
-    const corpoHTML = imagemUrl
+    // Contato compartilhado (vCard) — pedido do usuário (2026-10-01):
+    // "quando alguém compartilhar um contato, abra uma conversa e a
+    // possibilidade de preencher os dados do lead e salvar". O payload
+    // da Meta (`msg.contacts`) já vem preservado por completo em
+    // `payload_bruto` desde sempre (ver whatsapp-webhook/extrairTexto) —
+    // só nunca tinha ação nenhuma em cima dele, só o texto "📇 Contato
+    // compartilhado: Nome — Telefone".
+    const contatosCompartilhados = (m.tipo === 'outro' && Array.isArray(m.payload_bruto?.contacts)) ? m.payload_bruto.contacts : null;
+    const corpoHTML = contatosCompartilhados
+        ? contatosCompartilhados.map((c) => {
+            const nome = c.name?.formatted_name || c.name?.first_name || 'Contato sem nome';
+            const telefoneDigits = ((c.phones || [])[0]?.wa_id || (c.phones || [])[0]?.phone || '').replace(/\D/g, '');
+            return `<div style="display:flex; align-items:center; gap:8px; padding:8px; background:rgba(0,0,0,0.04); border-radius:8px; margin-bottom:4px;">
+                <i class="fa-solid fa-address-card" style="font-size:20px; color:var(--na-green-dark);"></i>
+                <div style="flex:1; min-width:0;">
+                    <div style="font-weight:600; font-size:12px;">${escapeHTML(nome)}</div>
+                    <div style="font-size:11px; color:#64748b;">${escapeHTML(telefoneDigits || 'sem telefone')}</div>
+                    ${telefoneDigits ? `<div style="display:flex; gap:6px; margin-top:4px;">
+                        <button class="btn-toggle" style="font-size:10.5px; padding:3px 7px;" onclick="salvarContatoWppComoLead('${escapeHTML(nome).replace(/'/g, "\\'")}', '${telefoneDigits}')"><i class="fa-solid fa-user-plus"></i> Salvar como Lead</button>
+                        <button class="btn-secondary" style="font-size:10.5px; padding:3px 7px;" onclick="abrirChatNaoIdentificado('${telefoneDigits}')"><i class="fa-brands fa-whatsapp"></i> Abrir Conversa</button>
+                    </div>` : ''}
+                </div>
+            </div>`;
+        }).join('')
+        : imagemUrl
         ? `<img src="${escapeHTML(imagemUrl)}" alt="Imagem" style="max-width:100%; border-radius:6px; display:block; margin-bottom:${m.corpo_texto ? '4px' : '0'};">${m.corpo_texto ? textoComQuebrasDeLinha(m.corpo_texto, termoBusca) : ''}`
         : documento
         ? `<a href="${escapeHTML(documento.documento_url || '#')}" target="_blank" rel="noopener" style="display:flex; align-items:center; gap:8px; padding:8px; background:rgba(0,0,0,0.04); border-radius:8px; text-decoration:none; color:inherit; margin-bottom:${m.corpo_texto ? '4px' : '0'};">
@@ -1376,7 +1414,7 @@ function criarChatController({ messagesId, inputAreaId }) {
                     <input type="file" class="wpp-anexo-input" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" hidden>
                     <button type="button" class="btn-emoji-toggle" style="background: none; border: none; font-size: 20px; color: var(--text-muted); cursor: pointer;" title="Emojis"><i class="fa-regular fa-face-smile"></i></button>
                     <button type="button" class="btn-resposta-rapida-toggle" style="background: none; border: none; font-size: 17px; color: var(--text-muted); cursor: pointer;" title="Respostas rápidas"><i class="fa-solid fa-bolt"></i></button>
-                    <textarea class="chat-input" rows="1" placeholder="Digite uma mensagem... (Ctrl+Enter pra nova linha)"></textarea>
+                    <textarea class="chat-input" rows="1" placeholder="Digite uma mensagem... (Shift+Enter pra nova linha)"></textarea>
                     <button type="button" class="btn-audio-toggle" title="Gravar áudio"><i class="fa-solid fa-microphone"></i></button>
                     <button type="button" class="btn-send"><i class="fa-solid fa-paper-plane"></i></button>
                 </div>
@@ -1390,11 +1428,20 @@ function criarChatController({ messagesId, inputAreaId }) {
             const audioBtn = container.querySelector('.btn-audio-toggle');
             const disparar = () => enviarMensagem(input);
             botao.addEventListener('click', disparar);
-            // Enter sozinho envia (mesmo comportamento de sempre); Ctrl+Enter
-            // (pedido do usuário, 2026-09-29) cai no padrão do <textarea> —
-            // insere a quebra de linha, sem preventDefault nenhum.
+            // Enter sozinho envia (mesmo comportamento de sempre). Shift+Enter
+            // (padrão real do WhatsApp — corrigido 2026-10-01, era Ctrl+Enter
+            // por engano) insere quebra de linha — inserida NA MÃO (não
+            // confiando no padrão do navegador, que não é garantido em todo
+            // browser/SO) pra funcionar de forma confiável e já redimensionar
+            // a caixa na hora.
             input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' && !e.ctrlKey) { e.preventDefault(); disparar(); }
+                if (e.key !== 'Enter') return;
+                if (!e.shiftKey) { e.preventDefault(); disparar(); return; }
+                e.preventDefault();
+                const ini = input.selectionStart, fim = input.selectionEnd;
+                input.value = input.value.slice(0, ini) + '\n' + input.value.slice(fim);
+                input.selectionStart = input.selectionEnd = ini + 1;
+                ajustarAlturaTextareaWpp(input);
             });
             input.addEventListener('input', () => ajustarAlturaTextareaWpp(input));
             anexoBtn.addEventListener('click', () => anexoInput.click());
@@ -1436,6 +1483,7 @@ function criarChatController({ messagesId, inputAreaId }) {
             }
         });
         input.disabled = false;
+        input.focus();
 
         if (error) { alert('Erro ao enviar mensagem: ' + error.message); input.value = texto; return; }
         if (!data.ok) {
@@ -1470,7 +1518,7 @@ function criarChatController({ messagesId, inputAreaId }) {
             const { error: erroUpload } = await window.supabaseClient.storage
                 .from('whatsapp-midia')
                 .upload(caminho, anexo.file, { contentType: anexo.file.type || 'application/octet-stream' });
-            if (erroUpload) { alert('Erro ao subir o arquivo: ' + erroUpload.message); input.disabled = false; return; }
+            if (erroUpload) { alert('Erro ao subir o arquivo: ' + erroUpload.message); input.disabled = false; input.focus(); return; }
 
             const { data: urlData } = window.supabaseClient.storage.from('whatsapp-midia').getPublicUrl(caminho);
             const url = urlData.publicUrl;
@@ -1490,6 +1538,7 @@ function criarChatController({ messagesId, inputAreaId }) {
 
             const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', { body });
             input.disabled = false;
+            input.focus();
             if (error) { alert('Erro ao enviar anexo: ' + error.message); return; }
             if (!data.ok) {
                 if (data.erro === 'janela_fechada') {
@@ -1505,6 +1554,7 @@ function criarChatController({ messagesId, inputAreaId }) {
             moverParaAbordagemAposEnvio(leadId).catch(e => console.warn('Erro ao mover lead pra Abordagem após envio:', e.message));
         } catch (e) {
             input.disabled = false;
+            input.focus();
             alert('Erro inesperado ao enviar anexo: ' + (e.message || e));
         }
     }
@@ -3392,6 +3442,7 @@ async function enviarTextoNaoIdentificado(telefone) {
         body: { telefoneWhatsapp: telefone, tipo: 'texto', texto, atendenteNome: obterNomeAtendente() }
     });
     input.disabled = false;
+    input.focus();
 
     if (error) { alert('Erro ao enviar mensagem: ' + error.message); input.value = texto; return; }
     if (!data.ok) {
@@ -3471,7 +3522,101 @@ function renderizarTagsWpp(leadId) {
                 </select>
             </span>
         </div>
+        <div style="display:flex; flex-wrap:wrap; gap:4px; align-items:center; padding:4px 12px 6px; border-bottom:1px solid var(--border-color); background:#fafafa; font-size:10.5px;">
+            ${lead.lembrete_em
+                ? `<span class="tag" style="background:#fef3c7; color:#92400e; display:inline-flex; align-items:center; gap:4px;"><i class="fa-solid fa-clock"></i> ${formatarDataBRWpp(lead.lembrete_em)}${lead.lembrete_nota ? ' — ' + escapeHTML(lead.lembrete_nota) : ''} <i class="fa-solid fa-pen" style="cursor:pointer;" onclick="abrirLembreteWpp('${leadId}')" title="Editar lembrete"></i> <i class="fa-solid fa-xmark" style="cursor:pointer;" onclick="salvarLembreteWpp('${leadId}', null, null)" title="Remover lembrete"></i></span>`
+                : `<button class="btn-add-tag" style="font-size:10.5px; padding:3px 8px;" onclick="abrirLembreteWpp('${leadId}')"><i class="fa-solid fa-clock"></i> Lembrete</button>`
+            }
+            <button class="btn-secondary" style="margin-left:auto; font-size:10.5px; padding:3px 8px; color:#991b1b;" onclick="excluirLeadWpp('${leadId}')" title="Mover pra Lixeira (30 dias pra restaurar)"><i class="fa-solid fa-trash"></i> Excluir Lead</button>
+        </div>
     `;
+}
+
+// Pedido do usuário (2026-10-01): "quando alguém compartilhar um
+// contato, abra uma conversa e a possibilidade de preencher os dados do
+// lead e salvar" — reaproveita o modal "Novo Lead" já existente
+// (abrirNovoLeadManual(), js/app.js), só pré-preenchido com o que veio
+// na vCard. DDD/telefone separados a partir do E.164 bruto (assume
+// Brasil, DDI 55 — mesma suposição já usada no resto do projeto pra
+// número de WhatsApp).
+function salvarContatoWppComoLead(nome, telefoneDigits) {
+    if (typeof abrirNovoLeadManual !== 'function') { alert('Função de Novo Lead não disponível nesta tela.'); return; }
+    abrirNovoLeadManual();
+    document.getElementById('novoLeadManualNome').value = nome || '';
+    let resto = telefoneDigits || '';
+    if (resto.startsWith('55') && resto.length >= 12) resto = resto.slice(2);
+    document.getElementById('novoLeadManualDDD').value = resto.slice(0, 2);
+    document.getElementById('novoLeadManualTelefone').value = resto.slice(2);
+}
+
+function formatarDataBRWpp(dataISO) {
+    if (!dataISO) return '';
+    const d = new Date(dataISO + 'T00:00:00');
+    if (isNaN(d.getTime())) return dataISO;
+    return d.toLocaleDateString('pt-BR');
+}
+
+// Lembrete de follow-up (snooze) direto do WhatsApp Unificado — pedido do
+// usuário (2026-10-01): "coloque o snooze no whatsapp unificado". Mesmo
+// par de colunas já usado na gaveta (leads_inscricoes.lembrete_em/
+// lembrete_nota, migracao_lembrete_lead.sql) — função paralela porque a
+// gaveta (salvarLembreteLead, js/app.js) é amarrada a elementos DOM
+// próprios dela (#drawer-lembrete-data etc.), mesmo padrão já usado pelas
+// tags neste arquivo.
+function abrirLembreteWpp(leadId) {
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
+    if (!lead) return;
+    const data = prompt('Lembrar de voltar a falar com este lead em que data? (formato AAAA-MM-DD, ex: 2027-07-01)\n\nDeixe em branco pra remover o lembrete.', lead.lembrete_em || '');
+    if (data === null) return; // cancelou
+    const dataLimpa = data.trim();
+    if (dataLimpa && !/^\d{4}-\d{2}-\d{2}$/.test(dataLimpa)) { alert('Formato de data inválido — use AAAA-MM-DD (ex: 2027-07-01).'); return; }
+    const nota = dataLimpa ? prompt('Nota do lembrete (opcional) — ex: "Disse que não pode agora, voltar a contatar em julho":', lead.lembrete_nota || '') : null;
+    salvarLembreteWpp(leadId, dataLimpa || null, (nota || '').trim() || null);
+}
+
+async function salvarLembreteWpp(leadId, data, nota) {
+    const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(leadId));
+    if (leadIndex !== -1) { leadsAtuais[leadIndex].lembrete_em = data; leadsAtuais[leadIndex].lembrete_nota = nota; }
+    renderizarTagsWpp(leadId);
+    if (typeof renderizarCards === 'function') renderizarCards();
+
+    const { error } = await window.supabaseClient.from('leads_inscricoes').update({ lembrete_em: data, lembrete_nota: nota }).eq('pessoaIdentificador', leadId);
+    if (error) { alert('Erro ao salvar lembrete: ' + error.message); return; }
+    if (typeof registrarLogAtividade === 'function') {
+        registrarLogAtividade('lembrete_salvo', { pessoaIds: [String(leadId)], detalhes: { data, nota, origem: 'whatsapp_unificado' } });
+    }
+}
+
+// Excluir lead (mover pra Lixeira) direto do WhatsApp Unificado — pedido
+// do usuário (2026-10-01). Reaproveita a MESMA regra de retenção de
+// sempre (soft-delete 30 dias, ver "Lixeira de Leads") — nunca apaga
+// definitivo na hora.
+async function excluirLeadWpp(leadId) {
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
+    const nome = lead ? (lead.pessoaNome || 'este lead') : 'este lead';
+    if (!confirm(`Mover "${nome}" pra lixeira? Fica lá por 30 dias (dá pra restaurar até lá) e depois é apagado definitivamente.`)) return;
+
+    const { error } = await window.supabaseClient.from('leads_inscricoes').update({ lixeira_em: new Date().toISOString() }).eq('pessoaIdentificador', leadId);
+    if (error) { alert('Erro ao mover pra lixeira: ' + error.message); return; }
+
+    leadsAtuais = leadsAtuais.filter(l => String(l.pessoaIdentificador) !== String(leadId));
+    if (typeof registrarLogAtividade === 'function') {
+        registrarLogAtividade('mover_lixeira', { pessoaIds: [String(leadId)], detalhes: { origem: 'whatsapp_unificado' } });
+    }
+    if (typeof atualizarContagemLixeira === 'function') atualizarContagemLixeira();
+    if (typeof renderizarCards === 'function') renderizarCards();
+
+    wppContatoAtivoId = null;
+    const header = document.getElementById('wppChatHeader');
+    if (header) header.innerHTML = '';
+    const tagsBlock = document.getElementById('wppChatTagsBlock');
+    if (tagsBlock) tagsBlock.innerHTML = '';
+    const msgs = document.getElementById('wppMessages');
+    if (msgs) msgs.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text-muted);">Lead movido pra lixeira.</div>';
+    const inputArea = document.getElementById('wppChatInputArea');
+    if (inputArea) inputArea.innerHTML = '';
+    const searchEl = document.getElementById('wppSearch');
+    renderizarContatosWpp(searchEl ? searchEl.value : '');
 }
 
 async function alternarSugestaoIaLead(leadId, valor) {
@@ -3520,7 +3665,45 @@ async function carregarSugestaoIaWpp(leadId) {
                 <button class="btn-secondary" style="font-size:11px; padding:4px 10px;" onclick="descartarSugestaoIaWpp(${data.id}, '${leadId}')">Descartar</button>
             </div>
         </div>
+        ${data.lembrete_sugerido_data ? `
+        <div style="margin:0 12px 8px; padding:8px 10px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px;">
+            <div style="font-size:11px; font-weight:600; color:#92400e; margin-bottom:4px;"><i class="fa-solid fa-clock"></i> A IA detectou uma data de retorno — criar lembrete?</div>
+            <div style="font-size:12px; margin-bottom:6px;"><strong>${formatarDataBRWpp(data.lembrete_sugerido_data)}</strong> — ${escapeHTML(data.lembrete_sugerido_motivo || '')}</div>
+            <div style="display:flex; gap:6px;">
+                <button class="btn-primary" style="font-size:11px; padding:4px 10px;" onclick="aplicarLembreteSugeridoWpp(${data.id}, '${leadId}', '${data.lembrete_sugerido_data}', '${escapeHTML(data.lembrete_sugerido_motivo || '').replace(/'/g, "\\'")}')"><i class="fa-solid fa-check"></i> Criar Lembrete</button>
+                <button class="btn-secondary" style="font-size:11px; padding:4px 10px;" onclick="ignorarLembreteSugeridoWpp(${data.id}, '${leadId}')">Ignorar</button>
+            </div>
+        </div>` : ''}
     `;
+}
+
+// Aplica a sugestão de lembrete que a IA detectou (data futura mencionada
+// pelo lead pra ser recontatado) — pedido do usuário (2026-10-01): "quero
+// que a IA já crie um snooze para essa data, e registre o motivo no
+// resumo". Cria o lembrete (mesma coluna de sempre) E concatena o motivo
+// no Resumo/Anotações (nunca sobrescreve o que já tem escrito).
+async function aplicarLembreteSugeridoWpp(sugestaoId, leadId, data, motivo) {
+    await salvarLembreteWpp(leadId, data, motivo || null);
+
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
+    const resumoAtual = (lead && lead.resumo_ia) ? lead.resumo_ia.trim() : '';
+    const notaNova = `[IA, ${new Date().toLocaleDateString('pt-BR')}] ${motivo || 'Lembrete criado a partir de data mencionada na conversa.'}`;
+    const resumoFinal = resumoAtual ? `${resumoAtual}\n${notaNova}` : notaNova;
+
+    const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(leadId));
+    if (leadIndex !== -1) leadsAtuais[leadIndex].resumo_ia = resumoFinal;
+    await window.supabaseClient.from('leads_inscricoes').update({ resumo_ia: resumoFinal }).eq('pessoaIdentificador', leadId);
+
+    // Limpa a sugestão de lembrete desta linha (nunca a própria sugestão de
+    // TEXTO, que continua disponível pra enviar normalmente) — senão o
+    // bloco amarelo reapareceria de novo ao recarregar.
+    await window.supabaseClient.from('sugestoes_resposta_wpp').update({ lembrete_sugerido_data: null, lembrete_sugerido_motivo: null }).eq('id', sugestaoId);
+    await carregarSugestaoIaWpp(leadId);
+}
+
+async function ignorarLembreteSugeridoWpp(sugestaoId, leadId) {
+    await window.supabaseClient.from('sugestoes_resposta_wpp').update({ lembrete_sugerido_data: null, lembrete_sugerido_motivo: null }).eq('id', sugestaoId);
+    await carregarSugestaoIaWpp(leadId);
 }
 
 async function enviarSugestaoIaWpp(id, leadId) {
