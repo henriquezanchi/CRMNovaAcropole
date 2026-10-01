@@ -25,6 +25,7 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin, NOME_TABELA_LEADS } from "../_shared/supabaseAdmin.ts";
 import { buscarExemplosEstilo } from "../_shared/exemplosEstilo.ts";
 import { buscarListaFiliais } from "../_shared/filiaisInfo.ts";
+import { montarTabelaDiasSemana } from "../_shared/calendario.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const MODELO = "claude-haiku-4-5-20251001";
@@ -100,7 +101,7 @@ type DadosEvento = {
 // que a pessoa recusou), pra sugerir convidá-la pra essa em vez de só se
 // despedir. Nunca inventa nada — se não achar, os campos ficam null e o
 // prompt é instruído a não inventar.
-async function buscarDadosEvento(eventoId: number): Promise<DadosEvento> {
+async function buscarDadosEvento(eventoId: number, textoConversa: string): Promise<DadosEvento> {
     const vazio: DadosEvento = { hora: null, endereco: null, linkInscricao: null, filialFalada: null, proximoEventoNome: null, proximoEventoData: null, listaFiliais: "" };
     const { data: evento } = await supabaseAdmin
         .from("eventos")
@@ -138,7 +139,7 @@ async function buscarDadosEvento(eventoId: number): Promise<DadosEvento> {
         if (proximo) { proximoEventoNome = proximo.nome; proximoEventoData = proximo.data; }
     }
 
-    const listaFiliais = await buscarListaFiliais(evento.filial || null);
+    const listaFiliais = await buscarListaFiliais(evento.filial || null, textoConversa);
 
     return { hora: evento.hora || null, endereco, linkInscricao: evento.link_inscricao || null, filialFalada, proximoEventoNome, proximoEventoData, listaFiliais };
 }
@@ -160,7 +161,9 @@ function montarPrompt(item: Candidata, historico: string, dados: DadosEvento, ex
         ? `\nSe a pessoa não pode ir a ESTE evento, existe uma próxima Abertura de Turma na mesma filial: "${dados.proximoEventoNome}" em ${dados.proximoEventoData}. Pode convidá-la pra essa em vez de só se despedir.`
         : "";
 
-    return `Você ajuda uma escola de filosofia (Nova Acrópole) a triar respostas de convites de evento pelo WhatsApp. Uma pessoa foi convidada pro evento abaixo e respondeu. Hoje é ${hojeISO}.
+    return `Você ajuda uma escola de filosofia (Nova Acrópole) a triar respostas de convites de evento pelo WhatsApp. Uma pessoa foi convidada pro evento abaixo e respondeu.
+
+${montarTabelaDiasSemana(hojeISO)}
 
 Dados reais do evento (use pra responder com precisão — nunca invente nada que não esteja aqui):
 ${infoEvento}${infoProximoEvento}
@@ -186,6 +189,7 @@ Além da categoria, escreva "sugestao_resposta": um rascunho de mensagem de acom
 - Se "ambiguo": deixe "sugestao_resposta" como null — não force um texto sem saber o que responder.
 - NUNCA invente evento, data, endereço, valor, ou qualquer fato que não foi dado aqui.
 - Se o lead mencionar ou perguntar sobre uma unidade/filial DIFERENTE da do evento (ver lista de unidades acima, se houver), responda com os dados REAIS daquela unidade que ele mencionou — nunca confunda com a filial deste evento.
+- Se o histórico tiver uma promessa vaga de dia da semana feita pela ESCOLA (ex: "teremos outra oportunidade na próxima quinta") e o lead só confirmou agora, use a tabela de calendário no topo pra achar a DATA EXATA daquele dia da semana — nunca escreva uma data sem conferir na tabela.
 - ATENÇÃO a datas abreviadas no formato "NN/NN" (ex: "01/27", "após 01/27"): o formato brasileiro é DIA/MÊS, então o SEGUNDO número só pode ser mês válido se for de 1 a 12. Se o SEGUNDO número for MAIOR que 12 (como em "01/27", onde 27 não é mês), não é dia/mês — é quase certamente MÊS/ANO abreviado: "01/27" = janeiro de 2027, NUNCA "27 de janeiro". Se usar essa data na sugestão, escreva por extenso COM O ANO (ex: "em janeiro de 2027"), nunca deixe o ano implícito quando o lead mencionou um.
 
 Além disso, verifique se o LEAD mencionou explicitamente um período/data FUTURA específica pra ser recontatado (ex: "me chama em julho de 2027", "só depois do carnaval", "no mês que vem", "após 01/27") — diferente de uma recusa vaga ("mais tarde"/"outro dia", que NÃO conta). Se houver data/período específico o suficiente pra converter numa data real (aplicando a regra de data abreviada acima quando for o caso):
@@ -256,7 +260,7 @@ Deno.serve(async (req) => {
         const resultadosDebug = [];
         for (const item of candidatas as Candidata[]) {
             const historico = await montarHistorico(item.pessoaIdentificador);
-            const dados = await buscarDadosEvento(item.evento_id);
+            const dados = await buscarDadosEvento(item.evento_id, `${historico}\n${item.corpo_texto}`);
             resultadosDebug.push({ corpo_texto: item.corpo_texto, ...(await classificarUma(item, historico, dados, exemplos, hojeISO)) });
         }
         return json({ ok: true, debug: resultadosDebug });
@@ -265,7 +269,7 @@ Deno.serve(async (req) => {
     let processadas = 0;
     for (const item of candidatas as Candidata[]) {
         const historico = await montarHistorico(item.pessoaIdentificador);
-        const dados = await buscarDadosEvento(item.evento_id);
+        const dados = await buscarDadosEvento(item.evento_id, `${historico}\n${item.corpo_texto}`);
         const resultado = await classificarUma(item, historico, dados, exemplos, hojeISO);
 
         // Mesmo fix de sugerir-resposta-whatsapp (2026-10-01): distingue

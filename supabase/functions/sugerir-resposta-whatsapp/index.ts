@@ -27,6 +27,7 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin, NOME_TABELA_LEADS } from "../_shared/supabaseAdmin.ts";
 import { buscarExemplosEstilo } from "../_shared/exemplosEstilo.ts";
 import { buscarListaFiliais } from "../_shared/filiaisInfo.ts";
+import { montarTabelaDiasSemana } from "../_shared/calendario.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const MODELO = "claude-haiku-4-5-20251001";
@@ -88,7 +89,7 @@ async function montarContexto(pessoaIdentificador: string): Promise<string> {
 // específico — filial (endereço/mensalidade), tags, eventos que já
 // frequentou, resumo/abordagem já anotados pelo time — e entrega tudo
 // pro prompt. Continua proibido inventar o que NÃO vier aqui.
-async function montarContextoCRM(pessoaIdentificador: string, filial: string | null): Promise<string> {
+async function montarContextoCRM(pessoaIdentificador: string, filial: string | null, textoConversa: string): Promise<string> {
     const partes: string[] = [];
 
     const { data: lead } = await supabaseAdmin
@@ -140,7 +141,7 @@ async function montarContextoCRM(pessoaIdentificador: string, filial: string | n
     // CADASTRO dele (Setor Oeste), ignorando a unidade que ele realmente
     // citou. Lista todas as filiais pra IA conseguir identificar e usar
     // os dados certos quando isso acontecer.
-    const listaFiliais = await buscarListaFiliais(filial);
+    const listaFiliais = await buscarListaFiliais(filial, textoConversa);
     if (listaFiliais) partes.push(listaFiliais);
 
     // Pedido do usuário (2026-10-01): se o lead tem um convite de evento
@@ -175,7 +176,7 @@ function montarPrompt(contexto: string, contextoCRM: string, ultimaMensagem: str
 
     return `Você ajuda o time de atendimento de uma escola de filosofia (Nova Acrópole) a responder mensagens de WhatsApp de leads/alunos, de forma humanizada.
 
-Hoje é ${hojeISO}.
+${montarTabelaDiasSemana(hojeISO)}
 
 Dados já cadastrados no CRM sobre este lead e sua filial (use pra responder com precisão quando fizer sentido, ex: perguntas sobre endereço/valor/eventos que já foi):
 ${contextoCRM}
@@ -193,6 +194,7 @@ Escreva um rascunho de resposta em português, curto (1-5 frases), caloroso, nat
 - Se o lead disser uma OBJEÇÃO (não pode agora, está sem tempo, já é/foi aluno e não quer voltar agora, etc.), use o mesmo tom empático e sem insistência dos exemplos acima — nunca insista ou tente reverter a objeção à força.
 - Se o lead disser que QUER IR a um evento que já tem um convite PENDENTE listado acima (data/horário já FIXOS, já comunicados antes), NUNCA pergunte "qual dia você pode" como se houvesse escolha — é só confirmar a data/horário que já convidamos e, se fizer sentido, o endereço/link.
 - Se o lead mencionar ou perguntar sobre uma unidade/filial DIFERENTE da "filial de cadastro" (ver lista de unidades acima), responda com os dados REAIS daquela unidade que ele mencionou — nunca confunda com a filial de cadastro dele.
+- Se o histórico tiver uma promessa vaga de dia da semana feita pela ESCOLA (ex: "teremos outra oportunidade na próxima quinta", "pode ser semana que vem?") e o lead só confirmou agora ("sim", "pode ser"), use a tabela de calendário no topo pra achar a DATA EXATA daquele dia da semana — nunca escreva uma data sem conferir na tabela.
 - Se não der pra saber o que responder com confiança (mensagem ambígua, fora de contexto, ou perigosa de responder sem saber mais), devolva "sugestao": null — não force um texto.
 - ATENÇÃO a datas abreviadas no formato "NN/NN" (ex: "01/27", "depois de 03/28"): o formato brasileiro é DIA/MÊS, então o SEGUNDO número só pode ser mês válido se for de 1 a 12. Se o SEGUNDO número for MAIOR que 12 (como em "01/27", onde 27 não é mês nenhum), não é dia/mês — é quase certamente MÊS/ANO abreviado: "01/27" = janeiro de 2027, NUNCA "27 de janeiro". Se for usar essa data na resposta, escreva por extenso COM O ANO (ex: "em janeiro de 2027"), nunca deixe o ano implícito quando o lead mencionou um.
 
@@ -265,7 +267,7 @@ Deno.serve(async (req) => {
         for (const item of candidatas as Candidata[]) {
             if (setJaClassificadas.has(item.mensagem_id)) continue;
             const contexto = await montarContexto(item.pessoaIdentificador);
-            const contextoCRM = await montarContextoCRM(item.pessoaIdentificador, item.filial);
+            const contextoCRM = await montarContextoCRM(item.pessoaIdentificador, item.filial, `${contexto}\n${item.corpo_texto}`);
             resultadosDebug.push({ corpo_texto: item.corpo_texto, contextoCRM, ...(await sugerirUma(contexto, contextoCRM, item.corpo_texto, exemplos, hojeISO)) });
         }
         return json({ ok: true, debug: resultadosDebug });
@@ -276,7 +278,7 @@ Deno.serve(async (req) => {
         if (setJaClassificadas.has(item.mensagem_id)) continue;
 
         const contexto = await montarContexto(item.pessoaIdentificador);
-        const contextoCRM = await montarContextoCRM(item.pessoaIdentificador, item.filial);
+        const contextoCRM = await montarContextoCRM(item.pessoaIdentificador, item.filial, `${contexto}\n${item.corpo_texto}`);
         const resultado = await sugerirUma(contexto, contextoCRM, item.corpo_texto, exemplos, hojeISO);
         // Bug real corrigido (2026-10-01, "não está gerando respostas,
         // pq?"): uma falha TÉCNICA (rede, rate limit momentâneo da

@@ -7891,6 +7891,64 @@ export .txt, "Sugerir com IA" e a fila de atendentes (esta última,
 estruturalmente impossível de testar sem um webhook real assinado)
 ficam pra confirmar na próxima sessão de uso real.
 
+## Bug real: IA calculando "próxima quinta" errado + confundindo filial com a lista completa (2026-10-01)
+
+Relatado pelo usuário com um caso real: o atendente tinha prometido "uma
+outra oportunidade na próxima quinta" (sem data exata) numa mensagem
+anterior; o lead respondeu "Sim" HOJE, uma quinta-feira (01/10) — e a
+sugestão de `sugerir-resposta-whatsapp` disse "nos vemos na próxima
+quinta (05/10)", só que 05/10 é uma SEGUNDA-feira, não quinta. **As
+datas da tabela `eventos` estavam certas o tempo todo** (confirmado por
+SELECT direto) — o erro era só a IA CALCULANDO de cabeça que dia é "a
+próxima quinta" a partir de "hoje é 2026-10-01", tarefa de aritmética de
+calendário em que LLMs erram com frequência.
+
+- **Corrigido com o mesmo princípio de sempre** (nunca deixar a IA
+  calcular/inventar um fato que o código já pode entregar pronto): nova
+  `supabase/functions/_shared/calendario.ts`,
+  `montarTabelaDiasSemana(hojeISO, dias=14)` — monta os próximos 14 dias
+  JÁ CALCULADOS (dia da semana + data), com uma marca especial na linha
+  de +7 dias ("é isso que 'a próxima X' significa a partir de hoje" —
+  sempre o mesmo dia da semana de hoje, já que 7 dias se repetem). O
+  prompt das duas functions de IA (`sugerir-resposta-whatsapp`,
+  `classificar-resposta-convite`) passou a receber essa tabela no lugar
+  de só "Hoje é AAAA-MM-DD", com instrução explícita pra NUNCA calcular
+  dia da semana de cabeça — só consultar a tabela.
+- **2º bug real, achado testando ao vivo o fix acima** (não relatado
+  pelo usuário, achado na validação): com a tabela de calendário
+  funcionando (data certa confirmada 2x), a IA respondeu com os dados da
+  **ÚLTIMA filial da lista** ("Goiânia II") pra um lead de "Barra do
+  Garças/MT" — mesmo o lead nunca tendo mencionado NENHUMA outra unidade
+  na conversa. Causa: desde o fix anterior do mesmo dia (filial errada —
+  ver `_shared/filiaisInfo.ts`), a lista de TODAS as filiais ativas
+  passou a entrar no prompt **sempre**, mesmo quando o lead nunca
+  menciona outra unidade — puro ruído na maioria das conversas, e esse
+  ruído criava viés de recência (o último item da lista "vence").
+  **Corrigido**: `buscarListaFiliais(filialDoLead, textoParaChecarOutraMencao?)`
+  ganhou um 2º parâmetro — quando informado, a função só MONTA (e só
+  inclui no prompt) a lista completa se detectar, por substring (núcleo
+  do nome da filial, sem "Goiânia"/"MT"/pontuação, com variante numeral
+  romano↔arábico pra cobrir "Goiânia II"/"Goiânia 2"), a menção de
+  alguma filial que NÃO é a do lead dentro do texto da conversa recente.
+  Sem menção real a outra unidade, a lista nem entra no prompt — elimina
+  a fonte de confusão pro caso comum (a grande maioria das conversas).
+  Os 2 chamadores (`montarContextoCRM()`/`buscarDadosEvento()`) passam o
+  histórico+mensagem atual como texto de checagem.
+- **Testado ao vivo, ponta a ponta, contra produção** (lead de teste
+  904000019, histórico limpo pra não contaminar com menções de testes
+  anteriores da sessão): reproduzido o cenário exato (atendente promete
+  "próxima quinta" sem data, lead responde "Sim" hoje, uma quinta) — a
+  sugestão gerada disse corretamente "08/10" (quinta-feira real seguinte)
+  **e** "aqui na Nova Acrópole de Barra do Garças" (filial certa do
+  lead, sem a lista completa aparecer no prompt). Dados de teste
+  apagados depois (mensagens + sugestões geradas).
+- **Lead real afetado, não corrigido retroativamente**: a mensagem com a
+  data errada (05/10) JÁ FOI ENVIADA de verdade pro lead real "BRASILIA
+  BORGE" (`pessoaIdentificador=456575`, Goiânia - Setor Oeste) antes
+  deste fix — como é uma mensagem de WhatsApp já entregue, não dá pra
+  "desenviar"; precisa de um follow-up manual do time corrigindo a data
+  certa (08/10) com essa pessoa.
+
 ## Convenções de código
 
 - Comentários e nomes de função em português, no mesmo estilo do resto do
