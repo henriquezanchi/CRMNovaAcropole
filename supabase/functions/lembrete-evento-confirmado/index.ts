@@ -24,7 +24,7 @@
 // aprovado só pra isso.
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
-import { linkMapsEndereco } from "../_shared/filiaisInfo.ts";
+import { linkMapsDaFilial } from "../_shared/filiaisInfo.ts";
 
 const TAMANHO_LOTE = 5;
 
@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
 
     const filiaisUnicas = [...new Set((leads || []).map((l: any) => l.filial).filter(Boolean))];
     const { data: filiais } = filiaisUnicas.length > 0
-        ? await supabaseAdmin.from("filiais").select("nome, nome_com_preposicao, endereco").in("nome", filiaisUnicas)
+        ? await supabaseAdmin.from("filiais").select("nome, nome_com_preposicao, endereco, link_maps_ulisses").in("nome", filiaisUnicas)
         : { data: [] as any[] };
     const mapaFiliais = new Map((filiais || []).map((f: any) => [f.nome, f]));
 
@@ -91,7 +91,8 @@ Deno.serve(async (req) => {
             // livre, sem link clicável separado, então o link entra como
             // uma frase própria logo depois do endereço.
             const endereco = filialInfo.endereco ? ` — ${filialInfo.endereco}` : "";
-            const linkMaps = filialInfo.endereco ? `\nLocalização: ${linkMapsEndereco(filialInfo.endereco)}` : "";
+            const linkMapsTxt = linkMapsDaFilial(filialInfo);
+            const linkMaps = linkMapsTxt ? `\nLocalização: ${linkMapsTxt}` : "";
             const horaTxt = evento.hora ? ` às ${String(evento.hora).slice(0, 5)}` : "";
 
             const texto = `Oi${nome ? `, ${nome}` : ""}! Passando só pra lembrar: amanhã é o dia da "${evento.nome}"${horaTxt}, aqui ${filialFalada}${endereco}.${linkMaps}\nTe esperamos! 🙏`;

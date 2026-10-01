@@ -26,7 +26,7 @@
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin, NOME_TABELA_LEADS } from "../_shared/supabaseAdmin.ts";
 import { buscarExemplosEstilo } from "../_shared/exemplosEstilo.ts";
-import { buscarListaFiliais, linkMapsEndereco } from "../_shared/filiaisInfo.ts";
+import { buscarListaFiliais, linkMapsDaFilial } from "../_shared/filiaisInfo.ts";
 import { montarTabelaDiasSemana, adicionarMeses } from "../_shared/calendario.ts";
 import { buscarPersonaAtendente } from "../_shared/persona.ts";
 
@@ -127,7 +127,7 @@ async function montarContextoCRM(pessoaIdentificador: string, filial: string | n
     if (filial) {
         const { data: filialRow } = await supabaseAdmin
             .from("filiais")
-            .select("nome_com_preposicao, endereco, valor_mensalidade")
+            .select("nome_com_preposicao, endereco, valor_mensalidade, link_maps_ulisses")
             .eq("nome", filial)
             .maybeSingle();
         if (filialRow) {
@@ -137,7 +137,7 @@ async function montarContextoCRM(pessoaIdentificador: string, filial: string | n
             // certo embutido, pra IA só copiar em vez de tentar montar
             // sozinha.
             if (filialRow.nome_com_preposicao) partes.push(`Como falar da filial: "aqui na Nova Acrópole ${filialRow.nome_com_preposicao}" (nunca comece a frase com "aqui do"/"aqui da")`);
-            if (filialRow.endereco) partes.push(`Endereço desta filial: ${filialRow.endereco} (link do Google Maps: ${linkMapsEndereco(filialRow.endereco)} — sempre que mencionar o endereço na resposta, inclua também este link)`);
+            if (filialRow.endereco) partes.push(`Endereço desta filial: ${filialRow.endereco} (link do Google Maps: ${linkMapsDaFilial(filialRow)} — sempre que mencionar o endereço na resposta, inclua também este link)`);
             if (filialRow.valor_mensalidade) partes.push(`Valor da mensalidade desta filial: R$ ${filialRow.valor_mensalidade}`);
         }
     }

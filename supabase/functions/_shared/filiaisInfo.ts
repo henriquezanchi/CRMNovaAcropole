@@ -31,6 +31,18 @@ export function linkMapsEndereco(endereco: string | null | undefined): string | 
     return endereco ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(endereco)}` : null;
 }
 
+// Pedido do usuário (2026-10-01): "podemos pegar o link do maps no
+// ulisses" — `filiais.link_maps_ulisses` (sincronizado 1x/dia via
+// scraper/importar-ulisses-api.js, GET /facade/filial/{id}) é um link de
+// PIN exato (lat/lng reais da API deles), bem mais preciso que o nosso
+// `linkMapsEndereco()` (busca por texto) — usado como PRIMEIRA opção
+// sempre que existir; o link por texto continua sendo o fallback pra
+// filial ainda não sincronizada.
+export function linkMapsDaFilial(filial: { link_maps_ulisses?: string | null; endereco?: string | null } | null | undefined): string | null {
+    if (!filial) return null;
+    return filial.link_maps_ulisses || linkMapsEndereco(filial.endereco);
+}
+
 function normalizarTextoDeteccaoFilial(s: string): string {
     return (s || "")
         .normalize("NFD").replace(/[̀-ͯ]/g, "")
@@ -57,7 +69,7 @@ function nucleoDistintivoFilial(nome: string): string {
 // NÃO é a do lead. Omitido (undefined) = sempre inclui, comportamento
 // antigo (nenhum chamador usa mais assim, mas mantido por segurança).
 export async function buscarListaFiliais(filialDoLead: string | null, textoParaChecarOutraMencao?: string): Promise<string> {
-    const { data } = await supabaseAdmin.from("filiais").select("nome, nome_com_preposicao, endereco").eq("ativo", true);
+    const { data } = await supabaseAdmin.from("filiais").select("nome, nome_com_preposicao, endereco, link_maps_ulisses").eq("ativo", true);
     if (!data || data.length === 0) return "";
 
     if (textoParaChecarOutraMencao !== undefined) {
@@ -75,7 +87,7 @@ export async function buscarListaFiliais(filialDoLead: string | null, textoParaC
     }
 
     const linhas = data
-        .map((f: any) => `- ${f.nome}${f.nome === filialDoLead ? " (filial de CADASTRO deste lead)" : ""}: ${f.nome_com_preposicao ? `fala-se "${f.nome_com_preposicao}"` : ""}${f.endereco ? `, endereço ${f.endereco} (link do mapa: ${linkMapsEndereco(f.endereco)})` : " (endereço não cadastrado)"}`)
+        .map((f: any) => `- ${f.nome}${f.nome === filialDoLead ? " (filial de CADASTRO deste lead)" : ""}: ${f.nome_com_preposicao ? `fala-se "${f.nome_com_preposicao}"` : ""}${f.endereco ? `, endereço ${f.endereco} (link do mapa: ${linkMapsDaFilial(f)})` : " (endereço não cadastrado)"}`)
         .join("\n");
     return `Todas as unidades ativas da Nova Acrópole (use isto se o lead mencionar ou perguntar sobre uma unidade DIFERENTE da filial de cadastro dele — responda com os dados REAIS da unidade que ELE mencionou, nunca confunda com a filial de cadastro):\n${linhas}`;
 }

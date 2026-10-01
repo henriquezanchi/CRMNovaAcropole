@@ -156,6 +156,33 @@ export async function sincronizarEventosUlissesApi() {
         return '0 filial(is) do CRM encontrada(s) no sistema do Ulisses — nada a sincronizar.' + (semMatch.length ? ` Sem match: ${semMatch.join(', ')}.` : '');
     }
 
+    // Pedido do usuário (2026-10-01): "podemos pegar o link do maps no
+    // ulisses (entre vários outros dados que não mudam frequentemente)"
+    // — achado real testando `GET /facade/filial/{id}`: ele já devolve
+    // `linkMapa` (link de PIN exato, lat/lng reais — bem mais preciso que
+    // gerar um link de busca por texto em cima do endereço), além de
+    // lat/lng soltos, facebook, instagram. De carona nesta MESMA rodada
+    // diária (não é chamada de API extra de peso nenhuma, já iteramos
+    // estas filiais aqui mesmo) — sempre regrava com o valor mais recente
+    // da API (não é "preservar se já tiver", é confiar na fonte oficial,
+    // que também pode corrigir um endereço/link errado do lado deles).
+    for (const [filialId, nomeCrm] of nomePorFilialIdUlisses) {
+        try {
+            const dadosFilial = await ulissesApi.filial(filialId);
+            const payload = {};
+            if (dadosFilial.linkMapa) payload.link_maps_ulisses = dadosFilial.linkMapa;
+            if (typeof dadosFilial.lat === 'number') payload.lat = dadosFilial.lat;
+            if (typeof dadosFilial.lng === 'number') payload.lng = dadosFilial.lng;
+            if (dadosFilial.facebook) payload.facebook = dadosFilial.facebook;
+            if (dadosFilial.instagram) payload.instagram = dadosFilial.instagram;
+            if (Object.keys(payload).length > 0) {
+                await supabaseAdmin.from('filiais').update(payload).eq('nome', nomeCrm);
+            }
+        } catch (e) {
+            console.warn(`[ulisses-api] Não consegui buscar dados complementares da filial "${nomeCrm}" (filialId=${filialId}) — pulando (não trava o resto):`, e.message);
+        }
+    }
+
     // IDs de onde vamos LISTAR eventos: nossas filiais matched + Setor
     // Universitário (mesmo sem ser filial nossa — é só fonte de eventos
     // que PODEM pertencer a uma das nossas).

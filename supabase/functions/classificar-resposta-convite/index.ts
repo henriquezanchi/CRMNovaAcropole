@@ -24,7 +24,7 @@
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin, NOME_TABELA_LEADS } from "../_shared/supabaseAdmin.ts";
 import { buscarExemplosEstilo } from "../_shared/exemplosEstilo.ts";
-import { buscarListaFiliais, linkMapsEndereco } from "../_shared/filiaisInfo.ts";
+import { buscarListaFiliais, linkMapsDaFilial } from "../_shared/filiaisInfo.ts";
 import { montarTabelaDiasSemana, adicionarMeses } from "../_shared/calendario.ts";
 import { buscarPersonaAtendente } from "../_shared/persona.ts";
 
@@ -88,6 +88,7 @@ async function montarHistorico(pessoaIdentificador: string): Promise<string> {
 type DadosEvento = {
     hora: string | null;
     endereco: string | null;
+    linkMaps: string | null;
     linkInscricao: string | null;
     filialFalada: string | null; // ex: "Setor Oeste" já com a preposição certa pronta pra usar
     proximoEventoNome: string | null; // pra quando a pessoa não pode ir a ESTE — próxima Abertura de Turma da mesma filial, se houver
@@ -103,7 +104,7 @@ type DadosEvento = {
 // despedir. Nunca inventa nada — se não achar, os campos ficam null e o
 // prompt é instruído a não inventar.
 async function buscarDadosEvento(eventoId: number, textoConversa: string): Promise<DadosEvento> {
-    const vazio: DadosEvento = { hora: null, endereco: null, linkInscricao: null, filialFalada: null, proximoEventoNome: null, proximoEventoData: null, listaFiliais: "" };
+    const vazio: DadosEvento = { hora: null, endereco: null, linkMaps: null, linkInscricao: null, filialFalada: null, proximoEventoNome: null, proximoEventoData: null, listaFiliais: "" };
     const { data: evento } = await supabaseAdmin
         .from("eventos")
         .select("hora, link_inscricao, filial, data, tipo")
@@ -112,14 +113,16 @@ async function buscarDadosEvento(eventoId: number, textoConversa: string): Promi
     if (!evento) return vazio;
 
     let endereco: string | null = null;
+    let linkMaps: string | null = null;
     let filialFalada: string | null = null;
     if (evento.filial) {
         const { data: filialRow } = await supabaseAdmin
             .from("filiais")
-            .select("nome_com_preposicao, endereco")
+            .select("nome_com_preposicao, endereco, link_maps_ulisses")
             .eq("nome", evento.filial)
             .maybeSingle();
         endereco = filialRow?.endereco || null;
+        linkMaps = linkMapsDaFilial(filialRow);
         filialFalada = filialRow?.nome_com_preposicao || null;
     }
 
@@ -142,7 +145,7 @@ async function buscarDadosEvento(eventoId: number, textoConversa: string): Promi
 
     const listaFiliais = await buscarListaFiliais(evento.filial || null, textoConversa);
 
-    return { hora: evento.hora || null, endereco, linkInscricao: evento.link_inscricao || null, filialFalada, proximoEventoNome, proximoEventoData, listaFiliais };
+    return { hora: evento.hora || null, endereco, linkMaps, linkInscricao: evento.link_inscricao || null, filialFalada, proximoEventoNome, proximoEventoData, listaFiliais };
 }
 
 function montarPrompt(item: Candidata, historico: string, dados: DadosEvento, exemplos: string, hojeISO: string, persona: string): string {
@@ -154,7 +157,7 @@ function montarPrompt(item: Candidata, historico: string, dados: DadosEvento, ex
         `Nome: ${item.evento_nome}`,
         `Data: ${item.evento_data}`,
         dados.hora ? `Horário: ${dados.hora}` : null,
-        dados.endereco ? `Endereço: ${dados.endereco} (link do Google Maps: ${linkMapsEndereco(dados.endereco)} — sempre que mencionar o endereço na resposta, inclua também este link)` : null,
+        dados.endereco ? `Endereço: ${dados.endereco} (link do Google Maps: ${dados.linkMaps} — sempre que mencionar o endereço na resposta, inclua também este link)` : null,
         dados.linkInscricao ? `Link de inscrição: ${dados.linkInscricao}` : null,
         dados.filialFalada ? `Como falar da filial: "aqui na Nova Acrópole ${dados.filialFalada}" (nunca comece a frase com "aqui do"/"aqui da")` : null,
     ].filter(Boolean).join("\n");

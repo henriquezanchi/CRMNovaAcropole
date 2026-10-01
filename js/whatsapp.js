@@ -664,7 +664,12 @@ function resolverRespostaRapida(texto, leadId) {
         // na hora a partir do PRÓPRIO endereço cadastrado (sem precisar de
         // lat/long nem campo novo no banco): link de busca do Google Maps,
         // funciona em qualquer endereço de texto livre.
-        .replaceAll('{link_maps}', filialObj.endereco ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(filialObj.endereco)}` : '(endereço ainda não cadastrado em Gerenciar Filiais)');
+        // Pedido do usuário (2026-10-01): "podemos pegar o link do maps no
+        // ulisses" — `filialObj.link_maps_ulisses` (sincronizado 1x/dia
+        // via scraper/importar-ulisses-api.js, GET /facade/filial/{id}) é
+        // um link de PIN exato, preferido sobre o link gerado por busca de
+        // texto quando já estiver disponível.
+        .replaceAll('{link_maps}', filialObj.link_maps_ulisses || (filialObj.endereco ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(filialObj.endereco)}` : '(endereço ainda não cadastrado em Gerenciar Filiais)'));
 }
 
 // ==========================================================
