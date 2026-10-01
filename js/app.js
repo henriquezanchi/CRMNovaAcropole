@@ -2621,6 +2621,7 @@ function atualizarDashboard() {
 
     renderizarResumoLeadForte();
     renderizarResumoJornada();
+    renderizarResumoRetorno1Evento();
     renderizarFeedAtividades();
     atualizarLembretesPendentes();
     atualizarAniversariantes();
@@ -2733,6 +2734,36 @@ function renderizarResumoJornada() {
 function filtrarPorJornada(estagio) {
     switchModule('tab-crm', 'Prospecção Ativa', 'CRM Modularizado VS Code');
     quickFilterTag(`Jornada: ${estagio}`);
+}
+
+// KPI novo (2026-10-01), achado numa avaliação de conversão: quem já é
+// aluno frequentou ~4x mais eventos em média (3,95) do que quem nunca
+// converte (1,39) — e 79% dos prospects nunca passam de 0-1 evento. Este
+// card conta quem já está marcado "Retorno: Só 1 Evento" (calculada no
+// importador, ver calcularTagsTrilhaEJornada() em js/importador.js) —
+// exatamente quem está "a 1 evento de distância" de sair desse grupo
+// estagnado. Mesmo padrão proxy (sobre leadsAtuais) do resto do Dashboard.
+function renderizarResumoRetorno1Evento() {
+    const container = document.getElementById('retorno1EventoResumo');
+    if (!container) return;
+
+    let total = 0;
+    leadsAtuais.forEach(l => {
+        const tags = parseTags(l.tags).map(t => t.trim());
+        if (tags.includes('Retorno: Só 1 Evento')) total++;
+    });
+
+    container.innerHTML = `
+        <div class="lead-forte-resumo-item tag-warning" onclick="filtrarPorRetorno1Evento()" title="Ver esses leads no CRM — já vieram 1x, só precisam de um convite pra voltar">
+            <div class="lead-forte-resumo-valor">${total.toLocaleString('pt-BR')}</div>
+            <div class="lead-forte-resumo-label"><i class="fa-solid fa-rotate-left"></i> Vieram 1x, nunca voltaram</div>
+        </div>
+    `;
+}
+
+function filtrarPorRetorno1Evento() {
+    switchModule('tab-crm', 'Prospecção Ativa', 'CRM Modularizado VS Code');
+    quickFilterTag('Retorno: Só 1 Evento');
 }
 
 // Diferente dos KPIs acima (proxy, calculados só em cima do que já está no
@@ -3648,6 +3679,13 @@ const FAMILIAS_TAG = [
     // histórico de eventos + config de trilhas_tipo_evento (sistema de
     // follow-up). Cor própria pra distinguir de tag customizada comum.
     { label: 'Jornada', testar: t => /^(Trilha|Jornada): /i.test(t), classe: () => 'tag-jornada' },
+    // "Retorno: Só 1 Evento" — pedido do usuário (2026-10-01), achado numa
+    // avaliação de conversão: quem já é aluno frequentou ~4x mais eventos
+    // em média do que quem nunca converte, e 79% dos prospects nunca
+    // passam de 0-1 evento. Cor própria (âmbar, mesmo tom de "precisa de
+    // atenção" já usado em Sem Telefone/Sem E-mail) pra chamar atenção de
+    // quem está "a 1 evento de distância" de sair desse grupo estagnado.
+    { label: 'Retorno', testar: t => /^Retorno: /i.test(t), classe: () => 'tag-warning' },
     // "Convite: X" — classificação automática da resposta a um convite de
     // evento (pedido do usuário 2026-09-28, reunião com a Ediliene — ver
     // Edge Function classificar-resposta-convite). Cor varia por

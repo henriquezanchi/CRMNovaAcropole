@@ -448,6 +448,13 @@ async function carregarAgendaGeralLeadsPrioritarios() {
 
     candidatos.forEach(l => {
         l._diasAbertura = _diasParaAberturaTurma(l);
+        // "Retorno: Só 1 Evento" (2026-10-01) — achado numa avaliação de
+        // conversão: quem já é aluno frequentou ~4x mais eventos em média
+        // do que quem nunca converte. Prioridade logo ATRÁS de "Abertura
+        // de Turma chegando" e ACIMA de Lead Forte — é um sinal mais
+        // específico e mais recente que achamos nos dados do que a
+        // pontuação genérica de Lead Forte 3 (que é a maioria da base).
+        l._temRetorno1Evento = parseTags(l.tags).map(t => t.trim()).includes('Retorno: Só 1 Evento') ? 0 : 1;
         l._rankForte = rankLeadForte(l);
         l._rankJornada = _rankJornadaAgendaGeral(l);
         l._diasSemContato = l.ultimo_contato_em
@@ -457,6 +464,7 @@ async function carregarAgendaGeralLeadsPrioritarios() {
 
     candidatos.sort((a, b) => {
         if (a._diasAbertura !== b._diasAbertura) return a._diasAbertura - b._diasAbertura;
+        if (a._temRetorno1Evento !== b._temRetorno1Evento) return a._temRetorno1Evento - b._temRetorno1Evento;
         if (a._rankForte !== b._rankForte) return a._rankForte - b._rankForte;
         if (a._rankJornada !== b._rankJornada) return a._rankJornada - b._rankJornada;
         if (contarTags(b) !== contarTags(a)) return contarTags(b) - contarTags(a);
@@ -473,7 +481,9 @@ async function carregarAgendaGeralLeadsPrioritarios() {
     container.innerHTML = top50.map(l => {
         const motivo = l._diasAbertura !== Infinity
             ? `<span class="tag-inscrito-turma" style="display:inline-block; padding:1px 6px; border-radius:4px; font-size:10px;">Turma em ${l._diasAbertura === 0 ? 'HOJE' : `${l._diasAbertura}d`}</span>`
-            : (l._rankForte < 99 ? `<span class="tag-strong tag-strong-${l._rankForte}" style="display:inline-block; padding:1px 6px; border-radius:4px; font-size:10px;">Lead Forte ${l._rankForte}</span>` : '');
+            : (l._temRetorno1Evento === 0
+                ? `<span class="tag-warning" style="display:inline-block; padding:1px 6px; border-radius:4px; font-size:10px;">Só veio 1x</span>`
+                : (l._rankForte < 99 ? `<span class="tag-strong tag-strong-${l._rankForte}" style="display:inline-block; padding:1px 6px; border-radius:4px; font-size:10px;">Lead Forte ${l._rankForte}</span>` : ''));
         const contatoTxt = l._diasSemContato === Infinity ? 'Nunca contatado' : `Contatado há ${l._diasSemContato}d`;
         return `
             <div class="activity-item" style="cursor:pointer;" onclick="abrirResultadoBuscaGlobal('${l.pessoaIdentificador}')">

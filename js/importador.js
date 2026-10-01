@@ -309,16 +309,29 @@ function parseTelefoneInativo(campo) {
 //   - "Engajado": trilha Filosófica + Lead Forte 1 ou 2 — já dá sinal
 //     forte de propensão a matricular.
 function calcularTagsTrilhaEJornada(eventos, tagsBase, mapaTrilha) {
+    const jaAlunoOuExAluno = tagsBase.some(t => ['Ativo', 'Aluno Ativo', 'Inativo', 'Ex-Aluno (Inativo)'].includes(t));
+
+    // "Retorno: Só 1 Evento" — pedido do usuário (2026-10-01), achado numa
+    // avaliação de conversão real: quem JÁ é aluno frequentou em média
+    // 3,95 eventos antes de converter; quem nunca converte frequentou só
+    // 1,39 em média — e 79% dos prospects nunca passam de 0-1 evento. Essa
+    // tag marca exatamente quem está "a 1 evento de distância" de sair
+    // desse grupo estagnado — não é sobre contatar mais, é sobre trazer de
+    // volta pra um 2º evento especificamente. Calculada FORA do bloco de
+    // trilha abaixo (que pode retornar cedo se nenhum evento tiver tipo
+    // classificado) — o que importa aqui é só a CONTAGEM bruta de eventos,
+    // não a trilha deles. Só pra quem ainda não é aluno/ex-aluno (1 evento
+    // já atendido não é "estagnação" nenhuma pra quem já converteu).
+    const tagsRetorno = (!jaAlunoOuExAluno && (eventos || []).length === 1) ? ['Retorno: Só 1 Evento'] : [];
+
     const trilhas = new Set();
     (eventos || []).forEach(e => {
         const trilha = mapaTrilha.get(e.tipo);
         if (trilha) trilhas.add(trilha);
     });
-    if (trilhas.size === 0) return [];
+    if (trilhas.size === 0) return tagsRetorno;
 
     const tagsTrilha = Array.from(trilhas).sort().map(t => `Trilha: ${t}`);
-
-    const jaAlunoOuExAluno = tagsBase.some(t => ['Ativo', 'Aluno Ativo', 'Inativo', 'Ex-Aluno (Inativo)'].includes(t));
     if (jaAlunoOuExAluno) return tagsTrilha;
 
     const tagLeadForte = tagsBase.find(t => /^Lead Forte [1-3]$/.test(t));
@@ -328,7 +341,7 @@ function calcularTagsTrilhaEJornada(eventos, tagsBase, mapaTrilha) {
         ? 'Descoberta'
         : (nivelLeadForte === 1 || nivelLeadForte === 2) ? 'Engajado' : 'Interesse Emergente';
 
-    return [...tagsTrilha, `Jornada: ${jornada}`];
+    return [...tagsRetorno, ...tagsTrilha, `Jornada: ${jornada}`];
 }
 
 // ==========================================
@@ -1770,7 +1783,7 @@ async function confirmarEnviarImportacao() {
             // como "custom", preservada pra sempre) junto da nova.
             || /^(TA|Merlin|CA|JN|PP|N[1-7]|Membro)$/.test(tag)
             || /^Sem (Telefone|E-mail)$/.test(tag)
-            || /^(Trilha|Jornada): /.test(tag)
+            || /^(Trilha|Jornada|Retorno): /.test(tag)
             || tag === 'Inscrito: Abertura de Turma';
     }
     // Subconjuntos de `ehTagDeSistema()` usados só na importação PARCIAL,
@@ -1795,7 +1808,7 @@ async function confirmarEnviarImportacao() {
             || /^Jornada: /.test(tag);
     }
     function ehTagTrilha(tag) {
-        return /^Trilha: /.test(tag) || tag === 'Inscrito: Abertura de Turma';
+        return /^(Trilha|Retorno): /.test(tag) || tag === 'Inscrito: Abertura de Turma';
     }
     const primeiraColuna = (typeof columnsConfig !== 'undefined' && columnsConfig.length > 0) ? columnsConfig[0].key : 'Frios';
 
