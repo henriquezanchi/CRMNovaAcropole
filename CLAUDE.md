@@ -103,6 +103,10 @@ supabase/functions/_shared/midia.ts → baixarEArmazenarMidiaRecebida() — baix
                                      da Graph API e re-hospeda no bucket whatsapp-midia;
                                      compartilhada entre whatsapp-webhook e
                                      whatsapp-backfill-midia
+supabase/functions/_shared/anthropic.ts → chamarClaude() — chamada centralizada à Anthropic
+                                     API (cache de prompt via blocoCacheavel/blocoDinamico +
+                                     log real de uso em ia_uso_tokens); ver seção "Custo da
+                                     Anthropic API — visibilidade real + cache de prompt"
 supabase/functions/whatsapp-marcar-lido/ → Edge Function: marca uma mensagem recebida como
                                      lida na Meta (✓✓ azul do lado do lead) — endpoint próprio
                                      da Graph API, chamada ao abrir uma conversa; ver seção
@@ -8007,6 +8011,96 @@ calendário em que LLMs erram com frequência.
   deste fix — como é uma mensagem de WhatsApp já entregue, não dá pra
   "desenviar"; precisa de um follow-up manual do time corrigindo a data
   certa (08/10) com essa pessoa.
+
+## Custo da Anthropic API — visibilidade real + cache de prompt (2026-10-01)
+
+Pergunta do usuário: "o custo da api está mais alto que o sistema de
+corretores. pq será? o que estamos usando que está gastando tanta api do
+claude?". Investigação (não chute): das 6 Edge Functions que chamam a
+Anthropic (`classificar-temas`, `ia-diagnostico-saude`,
+`ia-recomendar-contatos`, `ia-sugerir-resumo`, e as 2 que rodam sozinhas
+a cada 15 min — `classificar-resposta-convite`/`sugerir-resposta-whatsapp`),
+só estas 2 últimas rodam em CRON contínuo, e **nenhuma das 6 usava cache
+de prompt** — pagando inteiro, em toda chamada, um bloco de instrução
+fixo que é quase idêntico de um candidato pro outro na mesma rodada.
+
+- **`supabase/functions/_shared/anthropic.ts`, NOVO**: `chamarClaude()`
+  centraliza a chamada (nunca mais duplicar fetch+parse em cada
+  function) — recebe o prompt JÁ DIVIDIDO em `blocoCacheavel` (regras
+  fixas + calendário do dia + exemplos, igual pra qualquer candidato da
+  MESMA rodada) e `blocoDinamico` (dados do lead/evento específico,
+  histórico, última mensagem) — só o 1º ganha `cache_control: {type:
+  "ephemeral"}`. Também grava (best-effort) 1 linha em `ia_uso_tokens`
+  (`migracao_ia_uso_tokens.sql`, RLS pública, log puro) por chamada, com
+  os números EXATOS que a Anthropic devolve
+  (`input_tokens`/`output_tokens`/`cache_creation_input_tokens`/
+  `cache_read_input_tokens`) — substitui estimar custo por tamanho de
+  texto por uma fonte de verdade consultável.
+- **`sugerir-resposta-whatsapp`/`classificar-resposta-convite`**:
+  prompts reescritos em `montarPromptCacheavel()`/`montarPromptDinamico()`
+  — o cacheável vem SEMPRE antes do dinâmico na mensagem final (a
+  Anthropic cacheia um PREFIXO; se o dinâmico viesse primeiro, o prefixo
+  nunca se repetiria entre leads diferentes). Referências a "acima"/
+  "abaixo" nas regras foram reescritas pra não depender da ordem antiga.
+- **Bug real, só descoberto medindo contra a API de verdade (não por
+  erro nenhum retornado)**: com o cache implementado, as 2 primeiras
+  rodadas de teste ao vivo sempre voltavam
+  `cache_creation_input_tokens: 0` **e** `cache_read_input_tokens: 0` —
+  nos dois lados (criação E leitura), sem nenhum aviso/erro da API
+  (`resp.ok` sempre `200`, sem campo "ignorado" no corpo). Adicionar o
+  header `anthropic-beta: prompt-caching-2024-07-31` (1ª hipótese) não
+  resolveu. Causa real, confirmada por busca na documentação: a
+  Anthropic exige um **MÍNIMO de tokens pro bloco ser elegível a cache**,
+  e esse mínimo **varia por modelo** — 1.024 tokens pra Opus/Sonnet,
+  2.048 pras versões antigas de Haiku (3/3.5), mas **4.096 tokens pro
+  Haiku 4.5** (`claude-haiku-4-5-20251001`, o modelo usado aqui) — bem
+  mais alto que os ~2.800-3.700 tokens que o bloco de regras+exemplos
+  somava. Abaixo do mínimo, o `cache_control` é **silenciosamente
+  ignorado**, sem erro nenhum — só dá pra perceber medindo o `usage` da
+  resposta de verdade.
+  - **Medido ao vivo** (não estimado): um endpoint de diagnóstico
+    temporário (removido depois de confirmar o fix) mandava só o bloco
+    cacheável puro pra Anthropic e lia `usage.input_tokens` da resposta
+    — forma exata de saber o tamanho real em tokens sem depender de
+    estimativa por caractere.
+  - **Corrigido** aumentando o bloco cacheável com conteúdo REAL (não
+    enchimento) — `EXEMPLOS_ADICIONAIS_ESTILO`/
+    `EXEMPLOS_ADICIONAIS_ESTILO_CONVITE` (constantes hardcoded em cada
+    function, não dependem da tabela `exemplos_resposta_ia`, que hoje só
+    tem ~10 linhas curadas — poucas pra garantir o mínimo sozinha e de
+    forma estável): mais pares cenário→bom-padrão-de-resposta cobrindo
+    situações reais do dia a dia (pergunta de preço, objeção de tempo,
+    ex-aluno hesitante, "é seita?", pedido de descadastro, confirmação de
+    presença, etc.) — o MESMO tipo de conteúdo que já existia, só mais
+    dele. Resultado medido depois do ajuste: ~4.564-4.764 tokens nos 2
+    blocos, com margem sobre o piso de 4.096.
+  - **Testado ao vivo, confirmado funcionando**: 1ª chamada após o fix →
+    `cache_creation_input_tokens: 4764` (criou o cache); 2ª chamada
+    (mesmo bloco) → `cache_read_input_tokens: 4764` (leu do cache, custo
+    bem menor). Repetido pras 2 functions. Teste de ponta a ponta pelo
+    fluxo REAL (`?debug=1`, não só o endpoint de medição): uma chamada
+    de produção leu do cache criado minutos antes por outra invocação
+    (`cache_read_input_tokens: 4764`, `input_tokens: 1120` — só o
+    bloco dinâmico + overhead), confirmando que o cache também é
+    reaproveitado ENTRE invocações da function (não só dentro do mesmo
+    loop de candidatos), contanto que caia dentro da janela de 5 min
+    padrão da Anthropic.
+  - **Risco residual aceito**: a margem sobre o piso de 4.096 depende em
+    parte dos ~10 exemplos reais de `exemplos_resposta_ia` (ativo=true)
+    — se essa tabela ficar vazia um dia, o bloco cacheável ainda fica
+    seguramente acima do piso graças só ao conteúdo hardcoded
+    (`EXEMPLOS_ADICIONAIS_ESTILO*`), mas com menos folga. Se o cache
+    voltar a mostrar `cache_creation_input_tokens: 0`/
+    `cache_read_input_tokens: 0` no futuro, o primeiro passo de
+    diagnóstico é sempre medir o tamanho real do bloco cacheável contra
+    a API (não estimar por caractere) e comparar com o piso do modelo em
+    uso — pode mudar de novo se o modelo (`MODELO`, hoje
+    `claude-haiku-4-5-20251001`) for trocado por outro.
+- **Dados de teste gerados durante esta investigação já foram limpos**
+  (mensagens de WhatsApp de teste, sugestões geradas, linhas de
+  `ia_uso_tokens`) — a tabela `ia_uso_tokens` ficou vazia de propósito
+  ao final, pronta pra só acumular uso real da próxima rodada de cron em
+  diante.
 
 ## Convenções de código
 
