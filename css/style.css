@@ -363,6 +363,8 @@ select:hover { border-color: #94a3b8; }
 .tag-nivel { background: #f5f3ff; color: #6d28d9; border: 1px solid #ddd6fe; }
 /* Trilha de Interesse / Estágio da Jornada (sistema de follow-up) */
 .tag-jornada { background: #ecfeff; color: #0e7490; border: 1px solid #a5f3fc; }
+/* "Contato Recente: 7/30 dias" — neutra/informativa, não é alerta nem conquista */
+.tag-contato-recente { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
 /* "Convite: X" — classificação automática da resposta a um convite de
    evento (2026-09-28) — cada categoria tem cor própria pra reconhecer de
    longe qual grupo de resposta é aquele. */

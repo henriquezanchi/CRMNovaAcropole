@@ -8542,3 +8542,56 @@ do projeto), reaproveitando FIELMENTE a lógica já validada de
   `telefone`/`email` com exatamente 1 membro restante = sempre resíduo
   de merge, nunca um estado legítimo desses 2 critérios). Confirmado:
   `email` caiu de 75 pra 29 grupos (75-46, bate exato).
+
+## Tags "Contato Recente: 7/30 dias" (2026-10-06)
+
+Pedido do usuário: "crie uma tag para quem recebeu mensagem nossa nos
+últimos dias (pode ser nos últimos 7, e ultimos 30 dias) e já marque
+todo mundo que atende a esse critério. Assim evitamos enviar mensagem de
+novo".
+
+**Decisão de design**: NÃO é uma tag comum (adicionada 1x, esquecida) —
+isso viraria uma mentira depois que os 7/30 dias passassem, exatamente o
+oposto do propósito ("não mandar de novo pra quem já foi contatado"). É
+uma tag de SISTEMA, sempre recalculada a partir da coluna
+`ultimo_contato_em` (já existente, carimbada automaticamente em todo
+envio real desde `migracao_whatsapp_snooze_fila_ultimo_contato.sql`):
+
+- **Adicionada na hora**, dentro de `whatsapp-send` (Edge Function) — no
+  MESMO bloco que já carimba `ultimo_contato_em`, agora também lê as
+  tags atuais do lead e adiciona `"Contato Recente: 7 dias"`/`"Contato
+  Recente: 30 dias"` se ainda não estiverem lá (as duas coexistem — quem
+  foi contatado há 3 dias tem as DUAS, quem foi contatado há 15 dias só
+  a de 30). Cobre todo envio real (individual, convite em massa, bot de
+  reengajamento, etc.) de graça, sem precisar mexer em cada chamador.
+- **Removida pelo tempo passando, não por nenhum evento** — função SQL
+  `sincronizar_tags_contato_recente()` (`migracao_tags_contato_recente.sql`),
+  rodando via `pg_cron` 1x/dia (09:05 UTC = 06:05 Brasília): percorre
+  TODA a base (exceto lixeira), compara `ultimo_contato_em` contra os 2
+  limiares e ADICIONA ou REMOVE cada tag conforme o caso — nenhuma outra
+  rotina do projeto remove uma tag baseada só em tempo decorrido, esta é
+  a primeira (mesmo padrão de `limpar_lixeira_leads_vencidos()`/
+  `arquivar_conversas_whatsapp_inativas()`, só que atualiza em vez de
+  excluir/arquivar).
+- **`tags` é jsonb mas guardado como STRING jsonb contendo o array**
+  (confirmado: `jsonb_typeof(tags) = 'string'`) — a função SQL usa
+  `(tags #>> '{}')::jsonb` pra extrair o array de verdade e
+  `to_jsonb(...::text)` pra regravar no MESMO formato, mesma técnica já
+  usada em `leads_ativos_inativos_da_filial()` etc.
+- **Rodada manualmente 1x contra produção** (satisfaz "já marque todo
+  mundo que atende a esse critério" imediatamente, sem esperar o cron do
+  dia seguinte): confirmado 896 leads tagueados, batendo exato com
+  `count(*) where ultimo_contato_em >= now() - interval '7/30 days'`.
+- **Nova família de tag** (`FAMILIAS_TAG`, `js/app.js`) —
+  `/^Contato Recente: /i`, cor neutra/informativa própria
+  (`.tag-contato-recente`, cinza-azulado — não é alerta nem conquista,
+  só um "já foi contatado, cuidado pra não repetir"). Não protegida
+  contra remoção manual (mesmo tratamento de `Jornada:`/`Convite:`/
+  `Conversa:` — se alguém remover na mão, o cron do dia seguinte
+  recalcula sozinho de qualquer forma, já que é derivada de
+  `ultimo_contato_em`, não um estado independente).
+- **Uso pretendido**: filtro de coluna já tem a lista "Excluir" (chips
+  vermelhos) — marcando `"Contato Recente: 7 dias"` ali, um SDR filtrando
+  uma coluna pra disparo em massa já esconde sozinho quem foi contatado
+  recentemente, sem precisar de nenhuma UI nova (reaproveita o mecanismo
+  de exclusão por tag já existente).

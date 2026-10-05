@@ -302,9 +302,26 @@ Deno.serve(async (req) => {
     // causa disso.
     if (pessoaIdentificador) {
         const responsavel = origemEnvio === "campanha" ? "API" : (atendenteNome || null);
+        // "Contato Recente: 7/30 dias" (pedido do usuário, 2026-10-06:
+        // "evitamos enviar mensagem de novo") — adicionadas JÁ AQUI, na
+        // hora do envio (não espera o cron do dia seguinte rodar) — quem
+        // remove essas tags depois que o prazo vence é só o cron diário
+        // `sincronizar_tags_contato_recente()` (migracao_tags_contato_recente.sql,
+        // já que nenhum EVENTO dispara a remoção, só o tempo passando).
+        const { data: leadAtual } = await supabaseAdmin.from(NOME_TABELA_LEADS)
+            .select("tags").eq("pessoaIdentificador", pessoaIdentificador).maybeSingle();
+        let tags: string[] = [];
+        try {
+            const parsed = JSON.parse(leadAtual?.tags || "[]");
+            if (Array.isArray(parsed)) tags = parsed;
+        } catch { /* tags malformada — trata como vazia, nunca trava o envio */ }
+        if (!tags.includes("Contato Recente: 7 dias")) tags.push("Contato Recente: 7 dias");
+        if (!tags.includes("Contato Recente: 30 dias")) tags.push("Contato Recente: 30 dias");
+
         await supabaseAdmin.from(NOME_TABELA_LEADS)
             .update({
                 ultimo_contato_em: new Date().toISOString(),
+                tags: JSON.stringify(tags),
                 // Pedido do usuário (2026-10-01) — ver comentário no tipo
                 // `origemEnvio` acima. Só atualiza quando há um valor real
                 // pra gravar (nunca apaga um responsável já existente só

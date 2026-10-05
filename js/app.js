@@ -3778,6 +3778,14 @@ const FAMILIAS_TAG = [
             return 'tag-convite-neutro';
         },
     },
+    // "Contato Recente: 7/30 dias" — pedido do usuário (2026-10-06):
+    // "evitamos enviar mensagem de novo". Recalculada automaticamente
+    // (nunca manual) a partir de `ultimo_contato_em` — adicionada na
+    // hora do envio por whatsapp-send, removida pelo cron diário
+    // `sincronizar_tags_contato_recente()` quando o prazo vence (ver
+    // migracao_tags_contato_recente.sql). Cor neutra/informativa — não é
+    // um alerta, é só um "já foi contatado, cuidado pra não repetir".
+    { label: 'Contato Recente', testar: t => /^Contato Recente: /i.test(t), classe: () => 'tag-contato-recente' },
     { label: 'Cadastro', testar: t => /^(Sem (Telefone|E-mail)|Conferir Telefone)$/i.test(t), classe: () => 'tag-warning' },
     { label: 'Engajamento / SDR', testar: t => /(n[ãa]o atende|caixa postal|n[ãa]o responde|inv[áa]lido|no-?show)/i.test(t), classe: () => 'tag-error' },
     { label: 'Objeções', testar: t => /^objeç[ãa]o/i.test(t), classe: () => 'tag-warning' },
