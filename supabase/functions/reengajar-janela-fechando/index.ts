@@ -9,23 +9,37 @@
 // Ou seja: isto NÃO é pra ficar insistindo com quem não respondeu — é
 // pra COMPENSAR a demora do time, preparando com antecedência (lendo a
 // conversa INTEIRA, não só as últimas mensagens) a melhor resposta
-// possível, pronta assim que alguém abrir o CRM. Mesmo princípio de
-// segurança de TODA function de IA do projeto (ia-diagnostico-saude/
-// classificar-resposta-convite/sugerir-resposta-whatsapp): a IA NUNCA
-// envia sozinha — só escreve, status='pendente', o SDR revisa e autoriza
-// o envio com 1 clique (confirmado explicitamente com o usuário antes de
-// codificar, numa pergunta direta).
+// possível.
+//
+// DIFERENTE DE TODA OUTRA FUNCTION DE IA DO PROJETO (ia-diagnostico-saude/
+// classificar-resposta-convite/sugerir-resposta-whatsapp, que só
+// escrevem e esperam 1 clique humano): esta ENVIA SOZINHA, sem revisão
+// antes. Decisão revista explicitamente pelo usuário (2026-10-05, depois
+// de a 1ª versão ter sido feita como "sugestão só, igual as outras"):
+// "eu acredito que precisa ser autônomo. Pq a ideia é que se estivermos
+// sem acessar o crm dentro da janela de alguém, precisamos mantê-la
+// aberta" — esperar um clique anularia o propósito inteiro: se ninguém
+// está no CRM pra clicar, a janela fecha de qualquer jeito, que é
+// exatamente o cenário que isto existe pra cobrir. Por causa disso, o
+// prompt é propositalmente mais conservador que o das outras functions
+// — a regra "na dúvida, não envie nada" é dita explicitamente antes de
+// qualquer outra instrução (ver montarPromptCacheavel()), e a IA também
+// aprendeu a reconhecer quando a CONVERSA (não só a última mensagem) já
+// parece concluída, pra nunca reabrir algo que terminou naturalmente
+// (pedido do usuário, mesma conversa: "se a última mensagem for do lead,
+// mas a conversa indicar uma conclusão, não reengajar").
 //
 // REAPROVEITA a tabela/UI de sugerir-resposta-whatsapp
 // (sugestoes_resposta_wpp, card no WhatsApp Unificado) em vez de criar
-// uma estrutura paralela — a única coisa nova no schema é a coluna
-// `reengajamento_em` (migracao_reengajamento_janela.sql), que garante
-// "uma vez só por janela": uma vez marcada pra uma mensagem, essa MESMA
-// mensagem nunca é reprocessada de novo (ver
-// mensagens_candidatas_reengajamento_janela()). Se a sugestão já
-// existente (criada pelo gatilho de 2h de sugerir-resposta-whatsapp)
-// ainda está 'pendente' depois de 12h, ela é ATUALIZADA com uma versão
-// mais completa (conversa inteira, não só 6 mensagens) — nunca duplicada.
+// uma estrutura paralela — serve agora como REGISTRO do que já foi
+// enviado (status='enviada' direto, sem passar por 'pendente') em vez de
+// fila de aprovação; só cai de volta pra 'pendente' se o ENVIO em si
+// falhar (ver enviarMensagemWhatsapp()), caso em que um humano ainda
+// pode revisar/mandar na mão depois. A única coisa nova no schema é a
+// coluna `reengajamento_em` (migracao_reengajamento_janela.sql), que
+// garante "uma vez só por janela": uma vez marcada pra uma mensagem,
+// essa MESMA mensagem nunca é reprocessada de novo (ver
+// mensagens_candidatas_reengajamento_janela()).
 //
 // Chamada por pg_cron a cada 15 min (migracao_agendamento_reengajamento_janela.sql).
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
@@ -75,6 +89,55 @@ async function aplicarTagConversa(pessoaIdentificador: string, tagNova: string) 
 
 function json(body: unknown, status = 200) {
     return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+// Nome mostrado no chat (atendente_nome) e no log de atividade — NUNCA
+// se passa por um humano. Pedido do usuário (2026-10-05, revisão da
+// decisão inicial): "eu acredito que precisa ser autônomo. Pq a ideia é
+// que se estivermos sem acessar o crm dentro da janela de alguém,
+// precisamos mantê-la aberta" — ou seja, esperar 1 clique humano (como
+// nas outras functions de IA do projeto) anularia o propósito: se
+// ninguém está no CRM pra clicar, a janela fecha de qualquer jeito.
+// Diferente de TODA outra function de IA do projeto (que só sugerem),
+// esta ENVIA de verdade — por isso as regras de segurança no prompt são
+// mais rígidas ("na dúvida, não envie nada") e o atendente aparece
+// identificado como bot, nunca disfarçado de humano.
+const NOME_ATENDENTE_BOT = "Bot de Reengajamento (IA)";
+
+// Chamada servidor-a-servidor pro whatsapp-send — mesmo padrão já usado
+// por resumo-semanal-chefe -> whatsapp-notificar-chefe-filial.
+async function enviarMensagemWhatsapp(pessoaIdentificador: string, texto: string): Promise<{ ok: boolean; erro?: string }> {
+    try {
+        const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/whatsapp-send`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            },
+            body: JSON.stringify({
+                pessoaIdentificador,
+                tipo: "texto",
+                texto,
+                atendenteNome: NOME_ATENDENTE_BOT,
+                origemEnvio: "campanha",
+            }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || data?.ok === false) return { ok: false, erro: data?.detalhe?.message || data?.erro || `status ${resp.status}` };
+        return { ok: true };
+    } catch (e) {
+        return { ok: false, erro: String(e) };
+    }
+}
+
+// Aplica o lembrete sugerido diretamente (sem esperar clique humano,
+// mesmo motivo do envio autônomo acima) — mas só quando o lead AINDA NÃO
+// tem um lembrete ativo, pra nunca sobrescrever silenciosamente algo que
+// um humano já configurou de propósito por outro motivo.
+async function aplicarLembreteAutomatico(pessoaIdentificador: string, data: string, motivo: string | null) {
+    const { data: lead } = await supabaseAdmin.from(NOME_TABELA_LEADS).select("lembrete_em").eq("pessoaIdentificador", pessoaIdentificador).maybeSingle();
+    if (!lead || lead.lembrete_em) return; // já tem um lembrete ativo — não mexe
+    await supabaseAdmin.from(NOME_TABELA_LEADS).update({ lembrete_em: data, lembrete_nota: motivo }).eq("pessoaIdentificador", pessoaIdentificador);
 }
 
 type Candidata = { mensagem_id: number; pessoaIdentificador: string; filial: string | null };
@@ -245,7 +308,7 @@ function montarPromptCacheavel(exemplos: string, hojeISO: string): string {
         ? `\nExemplos REAIS de como o time já respondeu perguntas parecidas (siga o MESMO TOM — caloroso, direto, sem ser robótico — mas nunca copie dado concreto de lá, use sempre os dados do lead informados a seguir, que são da conversa de AGORA):\n${exemplos}\n`
         : "";
 
-    return `Você ajuda o time de atendimento de uma escola de filosofia (Nova Acrópole) a RETOMAR conversas de WhatsApp que ficaram pelo menos 12 HORAS sem nenhuma resposta da escola — o time está atrasado, e você precisa preparar a melhor resposta possível AGORA, pronta pra um humano revisar e enviar com 1 clique assim que abrir o sistema.
+    return `Você ajuda o time de atendimento de uma escola de filosofia (Nova Acrópole) a RETOMAR conversas de WhatsApp que ficaram pelo menos 12 HORAS sem nenhuma resposta da escola — o time está atrasado, e sua resposta será ENVIADA AUTOMATICAMENTE, SEM REVISÃO HUMANA antes. Por isso, a regra mais importante de todas é: na dúvida, NÃO ENVIE NADA ("sugestao": null) — é sempre preferível deixar a conversa como está do que mandar algo errado, forçado ou sem propósito real, já que ninguém vai revisar antes de sair.
 
 ${montarTabelaDiasSemana(hojeISO)}
 ${blocoExemplos}
@@ -258,6 +321,7 @@ Escreva um rascunho de resposta em português, curto (1-5 frases), caloroso, nat
 - Se o lead tiver uma pergunta ou pedido ainda sem resposta nossa, e os dados do lead tiverem a informação certa, ENTREGUE o dado real agora — nunca "vou te mandar" se o dado já está disponível.
 - NUNCA invente fato concreto que não esteja nos dados do lead (endereço, valor, data, evento, horário) — sem o dado, reconheça a pergunta e diga que vai confirmar.
 - Se a última mensagem do lead já era só um agradecimento/"ok" sem nenhuma pergunta pendente, não force uma continuação artificial — "sugestao": null é a resposta certa, melhor não mandar nada do que mandar algo sem propósito real (nunca incomodar o lead só pra "manter a conversa viva").
+- Se a CONVERSA COMO UM TODO já soa concluída/encerrada — a pessoa se despediu ("tchau", "até mais", "falou"), o assunto chegou a um fim natural, ou simplesmente não há mais nada pendente de verdade a tratar — "sugestao": null, mesmo que a última mensagem tecnicamente seja do lead. Reabrir uma conversa que já tinha terminado naturalmente é pior do que deixá-la fechada.
 - Se o lead já pediu claramente pra não ser mais contatado, ou a conversa mostra sinal claro de desinteresse, "sugestao": null também — nunca insista.
 - Se os dados do lead tiverem um bloco "Persona configurada por...", siga o tom E as observações dali À RISCA (tem prioridade sobre o estilo padrão, mas nunca sobre as regras de segurança acima).
 - Se o lead mencionar uma unidade/filial DIFERENTE da "filial de cadastro" (ver lista de unidades nos dados do lead, se houver), responda com os dados REAIS daquela unidade — nunca confunda com a filial de cadastro.
@@ -363,6 +427,48 @@ Deno.serve(async (req) => {
         }
         aplicarLembretePadraoObjecaoSemPrazo(resultado, hojeISO);
 
+        // ENVIO AUTÔNOMO (pedido do usuário, 2026-10-05) — diferente de
+        // TODA outra function de IA do projeto, esta manda de verdade,
+        // sem esperar 1 clique humano: "se estivermos sem acessar o crm
+        // dentro da janela de alguém, precisamos mantê-la aberta" — só
+        // faz sentido se o envio não depender de alguém estar olhando.
+        // "sugestao": null (IA decidiu que não há nada de real valor a
+        // dizer, ou que a conversa já parece concluída) significa
+        // simplesmente não mandar nada — correto e esperado, não é falha.
+        let statusFinal: "enviada" | "descartada" | "pendente" = "descartada";
+        if (resultado.sugestao) {
+            const envio = await enviarMensagemWhatsapp(item.pessoaIdentificador, resultado.sugestao);
+            if (envio.ok) {
+                statusFinal = "enviada";
+                await supabaseAdmin.from("log_atividade").insert({
+                    filial: item.filial,
+                    acao: "reengajamento_automatico_enviado",
+                    autor: NOME_ATENDENTE_BOT,
+                    pessoa_ids: [item.pessoaIdentificador],
+                    detalhes: { texto: resultado.sugestao, mensagem_origem_id: item.mensagem_id },
+                });
+                // Limitação conhecida, aceita: todo envio real feito pelo
+                // FRONTEND move o lead pra "Em Abordagem"
+                // (moverParaAbordagemAposEnvio(), js/whatsapp.js) — mas
+                // essa função depende de columnsConfig, que é 100%
+                // client-side/localStorage (nunca existe uma tabela de
+                // "colunas válidas" no servidor, ver CLAUDE.md). Rodando
+                // aqui, sem navegador nenhum envolvido, não tem como saber
+                // com segurança qual é a coluna "fria" de cada time, então
+                // esta function não tenta mover a coluna — o lead pode
+                // continuar aparecendo em "Frios" mesmo já tendo recebido
+                // uma mensagem real do bot.
+            } else {
+                // Falha no ENVIO em si (ex: janela já fechou de verdade
+                // entre a detecção e o envio, API da Meta indisponível) —
+                // diferente de falha da IA: aqui já temos um texto pronto,
+                // vale deixar 'pendente' pra um humano revisar/reenviar na
+                // mão em vez de simplesmente descartar o trabalho.
+                console.warn(`Falha ao enviar reengajamento pra ${item.pessoaIdentificador} (ficou pendente pra revisão humana):`, envio.erro);
+                statusFinal = "pendente";
+            }
+        }
+
         // Já existe uma sugestão 'pendente' pra essa mensagem (criada
         // antes por sugerir-resposta-whatsapp, no gatilho de 2h) — a RPC
         // só traz essas como candidatas (status='pendente', ver
@@ -380,6 +486,7 @@ Deno.serve(async (req) => {
                 lembrete_sugerido_data: resultado.lembreteData,
                 lembrete_sugerido_motivo: resultado.lembreteMotivo,
                 reengajamento_em: new Date().toISOString(),
+                status: statusFinal,
             }).eq("id", existente.id);
         } else {
             const { error: erroInsert } = await supabaseAdmin.from("sugestoes_resposta_wpp").insert({
@@ -389,6 +496,7 @@ Deno.serve(async (req) => {
                 lembrete_sugerido_data: resultado.lembreteData,
                 lembrete_sugerido_motivo: resultado.lembreteMotivo,
                 reengajamento_em: new Date().toISOString(),
+                status: statusFinal,
             });
             // unique(mensagem_origem_id) — corrida com outra execução do
             // cron (ou com sugerir-resposta-whatsapp inserindo ao mesmo
@@ -399,6 +507,13 @@ Deno.serve(async (req) => {
 
         if (resultado.tagSugerida) {
             await aplicarTagConversa(item.pessoaIdentificador, ROTULO_TAG_CONVERSA[resultado.tagSugerida]);
+        }
+        // Lembrete também aplicado automaticamente (mesmo motivo do envio
+        // — ninguém vai clicar "Criar Lembrete"), só quando o lead ainda
+        // não tiver um lembrete ativo (nunca sobrescreve algo que um
+        // humano já configurou de propósito).
+        if (resultado.lembreteData) {
+            await aplicarLembreteAutomatico(item.pessoaIdentificador, resultado.lembreteData, resultado.lembreteMotivo);
         }
     }
 

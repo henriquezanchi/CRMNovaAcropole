@@ -8215,10 +8215,52 @@ time, preparando com antecedência (lendo a conversa INTEIRA, não só as
 abrir o CRM.
 
 **Decisão confirmada com o usuário antes de codificar** (3 perguntas
-diretas): (1) nunca envia sozinho — só prepara, 1 clique de aprovação
-humana, mesmo padrão de TODA function de IA do projeto; (2) 1 tentativa
-só por janela (não insiste de novo mais perto do fim); (3) toggle por
-filial, ligado por padrão.
+diretas): (1) aprovação humana antes de enviar — como TODA function de
+IA do projeto; (2) 1 tentativa só por janela (não insiste de novo mais
+perto do fim); (3) toggle por filial, ligado por padrão.
+
+**Revertido pelo próprio usuário, ainda no mesmo dia**: "no caso do bot
+de reengajamento, eu acredito que precisa ser autônomo. Pq a ideia é que
+se estivermos sem acessar o crm dentro da janela de alguém, precisamos
+mantê-la aberta" — o item (1) acima foi corretamente apontado como
+contraditório com o PRÓPRIO propósito do recurso: se o time está
+ausente/atrasado o bastante pra precisar do reforço de 12h, também não
+vai estar disponível pra clicar "Enviar" a tempo. **Esta é a PRIMEIRA
+exceção deliberada, nesta sessão, ao princípio de sempre do projeto ("IA
+nunca age sozinha, só sugere")** — aceita porque o próprio usuário pediu
+explicitamente e entendeu o trade-off. Mais uma trava de segurança foi
+adicionada no prompt por causa disso: "se a última mensagem for do lead,
+mas a CONVERSA COMO UM TODO já soa concluída/encerrada (despedida,
+assunto resolvido) — `'sugestao': null`, mesmo sendo tecnicamente 'do
+lead'. Reabrir uma conversa que já tinha terminado naturalmente é pior
+que deixá-la fechada." A regra MAIS importante do prompt virou "na
+dúvida, NÃO ENVIE NADA" — texto explícito, antes de qualquer outra
+instrução, dado que agora não há revisão humana no meio do caminho.
+
+- **Mecânica do envio autônomo**: a Edge Function chama `whatsapp-send`
+  ela mesma (servidor-a-servidor, `SUPABASE_SERVICE_ROLE_KEY`, mesmo
+  padrão de `resumo-semanal-chefe`/`whatsapp-reenviar-falhas`) sempre que
+  a IA devolver uma sugestão não-nula — `atendenteNome: "Bot de
+  Reengajamento (IA)"` (aparece no balão da mensagem, igual qualquer
+  outro atendente, pra nunca disfarçar que foi automático). Sucesso grava
+  `status: 'enviada'` + 1 linha em `log_atividade`
+  (`acao='reengajamento_automatico_enviado'`); falha no envio (ex: janela
+  já fechou nos minutos entre a leitura e o envio) grava `status:
+  'pendente'` de novo — vira candidata normal de revisão humana, como
+  qualquer sugestão que não foi enviada. **Não reaproveita
+  `moverParaAbordagemAposEnvio()`** (que é só frontend/`localStorage`,
+  sem equivalente server-side) — limitação aceita, documentada no
+  próprio código: o lead não é movido de coluna por este envio
+  automático especificamente.
+- **Status do deploy (2026-10-05)**: a reescrita acima pra versão
+  autônoma existe no código-fonte, mas o `npx supabase functions deploy
+  reengajar-janela-fechando` ainda NÃO foi rodado — bloqueado por uma
+  permissão do próprio Claude Code (classificador de modo automático
+  marcou o comando como "perigoso"). Até esse deploy rodar (manualmente,
+  pelo usuário, ou aprovado numa sessão futura), a function em PRODUÇÃO
+  continua sendo a versão com aprovação humana (o que já foi testado ao
+  vivo, ver bullets abaixo) — a versão autônoma só passa a valer depois
+  do deploy.
 
 - **Reaproveita 100% a tabela/UI de `sugerir-resposta-whatsapp`**
   (`sugestoes_resposta_wpp`, card de revisão no WhatsApp Unificado) em
