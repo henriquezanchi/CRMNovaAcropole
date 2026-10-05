@@ -672,6 +672,77 @@ function resolverRespostaRapida(texto, leadId) {
         .replaceAll('{link_maps}', filialObj.link_maps_ulisses || (filialObj.endereco ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(filialObj.endereco)}` : '(endereço ainda não cadastrado em Gerenciar Filiais)'));
 }
 
+// Pedido do usuário (2026-10-05/06): "quero poder encaminhar a foto do
+// evento também nas respostas rápidas" — hoje uma resposta só insere
+// TEXTO na caixa. Quando a resposta está linkada a um TIPO de evento
+// (`resposta.tipo_evento`, catálogo `tipos_evento` — não dá pra linkar a
+// um evento_id fixo, já que o catálogo de respostas é GLOBAL e um
+// evento é sempre de 1 filial só), acha sozinho o evento desse tipo mais
+// próximo (ainda não passado) na filial do LEAD sendo respondido — mesmo
+// princípio já usado por `enviarConviteAberturaTurmaFilial()` (lá,
+// hardcoded pro tipo "Abertura de Turma" e só pra gaveta; aqui,
+// generalizado pra qualquer tipo e qualquer tela, por isso busca o
+// evento DIRETO no banco em vez de reaproveitar `eventosAtuais`, que só
+// cobre a filial escolhida no topbar — no WhatsApp Unificado o lead pode
+// ser de outra). Achando e ele tendo `imagem_url`, ENVIA DE VERDADE
+// (mesmo caminho de "Convite Compartilhável"/"Nova Turma",
+// `whatsapp-send` tipo:'imagem') — a legenda é o texto da resposta já
+// com os placeholders resolvidos. Devolve `true` quando já tratou o
+// clique de ponta a ponta (enviou, ou mostrou um erro definitivo) —
+// `false` quando não achou evento/foto, ou o atendente cancelou o envio,
+// pra quem chamou cair de volta no comportamento de sempre (preencher a
+// caixa com o texto).
+async function tentarEnviarRespostaRapidaComFoto(resposta, leadId) {
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
+    if (!lead || !lead.filial) return false;
+
+    const hojeISO = new Date().toISOString().slice(0, 10);
+    const { data: candidatosEvento } = await window.supabaseClient
+        .from('eventos')
+        .select('id, nome, data, data_limite_inscricao, imagem_url')
+        .eq('filial', lead.filial)
+        .eq('tipo', resposta.tipo_evento)
+        .eq('ativo', true)
+        .order('data', { ascending: true });
+    const evento = (candidatosEvento || [])
+        .filter(ev => (ev.data_limite_inscricao || ev.data) >= hojeISO)
+        .sort((a, b) => a.data.localeCompare(b.data))[0];
+    if (!evento || !evento.imagem_url) return false;
+
+    const dataFormatada = (typeof formatarDataEvento === 'function') ? formatarDataEvento(evento.data) : evento.data;
+    const caption = resolverRespostaRapida(resposta.texto, leadId);
+    const primeiroNome = (typeof nomeParaChamar === 'function') ? nomeParaChamar(lead) : (lead.pessoaNome || 'o lead');
+
+    if (!confirm(`Esta resposta está linkada ao evento "${evento.nome}" (${dataFormatada}), que tem foto cadastrada.\n\nEnviar a FOTO DE VERDADE + a legenda abaixo pra ${primeiroNome}, em vez de só preencher a caixa?\n\nLegenda: "${caption}"`)) return false;
+
+    const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
+        body: { pessoaIdentificador: leadId, tipo: 'imagem', imagemUrl: evento.imagem_url, caption, atendenteNome: (typeof obterNomeAtendente === 'function') ? obterNomeAtendente() : '' }
+    });
+    if (error) { alert('Erro ao enviar: ' + error.message); return true; }
+    if (!data.ok) {
+        if (data.erro === 'janela_fechada') {
+            alert('Essa conversa está fora da janela de 24h — não dá pra enviar uma foto agora. Aqui está o texto, pra mandar de outra forma:\n\n' + caption);
+        } else {
+            console.error('Erro ao enviar resposta rápida com foto:', data.detalhe || data.erro);
+            alert('Não foi possível enviar: ' + (typeof mensagemErroWpp === 'function' ? mensagemErroWpp(data) : (data.erro || 'erro desconhecido')));
+        }
+        return true;
+    }
+
+    if (typeof moverParaAbordagemAposEnvio === 'function') {
+        moverParaAbordagemAposEnvio(leadId).catch(e => console.warn('Erro ao mover lead pra Abordagem após envio:', e.message));
+    }
+    // Recarrega a conversa que estiver aberta (gaveta OU WhatsApp
+    // Unificado, qualquer uma que seja a atual) pra já mostrar a foto
+    // enviada — mesmo padrão dual-contexto de confirmarNumeroErradoWpp().
+    if (typeof chatDrawer !== 'undefined' && typeof currentLeadId !== 'undefined' && String(currentLeadId) === String(leadId)) {
+        await chatDrawer.abrir(leadId);
+    } else if (typeof chatWpp !== 'undefined' && typeof wppContatoAtivoId !== 'undefined' && String(wppContatoAtivoId) === String(leadId)) {
+        await chatWpp.abrir(leadId);
+    }
+    return true;
+}
+
 // ==========================================================
 // Consultar mensalidade de todas as filiais, sem sair do WhatsApp
 // Unificado (pedido do usuário, 2026-10-01: "preciso saber o valor de
@@ -754,11 +825,19 @@ async function abrirRespostasRapidasWpp(botaoEl, inputEl, leadId) {
     picker.style.top = `${Math.max(8, rect.top - Math.min(280, 36 * (respostasRapidasCache.length + 1) + 40))}px`;
     picker.style.left = `${Math.min(window.innerWidth - 260, Math.max(8, rect.left - 60))}px`;
     picker.querySelectorAll('.wpp-resposta-rapida-item:not(.wpp-resposta-rapida-gerenciar)').forEach(btn => {
-        btn.addEventListener('click', (ev) => {
+        btn.addEventListener('click', async (ev) => {
             ev.stopPropagation();
             const r = respostasRapidasCache.find(x => String(x.id) === btn.dataset.id);
             fecharRespostasRapidasWpp();
-            if (r) inserirTextoNoInputWpp(inputEl, resolverRespostaRapida(r.texto, leadId));
+            if (!r) return;
+            // Pedido do usuário (2026-10-05): "quero poder encaminhar a
+            // foto do evento também nas respostas rápidas" — se esta
+            // resposta está linkada a um tipo de evento, tenta mandar a
+            // foto de verdade primeiro; só cai pro comportamento de
+            // sempre (preencher a caixa) se não achar evento/foto, ou se
+            // o atendente cancelar o envio.
+            if (r.tipo_evento && await tentarEnviarRespostaRapidaComFoto(r, leadId)) return;
+            inserirTextoNoInputWpp(inputEl, resolverRespostaRapida(r.texto, leadId));
         });
     });
     const btnGerenciar = picker.querySelector('.wpp-resposta-rapida-gerenciar');
@@ -787,12 +866,19 @@ async function abrirGerenciarRespostasRapidasWpp() {
     fecharGerenciarRespostasRapidasWpp();
     const { data } = await window.supabaseClient.from('respostas_rapidas_whatsapp').select('*').order('ordem');
     respostasRapidasCache = data || [];
+    // Catálogo de tipos de evento (pro <select> "Foto do evento" abaixo)
+    // — reaproveita TIPOS_EVENTO já carregado globalmente (js/eventos.js);
+    // sem nada carregado ainda (corrida de boot), busca agora.
+    if ((typeof TIPOS_EVENTO === 'undefined' || !TIPOS_EVENTO || TIPOS_EVENTO.length === 0) && typeof carregarTiposEvento === 'function') {
+        await carregarTiposEvento();
+    }
     const panel = _containerGerenciarRespostasRapidasWpp();
     panel.innerHTML = `
         <div class="wpp-encaminhar-overlay"></div>
         <div class="wpp-encaminhar-caixa" style="width:420px; max-height:80vh; overflow-y:auto;">
             <div class="wpp-encaminhar-titulo">Gerenciar Respostas Rápidas <button type="button" class="wpp-encaminhar-fechar"><i class="fa-solid fa-xmark"></i></button></div>
             <p style="font-size:11px; color:var(--text-muted); margin:0 0 8px;">Placeholders disponíveis: <code>{nome}</code> <code>{atendente}</code> <code>{filial}</code> <code>{endereco}</code> <code>{valor_mensalidade}</code> <code>{link_maps}</code></p>
+            <p style="font-size:11px; color:var(--text-muted); margin:0 0 8px;">Linkar a um "Tipo de Evento" (pedido do usuário, 2026-10-05): ao clicar, o CRM acha sozinho o evento desse tipo mais próximo na filial do lead — achando foto cadastrada nele, manda a FOTO DE VERDADE + este texto como legenda, em vez de só preencher a caixa.</p>
             <div id="wppRespostasRapidasLista" style="display:flex; flex-direction:column; gap:8px;"></div>
             <button type="button" class="btn-secondary" style="margin-top:10px; width:100%;" onclick="adicionarRespostaRapidaWpp()"><i class="fa-solid fa-plus"></i> Nova resposta</button>
         </div>
@@ -804,10 +890,15 @@ async function abrirGerenciarRespostasRapidasWpp() {
 function renderizarListaRespostasRapidasWpp() {
     const lista = document.getElementById('wppRespostasRapidasLista');
     if (!lista) return;
+    const tiposDisponiveis = (typeof TIPOS_EVENTO !== 'undefined' ? TIPOS_EVENTO : []);
     lista.innerHTML = respostasRapidasCache.length === 0 ? '<p style="font-size:12px; color:var(--text-muted);">Nenhuma resposta cadastrada ainda.</p>' : respostasRapidasCache.map(r => `
         <div style="border:1px solid var(--border-color); border-radius:6px; padding:8px;">
             <input type="text" value="${escapeHTML(r.atalho)}" data-id="${r.id}" class="resposta-rapida-atalho" style="width:100%; margin-bottom:4px; padding:5px; border:1px solid #cbd5e1; border-radius:4px; font-size:12px; font-weight:600; box-sizing:border-box;">
             <textarea data-id="${r.id}" class="resposta-rapida-texto" style="width:100%; height:60px; padding:5px; border:1px solid #cbd5e1; border-radius:4px; font-size:12px; font-family:inherit; box-sizing:border-box;">${escapeHTML(r.texto)}</textarea>
+            <select data-id="${r.id}" class="resposta-rapida-tipo-evento" style="width:100%; margin-top:4px; padding:5px; border:1px solid #cbd5e1; border-radius:4px; font-size:11px; box-sizing:border-box;">
+                <option value="">Sem foto de evento (só texto)</option>
+                ${tiposDisponiveis.map(t => `<option value="${escapeHTML(t)}" ${r.tipo_evento === t ? 'selected' : ''}>📷 Foto do evento: ${escapeHTML(t)}</option>`).join('')}
+            </select>
             <div style="display:flex; justify-content:flex-end; gap:6px; margin-top:4px;">
                 <button class="btn-add-tag" onclick="salvarRespostaRapidaWpp('${r.id}')"><i class="fa-solid fa-floppy-disk"></i> Salvar</button>
                 <button class="btn-add-tag" style="color:#b91c1c;" onclick="removerRespostaRapidaWpp('${r.id}')"><i class="fa-solid fa-trash"></i> Remover</button>
@@ -818,11 +909,13 @@ function renderizarListaRespostasRapidasWpp() {
 async function salvarRespostaRapidaWpp(id) {
     const atalho = document.querySelector(`.resposta-rapida-atalho[data-id="${id}"]`).value.trim();
     const texto = document.querySelector(`.resposta-rapida-texto[data-id="${id}"]`).value.trim();
+    const tipoEventoEl = document.querySelector(`.resposta-rapida-tipo-evento[data-id="${id}"]`);
+    const tipoEvento = tipoEventoEl ? (tipoEventoEl.value || null) : null;
     if (!atalho || !texto) { alert('Preencha o atalho e o texto.'); return; }
-    const { error } = await window.supabaseClient.from('respostas_rapidas_whatsapp').update({ atalho, texto }).eq('id', id);
+    const { error } = await window.supabaseClient.from('respostas_rapidas_whatsapp').update({ atalho, texto, tipo_evento: tipoEvento }).eq('id', id);
     if (error) { alert('Erro ao salvar: ' + error.message); return; }
     const r = respostasRapidasCache.find(x => String(x.id) === String(id));
-    if (r) { r.atalho = atalho; r.texto = texto; }
+    if (r) { r.atalho = atalho; r.texto = texto; r.tipo_evento = tipoEvento; }
 }
 async function removerRespostaRapidaWpp(id) {
     if (!confirm('Remover esta resposta rápida?')) return;

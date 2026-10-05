@@ -9065,3 +9065,39 @@ mesmo quando o SDR já sabe exatamente quem é a pessoa certa.
 - Log em `log_atividade` (`acao='whatsapp_reatribuido'`, com os 2
   `pessoaIds` envolvidos) — diferente de `acao='whatsapp_numero_errado'`
   (caminho antigo, ainda usado quando cai em "Não Identificados").
+
+## Foto de evento nas Respostas Rápidas — finalizado (2026-10-06)
+
+Pedido do usuário (2026-10-05, ficou pela metade — só a migração tinha
+sido escrita, nunca rodada nem com o código acompanhante): "quero poder
+encaminhar a foto do evento também nas respostas rápidas".
+
+- **`respostas_rapidas_whatsapp.tipo_evento`** (text, nullable,
+  `migracao_respostas_rapidas_foto_evento.sql`, rodada nesta sessão) —
+  cada resposta pode se linkar a um TIPO de evento (catálogo
+  `tipos_evento`, mesmo de "Gerenciar Tipos" na Agenda) em vez de um
+  `evento_id` fixo — o catálogo de respostas é GLOBAL, compartilhado
+  entre filiais, e um evento é sempre de 1 filial só.
+- **`tentarEnviarRespostaRapidaComFoto(resposta, leadId)`** (`js/whatsapp.js`)
+  — ao clicar numa resposta com `tipo_evento` preenchido, acha sozinho o
+  evento desse tipo mais próximo (ainda não passado) na filial do LEAD
+  sendo respondido (busca DIRETO no banco, não reaproveita `eventosAtuais`
+  — esse só cobre a filial do topbar, e no WhatsApp Unificado o lead pode
+  ser de outra). Achando e ele tendo `imagem_url`, pede confirmação e
+  ENVIA DE VERDADE (foto real + o texto da resposta como legenda, já com
+  os placeholders resolvidos) — mesmo caminho de "Convite Compartilhável"/
+  "Nova Turma" (`whatsapp-send`, tipo:'imagem'). Sem evento ou sem foto,
+  ou se o atendente cancelar, cai de volta no comportamento de sempre (só
+  preenche a caixa) — nunca trava.
+- **"Gerenciar Respostas Rápidas"** ganhou um `<select>` por resposta
+  ("Sem foto de evento" / "📷 Foto do evento: {tipo}"), populado a partir
+  de `TIPOS_EVENTO` (já carregado globalmente por `js/eventos.js`).
+- **Testado**: query de evento+foto confirmada contra dado real (4
+  filiais com "Abertura de Turma" futura e foto cadastrada).
+- **Decisão deliberada**: a resposta rápida "Abertura de Turma" já
+  existente (texto fixo com link de inscrição hardcoded pra um ciclo
+  específico) NÃO foi linkada automaticamente ao tipo — isso mudaria o
+  comportamento dela de "preencher a caixa" pra "enviar de verdade" sem
+  o usuário ter pedido essa mudança especificamente nela. Quem quiser
+  ativar a foto automática em qualquer resposta (essa ou uma nova) faz
+  isso pelo `<select>` novo, por escolha própria.

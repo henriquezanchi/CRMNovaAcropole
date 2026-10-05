@@ -1,0 +1,28 @@
+-- Migração: foto de evento nas Respostas Rápidas
+--
+-- Pedido do usuário (2026-10-05): "quero poder encaminhar a foto do
+-- evento também nas respostas rápidas" — hoje uma resposta rápida só
+-- insere TEXTO na caixa de digitação (resolverRespostaRapida(),
+-- js/whatsapp.js). Como o catálogo de respostas rápidas é GLOBAL
+-- (compartilhado entre todas as filiais — mesmo padrão de
+-- tags_sugeridas/modelos_mensagem_whatsapp), não dá pra linkar uma
+-- resposta a um `evento_id` fixo (um evento é sempre de UMA filial
+-- específica; a mesma resposta é usada em todas). Em vez disso, cada
+-- resposta pode se linkar a um TIPO de evento (do catálogo
+-- `tipos_evento`, mesmo já usado em "Gerenciar Tipos" na Agenda) — na
+-- hora de clicar, o CRM resolve sozinho qual é o evento desse tipo mais
+-- próximo (ainda não passado) na filial do LEAD específico que está
+-- sendo respondido, igual já faz "Nova Turma"
+-- (enviarConviteAberturaTurmaFilial(), js/whatsapp.js) pro tipo
+-- "Abertura de Turma" especificamente — generalizado aqui pra qualquer
+-- tipo, configurável por resposta.
+--
+-- Achando o evento E ele tiver imagem_url cadastrada, a resposta rápida
+-- passa a ENVIAR DE VERDADE uma mensagem de mídia real (foto + legenda =
+-- o texto da resposta, com placeholders resolvidos) em vez de só
+-- preencher a caixa — mesmo caminho já usado por "Convite Compartilhável"/
+-- "Nova Turma" (whatsapp-send, tipo:'imagem'). Sem evento encontrado, ou
+-- sem foto cadastrada nele, cai de volta no comportamento de sempre (só
+-- texto na caixa) — nunca trava, só degrada graciosamente.
+alter table respostas_rapidas_whatsapp
+  add column if not exists tipo_evento text;
