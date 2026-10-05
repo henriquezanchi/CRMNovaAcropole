@@ -9005,3 +9005,63 @@ banco (não especulação):
   ambiguidade real (duplicidade cross-filial, que seria melhor resolvida
   na raiz com uma mesclagem) e anomalias raras, não um bug sistemático
   de reconhecimento.
+
+## "Não identificados" não deveria existir quando NÓS iniciamos a conversa (2026-10-06)
+
+Pedido do usuário: "se nós iniciamos a conversa com o lead, não pode
+ficar como não identificado, mesmo que tenha duplicidade de telefone.
+Nesse caso, admite-se o lead que está ativo na conversa". Sinal mais
+forte que `resolverAmbiguidadePorHistorico()` (que só resolve quando
+EXATAMENTE 1 dos candidatos ambíguos tem QUALQUER histórico, em
+QUALQUER número — falha se os 2 leads duplicados já trocaram mensagem
+cada um na sua própria época).
+
+- **Nova `resolverPorUltimoEnvioNosso(ddd, candidatos)`**
+  (`supabase/functions/whatsapp-webhook/index.ts`) — olha quem foi o
+  ÚLTIMO envio NOSSO (`direcao='saida'`) pra ESTE TELEFONE EXATO
+  (testando as 2 variantes com/sem o 9º dígito, igual
+  `buscarLeadsPorTelefone()` já faz) — é literalmente "pra quem mandamos
+  mensagem por último nesse número", a definição de "quem está ativo na
+  conversa agora". Roda ANTES de `resolverAmbiguidadePorHistorico()`
+  (que fica como fallback secundário) — cobre tanto ambiguidade (2+
+  leads com o mesmo telefone) quanto 0 candidatos em `leads_inscricoes`.
+- **Bug real achado testando esta correção**: o que a Meta manda como
+  `msg.from` numa mensagem RECEBIDA pode ter formato diferente (com/sem
+  9) do que `whatsapp-send` gravou quando enviamos — um match por string
+  EXATA nunca bateria. Corrigido buscando as 2 variantes completas
+  (DDI+DDD+local).
+- **Testado contra o caso real que motivou o pedido** (CINTHYA BARBOSA
+  BORMIO SILVA / CELIA MARIA VIEIRA DE PAULA, mesmo telefone): o último
+  envio nosso pro número foi pra CELIA (2026-10-05, depois de um envio
+  anterior pra CINTHYA em 10-02) — a mensagem pendente foi vinculada a
+  ela, consistente com a nova regra. **Backfill retroativo**: esse e o
+  único outro "não identificado" real restante (LAZARA LEDA TELES
+  ARAUJO — anomalia isolada, 1 candidato limpo que por algum motivo
+  transitório não casou sozinho) foram vinculados manualmente — a lista
+  de "Não Identificados" ficou só com o número de onboarding do próprio
+  WhatsApp Business (`16465894168`, nunca foi lead).
+
+## "Esse WhatsApp é de outra pessoa (já cadastrada)" — reatribuição direta (2026-10-06)
+
+Pedido do usuário: "não vejo a opção de marcar o problema do whatsapp
+ter passado para outra pessoa no CRM" — o botão "Esse WhatsApp não é
+desta pessoa" (`confirmarNumeroErradoWpp()`, ver seção própria acima)
+só sabia fazer 1 coisa: limpar o telefone e devolver a conversa pra
+"Não Identificados", exigindo um 2º passo manual (buscar e vincular)
+mesmo quando o SDR já sabe exatamente quem é a pessoa certa.
+
+- **Estendido**: depois da 1ª confirmação, uma 2ª pergunta — "Você já
+  sabe quem é a pessoa certa, e ela já está cadastrada no CRM?" — se
+  sim, busca por nome (mesmo padrão de `vincularConversaNaoIdentificada()`)
+  e, achando EXATAMENTE 1 candidato, reatribui a conversa INTEIRA direto
+  pro `pessoaIdentificador` certo (pula o passo de "Não Identificados"
+  por completo). Sem resposta, nome vazio, 0 ou 2+ candidatos — cai no
+  comportamento de sempre (vai pra "Não Identificados").
+- **Telefone da pessoa certa preenchido de graça**: se ela ainda não
+  tinha telefone cadastrado, já grava este número nela — as PRÓXIMAS
+  mensagens dela casam sozinhas, sem repetir a ação. Se ela já tiver um
+  telefone diferente, não mexe (nunca sobrescreve dado bom já
+  confirmado).
+- Log em `log_atividade` (`acao='whatsapp_reatribuido'`, com os 2
+  `pessoaIds` envolvidos) — diferente de `acao='whatsapp_numero_errado'`
+  (caminho antigo, ainda usado quando cai em "Não Identificados").

@@ -3969,11 +3969,39 @@ async function confirmarNumeroErradoWpp(leadId) {
     const telefoneAtual = lead ? `${lead.pessoaTelefoneDDD || ''} ${lead.pessoaTelefoneNumero || ''}`.trim() : '';
     if (!confirm(
         `Esse WhatsApp não é de "${nome}"?\n\n` +
-        `Isso vai:\n` +
-        `• Remover o telefone${telefoneAtual ? ` (${telefoneAtual})` : ''} do cadastro deste lead — fica a tag "Telefone Inválido".\n` +
-        `• Devolver esta conversa inteira pra "Não Identificados", pra vincular depois com a pessoa certa (nenhuma mensagem é apagada).\n\n` +
-        `"${nome}" continua existindo normalmente no CRM, só sem este telefone/conversa.`
+        `O telefone${telefoneAtual ? ` (${telefoneAtual})` : ''} vai ser removido do cadastro deste lead — fica a tag "Telefone Inválido". "${nome}" continua existindo normalmente no CRM, só sem este telefone/conversa.`
     )) return;
+
+    // Pedido do usuário (2026-10-06): "não vejo a opção de marcar o
+    // problema do whatsapp ter passado para outra pessoa no CRM" — se o
+    // SDR já sabe quem é a pessoa certa (já cadastrada), reatribui a
+    // conversa DIRETO pra ela, sem passar pelo passo intermediário de
+    // "Não Identificados" (que continua existindo como fallback, pra
+    // quando ainda não se sabe quem é).
+    let novoLead = null;
+    if (confirm('Você já sabe quem é a pessoa certa, e ela JÁ está cadastrada no CRM?\n\nSe sim, vamos buscar pelo nome e reatribuir a conversa direto pra ela. Se não tiver certeza, cancele aqui — a conversa vai pra "Não Identificados" pra decidir depois.')) {
+        const nomeBusca = prompt('Digite o nome (ou parte do nome) da pessoa certa:');
+        if (nomeBusca && nomeBusca.trim()) {
+            const termo = nomeBusca.trim();
+            const { data: candidatos, error: erroBusca } = await window.supabaseClient
+                .from('leads_inscricoes')
+                .select('pessoaIdentificador, pessoaNome, filial, pessoaTelefoneDDD, pessoaTelefoneNumero')
+                .ilike('pessoaNome', `%${termo}%`)
+                .is('lixeira_em', null)
+                .limit(10);
+            if (erroBusca) {
+                alert('Erro ao buscar: ' + erroBusca.message);
+            } else if (!candidatos || candidatos.length === 0) {
+                alert('Nenhum lead encontrado com esse nome — a conversa vai pra "Não Identificados".');
+            } else if (candidatos.length > 1) {
+                alert(`Encontrei ${candidatos.length} leads com esse nome — seja mais específico da próxima vez:\n` +
+                    candidatos.map(c => `${c.pessoaNome} (${c.filial || 'sem filial'})`).join('\n') +
+                    `\n\nA conversa vai pra "Não Identificados" por enquanto.`);
+            } else {
+                novoLead = candidatos[0];
+            }
+        }
+    }
 
     const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(leadId));
     let tagsArray = leadIndex !== -1 ? parseTags(leadsAtuais[leadIndex].tags).map(t => t.trim()).filter(Boolean) : [];
@@ -3988,19 +4016,48 @@ async function confirmarNumeroErradoWpp(leadId) {
         .eq('pessoaIdentificador', leadId);
     if (erroLead) { alert('Erro ao limpar telefone: ' + erroLead.message); return; }
 
-    const { error: erroMsgs } = await window.supabaseClient
-        .from('mensagens_whatsapp')
-        .update({ pessoaIdentificador: null, filial: null })
-        .eq('pessoaIdentificador', leadId);
-    if (erroMsgs) alert('Telefone removido, mas não consegui desvincular a conversa: ' + erroMsgs.message);
+    let mensagemFinal;
+    if (novoLead) {
+        const { error: erroReatrib } = await window.supabaseClient
+            .from('mensagens_whatsapp')
+            .update({ pessoaIdentificador: novoLead.pessoaIdentificador, filial: novoLead.filial })
+            .eq('pessoaIdentificador', leadId);
+        if (erroReatrib) alert('Telefone removido, mas não consegui reatribuir a conversa: ' + erroReatrib.message);
+
+        // Se a pessoa certa ainda não tem telefone cadastrado, já grava
+        // este número nela — assim as PRÓXIMAS mensagens dela casam
+        // sozinhas, sem precisar repetir esta ação. Se ela já tiver um
+        // telefone diferente, não mexe (não arrisca sobrescrever um dado
+        // bom já confirmado).
+        if (!novoLead.pessoaTelefoneDDD && !novoLead.pessoaTelefoneNumero && telefoneAtual) {
+            const [dddAntigo, numeroAntigo] = telefoneAtual.split(' ');
+            if (dddAntigo && numeroAntigo) {
+                await window.supabaseClient
+                    .from(nomeTabela)
+                    .update({ pessoaTelefoneDDD: dddAntigo, pessoaTelefoneNumero: numeroAntigo })
+                    .eq('pessoaIdentificador', novoLead.pessoaIdentificador);
+            }
+        }
+        if (typeof registrarLogAtividade === 'function') {
+            registrarLogAtividade('whatsapp_reatribuido', { pessoaIds: [String(leadId), String(novoLead.pessoaIdentificador)], detalhes: { telefoneRemovido: telefoneAtual || null, reatribuidoPara: novoLead.pessoaNome } });
+        }
+        mensagemFinal = `Pronto! Telefone removido de "${nome}" e a conversa foi reatribuída direto pra "${novoLead.pessoaNome}".`;
+    } else {
+        const { error: erroMsgs } = await window.supabaseClient
+            .from('mensagens_whatsapp')
+            .update({ pessoaIdentificador: null, filial: null })
+            .eq('pessoaIdentificador', leadId);
+        if (erroMsgs) alert('Telefone removido, mas não consegui desvincular a conversa: ' + erroMsgs.message);
+        if (typeof registrarLogAtividade === 'function') {
+            registrarLogAtividade('whatsapp_numero_errado', { pessoaIds: [String(leadId)], detalhes: { telefoneRemovido: telefoneAtual || null } });
+        }
+        mensagemFinal = 'Pronto! Telefone removido e conversa movida pra "Não Identificados".';
+    }
 
     if (leadIndex !== -1) {
         leadsAtuais[leadIndex].pessoaTelefoneDDD = '';
         leadsAtuais[leadIndex].pessoaTelefoneNumero = '';
         leadsAtuais[leadIndex].tags = tagsJson;
-    }
-    if (typeof registrarLogAtividade === 'function') {
-        registrarLogAtividade('whatsapp_numero_errado', { pessoaIds: [String(leadId)], detalhes: { telefoneRemovido: telefoneAtual || null } });
     }
     if (typeof renderizarCards === 'function') renderizarCards();
 
@@ -4012,7 +4069,7 @@ async function confirmarNumeroErradoWpp(leadId) {
         const headerDrawer = document.getElementById('drawer-chat-header');
         if (headerDrawer) headerDrawer.innerText = `${nome} (sem telefone)`;
         const msgsDrawer = document.getElementById('drawer-messages');
-        if (msgsDrawer) msgsDrawer.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text-muted);">Conversa desvinculada — veja em "Não Identificados" no WhatsApp Unificado.</div>';
+        if (msgsDrawer) msgsDrawer.innerHTML = `<div style="padding:40px; text-align:center; color:var(--text-muted);">${novoLead ? `Conversa reatribuída pra "${escapeHTML(novoLead.pessoaNome)}".` : 'Conversa desvinculada — veja em "Não Identificados" no WhatsApp Unificado.'}</div>`;
         const inputAreaDrawer = document.getElementById('drawerChatInputArea');
         if (inputAreaDrawer) inputAreaDrawer.innerHTML = '';
     }
@@ -4025,14 +4082,14 @@ async function confirmarNumeroErradoWpp(leadId) {
         const tagsBlockWpp = document.getElementById('wppChatTagsBlock');
         if (tagsBlockWpp) tagsBlockWpp.innerHTML = '';
         const msgsWpp = document.getElementById('wppMessages');
-        if (msgsWpp) msgsWpp.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text-muted);">Conversa desvinculada — veja em "Não Identificados".</div>';
+        if (msgsWpp) msgsWpp.innerHTML = `<div style="padding:40px; text-align:center; color:var(--text-muted);">${novoLead ? `Conversa reatribuída pra "${escapeHTML(novoLead.pessoaNome)}".` : 'Conversa desvinculada — veja em "Não Identificados".'}</div>`;
         const inputAreaWpp = document.getElementById('wppChatInputArea');
         if (inputAreaWpp) inputAreaWpp.innerHTML = '';
     }
     const searchEl = document.getElementById('wppSearch');
     if (typeof renderizarContatosWpp === 'function') renderizarContatosWpp(searchEl ? searchEl.value : '');
 
-    alert('Pronto! Telefone removido e conversa movida pra "Não Identificados".');
+    alert(mensagemFinal);
 }
 
 async function alternarSugestaoIaLead(leadId, valor) {

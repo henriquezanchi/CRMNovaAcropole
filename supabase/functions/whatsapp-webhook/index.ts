@@ -205,6 +205,43 @@ async function resolverAmbiguidadePorHistorico(matches: any[]): Promise<any | nu
     return matches.find((m: any) => String(m.pessoaIdentificador) === idResolvido) ?? null;
 }
 
+// Pedido do usuário (2026-10-06): "se nós iniciamos a conversa com o
+// lead, não pode ficar como não identificado, mesmo que tenha
+// duplicidade de telefone. Nesse caso, admite-se o lead que está ativo
+// na conversa". Sinal AINDA mais forte que `resolverAmbiguidadePorHistorico()`
+// acima (que só resolve quando EXATAMENTE 1 dos candidatos tem QUALQUER
+// histórico, em QUALQUER número — falha se os 2 leads ambíguos já
+// trocaram mensagem alguma vez, cada um no seu próprio momento): aqui
+// olha especificamente quem foi o ÚLTIMO envio NOSSO (`direcao='saida'`)
+// pra ESTE TELEFONE EXATO — é literalmente "pra quem nós mandamos
+// mensagem nesse número por último", a definição de "quem está ativo
+// nesta conversa agora". Cobre tanto ambiguidade (2+ leads com o mesmo
+// telefone) quanto o caso de 0 candidatos em `leads_inscricoes` (ex: o
+// SDR mandou pra um número com pequena variação do que está cadastrado)
+// — nos dois casos, se JÁ conversamos com alguém por este número, é
+// essa pessoa quem está respondendo agora, nunca um chute.
+async function resolverPorUltimoEnvioNosso(ddd: string, candidatos: string[]): Promise<any | null> {
+    // Bug real achado testando esta correção (2026-10-06): o que a Meta
+    // manda de volta como `msg.from` numa mensagem RECEBIDA nem sempre
+    // tem o mesmo formato (com/sem 9º dígito) do que `whatsapp-send`
+    // gravou quando NÓS mandamos — ex: recebido "556281380210" (sem 9),
+    // enviado "5562981380210" (com 9). Um match por string EXATA nunca
+    // bateria. Por isso busca as 2 variantes completas (DDI+DDD+local,
+    // com e sem o 9), igual `buscarLeadsPorTelefone()` já faz pro lado
+    // de `leads_inscricoes`.
+    const variantesCompletas = candidatos.map((v) => `55${ddd}${v}`);
+    const { data } = await supabaseAdmin
+        .from(NOME_TABELA_MENSAGENS)
+        .select('pessoaIdentificador, filial')
+        .in('telefone_whatsapp', variantesCompletas)
+        .eq('direcao', 'saida')
+        .not('pessoaIdentificador', 'is', null)
+        .order('criado_em', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+    return data?.pessoaIdentificador ? data : null;
+}
+
 // REMOVIDO (2026-10-01, pedido do usuário): a fila automática por
 // "menor carga" escolhia entre QUALQUER usuário com módulo tab-whatsapp
 // ativo em `usuarios_crm` — inclusive quem nunca logou no CRM nem uma
@@ -279,6 +316,14 @@ Deno.serve(async (req) => {
                 const matches = await buscarLeadsPorTelefone(ddd, candidatos);
                 let match = matches.length === 1 ? matches[0] : null;
                 let resolvidoPorHistorico = false;
+                // Sinal mais forte primeiro (ver resolverPorUltimoEnvioNosso()):
+                // "pra quem mandamos mensagem por último neste telefone" —
+                // cobre ambiguidade (2+ leads) E o caso de 0 candidatos em
+                // leads_inscricoes (número divergente do cadastrado).
+                if (!match) {
+                    const resolvidoPorEnvio = await resolverPorUltimoEnvioNosso(ddd, candidatos);
+                    if (resolvidoPorEnvio) { match = resolvidoPorEnvio; resolvidoPorHistorico = true; }
+                }
                 if (!match && matches.length > 1) {
                     const resolvido = await resolverAmbiguidadePorHistorico(matches);
                     if (resolvido) { match = resolvido; resolvidoPorHistorico = true; }
