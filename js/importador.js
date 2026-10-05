@@ -268,17 +268,37 @@ async function salvarConfigPontuacao() {
     fecharConfigPontuacao();
 }
 
+// Mapeamento de exceções conhecidas — toda filial NÃO listada aqui usa o
+// DDD padrão de Goiânia ('62'), que cobre a maioria das unidades hoje.
+// Só adiciona uma entrada aqui quando confirmado que o DDD real da
+// filial é outro (mesmo espírito de MAPEAMENTO_FILIAL_ID_CONHECIDO em
+// scraper/importar-ulisses-api.js — exceção explícita, nunca inferida).
+//
+// Bug real corrigido (2026-10-05, achado investigando "leads a mesclar
+// com o mesmo telefone, mas com DDD diferente" relatado pelo usuário):
+// antes, parseTelefoneInativo() SEMPRE chutava ddd:'62' pra qualquer
+// filial quando a planilha de Inativos não trazia DDD — errado pra
+// Barra do Garças/MT (DDD real 66), que silenciosamente ganhava
+// telefones com o DDD de Goiânia. Além do risco óbvio (mensagem de
+// WhatsApp pro número errado), isso também inflava falsos-positivos no
+// agrupamento por telefone de "Leads a Tratar" (2 pessoas sem DDD
+// informado, de filiais diferentes, caindo no MESMO DDD fabricado).
+function dddPadraoDaFilial(filialDestino) {
+    const EXCECOES = { 'Barra do Garças/MT': '66' };
+    return EXCECOES[filialDestino] || '62';
+}
+
 // Telefones da planilha de Inativos vêm bagunçados: múltiplos números
 // juntos separados por "/", alguns com traço, alguns sem DDD. Pegamos só
 // o primeiro número informado e tentamos separar DDD + número; se não
 // der pra confiar no resultado, retornamos null (fica sem telefone).
-function parseTelefoneInativo(campo) {
+function parseTelefoneInativo(campo, dddPadrao) {
     if (!campo) return null;
     const primeiro = String(campo).split('/').map(s => s.trim()).find(s => s !== '');
     if (!primeiro) return null;
     const digitos = primeiro.replace(/\D/g, '');
     if (digitos.length === 8 || digitos.length === 9) {
-        return { ddd: '62', numero: digitos }; // assume DDD local (Goiânia) quando não vem no número
+        return { ddd: dddPadrao || '62', numero: digitos }; // assume o DDD padrão da FILIAL quando não vem no número
     }
     if (digitos.length === 10 || digitos.length === 11) {
         return { ddd: digitos.slice(0, 2), numero: digitos.slice(2) };
@@ -983,6 +1003,7 @@ async function processarPlanilhas() {
         return;
     }
 
+    const dddPadrao = dddPadraoDaFilial(filialDestino);
     logImport(`Filial de destino: ${filialDestino}`);
     if (temMercurio && temUlisses) {
         logImport('Lendo planilhas...');
@@ -1044,7 +1065,7 @@ async function processarPlanilhas() {
         const nome = row['Nome'];
         if (!nome) { auditoriaImportacao.inativosSemNome.push({ linha: i + 2 }); return; }
         const chave = normalizarNomeImport(nome);
-        const tel = parseTelefoneInativo(row['Telefones']);
+        const tel = parseTelefoneInativo(row['Telefones'], dddPadrao);
         if (row['Telefones'] && String(row['Telefones']).replace(/\//g, '').trim() !== '' && !tel) {
             telefonesInativosNaoInterpretados++;
         }

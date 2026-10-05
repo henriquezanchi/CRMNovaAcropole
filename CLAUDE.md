@@ -8320,3 +8320,68 @@ argumento (reaproveita o `<textarea>` existente) — são exatamente os 2
 pontos onde o foco precisava ser preservado. Como `criarChatController()`
 é compartilhado, o fix cobre WhatsApp Unificado E a gaveta do lead de
 uma vez, sem código duplicado.
+
+## Investigação: "mesclagem automática está funcionando?" + DDD chutado em Inativos (2026-10-05)
+
+Pedido do usuário, 3 mensagens em sequência: "a mesclagem automática está
+funcionando? estou vendo várias pessoas com e-mail e/ou telefone igual...
+ainda esperando mesclar"; "isso tem feito a gente entrar em contato com
+pessoas cujas tags não estão atualizadas"; "algumas pessoas estão com
+leads a mesclar com o mesmo telefone, mas com DDD diferente. Estamos
+colocando o DDD por conta própria, quando no cadastro não tem?".
+
+**Investigação com SQL direto contra produção** (não especulação):
+
+- **Auto-mesclagem (só `criterio='telefone'`) está ativa e funcionando**:
+  `log_atividade` confirma 6231 mesclagens históricas, as mais recentes
+  há poucas horas da investigação.
+- **Backlog pendente, por critério**: nome=2212, telefone=1302, sem
+  telefone=257, email=198 — volume esperado de fila de revisão manual,
+  não evidência de bug.
+- **Amostra de 30 grupos `telefone` pendentes**: todos com nomes
+  genuinamente diferentes entre si — corretamente NÃO auto-mesclados
+  (a regra exige nomes compatíveis — igual ou abreviação —, nunca só
+  telefone igual).
+- **"Mesmo telefone, DDD diferente" NÃO acontece nos grupos `telefone`**
+  — estruturalmente impossível: `normalizarTelefoneParaChave(ddd,
+  numero)` concatena DDD+número na própria chave de agrupamento, então
+  2 DDDs diferentes NUNCA caem no mesmo grupo "telefone" (confirmado
+  também por SQL, 0 ocorrências). **O padrão que o usuário viu é dos
+  grupos `nome` (critério 3, "Nome Parecido")** — confirmado por
+  amostra real (ex: "ANA CLARA NAVES" DDD 62 vs "ANA CLARA" DDD 85).
+  Isso é consequência DIRETA de uma decisão de design já registrada
+  neste arquivo (ver seção "Leads a Tratar" acima): *"Deliberadamente SEM
+  usar telefone/e-mail DIFERENTES como desqualificador... um lead pode
+  ter trocado de telefone, ou um dos dois cadastros pode ter erro de
+  digitação"* — não é um bug, é o comportamento pretendido (revisão
+  manual, nunca mescla sozinho nesse critério).
+- **Bug real confirmado, separado**: `parseTelefoneInativo()`
+  (`js/importador.js`) **chutava `ddd:'62'` pra QUALQUER filial** sempre
+  que a planilha de Inativos do Mercúrio não trazia DDD explícito no
+  telefone (comum — 42% dos 1302 membros pendentes em grupos "telefone"
+  têm a tag "Inativo", ou seja, passaram por essa função). Isso é
+  **errado pra Barra do Garças/MT** (DDD real 66) — silenciosamente
+  atribuía DDD de Goiânia a gente de outra cidade, com risco real de
+  mandar WhatsApp pro número errado (mesmo DDD + número de verdade de
+  outra pessoa). Também inflava falso-positivo de agrupamento por
+  telefone (2 pessoas sem DDD informado, de filiais diferentes, caindo
+  no mesmo DDD fabricado).
+  - **Corrigido**: nova `dddPadraoDaFilial(filialDestino)` —
+    mapeamento de EXCEÇÃO explícita (`{'Barra do Garças/MT': '66'}`,
+    mesmo espírito de `MAPEAMENTO_FILIAL_ID_CONHECIDO` em
+    `scraper/importar-ulisses-api.js`), fallback `'62'` pras demais
+    filiais (todas efetivamente Goiânia hoje). `parseTelefoneInativo()`
+    ganhou um 2º parâmetro (`dddPadrao`), resolvido 1x no topo de
+    `processarPlanilhas()` a partir da filial selecionada, e passado no
+    único call site. **Nunca muda telefone já gravado** — só afeta a
+    PRÓXIMA importação de Inativos sem DDD explícito; registros antigos
+    com DDD '62' fabricado (de filiais erradas) não são corrigidos
+    retroativamente por este fix (precisaria de um backfill manual
+    pontual se algum caso real em Barra do Garças/MT for confirmado).
+- **Conclusão prática pro usuário**: a mesclagem automática está
+  funcionando como projetado; os grupos "telefone"/"nome" ainda
+  pendentes são, pela amostra, pessoas genuinamente diferentes (família
+  compartilhando telefone fixo, ou coincidência de nome comum) — segue
+  exigindo revisão manual, não é sinal de bug na régua de auto-mesclagem.
+  O único bug real confirmado e corrigido foi o DDD fabricado em
+  Inativos pra filiais fora de Goiânia.
