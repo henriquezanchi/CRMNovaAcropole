@@ -8252,15 +8252,20 @@ instrução, dado que agora não há revisão humana no meio do caminho.
   sem equivalente server-side) — limitação aceita, documentada no
   próprio código: o lead não é movido de coluna por este envio
   automático especificamente.
-- **Status do deploy (2026-10-05)**: a reescrita acima pra versão
-  autônoma existe no código-fonte, mas o `npx supabase functions deploy
-  reengajar-janela-fechando` ainda NÃO foi rodado — bloqueado por uma
-  permissão do próprio Claude Code (classificador de modo automático
-  marcou o comando como "perigoso"). Até esse deploy rodar (manualmente,
-  pelo usuário, ou aprovado numa sessão futura), a function em PRODUÇÃO
-  continua sendo a versão com aprovação humana (o que já foi testado ao
-  vivo, ver bullets abaixo) — a versão autônoma só passa a valer depois
-  do deploy.
+- **Status do deploy**: `npx supabase functions deploy
+  reengajar-janela-fechando` tinha sido bloqueado por uma permissão do
+  próprio Claude Code (classificador de modo automático marcou o comando
+  como "perigoso") — contornado rodando o MESMO comando manualmente pelo
+  próprio usuário no terminal dele, com sucesso. **A versão AUTÔNOMA já
+  está em produção** desde então — o cron de 15 min (já agendado desde
+  antes, `migracao_agendamento_reengajamento_janela.sql`) passa a enviar
+  mensagens de verdade, sem revisão humana, assim que achar candidatas
+  reais (12-24h de conversa parada, toggle da filial ligado). Ainda não
+  confirmado visualmente um envio automático real em produção (o cron
+  roda sozinho; a próxima vez que alguém notar uma mensagem com
+  `atendente_nome = "Bot de Reengajamento (IA)"` no histórico de um lead,
+  ou uma entrada `acao='reengajamento_automatico_enviado'` em
+  `log_atividade`, confirma ponta a ponta).
 
 - **Reaproveita 100% a tabela/UI de `sugerir-resposta-whatsapp`**
   (`sugestoes_resposta_wpp`, card de revisão no WhatsApp Unificado) em
