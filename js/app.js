@@ -7,6 +7,15 @@ const tamanhoLote = 500;
 let currentLeadId = null;
 let podeCarregarMais = false;
 
+// Colunas cujo CONTEÚDO já está 100% carregado em leadsAtuais (não só a
+// janela já paginada) — toda coluna secundária já entra aqui sozinha
+// (carregarColunasSecundariasSemPaginacao() sempre carrega todas por
+// completo); a 1ª coluna (paginada de verdade) só entra quando alguém usa
+// o filtro dela, via garantirColunaFiltravelCompleta() — ver bug real
+// corrigido logo abaixo. Resetado a cada troca de filial/reset de
+// carregarLeads().
+let colunasFiltroCompletasCarregadas = new Set();
+
 const NOME_TABELA = 'leads_inscricoes'; // ajuste aqui se o nome da tabela no Supabase for outro
 const NOME_TABELA_FILIAIS = 'filiais';
 
@@ -220,6 +229,7 @@ async function carregarLeads(filial, resetar = true) {
     if (resetar) {
         inicioLote = 0;
         leadsAtuais = [];
+        colunasFiltroCompletasCarregadas = new Set();
         if (typeof iniciarNotificacoesParaFilial === 'function') iniciarNotificacoesParaFilial();
         // Carrega TODAS as colunas SECUNDÁRIAS por FORA da paginação normal
         // — bug real, mesma classe já corrigida antes só pra "Matriculados"
@@ -316,7 +326,50 @@ async function carregarColunasSecundariasSemPaginacao(filial) {
             leadsAtuais = [...leadsAtuais, ...novos];
             if (!data || data.length < TAMANHO_PAGINA) break;
         }
+        colunasFiltroCompletasCarregadas.add(key); // já tem 100% do conteúdo — ver garantirColunaFiltravelCompleta()
     }
+}
+
+// Bug real relatado pelo usuário (2026-10-05): "quando coloco um filtro,
+// ele não considera todos os leads daquela coluna, só os visíveis" — o
+// filtro avançado por coluna (tags/evento/data/telefone/e-mail/resumo,
+// aplicarFiltroVisualColuna() abaixo) sempre rodou em cima dos CARDS JÁ
+// RENDERIZADOS no DOM, que pra colunas secundárias já é o conteúdo
+// completo (carregarColunasSecundariasSemPaginacao() acima carrega todas
+// inteiras), mas pra 1ª coluna do funil (a única que continua paginada de
+// verdade, geralmente "Frios") só cobre a janela já paginada — igual o
+// bug já documentado de Matriculados/Ativos-Inativos, mesma classe.
+//
+// Chamada antes de aplicar qualquer filtro (chip de tag, excluir, ou o
+// dropdown de campos) — se a coluna ainda não está 100% carregada,
+// busca TUDO dela no banco (paginado 1000 em 1000, mesmo padrão de
+// carregarColunasSecundariasSemPaginacao()) antes de filtrar. Devolve
+// `true` quando trouxe lead novo (o chamador precisa rodar
+// renderizarCards() pra esses cards passarem a existir no DOM antes do
+// filtro poder escondê-los/mostrá-los); `false` quando a coluna já
+// estava completa (nada pra fazer, filtra na hora).
+async function garantirColunaFiltravelCompleta(key) {
+    if (colunasFiltroCompletasCarregadas.has(key)) return false;
+
+    const TAMANHO_PAGINA = 1000;
+    let trouxeNovo = false;
+    for (let de = 0; ; de += TAMANHO_PAGINA) {
+        const { data, error } = await window.supabaseClient
+            .from(NOME_TABELA)
+            .select('*')
+            .eq('filial', filialAtual)
+            .eq('funil_agencia', key)
+            .is('lixeira_em', null)
+            .order('pessoaIdentificador', { ascending: true })
+            .range(de, de + TAMANHO_PAGINA - 1);
+        if (error) { console.error(`Erro ao carregar a coluna "${key}" por completo pro filtro:`, error); break; }
+        const idsJaCarregados = new Set(leadsAtuais.map(l => l.pessoaIdentificador));
+        const novos = (data || []).filter(l => !idsJaCarregados.has(l.pessoaIdentificador));
+        if (novos.length > 0) { leadsAtuais = [...leadsAtuais, ...novos]; trouxeNovo = true; }
+        if (!data || data.length < TAMANHO_PAGINA) break;
+    }
+    colunasFiltroCompletasCarregadas.add(key);
+    return trouxeNovo;
 }
 
 // Mesmo problema do bug acima (Matriculados), mas pra tags "Ativo"/
@@ -992,7 +1045,7 @@ function montarDropdownFiltroColuna(key, tagsDisponiveis) {
     atualizarBadgeFiltroColuna(key);
 }
 
-function toggleFiltroColunaChip(key, campo, valor) {
+async function toggleFiltroColunaChip(key, campo, valor) {
     const filtro = getFiltroColuna(key);
     const lista = filtro[campo];
     const idx = lista.indexOf(valor);
@@ -1007,13 +1060,16 @@ function toggleFiltroColunaChip(key, campo, valor) {
     montarChipsTagsAgrupados(`tagsChips-${key}`, opcoes.tags, filtro.tags, (v) => toggleFiltroColunaChip(key, 'tags', v));
 
     atualizarBadgeFiltroColuna(key);
-    aplicarFiltroVisualColuna(key);
+    // Garante o conteúdo COMPLETO da coluna antes de filtrar (ver bug real
+    // "filtro só considera os visíveis", garantirColunaFiltravelCompleta()).
+    if (await garantirColunaFiltravelCompleta(key)) renderizarCards();
+    else aplicarFiltroVisualColuna(key);
 }
 
 // "Filter out": mesma mecânica do toggle de inclusão, só que marca a tag
 // pra EXCLUIR (esconder qualquer lead que tenha ela), independente do que
 // estiver marcado na lista de inclusão acima.
-function toggleFiltroColunaChipExcluir(key, valor) {
+async function toggleFiltroColunaChipExcluir(key, valor) {
     const filtro = getFiltroColuna(key);
     const lista = filtro.tagsExcluidas;
     const idx = lista.indexOf(valor);
@@ -1024,12 +1080,13 @@ function toggleFiltroColunaChipExcluir(key, valor) {
     montarChips(`tagsExcluidasChips-${key}`, opcoes.tags, filtro.tagsExcluidas, (v) => toggleFiltroColunaChipExcluir(key, v));
 
     atualizarBadgeFiltroColuna(key);
-    aplicarFiltroVisualColuna(key);
+    if (await garantirColunaFiltravelCompleta(key)) renderizarCards();
+    else aplicarFiltroVisualColuna(key);
 }
 
 // Lê os campos de texto/data/checkbox do dropdown (só aplicados ao clicar
 // "Aplicar", diferente dos chips que já filtram na hora).
-function aplicarFiltroColunaCampos(key) {
+async function aplicarFiltroColunaCampos(key) {
     const filtro = getFiltroColuna(key);
     filtro.evento = (document.getElementById(`filtroEvento-${key}`) || {}).value || '';
     filtro.dataDe = (document.getElementById(`filtroDataDe-${key}`) || {}).value || '';
@@ -1038,8 +1095,9 @@ function aplicarFiltroColunaCampos(key) {
     filtro.temEmail = (document.getElementById(`filtroTemEmail-${key}`) || {}).checked || false;
     filtro.temResumo = (document.getElementById(`filtroTemResumo-${key}`) || {}).checked || false;
     filtro.resumoTexto = (document.getElementById(`filtroResumoTexto-${key}`) || {}).value || '';
-    aplicarFiltroVisualColuna(key);
     atualizarBadgeFiltroColuna(key);
+    if (await garantirColunaFiltravelCompleta(key)) renderizarCards();
+    else aplicarFiltroVisualColuna(key);
 }
 
 function limparFiltroColuna(key) {

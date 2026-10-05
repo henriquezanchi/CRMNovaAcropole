@@ -8165,3 +8165,39 @@ fixo que é quase idêntico de um candidato pro outro na mesma rodada.
   corrigido em `atualizarContadores()`, `aplicarFiltroVisualColuna()` e
   `toggleSelecionarTodosColuna()`, mas vale lembrar em qualquer código novo
   que monte um seletor `#col-...`).
+
+## Bug real: filtro de coluna só considerava os leads JÁ VISÍVEIS (2026-10-05)
+
+Pedido do usuário: "quando coloco um filtro no crm, ele não considere
+todos os leads daquela coluna, mas, somente os visíveis. Quero que
+considere todos". `aplicarFiltroVisualColuna()` sempre rodou em cima dos
+`.lead-card` já RENDERIZADOS no DOM (show/hide por atributo `data-*`) —
+pras colunas SECUNDÁRIAS isso já era o conteúdo completo
+(`carregarColunasSecundariasSemPaginacao()` já carrega todas por inteiro,
+ver bullet "Matriculados recém-criado podia ficar invisível" acima), mas
+a **1ª coluna do funil** (a única que continua paginada de verdade,
+geralmente "Frios") só tinha a JANELA já paginada carregada — um filtro
+de tag/evento/data/telefone/e-mail/resumo nessa coluna nunca enxergava
+quem ainda não tinha sido paginado pro navegador. Mesma classe dos bugs
+já documentados de Matriculados/Ativos-Inativos, só que no filtro em vez
+da listagem simples.
+
+- **`colunasFiltroCompletasCarregadas`** (`Set`, `js/app.js`) — marca
+  quais colunas já têm 100% do conteúdo em `leadsAtuais`. Toda coluna
+  SECUNDÁRIA já entra sozinha (marcada dentro de
+  `carregarColunasSecundariasSemPaginacao()`, que já carregava tudo
+  mesmo); resetado a cada troca de filial/reset de `carregarLeads()`.
+- **`garantirColunaFiltravelCompleta(key)`**, nova — chamada ANTES de
+  qualquer filtro rodar (`toggleFiltroColunaChip()`/
+  `toggleFiltroColunaChipExcluir()`/`aplicarFiltroColunaCampos()`, todas
+  viraram `async`): se a coluna ainda não está marcada como completa,
+  busca TUDO dela no banco (paginado 1000 em 1000, mesmo padrão de
+  `carregarColunasSecundariasSemPaginacao()`) antes de filtrar — só
+  dispara a busca na 1ª vez que o usuário mexe no filtro daquela coluna
+  naquela sessão (lazy, sob demanda — nunca carrega "Frios" inteiro só
+  por trocar de filial, só quando alguém realmente for filtrar essa
+  coluna especificamente). Trazendo lead novo, chama `renderizarCards()`
+  (que já reaplica o filtro de toda coluna no final) pra esses cards
+  passarem a existir no DOM antes de poderem ser escondidos/mostrados;
+  já estando completa, só reaplica `aplicarFiltroVisualColuna(key)`
+  direto, sem round-trip nenhum.
