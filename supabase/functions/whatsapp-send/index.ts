@@ -315,8 +315,11 @@ Deno.serve(async (req) => {
             const parsed = JSON.parse(leadAtual?.tags || "[]");
             if (Array.isArray(parsed)) tags = parsed;
         } catch { /* tags malformada — trata como vazia, nunca trava o envio */ }
-        if (!tags.includes("Contato Recente: 7 dias")) tags.push("Contato Recente: 7 dias");
-        if (!tags.includes("Contato Recente: 30 dias")) tags.push("Contato Recente: 30 dias");
+        // Mutuamente exclusivas (pedido do usuário, 2026-10-06): um envio
+        // agora sempre cai dentro de "7 dias" — a de "30 dias", se
+        // existia, vira redundante e é removida.
+        tags = tags.filter((t) => t !== "Contato Recente: 7 dias" && t !== "Contato Recente: 30 dias");
+        tags.push("Contato Recente: 7 dias");
 
         await supabaseAdmin.from(NOME_TABELA_LEADS)
             .update({

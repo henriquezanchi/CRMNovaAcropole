@@ -1544,7 +1544,7 @@ function criarChatController({ messagesId, inputAreaId }) {
                     <input type="file" class="wpp-anexo-input" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" hidden>
                     <button type="button" class="btn-emoji-toggle" style="background: none; border: none; font-size: 20px; color: var(--text-muted); cursor: pointer;" title="Emojis"><i class="fa-regular fa-face-smile"></i></button>
                     <button type="button" class="btn-resposta-rapida-toggle" style="background: none; border: none; font-size: 17px; color: var(--text-muted); cursor: pointer;" title="Respostas rápidas"><i class="fa-solid fa-bolt"></i></button>
-                    <textarea class="chat-input" rows="1" placeholder="Digite uma mensagem... (Shift+Enter pra nova linha)"></textarea>
+                    <textarea class="chat-input" rows="1" placeholder="Digite uma mensagem..."></textarea>
                     <button type="button" class="btn-audio-toggle" title="Gravar áudio"><i class="fa-solid fa-microphone"></i></button>
                     <button type="button" class="btn-send"><i class="fa-solid fa-paper-plane"></i></button>
                 </div>
@@ -2941,6 +2941,33 @@ function voltarEscolhaConviteApi() {
 // Manager), só elimina a assinatura de "rajada" que motivou o aviso.
 const TAMANHO_LOTE_CONVITE_API = 1;
 const PAUSA_ENTRE_LOTES_MS = 1500;
+
+// Indicador de progresso FLUTUANTE, persistente mesmo com o modal
+// fechado (pedido do usuário, 2026-10-06: "fechar essa tela interrompe
+// o envio?" — NÃO interrompe, o loop de envio roda independente do
+// modal estar aberto/visível; o problema era só UX — fechar o modal
+// escondia o ÚNICO lugar que mostrava o progresso, dando a falsa
+// impressão de que o serviço parou). Reaproveita o MESMO container
+// (#wppPopupContainer, _containerPopupWpp() em js/notificacoes.js) já
+// usado pelo popup de "mensagem recebida" — canto inferior direito,
+// nunca bloqueia o meio da tela.
+function atualizarProgressoEnvioMassa(idOperacao, { titulo, atual, total, concluido }) {
+    const container = typeof _containerPopupWpp === 'function' ? _containerPopupWpp() : document.body;
+    let el = document.getElementById(`progressoEnvioWpp-${idOperacao}`);
+    if (!el) {
+        el = document.createElement('div');
+        el.id = `progressoEnvioWpp-${idOperacao}`;
+        el.className = 'wpp-progresso-toast';
+        container.appendChild(el);
+    }
+    const pct = total > 0 ? Math.round((atual / total) * 100) : 0;
+    el.innerHTML = `
+        <div class="wpp-progresso-toast-topo"><i class="fa-solid fa-paper-plane"></i> ${escapeHTML(titulo || 'Enviando mensagens')}</div>
+        <div class="wpp-progresso-toast-barra"><div class="wpp-progresso-toast-barra-fill" style="width:${pct}%"></div></div>
+        <div class="wpp-progresso-toast-texto">${concluido ? 'Concluído' : 'Enviando'}... (${atual}/${total})</div>
+    `;
+    if (concluido) setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 6000);
+}
 function pausarWpp(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 async function confirmarEnviarConviteApiLote() {
@@ -2982,9 +3009,11 @@ async function confirmarEnviarConviteApiLote() {
             }
         }));
         resultados.push(...respostas);
-        resultadoEl.innerHTML = `<p style="font-size:12px; color:var(--text-muted);">Enviando... (${resultados.length}/${linhas.length})</p>`;
+        resultadoEl.innerHTML = `<p style="font-size:12px; color:var(--text-muted);">Enviando em segundo plano — acompanhe o progresso no canto inferior direito, pode fechar esta tela sem interromper.</p>`;
+        atualizarProgressoEnvioMassa('conviteApi', { titulo: 'Convidar (API)', atual: resultados.length, total: linhas.length });
         if (i + TAMANHO_LOTE_CONVITE_API < linhas.length) await pausarWpp(PAUSA_ENTRE_LOTES_MS);
     }
+    atualizarProgressoEnvioMassa('conviteApi', { titulo: 'Convidar (API)', atual: resultados.length, total: linhas.length, concluido: true });
 
     const sucesso = resultados.filter(r => r.ok);
     const falha = resultados.filter(r => !r.ok);
@@ -3187,7 +3216,7 @@ async function confirmarConviteJanelaAberta() {
     if (!confirm(`Confirma o envio de verdade pra ${candidatos.length} lead(s) agora? Essa ação não pode ser desfeita.`)) return;
 
     const corpoEl = document.getElementById('conviteJanelaAbertaCorpo');
-    if (corpoEl) corpoEl.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Enviando...</p>';
+    if (corpoEl) corpoEl.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Enviando em segundo plano — acompanhe o progresso no canto inferior direito, pode fechar esta tela sem interromper.</p>';
 
     const resultados = [];
     // Lote de 1 + pausa maior (mesma correção de 2026-10-05 do envio em
@@ -3209,9 +3238,10 @@ async function confirmarConviteJanelaAberta() {
             }
         }));
         resultados.push(...respostas);
-        if (corpoEl) corpoEl.innerHTML = `<p style="font-size:12px; color:var(--text-muted);">Enviando... (${resultados.length}/${candidatos.length})</p>`;
+        atualizarProgressoEnvioMassa('conviteJanelaAberta', { titulo: 'Convidar (Janela Aberta)', atual: resultados.length, total: candidatos.length });
         if (i + TAMANHO_LOTE < candidatos.length) await pausarWpp(PAUSA_ENTRE_LOTES_MS);
     }
+    atualizarProgressoEnvioMassa('conviteJanelaAberta', { titulo: 'Convidar (Janela Aberta)', atual: resultados.length, total: candidatos.length, concluido: true });
 
     const sucesso = resultados.filter(r => r.ok);
     const falha = resultados.filter(r => !r.ok);

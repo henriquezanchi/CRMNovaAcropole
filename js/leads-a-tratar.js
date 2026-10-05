@@ -167,6 +167,41 @@ function escolherSobreviventeAutoMesclagem(membros) {
     })[0];
 }
 
+// Bug real achado pelo usuário (2026-10-06): "Retorno: Só 1 Evento" (só
+// válida quando historico_eventos tem EXATAMENTE 1 entrada, ver
+// calcularTagsTrilhaEJornada() em js/importador.js) sobrevivia depois de
+// uma mesclagem UNIR o histórico de 2 leads — a mesclagem só fazia UNIÃO
+// das tags já existentes, nunca RECALCULAVA uma tag DERIVADA do
+// histórico combinado. 173 leads encontrados com esse resíduo em
+// produção, corrigidos manualmente — esta função evita que aconteça de
+// novo em qualquer mesclagem futura (automática ou manual).
+// Bug real achado pelo usuário (2026-10-06): NASRAH NICOLAS acumulou 17
+// cópias da MESMA nota "E-mail alternativo" no resumo_ia — o dedup
+// (`new Set(resumos)`) tratava cada resumo_ia JÁ MESCLADO (um blob
+// multi-linha, com várias notas coladas por "\n---\n") como 1 item só,
+// então só dava pra dedupar blobs IDÊNTICOS inteiros — nunca pegava
+// repetição de uma LINHA dentro de um blob que cresce a cada rodada (a
+// causa raiz de por que o MESMO par de duplicados é mesclado de novo
+// repetidamente ainda não foi investigada — ver CLAUDE.md). Corrigido
+// quebrando cada resumo_ia em SEGMENTOS (por "\n---\n") antes de dedupar
+// — segmento repetido nunca mais se acumula, mesmo que a mesclagem
+// aconteça de novo pro mesmo par.
+function montarResumoFinalMesclagem(resumosBrutos, notasExtra) {
+    const segmentos = [];
+    resumosBrutos.forEach(r => {
+        String(r || '').split('\n---\n').map(s => s.trim()).filter(Boolean).forEach(s => segmentos.push(s));
+    });
+    if (notasExtra && notasExtra.length > 0) segmentos.push(notasExtra.join('\n'));
+    return segmentos.length > 0 ? Array.from(new Set(segmentos)).join('\n---\n') : null;
+}
+
+function recalcularTagRetornoAposMerge(tagsFinais, eventosFinais) {
+    const semRetorno = tagsFinais.filter(t => t !== 'Retorno: Só 1 Evento');
+    const jaAlunoOuExAluno = semRetorno.some(t => ['Ativo', 'Aluno Ativo', 'Inativo', 'Ex-Aluno (Inativo)'].includes(t));
+    if (!jaAlunoOuExAluno && (eventosFinais || []).length === 1) semRetorno.push('Retorno: Só 1 Evento');
+    return semRetorno;
+}
+
 // Mesma incorporação de dados já usada na mesclagem manual
 // (confirmarMesclagem()) — tags e histórico de eventos em UNIÃO, e-mail
 // nunca perdido (quem não for escolhido vira nota no resumo_ia), sem
@@ -187,6 +222,7 @@ async function mesclarAutomaticamenteLeads(membros) {
         const chave = chaveEvento(e);
         if (!eventosExistentes.has(chave)) { eventosFinais.push(e); eventosExistentes.add(chave); }
     }));
+    tagsFinais = recalcularTagRetornoAposMerge(tagsFinais, eventosFinais);
 
     const notasContatoAlternativo = [];
     let email = principal.pessoaEmail;
@@ -1062,6 +1098,7 @@ async function confirmarMesclagem() {
             if (!eventosExistentes.has(chave)) { eventosFinais.push(e); eventosExistentes.add(chave); }
         });
     });
+    tagsFinais = recalcularTagRetornoAposMerge(tagsFinais, eventosFinais);
 
     // Anotações extras pra quando a pessoa escolhe "Manter os dois" — o
     // valor não escolhido como principal não pode ser perdido (o cadastro
@@ -1116,9 +1153,7 @@ async function confirmarMesclagem() {
 
     // Resumo de IA: concatena o de todos que tiverem algo escrito (não
     // descarta nenhuma anotação manual) + as notas de contato alternativo acima
-    const resumos = [principal.resumo_ia, ...outros.map(o => o.resumo_ia)].map(r => (r || '').trim()).filter(Boolean);
-    if (notasContatoAlternativo.length > 0) resumos.push(notasContatoAlternativo.join('\n'));
-    const resumoFinal = resumos.length > 0 ? Array.from(new Set(resumos)).join('\n---\n') : null;
+    const resumoFinal = montarResumoFinalMesclagem([principal.resumo_ia, ...outros.map(o => o.resumo_ia)], notasContatoAlternativo);
 
     if (telNumero) tagsFinais = tagsFinais.filter(t => t !== 'Sem Telefone');
     if (email) tagsFinais = tagsFinais.filter(t => t !== 'Sem E-mail');

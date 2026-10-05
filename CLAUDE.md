@@ -8595,3 +8595,189 @@ envio real desde `migracao_whatsapp_snooze_fila_ultimo_contato.sql`):
   uma coluna pra disparo em massa já esconde sozinho quem foi contatado
   recentemente, sem precisar de nenhuma UI nova (reaproveita o mecanismo
   de exclusão por tag já existente).
+
+## Rodada de bugs reais achados testando ao vivo (2026-10-06)
+
+Depois de implementar "Contato Recente", o usuário foi testando o CRM ao
+vivo e achou vários bugs reais em sequência — todos investigados com
+SQL direto contra produção antes de corrigir (nunca por suposição).
+
+### "Contato Recente: 7/30 dias" mutuamente exclusivas
+
+Pedido do usuário, direto: "não pode ter as duas tags ao mesmo tempo...
+se entramos em contato nos últimos 7 dias, significa que entramos em
+contato nos últimos 30 dias, então é redundância". Corrigido em 2
+lugares (`migracao_tags_contato_recente_fix_exclusividade.sql` +
+`whatsapp-send`): "30 dias" só se aplica quando "7 dias" NÃO se aplica.
+
+### Falso positivo: tag aplicada numa mensagem que FALHOU (ALINE DA SILVA ROCHA)
+
+Achado pelo usuário com print real: um "Lembrete automático" falhou
+(ícone de erro visível no balão), mas o lead tinha as 2 tags "Contato
+Recente" mesmo assim. **Causa raiz real**: a Graph API aceita o envio de
+forma SÍNCRONA (por isso `whatsapp-send` já carimbava
+`ultimo_contato_em`/as tags OTIMISTAMENTE, na hora) — mas a entrega real
+só é confirmada/recusada DEPOIS, de forma ASSÍNCRONA, via webhook de
+status (`whatsapp-webhook`, que então atualiza `wa_status` pra
+`'falhou'`). O carimbo otimista nunca era desfeito quando a falha
+chegava depois — um lead podia ficar marcado como "contatado
+recentemente" sem a mensagem nunca ter chegado de verdade.
+
+- **Corrigido**: nova função `recomputarContatoRecente(pessoaIdentificador)`
+  em `whatsapp-webhook` — toda vez que um status vira `'falhou'`,
+  recalcula `ultimo_contato_em`/as tags daquele lead DO ZERO, a partir
+  só de envios que NÃO falharam (pode não sobrar nenhum — nesse caso os
+  dois ficam ausentes, corretamente).
+- **Backfill retroativo**: `update ... set ultimo_contato_em = null
+  where ... not exists (select 1 from mensagens_whatsapp ... wa_status
+  in (sucesso))` — limpa qualquer carimbo otimista órfão já existente em
+  produção (sem mensagem de sucesso real por trás).
+
+### Falso negativo: contato real de ANTES de 2026-09-30 nunca foi carimbado (JOSILENA VILELA DE ALMEIDA)
+
+Achado pelo usuário: lead com conversa real, mensagens entregues em
+29/09, mas SEM nenhuma tag "Contato Recente". Causa: `ultimo_contato_em`
+só passou a existir/ser carimbado a partir de 2026-09-30
+(`migracao_whatsapp_snooze_fila_ultimo_contato.sql`) — quem teve o
+ÚLTIMO contato bem-sucedido ANTES dessa data nunca teve a coluna
+preenchida retroativamente, mesmo tendo mensagem de verdade entregue.
+**Backfill**: `update leads_inscricoes set ultimo_contato_em = (max
+criado_em de mensagens_whatsapp direcao='saida' e wa_status em
+sucesso)` pra todo mundo — resolve os dois casos (Aline E Josilena) de
+uma vez, já que são o MESMO tipo de dessincronia entre o carimbo
+guardado e a realidade do histórico de mensagens.
+
+### "Retorno: Só 1 Evento" sobrevivendo depois de mesclagem (IZABELLA AURORA FELICIO GARCIA LOPES)
+
+Pedido do usuário: "pessoas convidadas num evento, mas sem confirmação/
+comparecimento, estão com a tag 'Retorno: Só 1 Evento' quando não
+parece ter sido o caso". Investigado: o evento visível na gaveta era um
+**"Convite do CRM"** (`origem='crm'`, pendente, nunca confirmado) — isso
+nunca conta como "veio num evento" (só `historico_eventos`, alimentado
+pelo Ulisses, conta). O `historico_eventos` REAL dela tinha **2**
+entradas (de 2017) — mas a tag "Só 1 Evento" (`calcularTagsTrilhaEJornada()`,
+`js/importador.js`, exige `length === 1`) continuava lá.
+
+- **Causa raiz**: mesclagem de duplicados (automática por telefone OU
+  manual, `js/leads-a-tratar.js`) UNE `historico_eventos` de 2 leads,
+  mas só faz UNIÃO das tags já existentes — nunca RECALCULA uma tag
+  DERIVADA do histórico recém-combinado. 173 leads encontrados com esse
+  resíduo em produção.
+- **Corrigido**: nova `recalcularTagRetornoAposMerge(tagsFinais,
+  eventosFinais)`, chamada logo depois de `eventosFinais` ser montado em
+  AMBAS as funções de mesclagem (`mesclarAutomaticamenteLeads()` e
+  `confirmarMesclagem()`) — remove a tag e só reaplica se o histórico
+  JÁ COMBINADO continuar tendo exatamente 1 evento. Os 173 leads
+  corrigidos retroativamente via SQL direto.
+- **Risco relacionado, NÃO corrigido nesta rodada** (fora do escopo
+  específico reportado): "Trilha: X"/"Jornada: X" são calculadas pela
+  MESMA função, a partir do MESMO `historico_eventos` — sofrem do
+  MESMO risco de ficarem desatualizadas depois de uma mesclagem (ex:
+  faltar uma trilha que o evento recém-unido deveria ter acrescentado).
+  Não auditado/corrigido agora — se aparecer um caso real, mesma classe
+  de bug, mesmo remédio (recalcular em vez de só unir).
+
+### Notas duplicadas em resumo_ia (NASRAH NICOLAS)
+
+Achado pelo usuário: 17 cópias EXATAS da mesma nota "E-mail alternativo"
+empilhadas no Resumo/Anotações. Causa: o dedup de resumo
+(`Array.from(new Set(resumos))`) tratava cada `resumo_ia` JÁ MESCLADO
+(um blob multi-linha, várias notas coladas por `"\n---\n"`) como 1 item
+só — só dava pra dedupar blobs IDÊNTICOS inteiros, nunca uma LINHA
+repetida dentro de um blob que cresce a cada rodada. 46 leads afetados
+em produção (até 19 cópias da mesma nota em alguns casos) — sinal forte
+de que o MESMO par de duplicados está sendo mesclado repetidamente (a
+causa raiz de por que o duplicado continua sendo recriado NÃO foi
+investigada nesta rodada — merece uma auditoria própria se o padrão
+persistir, mesma classe dos "Bug real #2 a #6" já documentados no
+Importador).
+
+- **Corrigido**: nova `montarResumoFinalMesclagem(resumosBrutos,
+  notasExtra)` — quebra cada resumo_ia em SEGMENTOS (por `"\n---\n"`)
+  ANTES de dedupar, então um segmento repetido nunca mais se acumula,
+  mesmo que a mesclagem aconteça de novo pro mesmo par. Usada nos
+  mesmos 2 pontos de mesclagem acima. 46 leads limpos retroativamente
+  (SQL com `regexp_split_to_array`/`unnest`/`string_agg`, preservando a
+  ordem original dos segmentos únicos).
+
+### Popup de progresso no meio da tela — e dúvida se fechar interrompe o envio
+
+Pedido do usuário, vendo o modal "Convidar (API)" com "Enviando...
+(1/82)" centralizado: "pode ficar em outro lugar... fechar essa tela
+interrompe o envio?". **Resposta**: NÃO interrompe — `fecharModalConviteLoteApi()`
+só esconde o modal via CSS (`classList.remove`), o loop `async` de envio
+continua rodando normalmente em segundo plano, escrevendo no mesmo
+elemento DOM (que só fica invisível, não destruído). O problema era
+100% de UX: sem o modal aberto, não sobrava NENHUM jeito de ver que
+ainda estava rodando — dava a falsa impressão de ter parado.
+
+- **Corrigido**: novo `atualizarProgressoEnvioMassa(idOperacao, {titulo,
+  atual, total, concluido})` (`js/whatsapp.js`) — indicador flutuante no
+  canto inferior direito (reaproveita `#wppPopupContainer`, mesmo
+  container do popup de "mensagem recebida"), com barra de progresso,
+  que PERSISTE independente do modal estar aberto ou fechado — some
+  sozinho 6s depois de concluído. Ligado nos 2 pontos de disparo em
+  massa (Convidar API, Convidar Janela Aberta). O texto dentro do modal
+  virou só um aviso ("pode fechar esta tela sem interromper").
+
+### Popup de notificação colidindo com a caixa de digitar/picker de respostas rápidas
+
+Print real do usuário: o popup "Nova mensagem de..." aparecia bem em
+cima da caixa de digitar E do picker de respostas rápidas (ambos também
+no canto inferior direito, já que o chat fica ancorado lá) — causava
+clique sem querer no popup em vez do campo certo. Corrigido subindo
+`#wppPopupContainer` de `bottom: 20px` pra `bottom: 140px` — limpa a
+barra de digitação e o início de qualquer picker que abra por cima dela.
+
+### Notificações deveriam agrupar por CONTATO, como o WhatsApp real
+
+Pedido do usuário: "no whatsapp normalmente recebemos notificações de
+cada pessoa com que mantemos contato" — várias mensagens seguidas da
+MESMA pessoa empilhavam vários popups, "uma potencial dispersão". Corrigido:
+`mostrarPopupWhatsApp()` ganhou uma `chave` (pessoaIdentificador, ou
+telefone se não identificado) — mensagem nova do MESMO contato enquanto
+o popup anterior ainda está na tela só ATUALIZA o texto + mostra "N
+mensagens novas" (reinicia os 8s), nunca empilha um 2º popup pra quem
+já tem um aberto.
+
+### Bug real: digitar uma resposta na gaveta, e a notificação apaga o rascunho
+
+Pedido do usuário: "quando estou digitando uma resposta na gaveta do
+lead, e vem uma notificação ele apaga o que escrevi... elimine as
+notificações de conversas abertas". Mesmo espírito do WhatsApp real —
+não notifica de uma conversa que você já está olhando. Corrigido no
+canal Realtime global (`iniciarNotificacoesWhatsAppGlobais()`,
+`js/notificacoes.js`): se a mensagem recebida é do MESMO lead que está
+aberto na gaveta (`currentLeadId`) OU no WhatsApp Unificado
+(`wppContatoAtivoId`), o sino/popup são suprimidos (o próprio chat
+aberto já escuta esse INSERT por conta própria e mostra a mensagem
+normalmente — só a notificação, que não tem relação com o rascunho
+sendo digitado, é que some). **Causa exata do apagamento do rascunho
+não foi confirmada** (não reproduzido ao vivo nesta sessão, sem
+Playwright disponível) — esta é a mitigação direta que o próprio
+usuário pediu, que também reduz a chance de qualquer efeito colateral
+do popup/re-render ligado à notificação; se o sintoma persistir mesmo
+sem notificação nenhuma da MESMA conversa, precisa de investigação
+própria (não teria sido causado por este código).
+
+### Placeholder "(Shift+Enter pra nova linha)" removido
+
+Pedido do usuário: texto a mais no placeholder da caixa de mensagem,
+removido (`js/whatsapp.js`) — a dica não agregava o suficiente pra
+justificar poluir o campo.
+
+### Pergunta do usuário: existe tag de interesse específico (ex: "Estoicismo")?
+
+Investigado um caso real (WENDERSON LIMA FEITOZA DE FARIAS, mensagem
+"Eu estudo o estoicismo e sou apaixonada pelo conteúdo da nova
+acrópole") — **confirmado: não existe nenhuma tag de tópico/interesse
+específico** tipo "Interesse: Estoicismo", e a razão é estrutural: hoje
+NENHUMA parte do CRM lê o CONTEÚDO de uma mensagem de WhatsApp pra
+extrair um tema filosófico específico e virar tag. O que existe hoje
+é: "Trilha: Filosófica" (baseada em TIPO de EVENTO frequentado, não em
+conversa), e "Conversa: Interessado/Objeção/etc." (sentimento genérico,
+via `sugerir-resposta-whatsapp`, nunca um tópico específico). Extrair
+"estoicismo"/"epicurismo"/etc. de uma mensagem livre exigiria uma nova
+capacidade (provavelmente estendendo a MESMA IA de sugestão de resposta
+pra também detectar e marcar o tema mencionado) — **não construída
+nesta rodada**, registrado como gap real caso o usuário queira priorizar.

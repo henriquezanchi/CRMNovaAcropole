@@ -90,6 +90,45 @@ function extrairTexto(msg: any): string {
 // normalmente, só sem a mídia (cai no texto placeholder de
 // extrairTexto()), nunca trava o webhook.
 
+// Recalcula ultimo_contato_em/"Contato Recente: X" de UM lead a partir
+// do zero — usado quando um status assíncrono vira 'falhou' DEPOIS de já
+// termos carimbado otimisticamente no envio (ver bullet "Bug real" acima
+// do chamador). Fonte de verdade: a mensagem de SAÍDA mais recente que
+// NÃO falhou (pode não existir nenhuma — nesse caso os dois ficam
+// vazios/ausentes, exatamente como deveria ser pra quem nunca teve
+// contato de verdade confirmado).
+async function recomputarContatoRecente(pessoaIdentificador: string) {
+    const { data: ultimaOk } = await supabaseAdmin
+        .from(NOME_TABELA_MENSAGENS)
+        .select("criado_em")
+        .eq("pessoaIdentificador", pessoaIdentificador)
+        .eq("direcao", "saida")
+        .in("wa_status", ["enviado", "entregue", "lido"])
+        .order("criado_em", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+    const { data: lead } = await supabaseAdmin.from(NOME_TABELA_LEADS)
+        .select("tags").eq("pessoaIdentificador", pessoaIdentificador).maybeSingle();
+    let tags: string[] = [];
+    try {
+        const parsed = JSON.parse(lead?.tags || "[]");
+        if (Array.isArray(parsed)) tags = parsed;
+    } catch { /* tags malformada — trata como vazia */ }
+    tags = tags.filter((t) => t !== "Contato Recente: 7 dias" && t !== "Contato Recente: 30 dias");
+
+    const novoUltimoContato = ultimaOk?.criado_em ?? null;
+    if (novoUltimoContato) {
+        const horas = (Date.now() - new Date(novoUltimoContato).getTime()) / 36e5;
+        if (horas <= 24 * 7) tags.push("Contato Recente: 7 dias");
+        else if (horas <= 24 * 30) tags.push("Contato Recente: 30 dias");
+    }
+
+    await supabaseAdmin.from(NOME_TABELA_LEADS)
+        .update({ ultimo_contato_em: novoUltimoContato, tags: JSON.stringify(tags) })
+        .eq("pessoaIdentificador", pessoaIdentificador);
+}
+
 function mapearStatusMeta(status: string): string {
     if (status === "sent") return "enviado";
     if (status === "delivered") return "entregue";
@@ -295,15 +334,34 @@ Deno.serve(async (req) => {
             }
 
             for (const status of value.statuses ?? []) {
-                const { error } = await supabaseAdmin
+                const statusMapeado = mapearStatusMeta(status.status);
+                const { data: msgAtualizada, error } = await supabaseAdmin
                     .from(NOME_TABELA_MENSAGENS)
                     .update({
-                        wa_status: mapearStatusMeta(status.status),
+                        wa_status: statusMapeado,
                         wa_status_erro: status.errors ?? null,
                         atualizado_em: new Date().toISOString(),
                     })
-                    .eq("wa_message_id", status.id);
+                    .eq("wa_message_id", status.id)
+                    .select("pessoaIdentificador")
+                    .maybeSingle();
                 if (error) console.error("Erro ao atualizar status:", error);
+
+                // Bug real relatado pelo usuário (2026-10-06, print real):
+                // a Graph API aceita o envio SÍNCRONO (por isso
+                // whatsapp-send já carimba ultimo_contato_em/"Contato
+                // Recente" na hora, otimista) — mas a entrega real só é
+                // confirmada/recusada DEPOIS, de forma assíncrona, bem
+                // aqui. Quando a Meta reporta falha de verdade (ex:
+                // número sem WhatsApp), o carimbo otimista nunca era
+                // desfeito — um lead podia ficar marcado como "contatado
+                // recentemente" mesmo a mensagem nunca tendo chegado.
+                // Corrigido: toda vez que um status vira 'falhou', recalcula
+                // ultimo_contato_em/as tags daquele lead do zero, a partir
+                // SÓ de envios que NÃO falharam.
+                if (statusMapeado === "falhou" && msgAtualizada?.pessoaIdentificador) {
+                    await recomputarContatoRecente(msgAtualizada.pessoaIdentificador).catch((e) => console.error("Erro recomputando contato recente:", e));
+                }
             }
         }
     }

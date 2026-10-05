@@ -270,6 +270,22 @@ function iniciarNotificacoesWhatsAppGlobais() {
                 if (leadSilencio?.wpp_silenciado_ate && new Date(leadSilencio.wpp_silenciado_ate) > new Date()) return;
             }
 
+            // Pedido do usuário (2026-10-06, bug real): "quando estou
+            // digitando uma resposta na gaveta do lead, e vem uma
+            // notificação ele apaga o que escrevi... elimine as
+            // notificações de conversas abertas". Mesmo espírito do
+            // WhatsApp real — não notifica de uma conversa que você já
+            // está olhando na tela. `currentLeadId` (gaveta, js/app.js) e
+            // `wppContatoAtivoId` (WhatsApp Unificado, js/whatsapp.js) são
+            // o lead/contato atualmente aberto — o PRÓPRIO chat aberto já
+            // escuta esse INSERT por conta própria (canal Realtime dentro
+            // de criarChatController()) e mostra a mensagem nova
+            // normalmente; só o sino/popup, que não tem relação com o
+            // rascunho sendo digitado, é suprimido aqui.
+            const idLeadAberto = (typeof currentLeadId !== 'undefined' && currentLeadId) ? String(currentLeadId) : null;
+            const idContatoWppAberto = (typeof wppContatoAtivoId !== 'undefined' && wppContatoAtivoId) ? String(wppContatoAtivoId) : null;
+            if (msg.pessoaIdentificador && (String(msg.pessoaIdentificador) === idLeadAberto || String(msg.pessoaIdentificador) === idContatoWppAberto)) return;
+
             const lead = (typeof leadsAtuais !== 'undefined')
                 ? leadsAtuais.find(l => String(l.pessoaIdentificador) === String(msg.pessoaIdentificador))
                 : null;
@@ -297,7 +313,7 @@ function iniciarNotificacoesWhatsAppGlobais() {
             // já foi concedida antes), este SEMPRE aparece, sem depender
             // de nada além do CRM estar com a aba aberta.
             if (typeof mostrarPopupWhatsApp === 'function') {
-                mostrarPopupWhatsApp({ titulo: `Nova mensagem de ${nome}`, mensagem: msg.corpo_texto || '', aoClicar });
+                mostrarPopupWhatsApp({ chave: msg.pessoaIdentificador || msg.telefone_whatsapp, titulo: `Nova mensagem de ${nome}`, mensagem: msg.corpo_texto || '', aoClicar });
             }
         })
         .subscribe();
@@ -319,8 +335,36 @@ function _containerPopupWpp() {
     return container;
 }
 
-function mostrarPopupWhatsApp({ titulo, mensagem, aoClicar }) {
+// Agrupado por CONTATO (pedido do usuário, 2026-10-06: "no whatsapp
+// normalmente recebemos notificações de cada pessoa com que mantemos
+// contato" — várias mensagens seguidas da MESMA pessoa não deveriam
+// empilhar vários popups, só atualizar 1) — `toastsWppAtivosPorContato`
+// guarda o popup (e seu timer de auto-fechar) já aberto pra cada
+// `chave` (pessoaIdentificador, ou telefone quando não identificado).
+// Mensagem nova do MESMO contato enquanto o popup anterior ainda está
+// na tela só atualiza o texto + conta quantas chegaram, e reinicia os
+// 8s — nunca mais que 1 popup por pessoa ao mesmo tempo.
+const toastsWppAtivosPorContato = new Map();
+
+function mostrarPopupWhatsApp({ chave, titulo, mensagem, aoClicar }) {
     const container = _containerPopupWpp();
+    const chaveFinal = chave != null ? String(chave) : null;
+    const existente = chaveFinal ? toastsWppAtivosPorContato.get(chaveFinal) : null;
+
+    if (existente) {
+        clearTimeout(existente.timer);
+        existente.contador++;
+        existente.popup.querySelector('.wpp-popup-toast-msg').textContent = (mensagem || '').slice(0, 100);
+        const badge = existente.popup.querySelector('.wpp-popup-toast-contador');
+        if (existente.contador > 1) {
+            if (badge) badge.textContent = `${existente.contador} mensagens novas`;
+            else existente.popup.querySelector('.wpp-popup-toast-corpo').insertAdjacentHTML('beforeend', `<div class="wpp-popup-toast-contador">${existente.contador} mensagens novas</div>`);
+        }
+        existente.popup.onclickHandler = aoClicar; // sempre abre a conversa com a última mensagem recebida
+        existente.timer = setTimeout(() => remover(chaveFinal), 8000);
+        return;
+    }
+
     const popup = document.createElement('div');
     popup.className = 'wpp-popup-toast';
     popup.innerHTML = `
@@ -331,11 +375,20 @@ function mostrarPopupWhatsApp({ titulo, mensagem, aoClicar }) {
         </div>
         <button type="button" class="wpp-popup-toast-fechar" title="Fechar">✕</button>
     `;
-    const remover = () => { if (popup.parentNode) popup.parentNode.removeChild(popup); };
-    popup.querySelector('.wpp-popup-toast-fechar').addEventListener('click', (e) => { e.stopPropagation(); remover(); });
-    popup.addEventListener('click', () => { if (typeof aoClicar === 'function') aoClicar(); remover(); });
+    const remover = (chaveRemover) => {
+        if (popup.parentNode) popup.parentNode.removeChild(popup);
+        if (chaveRemover) toastsWppAtivosPorContato.delete(chaveRemover);
+    };
+    popup.querySelector('.wpp-popup-toast-fechar').addEventListener('click', (e) => { e.stopPropagation(); remover(chaveFinal); });
+    popup.addEventListener('click', () => {
+        const estado = chaveFinal ? toastsWppAtivosPorContato.get(chaveFinal) : null;
+        const handler = (estado && estado.popup.onclickHandler) || aoClicar;
+        if (typeof handler === 'function') handler();
+        remover(chaveFinal);
+    });
     container.appendChild(popup);
-    setTimeout(remover, 8000);
+    const timer = setTimeout(() => remover(chaveFinal), 8000);
+    if (chaveFinal) toastsWppAtivosPorContato.set(chaveFinal, { popup, timer, contador: 1 });
 }
 
 // ==========================================

@@ -101,7 +101,14 @@ select:hover { border-color: #94a3b8; }
    mostrarPopupWhatsApp()) — pedido do usuário (2026-09-28): aparece
    SEMPRE, sem depender de abrir o sino nem de permissão de notificação
    nativa do navegador. */
-#wppPopupContainer { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; max-width: 320px; }
+/* bottom: 140px (não 20px) — pedido do usuário (2026-10-06, print real):
+   o chat do WhatsApp (Unificado ou gaveta) fica ancorado no lado
+   DIREITO da tela, igual este container — "20px" colidia direto com a
+   caixa de digitar e com o picker de respostas rápidas, causando clique
+   sem querer na notificação em vez de no campo certo. 140px limpa a
+   barra de digitação + o início de qualquer picker que abra por cima
+   dela (emoji/respostas rápidas/anexo). */
+#wppPopupContainer { position: fixed; bottom: 140px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; max-width: 320px; }
 .wpp-popup-toast {
     background: white; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.18);
     padding: 12px 14px; cursor: pointer; border-left: 4px solid var(--na-green);
@@ -114,6 +121,22 @@ select:hover { border-color: #94a3b8; }
 .wpp-popup-toast-titulo { font-size: 12.5px; font-weight: 700; color: var(--text-dark); }
 .wpp-popup-toast-msg { font-size: 12px; color: var(--text-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .wpp-popup-toast-fechar { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 12px; flex-shrink: 0; }
+/* "N mensagens novas" — aparece só quando o MESMO contato manda 2+
+   mensagens enquanto o popup anterior ainda está na tela (ver
+   mostrarPopupWhatsApp(), js/notificacoes.js). */
+.wpp-popup-toast-contador { font-size: 10.5px; font-weight: 700; color: var(--na-green-dark); margin-top: 2px; }
+/* Progresso de disparo em massa — flutuante, canto inferior direito,
+   persiste mesmo com o modal do disparo fechado (ver atualizarProgressoEnvioMassa(),
+   js/whatsapp.js) — nunca bloqueia o meio da tela. */
+.wpp-progresso-toast {
+    background: white; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+    padding: 10px 14px; border-left: 4px solid var(--na-green); min-width: 220px;
+    animation: wppPopupEntrar 0.25s ease-out;
+}
+.wpp-progresso-toast-topo { font-size: 12.5px; font-weight: 700; color: var(--text-dark); display: flex; align-items: center; gap: 6px; }
+.wpp-progresso-toast-barra { background: #e5e7eb; border-radius: 4px; height: 6px; margin: 6px 0; overflow: hidden; }
+.wpp-progresso-toast-barra-fill { background: var(--na-green); height: 100%; transition: width 0.3s ease; }
+.wpp-progresso-toast-texto { font-size: 11.5px; color: var(--text-muted); }
 
 .notificacoes-wrapper { position: relative; }
 .notificacoes-sino { position: relative; }
