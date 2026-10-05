@@ -103,19 +103,22 @@ select:hover { border-color: #94a3b8; }
    nativa do navegador. */
 /* bottom: 140px (não 20px) — pedido do usuário (2026-10-06, print real):
    o chat do WhatsApp (Unificado ou gaveta) fica ancorado no lado
-   DIREITO da tela, igual este container — "20px" colidia direto com a
-   caixa de digitar e com o picker de respostas rápidas, causando clique
-   sem querer na notificação em vez de no campo certo. 140px limpa a
-   barra de digitação + o início de qualquer picker que abra por cima
-   dela (emoji/respostas rápidas/anexo). */
-#wppPopupContainer { position: fixed; bottom: 140px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; max-width: 320px; }
+   DIREITO da tela, igual este container ficava antes — "20px" colidia
+   direto com a caixa de digitar e com o picker de respostas rápidas,
+   causando clique sem querer na notificação em vez de no campo certo.
+   Subir pra 140px (tentativa anterior) ainda não bastou — o usuário
+   relatou colisão de novo (2026-10-06). Movido de vez pra cima da tela,
+   abaixo do topbar e à direita da sidebar (nunca sobrepõe a caixa de
+   digitar, que é sempre na parte de baixo) — zona sem nenhum elemento
+   fixo concorrente. */
+#wppPopupContainer { position: fixed; top: 80px; left: 90px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; max-width: 320px; }
 .wpp-popup-toast {
     background: white; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.18);
     padding: 12px 14px; cursor: pointer; border-left: 4px solid var(--na-green);
     display: flex; align-items: flex-start; gap: 8px;
     animation: wppPopupEntrar 0.25s ease-out;
 }
-@keyframes wppPopupEntrar { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes wppPopupEntrar { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
 .wpp-popup-toast-icone { color: var(--na-green); font-size: 16px; margin-top: 2px; flex-shrink: 0; }
 .wpp-popup-toast-corpo { flex: 1; min-width: 0; }
 .wpp-popup-toast-titulo { font-size: 12.5px; font-weight: 700; color: var(--text-dark); }

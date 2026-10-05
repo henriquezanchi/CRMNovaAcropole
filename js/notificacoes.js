@@ -146,10 +146,14 @@ function verificarNotificacoesLeadForte() {
         leadForteJaVistos.add(id);
         const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === id);
         if (!lead) return;
+        // Pedido do usuário (2026-10-06): "quando surgir novos leads
+        // fortes, indique na notificação de qual unidade ele é" — sem
+        // isso, com várias filiais usando o mesmo painel, não dava pra
+        // saber pra quem ligar sem abrir o lead primeiro.
         adicionarNotificacao({
             icone: 'fa-solid fa-fire',
             titulo: 'Novo Lead Forte 1',
-            mensagem: `${lead.pessoaNome || 'Lead sem nome'} — alta propensão a matricular.`,
+            mensagem: `${lead.pessoaNome || 'Lead sem nome'} (${lead.filial || 'filial não informada'}) — alta propensão a matricular.`,
             aoClicar: () => { if (typeof abrirResultadoBuscaGlobal === 'function') abrirResultadoBuscaGlobal(id); },
         });
     });

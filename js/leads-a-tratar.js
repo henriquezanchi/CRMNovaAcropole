@@ -202,6 +202,26 @@ function recalcularTagRetornoAposMerge(tagsFinais, eventosFinais) {
     return semRetorno;
 }
 
+// Bug real corrigido (2026-10-06, pedido do usuário: "membros ativos não
+// podem ser marcados como lead forte de nenhum grau. Eles já são alunos,
+// não são mais leads"): "Lead Forte N"/"Jornada: X" só fazem sentido pra
+// quem NÃO é Ativo/Inativo (ver `calcularNivelLeadForte()`/
+// `calcularTagsTrilhaEJornada()`, js/importador.js — as duas já nascem
+// condicionadas a isso na importação normal). Mas a mesclagem só fazia
+// UNIÃO das tags dos membros (sem saber dessa regra de exclusividade) —
+// se um dos duplicados já carregava "Lead Forte 2"/"Jornada: Engajado" de
+// antes (ex: era só prospecto quando ganhou a tag, depois matriculou), a
+// união trazia essas tags de volta pro sobrevivente mesmo ele já sendo
+// Ativo. Mesma classe do bug já corrigido pra "Retorno: Só 1 Evento"
+// acima — 270 leads (Lead Forte) + 200 (Jornada) encontrados em produção
+// nesta rodada, limpos via SQL direto; esta função evita que o problema
+// volte a crescer a partir de agora.
+function recalcularLeadForteEJornadaAposMerge(tagsFinais) {
+    const jaAlunoOuExAluno = tagsFinais.some(t => ['Ativo', 'Aluno Ativo', 'Inativo', 'Ex-Aluno (Inativo)'].includes(t));
+    if (!jaAlunoOuExAluno) return tagsFinais;
+    return tagsFinais.filter(t => !/^Lead Forte \d$/.test(t) && !t.startsWith('Jornada: '));
+}
+
 // Mesma incorporação de dados já usada na mesclagem manual
 // (confirmarMesclagem()) — tags e histórico de eventos em UNIÃO, e-mail
 // nunca perdido (quem não for escolhido vira nota no resumo_ia), sem
@@ -223,6 +243,7 @@ async function mesclarAutomaticamenteLeads(membros) {
         if (!eventosExistentes.has(chave)) { eventosFinais.push(e); eventosExistentes.add(chave); }
     }));
     tagsFinais = recalcularTagRetornoAposMerge(tagsFinais, eventosFinais);
+    tagsFinais = recalcularLeadForteEJornadaAposMerge(tagsFinais);
 
     const notasContatoAlternativo = [];
     let email = principal.pessoaEmail;
@@ -1099,6 +1120,7 @@ async function confirmarMesclagem() {
         });
     });
     tagsFinais = recalcularTagRetornoAposMerge(tagsFinais, eventosFinais);
+    tagsFinais = recalcularLeadForteEJornadaAposMerge(tagsFinais);
 
     // Anotações extras pra quando a pessoa escolhe "Manter os dois" — o
     // valor não escolhido como principal não pode ser perdido (o cadastro

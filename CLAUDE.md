@@ -8908,3 +8908,100 @@ não duplicada.
   confirmação humana, então o campo fica vazio até alguém digitar o
   telefone correto manualmente (reaproveitando o fluxo normal de edição de
   telefone na gaveta).
+
+## Popup de notificação movido pra cima da tela (2026-10-06)
+
+Pedido do usuário ("eu quero as notificações em outro lugar"), depois de
+2 tentativas anteriores no mesmo canto inferior direito não terem
+resolvido de vez a colisão com a caixa de digitar/pickers. Movido pra
+`top: 80px; left: 90px;` (`#wppPopupContainer`, `css/style.css`) — abaixo
+do topbar, à direita da sidebar (70px de largura) — zona sem nenhum
+elemento fixo concorrente (a caixa de digitar é sempre na parte de baixo
+da tela). Animação de entrada invertida (`translateX(-20px)` em vez de
+`+20px`) pra combinar com o novo lado.
+
+## Bug real: Lead Forte N / Jornada: X sobrevivendo em Ativo/Inativo — regressão via mesclagem (2026-10-06)
+
+Pedido do usuário: "membros ativos não podem ser marcados como lead
+forte de nenhum grau. Eles já são alunos, não são mais leads. Faça uma
+limpeza... e uma mudança na regra interna". Já tinha sido corrigido uma
+vez (ver "Limpeza pontual" na seção de Tags, 2026-09-28, 84 leads) — mas
+a causa raiz daquele bug original (importação parcial) é DIFERENTE da
+causa raiz desta vez: **mesclagem de duplicados**
+(`mesclarAutomaticamenteLeads()`/`confirmarMesclagem()`, `js/leads-a-tratar.js`)
+só fazia UNIÃO das tags dos membros — se um dos duplicados já carregava
+`"Lead Forte N"`/`"Jornada: X"` de uma época em que ainda era só
+prospecto (antes de matricular), a união trazia essas tags de volta pro
+sobrevivente mesmo ele já sendo Ativo/Inativo. Mesma classe do bug já
+corrigido pra `"Retorno: Só 1 Evento"` (`recalcularTagRetornoAposMerge()`)
+— confirmado em produção: **270 leads com Lead Forte + 200 com Jornada**
+coexistindo com Ativo/Inativo (bem mais que os 84 de 2026-09-28, prova de
+que a mesclagem reintroduz isso continuamente, não foi um resíduo único).
+
+- **Corrigido**: nova `recalcularLeadForteEJornadaAposMerge(tagsFinais)`
+  (`js/leads-a-tratar.js`, ao lado de `recalcularTagRetornoAposMerge()`)
+  — remove qualquer `"Lead Forte N"`/`"Jornada: X"` se o resultado final
+  tiver `"Ativo"`/`"Inativo"` (ou os nomes antigos). Chamada logo depois
+  de `recalcularTagRetornoAposMerge()` nos DOIS pontos de mesclagem
+  (automática e manual/`confirmarMesclagem()`) — `"Trilha: X"` NUNCA é
+  tocada (essa é legítima pra qualquer pessoa, Ativo ou não).
+- **Limpeza retroativa**: os 270 leads já afetados em produção foram
+  corrigidos via SQL direto (remove só os 2 padrões de tag, preserva todo
+  o resto — Nível/Trilha/Cadastro/etc.), confirmado 0 restantes depois.
+  1 linha em `log_atividade`
+  (`acao='limpeza_lead_forte_jornada_ativo_inativo'`).
+- **Por que a importação normal nunca tem esse problema**: o passo 3 de
+  `processarPlanilhas()` (único ponto que GERA essas tags) já trata
+  Ativo/Inativo/Lead Forte/Jornada como um grupo atômico — só a
+  mesclagem, que faz união cega de tags sem conhecer essa regra de
+  exclusividade, conseguia reintroduzir o problema.
+
+## Notificação de "Novo Lead Forte 1" agora mostra a filial (2026-10-06)
+
+Pedido do usuário: "quando surgir novos leads fortes, indique na
+notificação de qual unidade ele é" — `verificarNotificacoesLeadForte()`
+(`js/notificacoes.js`) agora inclui `lead.filial` na mensagem (ex:
+"FULANO (Goiânia - Jardim América) — alta propensão a matricular"), sem
+precisar abrir o lead antes de saber pra qual unidade ligar.
+
+## Investigação: "muitos não identificados" — na real, quase todos se resolvem sozinhos (2026-10-06)
+
+Pedido do usuário, com print real de 5 "Não Identificados": "esse número
+só recebe mensagem de quem nós mandamos... não deveria ter mais nenhum
+não identificado, não é mesmo?". Investigado caso a caso, direto no
+banco (não especulação):
+
+- **2 dos 5 (JOZELIA SALES PIMENTEL, KELLY SUSAN) já tinham se resolvido
+  sozinhos entre o print e a investigação** — são casos de AMBIGUIDADE
+  real (a mesma pessoa cadastrada 2x, em filiais diferentes — resíduo
+  dos bugs históricos de duplicidade cross-filial já documentados), e o
+  mecanismo `resolverAmbiguidadePorHistorico()` (`whatsapp-webhook`) os
+  resolveu sozinho assim que uma resposta seguinte bateu com só 1 dos 2
+  candidatos já tendo histórico de conversa. Confirma que o design
+  (nunca escolher no chute entre 2+ ativos, mas resolver sozinho quando
+  fica claro depois) está funcionando.
+- **1 (16465894168) nunca foi lead** — é o número de onboarding do
+  próprio WhatsApp Business ("Continue setting up your account"), não é
+  tráfego real, sempre vai aparecer e sempre vai poder ser ignorado.
+- **1 (CINTHYA BARBOSA BORMIO SILVA / CELIA MARIA VIEIRA DE PAULA)
+  continua genuinamente ambíguo** — confirmado via `payload_bruto.candidatos_ambiguos`:
+  são 2 PESSOAS DIFERENTES de verdade compartilhando o mesmo telefone
+  (provável parente) — não dá pra resolver sozinho sem arriscar atribuir
+  a conversa à pessoa errada; precisa do clique humano "Vincular" (que já
+  mostra escolha rápida entre os 2 candidatos, sem precisar digitar nome
+  — `renderizarAreaInputNaoIdentificado()`).
+- **1 (LAZARA LEDA TELES ARAUJO, mensagem "por favor")
+  é uma ANOMALIA real, isolada**: tinha EXATAMENTE 1 candidato válido
+  (ela mesma, sem ambiguidade nenhuma) — as 6 mensagens anteriores dela,
+  minutos antes, casaram perfeitamente com o mesmo telefone/lead, só essa
+  ÚLTIMA falhou. Não foi possível reproduzir nem achar uma causa de
+  código (a lógica de match é a mesma que funcionou pras 6 anteriores) —
+  mais provável um blip transitório (rede/timeout) na chamada daquele
+  webhook específico, não um bug sistemático. Resolver manualmente
+  (Vincular) é o suficiente; só vale investigar mais fundo se o padrão
+  se repetir com frequência.
+- **Conclusão prática**: a lista de "Não Identificados" tende a ficar
+  pequena e se autolimpar sozinha com o tempo — o que sobra de verdade é
+  ambiguidade real (duplicidade cross-filial, que seria melhor resolvida
+  na raiz com uma mesclagem) e anomalias raras, não um bug sistemático
+  de reconhecimento.
