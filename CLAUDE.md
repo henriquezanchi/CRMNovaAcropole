@@ -8840,3 +8840,40 @@ sugestão foi corretamente descartada pelo SDR antes de sair (`status=
   uma sugestão gravada, não voltaria a aparecer como candidata sem
   inserir um caso de teste novo) — validar na próxima vez que um caso
   parecido aparecer de verdade.
+
+## Bug real: sugestões de IA empilhando "uma por cima da outra" pro mesmo lead (2026-10-06)
+
+Pedido do usuário, depois de perguntar "a sugestão de IA não é em tempo
+real?"/"vi várias sugestões, uma por cima da outra". Confirmado com dado
+real: `sugerir-resposta-whatsapp` e `classificar-resposta-convite` só
+evitam 2 sugestões/classificações NA MESMA rodada do cron pro mesmo lead
+(a RPC de candidatos já pega só a mensagem mais recente dele) — mas uma
+sugestão `pendente` de uma rodada ANTERIOR nunca era descartada quando a
+conversa andava e nascia uma sugestão nova. Achados **32 leads reais**
+com 2 a 5 classificações `pendente` acumuladas ao mesmo tempo no painel
+"Respostas de Convite pra Revisar" (Agenda do Dia).
+
+- **Corrigido nas 2 Edge Functions**: logo depois de inserir a sugestão/
+  classificação nova com sucesso, um `UPDATE ... set status='descartada'
+  where "pessoaIdentificador" = X and status='pendente' and
+  mensagem_origem_id <> novo_id` — qualquer pendência mais antiga do
+  MESMO lead é automaticamente superada (a conversa já andou, a sugestão
+  velha está desatualizada por definição). Reaproveita o status
+  `'descartada'` já existente (sem alterar o `check` da coluna).
+- **Limpeza retroativa**: os 32 leads já empilhados foram corrigidos via
+  SQL direto (`row_number() over (partition by pessoaIdentificador order
+  by criado_em desc)`, mantém só a mais recente como `pendente`,
+  descarta o resto) — rodado nas 2 tabelas, confirmado 0 leads com 2+
+  pendentes depois.
+- **Esclarecimento, não é um bug**: nenhuma das duas rotinas é em tempo
+  real — rodam por `pg_cron` a cada 15 min (`sugerir-resposta-whatsapp`
+  nos minutos `:05/:20/:35/:50`, `classificar-resposta-convite` em
+  `*/15 * * * *`), nunca disparadas pelo webhook da Meta. Medido atraso
+  real de até 1h+ numa rajada grande de mensagens (cada uma exige 1
+  chamada sequencial à Anthropic).
+- **"Só processa a mensagem mais recente" não contraria "ler o contexto
+  todo"**: isso só decide qual mensagem DISPARA uma sugestão nova (pra
+  não gerar várias sugestões picadas no meio de uma rajada) —
+  `montarContexto()`/`montarContextoCRM()` sempre buscam o histórico
+  recente INTEIRO da conversa antes de pedir a sugestão à IA,
+  independente de qual mensagem foi o gatilho.

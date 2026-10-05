@@ -418,6 +418,18 @@ Deno.serve(async (req) => {
         if (erroInsert) { console.warn("Não gravou classificação (provável corrida com outra execução):", erroInsert.message); continue; }
         processadas++;
 
+        // Bug real corrigido (2026-10-06, mesma classe do fix em
+        // sugerir-resposta-whatsapp): sem isso, uma classificação pendente
+        // de uma rodada anterior nunca era descartada quando a conversa
+        // andava e uma nova classificação nascia pro mesmo lead — 32
+        // leads reais chegaram a acumular até 5 pendentes ao mesmo tempo
+        // no painel "Respostas de Convite pra Revisar".
+        await supabaseAdmin.from("classificacoes_resposta_convite")
+            .update({ status: "descartada" })
+            .eq("pessoaIdentificador", item.pessoaIdentificador)
+            .eq("status", "pendente")
+            .neq("mensagem_origem_id", item.mensagem_id);
+
         await aplicarTagConvite(item.pessoaIdentificador, ROTULO_TAG[resultado.categoria]);
 
         const novaResposta = MAPA_RESPOSTA_CONVITE[resultado.categoria];

@@ -442,6 +442,21 @@ Deno.serve(async (req) => {
         if (erroInsert) { console.warn("Não gravou sugestão (provável corrida):", erroInsert.message); continue; }
         processadas++;
 
+        // Bug real corrigido (2026-10-06, "vi várias sugestões, uma por
+        // cima da outra"): cada rodada só evita 2 sugestões NA MESMA
+        // rodada pro mesmo lead (RPC já pega só a mensagem mais recente
+        // dele) — mas uma sugestão pendente de uma rodada ANTERIOR nunca
+        // era descartada quando a conversa andava e uma sugestão nova
+        // nascia. Resultado: várias sugestões pendentes empilhadas pro
+        // MESMO lead (achado 32 casos reais em produção, até 5 ao mesmo
+        // tempo). A conversa já andou — qualquer sugestão mais antiga
+        // pro mesmo lead está desatualizada por definição.
+        await supabaseAdmin.from("sugestoes_resposta_wpp")
+            .update({ status: "descartada" })
+            .eq("pessoaIdentificador", item.pessoaIdentificador)
+            .eq("status", "pendente")
+            .neq("mensagem_origem_id", item.mensagem_id);
+
         // Tag é aplicada direto (diferente da sugestão de texto/lembrete,
         // que sempre esperam clique humano) — mesmo padrão já usado em
         // classificar-resposta-convite: marcar uma tag é baixo risco,
