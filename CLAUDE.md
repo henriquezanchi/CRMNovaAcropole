@@ -8486,3 +8486,59 @@ segundos (`14:37:17` a `14:37:20`).
   evento de mensagem/status) — não há como o CRM detectar esse aviso
   específico sozinho; vale checar o Quality Rating lá periodicamente
   depois de qualquer disparo em massa.
+
+## Mesclagem inteligente pontual em "Leads a Tratar" (2026-10-05)
+
+Pedido do usuário: "faça uma mesclagem agora nos leads que estão na aba
+de leads a tratar (usando os critérios inteligentes que falamos, e
+preservando ambos telefone e e-mail)". Script descartável (não faz parte
+do projeto), reaproveitando FIELMENTE a lógica já validada de
+`nomesCompativeisParaAutoMesclagem()`/`escolherSobreviventeAutoMesclagem()`
+(`js/leads-a-tratar.js`), estendida aqui pra grupos `criterio='email'`
+(nunca tinha auto-merge, só `'telefone'` tinha).
+
+- **Escopo decidido durante a execução, não assumido de antemão**:
+  rodado primeiro em modo dry-run contra os 3 critérios — confirmou
+  `telefone`: 0 elegíveis (o auto-merge de toda importação já resolve
+  isso sozinho, nada sobrou pra fazer aqui) e `email`: 46 elegíveis
+  (evidência forte independente — e-mail idêntico — + nome compatível).
+  `nome` (826 grupos, 155 passariam no teste estrito) foi **excluído de
+  propósito** — ali não há telefone/e-mail batendo como segunda
+  evidência, só o nome sozinho; um exemplo real da amostra ("ANA PAULA DE
+  OLIVEIRA" vs "ANA PAULA OLIVEIRA DE SOUZA") mostrou risco real de
+  sobrenome comum coincidente (mesma classe de falso-positivo já
+  documentada na seção "Leads a Tratar" — "Lucas Nunes..."), então
+  continua exigindo revisão manual, como já era.
+- **Preservação de telefone ESTENDIDA** (pedido explícito do usuário):
+  o `mesclarAutomaticamenteLeads()` original só preserva e-mail
+  divergente (telefone nunca diverge nesse caso, é o próprio critério de
+  agrupamento) — o script generalizou o MESMO tratamento pro telefone
+  também, já que aqui (`criterio='email'`) os telefones PODEM divergir:
+  um vira o campo oficial, o outro vira nota em `resumo_ia` ("Telefone
+  alternativo (de NOME): DDD NUMERO") — nunca perdido.
+- **46 grupos mesclados, 0 erro**, confirmado por `log_atividade`
+  (`acao='mesclar_leads'`, `detalhes.origem='script_mesclagem_inteligente_2026-10-05'`).
+  Grupos com 2+ IDs REAIS do Ulisses no mesmo grupo (0 casos neste lote)
+  ficariam de fora de propósito — mesclar 2 cadastros reais é risco
+  diferente, fora do escopo.
+- **Achado real no meio da verificação**: em 7 dos 46 sobreviventes, o
+  telefone já existente (mantido como "oficial" por já ser truthy) era
+  pré-existente MAL FORMADO (DDD vazio, ou os 2 primeiros dígitos do
+  próprio número de celular usados por engano como DDD — ex:
+  DDD="99"+numero="9221011", quando o certo era DDD 62 + "999221011") —
+  bug de dado de ALGUM momento anterior, não causado por este script (só
+  exposto por ele: o merge preservou os dois valores corretamente, só
+  manteve o pior como oficial). Corrigido num 2º passo pontual:
+  promovido o telefone bem-formado (já salvo como nota) pro campo
+  oficial nesses 7 registros, removendo a nota que virou redundante.
+  **Não investigada a causa raiz desse bug de origem** (fora do escopo
+  deste pedido) — se reaparecer em volume, vale auditar de onde esses 7
+  telefones vieram originalmente.
+- **Limpeza de remanescente órfão**: o script deletava de
+  `leads_a_tratar` só os IDs efetivamente apagados, mas esquecia de
+  também remover a linha do PRÓPRIO sobrevivente no grupo já resolvido —
+  sobrava um "grupo fantasma" de 1 membro só na tela (cosmético, sem
+  perda de dado). Corrigido com uma limpeza extra (grupos
+  `telefone`/`email` com exatamente 1 membro restante = sempre resíduo
+  de merge, nunca um estado legítimo desses 2 critérios). Confirmado:
+  `email` caiu de 75 pra 29 grupos (75-46, bate exato).
