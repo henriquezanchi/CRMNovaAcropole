@@ -168,7 +168,7 @@ async function montarContextoCompleto(pessoaIdentificador: string): Promise<stri
 // deliberadamente copiada em vez de compartilhada: as duas functions já
 // divergem em tom/propósito (responder vs. retomar), copiar aqui evita
 // acoplar as duas a um módulo comum só por essa parte que hoje é igual.
-async function montarContextoCRM(pessoaIdentificador: string, filial: string | null, textoConversa: string): Promise<string> {
+async function montarContextoCRM(pessoaIdentificador: string, filial: string | null, textoConversa: string, hojeISO: string): Promise<string> {
     const partes: string[] = [];
 
     const { data: lead } = await supabaseAdmin
@@ -215,12 +215,18 @@ async function montarContextoCRM(pessoaIdentificador: string, filial: string | n
     const listaFiliais = await buscarListaFiliais(filial, textoConversa);
     if (listaFiliais) partes.push(listaFiliais);
 
+    // Mesmo bug corrigido em sugerir-resposta-whatsapp (2026-10-06, print
+    // do usuário — AMANDA MOREIRA): sem filtro de data, pegava QUALQUER
+    // convite pendente (até de evento JÁ PASSADO) ordenado por evento_id
+    // (mais recente CADASTRADO, não o mais PRÓXIMO) — aqui é AINDA MAIS
+    // crítico, já que esta function envia sozinha, sem revisão humana.
     const { data: convitePendente } = await supabaseAdmin
         .from("evento_leads")
-        .select("evento_id, eventos(nome, data, hora, link_inscricao)")
+        .select("evento_id, eventos!inner(nome, data, hora, link_inscricao)")
         .eq("pessoaIdentificador", pessoaIdentificador)
         .eq("resposta_convite", "pendente")
-        .order("evento_id", { ascending: false })
+        .gte("eventos.data", hojeISO)
+        .order("data", { foreignTable: "eventos", ascending: true })
         .limit(1)
         .maybeSingle();
     const eventoPendente = (convitePendente as any)?.eventos;
@@ -403,7 +409,7 @@ Deno.serve(async (req) => {
         const resultadosDebug = [];
         for (const item of candidatas as Candidata[]) {
             const contextoConversa = await montarContextoCompleto(item.pessoaIdentificador);
-            const contextoCRM = await montarContextoCRM(item.pessoaIdentificador, item.filial, contextoConversa);
+            const contextoCRM = await montarContextoCRM(item.pessoaIdentificador, item.filial, contextoConversa, hojeISO);
             const resultadoDebug = await retomarUma(contextoCRM, contextoConversa, exemplos, hojeISO);
             resultadosDebug.push({ pessoaIdentificador: item.pessoaIdentificador, contextoCRM, ...resultadoDebug });
         }

@@ -8781,3 +8781,62 @@ via `sugerir-resposta-whatsapp`, nunca um tópico específico). Extrair
 capacidade (provavelmente estendendo a MESMA IA de sugestão de resposta
 pra também detectar e marcar o tema mencionado) — **não construída
 nesta rodada**, registrado como gap real caso o usuário queira priorizar.
+
+### Bug real GRAVE: IA grounding num evento JÁ PASSADO (AMANDA MOREIRA)
+
+Print real do usuário: a IA sugeriu "Te esperamos na aula amanhã (terça,
+06/10)..." pra Amanda — mas a "Aula Experimental" já tinha acontecido em
+01/10, e a Abertura de Turma de verdade é quinta 08/10. Investigado via
+`sugestoes_resposta_wpp` (id 209, `status='enviada'` — chegou a ser
+mandada de verdade).
+
+- **Causa raiz, em `montarContextoCRM()` (`sugerir-resposta-whatsapp` E
+  `reengajar-janela-fechando`, código duplicado nas 2 — ver nota sobre
+  isso na seção do bot de reengajamento)**: a query de "convite
+  pendente" (`evento_leads`) NUNCA filtrava por data — pegava QUALQUER
+  convite `pendente`, mesmo de um evento JÁ ENCERRADO (ninguém nunca
+  resolveu a resposta dele), ordenado por `evento_id DESC` (o evento
+  mais RECENTEMENTE CADASTRADO, não o mais PRÓXIMO). Pra Amanda, isso
+  groundou a IA numa "Aula Experimental" de 01/10 encerrada — sem
+  instrução de que já tinha passado, a IA inventou uma data nova
+  ("06/10") tentando soar coerente, violando a regra de nunca inventar
+  data.
+- **Corrigido nas 2 functions**: `.gte("eventos.data", hojeISO)` (com
+  `!inner` pra forçar o filtro no join) + `order("data", {foreignTable:
+  "eventos", ascending: true})` — só considera evento ainda não
+  encerrado, o mais PRÓXIMO primeiro. Testado ao vivo via REST direto
+  (lead de Roger, caso irmão abaixo): a query agora devolve corretamente
+  "Novas turmas do Curso de Filosofia para Viver" (08/10), nunca mais a
+  Aula Experimental expirada.
+- **Mais crítico em `reengajar-janela-fechando`** — essa function
+  ENVIA SOZINHA, sem revisão humana (ver seção própria) — o mesmo bug
+  ali tinha risco bem maior de uma mensagem errada sair sem ninguém
+  revisar antes.
+
+### Bug real: IA confunde "sim, pode me mandar informações" com "confirmo presença" (ROGER PEREIRA ALVES)
+
+Mesmo lote de sugestões (17:50, 2026-10-05) — Roger respondeu só "Oi" e
+"Pode sim" depois de a gente perguntar (template de convite) se podia
+mandar mais detalhes — e a IA sugeriu "Que bom! Então te esperamos na
+quinta, 08/10..." como se ele tivesse confirmado IR ao evento. Usuário:
+"Ele aceitou receber informações! Precisamos encaminhá-las!!". Esta
+sugestão foi corretamente descartada pelo SDR antes de sair (`status=
+'descartada'`) — não chegou a ser enviada, mas o padrão de erro é real.
+
+- **Causa**: um "sim"/"pode sim" curto é genuinamente ambíguo sem olhar
+  CONTRA QUAL PERGUNTA ele está respondendo — a IA generalizava pra
+  "confirmação de presença" mesmo quando a pergunta sendo respondida era
+  só "posso te mandar mais detalhes?" (pedido de permissão pra enviar
+  informação, não convite pra decidir ir).
+- **Corrigido** (só em `sugerir-resposta-whatsapp` — `reengajar-janela-fechando`
+  tem um prompt diferente, focado em retomar conversa parada, sem essa
+  mesma ambiguidade específica, não alterado): nova regra explícita no
+  prompt — uma resposta curta e afirmativa só conta como confirmação de
+  PRESENÇA quando a pergunta sendo respondida for claramente sobre IR a
+  um evento; se for sobre RECEBER informação, a resposta tem que
+  ENTREGAR a informação de verdade, nunca pular pra "te esperamos lá".
+  **Não testado ao vivo com uma nova geração real** (a RPC de candidatos
+  só pega mensagens ainda não processadas — a mensagem do Roger já tem
+  uma sugestão gravada, não voltaria a aparecer como candidata sem
+  inserir um caso de teste novo) — validar na próxima vez que um caso
+  parecido aparecer de verdade.

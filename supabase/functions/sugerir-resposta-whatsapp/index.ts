@@ -91,7 +91,7 @@ async function montarContexto(pessoaIdentificador: string): Promise<string> {
 // específico — filial (endereço/mensalidade), tags, eventos que já
 // frequentou, resumo/abordagem já anotados pelo time — e entrega tudo
 // pro prompt. Continua proibido inventar o que NÃO vier aqui.
-async function montarContextoCRM(pessoaIdentificador: string, filial: string | null, textoConversa: string): Promise<string> {
+async function montarContextoCRM(pessoaIdentificador: string, filial: string | null, textoConversa: string, hojeISO: string): Promise<string> {
     const partes: string[] = [];
 
     const { data: lead } = await supabaseAdmin
@@ -160,12 +160,25 @@ async function montarContextoCRM(pessoaIdentificador: string, filial: string | n
     // usa, mas disponível aqui também pro caso de a mensagem não ter
     // caído no fluxo específico de convite (ex: pergunta de follow-up
     // fora da janela de 3h daquela RPC).
+    // Bug real corrigido (2026-10-06, print do usuário — AMANDA MOREIRA):
+    // esta query nunca filtrava por DATA — pegava QUALQUER convite
+    // pendente (até de um evento JÁ PASSADO, "pendente" só porque
+    // ninguém nunca marcou resposta) ordenado por evento_id (o mais
+    // RECENTE já cadastrado, não o mais PRÓXIMO/relevante). Pra Amanda,
+    // isso grounded a IA numa "Aula Experimental" de 01/10 já encerrada —
+    // sem instrução de que a data já tinha passado, a IA inventou uma
+    // data nova ("06/10") pra soar coerente, violando a regra de nunca
+    // inventar data. Corrigido: só considera evento com `data >= hoje`
+    // (`!inner` força o filtro no join), ordenado pelo mais PRÓXIMO
+    // primeiro — a IA nunca mais recebe um evento já encerrado como se
+    // fosse "pendente"/futuro.
     const { data: convitePendente } = await supabaseAdmin
         .from("evento_leads")
-        .select("evento_id, eventos(nome, data, hora, link_inscricao)")
+        .select("evento_id, eventos!inner(nome, data, hora, link_inscricao)")
         .eq("pessoaIdentificador", pessoaIdentificador)
         .eq("resposta_convite", "pendente")
-        .order("evento_id", { ascending: false })
+        .gte("eventos.data", hojeISO)
+        .order("data", { foreignTable: "eventos", ascending: true })
         .limit(1)
         .maybeSingle();
     const eventoPendente = (convitePendente as any)?.eventos;
@@ -283,6 +296,7 @@ Depois desta mensagem virão: os dados cadastrados no CRM sobre um lead específ
 Escreva um rascunho de resposta em português, curto (1-5 frases), caloroso, natural — NUNCA robótico, NUNCA insistente/vendedor logo de cara. Regras:
 - Se os dados do lead tiverem um bloco "Persona configurada por...", siga o tom E as observações dali À RISCA (tem prioridade sobre o estilo padrão) — mas nunca sobre as regras de segurança abaixo (nunca inventar fato, nunca "confirmo você", etc.).
 - Responda considerando TODO o histórico da conversa (pode ter mais de uma mensagem do lead em sequência) — nunca ignore o que ela já disse antes só porque a "última mensagem" é curta (ex: "pode sim", "sim", "pode mandar").
+- ATENÇÃO especial pra uma resposta CURTA e AFIRMATIVA ("pode sim", "sim", "pode mandar", "claro"): confira exatamente O QUE ela está autorizando, olhando a PERGUNTA anterior (nossa, não dela) que ela está respondendo. Se nossa pergunta foi algo como "posso te enviar mais detalhes/informações?", um "sim" ali é só permissão pra ENVIAR A INFORMAÇÃO — não é confirmação de presença em evento nenhum. Nesse caso, a resposta tem que ENTREGAR a informação de verdade (curso, valor, próxima turma etc. — usando os dados reais informados), nunca pular direto pra "te esperamos lá"/"confirmo sua presença" como se ela tivesse dito que vai comparecer. Só trate como confirmação de PRESENÇA quando a pergunta anterior (nossa ou dela) for claramente sobre IR a um evento específico.
 - Se os dados do lead tiverem a resposta exata pra pergunta (endereço, valor, evento, link de inscrição), ENTREGUE esse dado real na resposta — nunca diga só "vou te mandar os detalhes"/"estou enviando agora" se o dado já está disponível; escreva o dado de verdade na mensagem.
 - NUNCA invente fato concreto que não esteja nos dados do lead (endereço, valor, data, nome de evento específico, horário) — se a pergunta exigir um dado que não foi informado, só reconheça a pergunta e diga que alguém vai confirmar em breve.
 - Se a mensagem for só um agradecimento/despedida, uma resposta breve e cordial já basta.
@@ -384,7 +398,7 @@ Deno.serve(async (req) => {
         for (const item of candidatas as Candidata[]) {
             if (setJaClassificadas.has(item.mensagem_id)) continue;
             const contexto = await montarContexto(item.pessoaIdentificador);
-            const contextoCRM = await montarContextoCRM(item.pessoaIdentificador, item.filial, `${contexto}\n${item.corpo_texto}`);
+            const contextoCRM = await montarContextoCRM(item.pessoaIdentificador, item.filial, `${contexto}\n${item.corpo_texto}`, hojeISO);
             const resultadoDebug = await sugerirUma(contexto, contextoCRM, item.corpo_texto, exemplos, hojeISO);
             aplicarLembretePadraoObjecaoSemPrazo(resultadoDebug, hojeISO);
             resultadosDebug.push({ corpo_texto: item.corpo_texto, contextoCRM, ...resultadoDebug });
@@ -397,7 +411,7 @@ Deno.serve(async (req) => {
         if (setJaClassificadas.has(item.mensagem_id)) continue;
 
         const contexto = await montarContexto(item.pessoaIdentificador);
-        const contextoCRM = await montarContextoCRM(item.pessoaIdentificador, item.filial, `${contexto}\n${item.corpo_texto}`);
+        const contextoCRM = await montarContextoCRM(item.pessoaIdentificador, item.filial, `${contexto}\n${item.corpo_texto}`, hojeISO);
         const resultado = await sugerirUma(contexto, contextoCRM, item.corpo_texto, exemplos, hojeISO);
         // Bug real corrigido (2026-10-01, "não está gerando respostas,
         // pq?"): uma falha TÉCNICA (rede, rate limit momentâneo da
