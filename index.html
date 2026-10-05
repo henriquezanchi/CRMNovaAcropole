@@ -1245,7 +1245,7 @@
                 </div>
 
                 <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Evento (opcional — só pra registrar o convite em "Follow-up de Eventos", e excluir quem já confirmou)</label>
-                <select id="conviteApiEventoSelect" style="width:100%; padding:8px; margin-bottom:12px; box-sizing:border-box;"><option value="">(sem evento vinculado)</option></select>
+                <select id="conviteApiEventoSelect" style="width:100%; padding:8px; margin-bottom:12px; box-sizing:border-box;" onchange="atualizarTemplateConviteApi()"><option value="">(sem evento vinculado)</option></select>
 
                 <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">Template aprovado</label>
                 <select id="conviteApiTemplateSelect" style="width:100%; padding:8px; margin-bottom:8px; box-sizing:border-box;" onchange="atualizarTemplateConviteApi()"></select>

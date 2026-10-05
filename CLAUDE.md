@@ -3792,6 +3792,51 @@ paginado/carregado), inviável pra "toda a filial que tem tal perfil".
   do drive `G:\`, ver seção do scraper) — validar clicando de verdade na
   próxima vez que for usado, agora que os envios já saem de verdade.
 
+**Campos manuais do evento preenchidos sozinhos (2026-10-05)** — pedido
+do usuário com print real: escolhendo o template "Convite para evento"
+(`convite_palestra`) com um evento já selecionado, os campos manuais
+"evento (com artigo)" e "data" ainda exigiam digitar tudo à mão, mesmo
+o evento já estando escolhido no `<select>` acima. Corrigido:
+- Cada variável manual (`chave: null`) de `TEMPLATES_WHATSAPP` ganhou um
+  `papel` opcional — `'evento_com_artigo'` (`convite_palestra`/
+  `contato_aluno_ativo`) ou `'evento_data'` (só `convite_palestra`).
+  `atualizarTemplateConviteApi()` (`js/whatsapp.js`) agora calcula o
+  valor desses campos a partir do evento selecionado em
+  `#conviteApiEventoSelect` — nunca mais parte de `eventoEscolhido.nome`
+  cru pra TODOS os campos manuais (bug sutil da versão anterior: todo
+  campo manual recebia o mesmo valor, o nome puro do evento, mesmo o
+  campo "data" devendo ser uma data). Campos sem `papel` reconhecido
+  (ex: "tipo do evento"/"tema" de `contato_ulisses` — fala de um evento
+  PASSADO via Ulisses, não do evento futuro escolhido aqui) continuam em
+  branco, exigindo digitação manual como sempre. O `<select>` de evento
+  ganhou `onchange="atualizarTemplateConviteApi()"` — trocar o evento
+  DEPOIS de já ter escolhido o template também re-preenche os campos
+  (antes só recalculava ao trocar de TEMPLATE).
+  - `'evento_com_artigo'` → `montarEventoComArtigo(evento)`
+    (`js/eventos.js`): monta `"a Abertura de Turma"`/`"o Workshop..."`
+    usando o artigo (a/o) cadastrado por TIPO de evento — nova coluna
+    `tipos_evento.artigo` (`migracao_tipos_evento_artigo.sql`, mesmo
+    padrão de `trilha`/`palavras_chave`, editável em "Gerenciar Tipos" na
+    Agenda, novo `<select>` por linha). Sem artigo cadastrado pro tipo
+    daquele evento (ou evento sem tipo), cai no fallback `'a'` — nunca
+    trava, só pode soar levemente errado num caso raro, sempre revisável
+    (o campo continua 100% editável, só vem pré-preenchido agora).
+    Catálogo carregado via `ARTIGO_POR_TIPO_EVENTO` (`js/eventos.js`,
+    populado dentro de `carregarTiposEvento()`, já chamada no início de
+    `iniciarConviteApiEmMassa()` via `carregarEventos()` — garantido
+    carregado antes de qualquer preenchimento automático rodar).
+  - `'evento_data'` → `formatarDataCurtaEvento(evento.data)`
+    (`js/eventos.js`): `"DD/MM"`, sem ano (bate com o exemplo do próprio
+    label do template, "ex: 01/10").
+  - Migração rodada (`npx supabase db query --linked`) com seed dos
+    artigos conhecidos — tipos padrão (Palestra/Oficina/Aula Inaugural/
+    Leitura Comentada/Abertura de Turma → `a`; Workshop/Curso/
+    Filosofilme/Café Cultural → `o`) e também os nomes REAIS já
+    cadastrados nesta conta, diferentes da lista padrão embutida
+    (Workshop/Oficina, (Mini) Curso, Sábado de Voluntariado → `o`) —
+    confirmado por `SELECT` direto antes/depois; só `"Outro"` ficou sem
+    artigo (genérico demais pra adivinhar gênero, igual sempre foi).
+
 ### Setup pendente (só o usuário consegue fazer, fora do código)
 Checklist completo: Business Manager → App tipo "Business" com produto
 WhatsApp → número de teste ou verificado (anotar `phone_number_id` e WABA

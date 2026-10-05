@@ -38,6 +38,16 @@ let permiteMatriculaEventoAtual = false;
 let TIPOS_EVENTO = ['Palestra', 'Workshop', 'Oficina', 'Curso', 'Aula Inaugural', 'Leitura Comentada', 'Filosofilme', 'Café Cultural', 'Abertura de Turma', 'Outro'];
 let tiposEventoModalCache = []; // [{id, nome, ordem}], carregado ao abrir "Gerenciar Tipos"
 
+// Tipo de evento -> artigo ('a'/'o'), migracao_tipos_evento_artigo.sql —
+// pedido do usuário (2026-10-05): ao convidar via API, o campo manual
+// "evento (com artigo, ex: a Abertura de Turma)" de alguns templates
+// aprovados deve se preencher sozinho a partir do evento escolhido, sem
+// digitar nada — mas o artigo certo depende do TIPO do evento (não dá
+// pra adivinhar gênero por regra genérica). Ver montarEventoComArtigo()
+// em js/whatsapp.js. Sem a migração rodada, fica vazio (fallback 'a',
+// mais comum entre os tipos padrão) — nunca trava nada.
+let ARTIGO_POR_TIPO_EVENTO = {};
+
 // ==========================================
 // CARREGAMENTO
 // ==========================================
@@ -163,15 +173,26 @@ async function carregarResumoParticipantes(eventos) {
 }
 
 async function carregarTiposEvento() {
-    const { data, error } = await window.supabaseClient
+    let { data, error } = await window.supabaseClient
         .from(NOME_TABELA_TIPOS_EVENTO)
-        .select('nome')
+        .select('nome, artigo')
         .order('ordem', { ascending: true });
+
+    if (error) {
+        // Provavelmente migracao_tipos_evento_artigo.sql ainda não rodou —
+        // tenta de novo sem essa coluna, pra não travar o catálogo inteiro
+        // por causa de 1 campo opcional (mesmo padrão de colunasTrilhaDisponiveis).
+        const fallback = await window.supabaseClient.from(NOME_TABELA_TIPOS_EVENTO).select('nome').order('ordem', { ascending: true });
+        data = fallback.data;
+        error = fallback.error;
+    }
 
     if (error) {
         console.warn('Não foi possível carregar a tabela "tipos_evento" (rode migracao_tipos_evento.sql se ainda não rodou) — usando lista padrão.', error);
     } else if (data && data.length > 0) {
         TIPOS_EVENTO = data.map(row => row.nome);
+        ARTIGO_POR_TIPO_EVENTO = {};
+        data.forEach(row => { if (row.artigo) ARTIGO_POR_TIPO_EVENTO[row.nome] = row.artigo; });
     }
     montarSelectTipoEvento();
 }
@@ -211,14 +232,14 @@ async function renderizarListaTiposEventoModal() {
 
     let { data, error } = await window.supabaseClient
         .from(NOME_TABELA_TIPOS_EVENTO)
-        .select('id, nome, ordem, trilha, palavras_chave')
+        .select('id, nome, ordem, trilha, palavras_chave, artigo')
         .order('ordem', { ascending: true });
 
     colunasTrilhaDisponiveis = !error;
     if (error) {
-        // Provavelmente a migração de trilha/palavras_chave ainda não rodou
-        // — tenta de novo só com as colunas originais, pra não travar a
-        // tela toda por causa de 2 campos extras opcionais.
+        // Provavelmente a migração de trilha/palavras_chave/artigo ainda não
+        // rodou — tenta de novo só com as colunas originais, pra não travar
+        // a tela toda por causa de campos extras opcionais.
         const fallback = await window.supabaseClient
             .from(NOME_TABELA_TIPOS_EVENTO)
             .select('id, nome, ordem')
@@ -246,6 +267,11 @@ async function renderizarListaTiposEventoModal() {
                     ${TRILHAS_DISPONIVEIS.map(t => `<option value="${escapeHTML(t)}" ${tipo.trilha === t ? 'selected' : ''}>${escapeHTML(t)}</option>`).join('')}
                 </select>
                 <input type="text" value="${escapeHTML(tipo.palavras_chave || '')}" placeholder="Palavras-chave separadas por vírgula (classificação automática na importação)" onchange="atualizarPalavrasChaveTipoEvento(${tipo.id}, this.value)" style="min-width:220px;">
+                <select onchange="atualizarArtigoTipoEvento(${tipo.id}, this.value)" title="Artigo (a/o) — usado pra preencher sozinho o campo 'evento' nos convites via API, ex: 'a Abertura de Turma'/'o Workshop'">
+                    <option value="">Artigo: nenhum</option>
+                    <option value="a" ${tipo.artigo === 'a' ? 'selected' : ''}>a (ex: a Palestra)</option>
+                    <option value="o" ${tipo.artigo === 'o' ? 'selected' : ''}>o (ex: o Workshop)</option>
+                </select>
             ` : ''}
             <button class="icon-btn danger" title="Remover" onclick="removerTipoEvento(${tipo.id})"><i class="fa-solid fa-trash"></i></button>
         </div>
@@ -270,6 +296,11 @@ async function atualizarTrilhaTipoEvento(id, novaTrilha) {
 async function atualizarPalavrasChaveTipoEvento(id, novasPalavras) {
     const { error } = await window.supabaseClient.from(NOME_TABELA_TIPOS_EVENTO).update({ palavras_chave: novasPalavras.trim() || null }).eq('id', id);
     if (error) { alert('Erro ao salvar palavras-chave: ' + error.message); return; }
+}
+
+async function atualizarArtigoTipoEvento(id, novoArtigo) {
+    const { error } = await window.supabaseClient.from(NOME_TABELA_TIPOS_EVENTO).update({ artigo: novoArtigo || null }).eq('id', id);
+    if (error) { alert('Erro ao salvar artigo: ' + error.message); return; }
 }
 
 async function adicionarTipoEvento() {
@@ -437,6 +468,28 @@ function formatarDataEvento(dataISO) {
 function formatarHoraEvento(horaStr) {
     if (!horaStr) return '';
     return String(horaStr).slice(0, 5); // "HH:MM:SS" -> "HH:MM"
+}
+// "DD/MM" (sem ano) — formato pedido pelo campo manual "data (ex: 01/10)"
+// dos templates aprovados de convite via API (js/whatsapp.js).
+function formatarDataCurtaEvento(dataISO) {
+    if (!dataISO) return '';
+    const [, mes, dia] = String(dataISO).split('-');
+    return `${dia}/${mes}`;
+}
+
+// Monta "a Abertura de Turma"/"o Workshop de Oratória" a partir do
+// catálogo tipos_evento (ARTIGO_POR_TIPO_EVENTO, acima) — usado pra
+// preencher sozinho o campo manual "evento (com artigo)" dos templates
+// aprovados de Convidar via API, sem precisar digitar nada quando um
+// evento já foi escolhido na tela (pedido do usuário, 2026-10-05). Sem
+// artigo cadastrado pro tipo daquele evento (ou evento sem tipo), cai no
+// fallback "a" (mais comum entre os tipos já cadastrados) — nunca trava,
+// só pode soar errado em algum caso raro, revisável antes de enviar (o
+// campo continua editável).
+function montarEventoComArtigo(evento) {
+    if (!evento || !evento.nome) return '';
+    const artigo = (evento.tipo && ARTIGO_POR_TIPO_EVENTO[evento.tipo]) || 'a';
+    return `${artigo} ${evento.nome}`;
 }
 
 // ==========================================

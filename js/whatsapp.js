@@ -101,7 +101,7 @@ const TEMPLATES_WHATSAPP = [
             { chave: 'nome', label: 'nome do lead' },
             { chave: 'atendente', label: 'atendente (com artigo)' },
             { chave: 'filial', label: 'filial (com preposição)' },
-            { chave: null, label: 'evento/motivo (com artigo, ex: uma Palestra)' },
+            { chave: null, papel: 'evento_com_artigo', label: 'evento/motivo (com artigo, ex: uma Palestra)' },
         ],
     },
     // Enviado pra análise na Meta em 2026-10-01 — AINDA NÃO APROVADO no
@@ -120,8 +120,8 @@ const TEMPLATES_WHATSAPP = [
             { chave: 'nome', label: 'nome do lead' },
             { chave: 'atendente', label: 'atendente' },
             { chave: 'filial', label: 'filial (com preposição)' },
-            { chave: null, label: 'evento (com artigo, ex: a Abertura de Turma)' },
-            { chave: null, label: 'data (ex: 01/10)' },
+            { chave: null, papel: 'evento_com_artigo', label: 'evento (com artigo, ex: a Abertura de Turma)' },
+            { chave: null, papel: 'evento_data', label: 'data (ex: 01/10)' },
         ],
     },
 ];
@@ -2749,11 +2749,29 @@ function fecharModalConviteLoteApi() {
     document.getElementById('overlayModalConviteLoteApi').classList.remove('active');
 }
 
-// Ao trocar de template: mostra o texto aprovado (fixo, só leitura) e
-// monta 1 campo de texto por variável "manual" (chave: null) — essas
-// valem pra TODOS os selecionados neste envio (ex: "evento/motivo" do
-// template contato_aluno_ativo). Pré-preenche com o nome do evento
-// escolhido, se houver — só um ponto de partida, sempre editável.
+// Calcula o valor automático de 1 campo manual a partir do evento
+// escolhido na tela, conforme o "papel" declarado em TEMPLATES_WHATSAPP
+// (ver bullet acima) — 'evento_com_artigo' monta "a Abertura de
+// Turma"/"o Workshop..." via montarEventoComArtigo() (js/eventos.js,
+// usa o artigo cadastrado em "Gerenciar Tipos" pro tipo daquele evento);
+// 'evento_data' formata a data do evento como "DD/MM". Sem evento
+// escolhido (ou sem papel reconhecido), devolve '' — o campo fica em
+// branco, editável à mão, como já era antes.
+function valorAutomaticoCampoManualConviteApi(papel, evento) {
+    if (!evento) return '';
+    if (papel === 'evento_com_artigo') return typeof montarEventoComArtigo === 'function' ? montarEventoComArtigo(evento) : evento.nome;
+    if (papel === 'evento_data') return typeof formatarDataCurtaEvento === 'function' ? formatarDataCurtaEvento(evento.data) : '';
+    return '';
+}
+
+// Ao trocar de template OU de evento: mostra o texto aprovado (fixo, só
+// leitura) e monta 1 campo de texto por variável "manual" (chave: null)
+// — essas valem pra TODOS os selecionados neste envio. Pedido do usuário
+// (2026-10-05): campos ligados ao evento escolhido (evento/data) devem
+// se preencher SOZINHOS, sem digitar nada — só os campos sem "papel"
+// reconhecido (ex: "tipo do evento"/"tema" de contato_ulisses, que falam
+// de um evento PASSADO via Ulisses, não do evento futuro selecionado
+// aqui) continuam em branco, exigindo digitação manual como antes.
 function atualizarTemplateConviteApi() {
     const selectTemplate = document.getElementById('conviteApiTemplateSelect');
     const corpoEl = document.getElementById('conviteApiCorpoAprovado');
@@ -2771,10 +2789,15 @@ function atualizarTemplateConviteApi() {
     const eventoEscolhido = selectEvento ? (typeof eventosAtuais !== 'undefined' ? eventosAtuais : []).find(e => String(e.id) === selectEvento.value) : null;
 
     const manuais = tpl.variaveis.map((v, i) => ({ ...v, indice: i })).filter(v => v.chave === null);
-    camposEl.innerHTML = manuais.map(v => `
-        <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">${escapeHTML(v.label)}</label>
-        <input type="text" id="conviteApiManual-${v.indice}" style="width:100%; padding:8px; margin-bottom:8px; box-sizing:border-box;" value="${escapeHTML(eventoEscolhido ? eventoEscolhido.nome : '')}">
-    `).join('');
+    camposEl.innerHTML = manuais.map(v => {
+        const automatico = v.papel && eventoEscolhido;
+        const valor = automatico ? valorAutomaticoCampoManualConviteApi(v.papel, eventoEscolhido) : '';
+        const dica = automatico ? ' <span style="font-weight:400; color:var(--text-muted);">(preenchido a partir do evento escolhido — editável)</span>' : '';
+        return `
+        <label style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">${escapeHTML(v.label)}${dica}</label>
+        <input type="text" id="conviteApiManual-${v.indice}" style="width:100%; padding:8px; margin-bottom:8px; box-sizing:border-box;" value="${escapeHTML(valor)}">
+    `;
+    }).join('');
 }
 
 // Constrói a lista final (1 linha por lead selecionado, com os params
