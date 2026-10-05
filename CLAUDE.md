@@ -8877,3 +8877,34 @@ com 2 a 5 classificações `pendente` acumuladas ao mesmo tempo no painel
   `montarContexto()`/`montarContextoCRM()` sempre buscam o histórico
   recente INTEIRO da conversa antes de pedir a sugestão à IA,
   independente de qual mensagem foi o gatilho.
+
+## "Esse WhatsApp não é desta pessoa" — desvincular sem apagar o lead (2026-10-06)
+
+Pedido do usuário: "recebo algumas respostas de pessoas dizendo que aquele
+whatsapp não é da pessoa que procuro... sem apagar o lead, já que em
+muitos casos tem mais de um número cadastrado". Botão único
+(`confirmarNumeroErradoWpp(leadId)`, `js/whatsapp.js`), acessível tanto do
+cabeçalho do WhatsApp Unificado quanto do cabeçalho da gaveta do lead
+(ícone `fa-user-slash`, ao lado de "Exportar conversa") — mesma função,
+não duplicada.
+
+- **2 efeitos, nunca apaga o lead**: (1) o telefone atual (o que causou o
+  match errado) é removido do cadastro + tag `"Telefone Inválido"`/`"Sem
+  Telefone"` — mesma lógica de `marcarTelefoneInvalido()` (gaveta),
+  reescrita sem depender dos `<input>` da gaveta estarem na tela (funciona
+  vindo do WhatsApp Unificado, onde a gaveta pode nem estar aberta); (2)
+  TODA a conversa (todas as linhas de `mensagens_whatsapp` já vinculadas a
+  este `pessoaIdentificador`) volta a ser `"Não Identificada"`
+  (`pessoaIdentificador`/`filial = null`) — reaproveita o fluxo "Vincular"
+  que já existe pra esse estado, pra religar com a pessoa certa depois
+  (nenhuma mensagem é apagada).
+- **Sem migração nem Edge Function nova**: a policy de UPDATE
+  `"ocultar mensagem enviada"` (`migracao_whatsapp_pin_arquivar_ocultar.sql`,
+  `using(true) with check(true)`, sem restrição de linha) já permite esse
+  UPDATE direto do navegador.
+- **Por que não promove automaticamente um telefone alternativo**:
+  `telefone_alternativo` (scrape do Mercúrio) existe só como coluna, nunca
+  foi exposto na UI — não dá pra confiar que ele é o número certo sem
+  confirmação humana, então o campo fica vazio até alguém digitar o
+  telefone correto manualmente (reaproveitando o fluxo normal de edição de
+  telefone na gaveta).

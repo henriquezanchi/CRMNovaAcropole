@@ -3944,6 +3944,97 @@ async function excluirLeadWpp(leadId) {
     renderizarContatosWpp(searchEl ? searchEl.value : '');
 }
 
+// Pedido do usuário (2026-10-06): "recebo algumas respostas de pessoas
+// dizendo que aquele whatsapp não é da pessoa que procuro... sem apagar o
+// lead, já que em muitos casos tem mais de um número cadastrado". Botão
+// único (mesma função, chamada tanto do cabeçalho do WhatsApp Unificado
+// quanto do cabeçalho da gaveta do lead) — resolve em 2 efeitos, sem
+// apagar nada:
+// 1. O telefone atual (o que causou o match errado) é removido do
+//    cadastro + tag "Telefone Inválido"/"Sem Telefone" — mesmo efeito de
+//    marcarTelefoneInvalido() (js/app.js, só pra gaveta), reescrito aqui
+//    sem depender dos <input> da gaveta estarem na tela.
+// 2. TODA a conversa (mensagens_whatsapp já vinculada a este lead) volta
+//    a ser "Não Identificada" (pessoaIdentificador/filial = null) —
+//    reaproveita o fluxo "Vincular" que já existe pra esse estado, pra
+//    religar com a pessoa certa depois (nenhuma mensagem é apagada). Usa
+//    a policy de UPDATE já existente em mensagens_whatsapp ("ocultar
+//    mensagem enviada", using(true) with check(true), sem restrição de
+//    linha — ver migracao_whatsapp_pin_arquivar_ocultar.sql) — não
+//    precisa de migração nem Edge Function nova.
+async function confirmarNumeroErradoWpp(leadId) {
+    if (!leadId) return;
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
+    const nome = lead ? (lead.pessoaNome || 'este lead') : 'este lead';
+    const telefoneAtual = lead ? `${lead.pessoaTelefoneDDD || ''} ${lead.pessoaTelefoneNumero || ''}`.trim() : '';
+    if (!confirm(
+        `Esse WhatsApp não é de "${nome}"?\n\n` +
+        `Isso vai:\n` +
+        `• Remover o telefone${telefoneAtual ? ` (${telefoneAtual})` : ''} do cadastro deste lead — fica a tag "Telefone Inválido".\n` +
+        `• Devolver esta conversa inteira pra "Não Identificados", pra vincular depois com a pessoa certa (nenhuma mensagem é apagada).\n\n` +
+        `"${nome}" continua existindo normalmente no CRM, só sem este telefone/conversa.`
+    )) return;
+
+    const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(leadId));
+    let tagsArray = leadIndex !== -1 ? parseTags(leadsAtuais[leadIndex].tags).map(t => t.trim()).filter(Boolean) : [];
+    if (!tagsArray.includes('Telefone Inválido')) tagsArray.push('Telefone Inválido');
+    if (!tagsArray.includes('Sem Telefone')) tagsArray.push('Sem Telefone');
+    const tagsJson = JSON.stringify(tagsArray);
+
+    const nomeTabela = typeof NOME_TABELA !== 'undefined' ? NOME_TABELA : 'leads_inscricoes';
+    const { error: erroLead } = await window.supabaseClient
+        .from(nomeTabela)
+        .update({ pessoaTelefoneDDD: '', pessoaTelefoneNumero: '', tags: tagsJson })
+        .eq('pessoaIdentificador', leadId);
+    if (erroLead) { alert('Erro ao limpar telefone: ' + erroLead.message); return; }
+
+    const { error: erroMsgs } = await window.supabaseClient
+        .from('mensagens_whatsapp')
+        .update({ pessoaIdentificador: null, filial: null })
+        .eq('pessoaIdentificador', leadId);
+    if (erroMsgs) alert('Telefone removido, mas não consegui desvincular a conversa: ' + erroMsgs.message);
+
+    if (leadIndex !== -1) {
+        leadsAtuais[leadIndex].pessoaTelefoneDDD = '';
+        leadsAtuais[leadIndex].pessoaTelefoneNumero = '';
+        leadsAtuais[leadIndex].tags = tagsJson;
+    }
+    if (typeof registrarLogAtividade === 'function') {
+        registrarLogAtividade('whatsapp_numero_errado', { pessoaIds: [String(leadId)], detalhes: { telefoneRemovido: telefoneAtual || null } });
+    }
+    if (typeof renderizarCards === 'function') renderizarCards();
+
+    // Atualiza a gaveta, se for a mesma pessoa e estiver aberta
+    if (typeof currentLeadId !== 'undefined' && String(currentLeadId) === String(leadId)) {
+        const dddInput = document.getElementById('drawer-tel-ddd'); if (dddInput) dddInput.value = '';
+        const numInput = document.getElementById('drawer-tel-numero'); if (numInput) numInput.value = '';
+        if (typeof renderDrawerTags === 'function') renderDrawerTags();
+        const headerDrawer = document.getElementById('drawer-chat-header');
+        if (headerDrawer) headerDrawer.innerText = `${nome} (sem telefone)`;
+        const msgsDrawer = document.getElementById('drawer-messages');
+        if (msgsDrawer) msgsDrawer.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text-muted);">Conversa desvinculada — veja em "Não Identificados" no WhatsApp Unificado.</div>';
+        const inputAreaDrawer = document.getElementById('drawerChatInputArea');
+        if (inputAreaDrawer) inputAreaDrawer.innerHTML = '';
+    }
+
+    // Atualiza o WhatsApp Unificado, se for a mesma conversa aberta
+    if (String(wppContatoAtivoId) === String(leadId)) {
+        wppContatoAtivoId = null;
+        const headerWpp = document.getElementById('wppChatHeader');
+        if (headerWpp) headerWpp.innerHTML = '';
+        const tagsBlockWpp = document.getElementById('wppChatTagsBlock');
+        if (tagsBlockWpp) tagsBlockWpp.innerHTML = '';
+        const msgsWpp = document.getElementById('wppMessages');
+        if (msgsWpp) msgsWpp.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text-muted);">Conversa desvinculada — veja em "Não Identificados".</div>';
+        const inputAreaWpp = document.getElementById('wppChatInputArea');
+        if (inputAreaWpp) inputAreaWpp.innerHTML = '';
+    }
+    const searchEl = document.getElementById('wppSearch');
+    if (typeof renderizarContatosWpp === 'function') renderizarContatosWpp(searchEl ? searchEl.value : '');
+
+    alert('Pronto! Telefone removido e conversa movida pra "Não Identificados".');
+}
+
 async function alternarSugestaoIaLead(leadId, valor) {
     const novoValor = valor === 'ligado' ? true : valor === 'desligado' ? false : null;
     const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(leadId));
@@ -4399,6 +4490,7 @@ async function abrirChatWpp(leadId) {
             <button class="icon-btn" title="Consultar mensalidade de todas as filiais" onclick="abrirMensalidadesFiliaisWpp('${leadId}')"><i class="fa-solid fa-sack-dollar"></i></button>
             <button class="icon-btn" title="Buscar nesta conversa" onclick="chatWpp.toggleBuscaConversa()"><i class="fa-solid fa-magnifying-glass"></i></button>
             <button class="icon-btn" title="Exportar conversa (.txt) — auditoria/LGPD" onclick="exportarConversaWppTxt('${leadId}', '${escapeHTML(lead.pessoaNome || 'lead').replace(/'/g, '')}')"><i class="fa-solid fa-file-export"></i></button>
+            <button class="icon-btn" title="Esse WhatsApp não é desta pessoa (telefone errado)" onclick="confirmarNumeroErradoWpp('${leadId}')"><i class="fa-solid fa-user-slash"></i></button>
             <button class="btn-toggle" style="font-size:10px;" title="Abre a ficha completa do lead (eventos, tags, resumo, lembrete, histórico, etc.)" onclick="abrirFichaCompletaDoWpp('${leadId}')"><i class="fa-solid fa-address-card"></i> Ficha completa</button>
         `;
     }

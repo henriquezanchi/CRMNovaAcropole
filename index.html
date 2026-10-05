@@ -863,6 +863,7 @@
                 <button class="btn-toggle" id="btnConviteAberturaTurma" style="display:none; font-size:10px;" title="Acha sozinho a próxima Abertura de Turma desta filial e já manda foto + link, pronta pra ela encaminhar pros contatos e grupos dela" onclick="enviarConviteAberturaTurmaFilial()"><i class="fa-solid fa-graduation-cap"></i> Nova Turma</button>
                 <button class="icon-btn" title="Buscar nesta conversa" onclick="chatDrawer.toggleBuscaConversa()"><i class="fa-solid fa-magnifying-glass"></i></button>
                 <button class="icon-btn" title="Exportar conversa (.txt) — auditoria/LGPD" onclick="exportarConversaWppTxt(currentLeadId, (leadsAtuais.find(l => String(l.pessoaIdentificador) === String(currentLeadId)) || {}).pessoaNome || 'lead')"><i class="fa-solid fa-file-export"></i></button>
+                <button class="icon-btn" title="Esse WhatsApp não é desta pessoa (telefone errado)" onclick="confirmarNumeroErradoWpp(currentLeadId)"><i class="fa-solid fa-user-slash"></i></button>
                 <button class="btn-toggle" style="font-size:10px;" title="Abre esta conversa na aba WhatsApp Unificado (ordenar/filtrar, sugestão de IA, etc.)" onclick="abrirConversaNoWppUnificado(currentLeadId)"><i class="fa-brands fa-whatsapp"></i> Ver no WhatsApp Unificado</button>
                 <button class="icon-btn" title="Alterar seu nome (aparece nos convites)" onclick="alterarNomeAtendente()"><i class="fa-solid fa-user-pen"></i></button>
             </div>
