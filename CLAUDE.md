@@ -8201,3 +8201,122 @@ da listagem simples.
   passarem a existir no DOM antes de poderem ser escondidos/mostrados;
   já estando completa, só reaplica `aplicarFiltroVisualColuna(key)`
   direto, sem round-trip nenhum.
+
+## Reengajamento automático antes da janela de 24h fechar (2026-10-05)
+
+Pedido do usuário: "vamos rodar um bot para as pessoas que estão com
+menos de 12h para fechar a janela sem interação nossa... usando IA vamos
+ler a conversa toda e interagir estrategicamente" — refinado em seguida:
+"mude para uma vez só de reengajamento por janela" e "a ideia é evitar a
+nossa demora em responder, e não incomodar o lead". Ou seja: não é pra
+ficar insistindo com quem não respondeu — é pra COMPENSAR a demora do
+time, preparando com antecedência (lendo a conversa INTEIRA, não só as
+últimas mensagens) a melhor resposta possível, pronta assim que alguém
+abrir o CRM.
+
+**Decisão confirmada com o usuário antes de codificar** (3 perguntas
+diretas): (1) nunca envia sozinho — só prepara, 1 clique de aprovação
+humana, mesmo padrão de TODA function de IA do projeto; (2) 1 tentativa
+só por janela (não insiste de novo mais perto do fim); (3) toggle por
+filial, ligado por padrão.
+
+- **Reaproveita 100% a tabela/UI de `sugerir-resposta-whatsapp`**
+  (`sugestoes_resposta_wpp`, card de revisão no WhatsApp Unificado) em
+  vez de criar uma estrutura paralela — só 2 colunas novas
+  (`migracao_reengajamento_janela.sql`): `filiais.ia_reengajamento_janela_habilitado`
+  (toggle por filial, separado do toggle de "Sugestão de Resposta" — são
+  gatilhos diferentes, uma filial pode querer só um dos dois; o override
+  por CONVERSA continua sendo o MESMO campo, `leads_inscricoes.ia_sugestao_resposta`,
+  já que semanticamente é a mesma pergunta) e `sugestoes_resposta_wpp.reengajamento_em`
+  (marca "já passou pelo reforço de 12h" — garante "uma vez só por
+  janela": uma vez marcada, essa MESMA mensagem nunca é reprocessada,
+  mesmo que o lead não responda e a conversa continue parada).
+- **`mensagens_candidatas_reengajamento_janela(p_limite)`**
+  (`migracao_rpc_candidatas_reengajamento_janela.sql`) — candidata = a
+  ÚLTIMA mensagem de uma conversa, direção `entrada`, entre 12h e 24h de
+  idade (depois de 24h a janela já fechou, não adianta mais),
+  `reengajamento_em is null`, e (sem linha nenhuma ainda em
+  `sugestoes_resposta_wpp` OU uma linha `status='pendente'` — já
+  `enviada`/`descartada` pelo SDR não mexe mais), respeitando o toggle
+  filial+conversa.
+- **Nova Edge Function `reengajar-janela-fechando`**
+  (`supabase/functions/reengajar-janela-fechando/`, cron a cada 15 min,
+  `migracao_agendamento_reengajamento_janela.sql`) — pra cada candidata:
+  lê a conversa **quase inteira** (`LIMITE_HISTORICO_COMPLETO = 60`
+  mensagens, bem mais que as 6 de `sugerir-resposta-whatsapp` — um teto
+  generoso, não literalmente ilimitado, com aviso no próprio contexto
+  quando a conversa for mais longa que isso) + o mesmo `montarContextoCRM()`
+  de grounding (tags/eventos/resumo/filial/convite pendente — copiado da
+  function irmã, não compartilhado, já que as duas podem divergir em
+  tom/propósito com o tempo). Prompt focado em RETOMAR o fio genuinamente
+  (nunca mencionar "janela"/demora/prazo pro lead — ele não sabe que
+  existe um relógio do nosso lado), com instrução explícita pra devolver
+  `"sugestao": null` quando não houver nada de real valor a acrescentar
+  (ex: última mensagem do lead já era só "ok"/agradecimento) — "nunca
+  incomodar o lead só pra manter a conversa viva" é uma regra textual do
+  prompt. Mesmo contrato de JSON de `sugerir-resposta-whatsapp`
+  (sugestão + lembrete_sugerido + tag_sugerida) pra reaproveitar 100% a
+  UI já existente sem mudança nenhuma no frontend.
+  - **Upsert, não insert sempre**: se já existe uma sugestão `pendente`
+    pra essa mensagem (criada antes pelo gatilho de 2h de
+    `sugerir-resposta-whatsapp`, ainda não enviada/descartada 12h
+    depois), ATUALIZA ela com a versão mais completa (conversa inteira)
+    + grava `reengajamento_em`; sem linha nenhuma ainda, cria uma nova já
+    com `reengajamento_em` preenchido.
+  - **Mesma lição de cache de prompt já documentada acima**: o bloco
+    cacheável precisou de um banco de exemplos de retomada (temáticos,
+    diferentes dos de "responder pergunta nova" da function irmã) grande
+    o bastante pra passar dos 4.096 tokens mínimos do Haiku 4.5 — medido
+    ao vivo, ficou em ~4.467 tokens, confirmado `cache_creation_input_tokens`/
+    `cache_read_input_tokens` funcionando nas 2 chamadas seguintes.
+  - **Testado ao vivo, ponta a ponta, contra produção**: mensagem de
+    teste inserida com 13h de idade (lead de teste 904000019) → RPC
+    encontrou a candidata certa → `?debug=1` gerou uma sugestão coerente
+    usando o contexto real da filial → chamada real gravou a linha com
+    `reengajamento_em` preenchido → chamando de novo logo em seguida,
+    `processadas: 0` (confirma "uma vez só por janela" funcionando).
+    Dados de teste apagados depois.
+
+## Lembrete de follow-up: calendário real em vez de digitar a data (2026-10-05)
+
+Pedido do usuário, com print real do navegador: "libere um calendário
+para marcarmos a data. Digitar assim é incômodo" — `abrirLembreteWpp()`
+(botão de lembrete/snooze no WhatsApp Unificado, `js/whatsapp.js`) usava
+2 `prompt()` encadeados (data digitada à mão no formato AAAA-MM-DD + nota)
+— único lugar do app que ainda pedia data por texto pra isso (a gaveta já
+usa `<input type="date">` nativo desde sempre, `salvarLembreteLead()`).
+Trocado por um popover flutuante (mesmo padrão visual/posicionamento do
+menu "Silenciar conversa", `_containerMenuSilenciarWpp()`) com
+`<input type="date">` de verdade + campo de nota + botões Salvar/Remover —
+`.wpp-lembrete-popover` (`css/style.css`). Mesma função
+`salvarLembreteWpp()` de sempre por trás, só a captura dos valores mudou.
+
+## Foco voltava pra caixa de texto, mas um re-render alguns ms depois tirava de novo (2026-10-05)
+
+Pedido do usuário: "ao dar enter para enviar uma mensagem... voltar o
+cursor automaticamente para o campo de digitar. Tenho que clicar com o
+mouse toda vez". `enviarTexto()` (`js/whatsapp.js`) já chamava
+`input.focus()` logo depois do envio — mas o usuário reportou, testando
+ao vivo, que "a tela atualiza alguns milissegundos depois do enter...
+e isso tira do campo de digitação". Causa real: `renderizarAreaInput()`
+(dentro de `criarChatController()`, compartilhada entre WhatsApp
+Unificado e a gaveta do lead) sempre reconstruía o `<textarea>` do ZERO
+(`container.innerHTML = ...`) toda vez que era chamada — inclusive pelo
+canal Realtime, que recebe de volta o INSERT da PRÓPRIA mensagem que
+acabamos de mandar alguns milissegundos depois (rede, não é instantâneo)
+e também chama `renderizarAreaInput()`. Um `<textarea>` NOVO nunca está
+focado, mesmo substituindo visualmente o antigo no mesmo lugar.
+
+**Corrigido**: `renderizarAreaInput(forcarRecriar)` ganhou um parâmetro —
+se o container JÁ tem a caixa de texto livre e a janela continua aberta
+(mesmo modo, mesma conversa), a função NÃO mexe no DOM, só atualiza a
+barra "Respondendo a..." — preserva foco/cursor/rascunho. Só reconstrói
+de propósito quando `forcarRecriar=true`, passado explicitamente por
+`abrir()` (trocar de conversa SEMPRE precisa limpar qualquer rascunho da
+conversa anterior — nunca deve herdar o texto que alguém estava digitando
+pro lead errado). Os outros 2 call sites (`recarregarHistorico()`, direto
+depois de enviar; e o handler do canal Realtime) continuam chamando sem
+argumento (reaproveita o `<textarea>` existente) — são exatamente os 2
+pontos onde o foco precisava ser preservado. Como `criarChatController()`
+é compartilhado, o fix cobre WhatsApp Unificado E a gaveta do lead de
+uma vez, sem código duplicado.

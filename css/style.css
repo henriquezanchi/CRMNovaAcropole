@@ -927,6 +927,14 @@ select:hover { border-color: #94a3b8; }
 }
 .wpp-silenciar-opcao { background: none; border: none; text-align: left; padding: 7px 10px; font-size: 12px; border-radius: 5px; cursor: pointer; }
 .wpp-silenciar-opcao:hover { background: #f0f2f5; }
+
+/* Popover de lembrete (data real, <input type="date">) no WhatsApp
+   Unificado — pedido do usuário (2026-10-05): "libere um calendário...
+   digitar assim é incômodo", substituiu 2 prompt() encadeados. */
+.wpp-lembrete-popover {
+    display: none; position: fixed; z-index: 3000; background: white; border-radius: 8px;
+    padding: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); width: 220px;
+}
 .wpp-atendente-badge {
     display: inline-flex; align-items: center; gap: 3px; font-size: 9px; font-weight: 600;
     color: #475569; background: #f1f5f9; padding: 1px 6px; border-radius: 8px;

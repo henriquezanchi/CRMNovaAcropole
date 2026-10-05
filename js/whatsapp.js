@@ -1508,9 +1508,32 @@ function criarChatController({ messagesId, inputAreaId }) {
         recordingTimer = setInterval(() => { recordingSeconds++; atualizarTimerGravacaoWpp(); }, 1000);
     }
 
-    function renderizarAreaInput() {
+    // `forcarRecriar` (padrão false) — pedido do usuário (2026-10-05):
+    // "ao dar enter... voltar o cursor para o campo de digitar. [...]
+    // percebi que ele está voltando, mas a tela atualiza alguns
+    // milissegundos depois do enter, e isso tira do campo de digitação".
+    // Causa real: esta função sempre reconstruía o <textarea> do zero
+    // (innerHTML inteiro) toda vez que era chamada — inclusive pelo
+    // Realtime (INSERT da própria mensagem que acabamos de mandar
+    // ecoando de volta, segundos depois de `enviarTexto()` já ter
+    // devolvido o foco pra caixa) — um <textarea> NOVO nunca está
+    // focado, mesmo substituindo o antigo no mesmo lugar visual. Agora,
+    // se o container JÁ tem a caixa de texto livre (mesmo modo, mesma
+    // conversa) e a janela continua aberta, a função não mexe no DOM —
+    // só atualiza a barra "Respondendo a..." — preservando foco/cursor/
+    // rascunho digitado. Só reconstrói de propósito quando MUDA de
+    // conversa (abrir() sempre chama com forcarRecriar=true, já que
+    // trocar de lead precisa limpar qualquer rascunho da conversa
+    // anterior) ou quando o MODO muda (ex: janela fechou/abriu).
+    function renderizarAreaInput(forcarRecriar) {
         const container = el(inputAreaId);
         if (!container) return;
+
+        if (!forcarRecriar && janelaAberta(mensagens) && container.querySelector('.chat-input')) {
+            atualizarBarraRespondendo();
+            return;
+        }
+
         anexoPendente = null; // troca de conversa (recarregarHistorico() chama isto de novo) nunca deveria manter um anexo pendente de OUTRO lead
 
         if (janelaAberta(mensagens)) {
@@ -1707,7 +1730,7 @@ function criarChatController({ messagesId, inputAreaId }) {
         mensagens = await carregarHistoricoMensagens(leadId);
         temMaisAntigas = mensagens.length === TAMANHO_PAGINA_HISTORICO_WPP;
         renderizarMensagens();
-        renderizarAreaInput();
+        renderizarAreaInput(true); // troca de conversa — sempre reconstrói, nunca herda rascunho/foco da conversa anterior
         if (templateNomeForcado) selecionarTemplatePorNome(templateNomeForcado);
         // Confirmação de leitura ativa (pedido do usuário, 2026-09-29):
         // marca a última mensagem RECEBIDA como lida na Meta (✓✓ azul do
@@ -3655,8 +3678,8 @@ function renderizarTagsWpp(leadId) {
         </div>
         <div style="display:flex; flex-wrap:wrap; gap:4px; align-items:center; padding:4px 12px 6px; border-bottom:1px solid var(--border-color); background:#fafafa; font-size:10.5px;">
             ${lead.lembrete_em
-                ? `<span class="tag" style="background:#fef3c7; color:#92400e; display:inline-flex; align-items:center; gap:4px;"><i class="fa-solid fa-clock"></i> ${formatarDataBRWpp(lead.lembrete_em)}${lead.lembrete_nota ? ' — ' + escapeHTML(lead.lembrete_nota) : ''} <i class="fa-solid fa-pen" style="cursor:pointer;" onclick="abrirLembreteWpp('${leadId}')" title="Editar lembrete"></i> <i class="fa-solid fa-xmark" style="cursor:pointer;" onclick="salvarLembreteWpp('${leadId}', null, null)" title="Remover lembrete"></i></span>`
-                : `<button class="btn-add-tag" style="font-size:10.5px; padding:3px 8px;" onclick="abrirLembreteWpp('${leadId}')"><i class="fa-solid fa-clock"></i> Lembrete</button>`
+                ? `<span class="tag" style="background:#fef3c7; color:#92400e; display:inline-flex; align-items:center; gap:4px;"><i class="fa-solid fa-clock"></i> ${formatarDataBRWpp(lead.lembrete_em)}${lead.lembrete_nota ? ' — ' + escapeHTML(lead.lembrete_nota) : ''} <i class="fa-solid fa-pen" style="cursor:pointer;" onclick="abrirLembreteWpp(this, '${leadId}')" title="Editar lembrete"></i> <i class="fa-solid fa-xmark" style="cursor:pointer;" onclick="salvarLembreteWpp('${leadId}', null, null)" title="Remover lembrete"></i></span>`
+                : `<button class="btn-add-tag" style="font-size:10.5px; padding:3px 8px;" onclick="abrirLembreteWpp(this, '${leadId}')"><i class="fa-solid fa-clock"></i> Lembrete</button>`
             }
             <button class="btn-secondary" style="margin-left:auto; font-size:10.5px; padding:3px 8px; color:#991b1b;" onclick="excluirLeadWpp('${leadId}')" title="Mover pra Lixeira (30 dias pra restaurar)"><i class="fa-solid fa-trash"></i> Excluir Lead</button>
         </div>
@@ -3768,15 +3791,70 @@ function formatarDataBRWpp(dataISO) {
 // gaveta (salvarLembreteLead, js/app.js) é amarrada a elementos DOM
 // próprios dela (#drawer-lembrete-data etc.), mesmo padrão já usado pelas
 // tags neste arquivo.
-function abrirLembreteWpp(leadId) {
+//
+// Popover com <input type="date"> de verdade (pedido do usuário,
+// 2026-10-05: "libere um calendário para marcarmos a data. Digitar assim
+// é incômodo") — antes usava 2 prompt() encadeados (data digitada à mão
+// + nota), único lugar do app que ainda pedia data por texto pra isso (a
+// gaveta já usava <input type="date"> desde sempre). Mesmo padrão visual/
+// de posicionamento do menu de silenciar conversa (abrirMenuSilenciarWpp).
+function _containerLembretePopoverWpp() {
+    let el = document.getElementById('wppLembretePopover');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'wppLembretePopover';
+        el.className = 'wpp-lembrete-popover';
+        document.body.appendChild(el);
+    }
+    return el;
+}
+function fecharLembretePopoverWpp() {
+    const el = document.getElementById('wppLembretePopover');
+    if (el) el.style.display = 'none';
+}
+
+function abrirLembreteWpp(botaoEl, leadId) {
     const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
     if (!lead) return;
-    const data = prompt('Lembrar de voltar a falar com este lead em que data? (formato AAAA-MM-DD, ex: 2027-07-01)\n\nDeixe em branco pra remover o lembrete.', lead.lembrete_em || '');
-    if (data === null) return; // cancelou
-    const dataLimpa = data.trim();
-    if (dataLimpa && !/^\d{4}-\d{2}-\d{2}$/.test(dataLimpa)) { alert('Formato de data inválido — use AAAA-MM-DD (ex: 2027-07-01).'); return; }
-    const nota = dataLimpa ? prompt('Nota do lembrete (opcional) — ex: "Disse que não pode agora, voltar a contatar em julho":', lead.lembrete_nota || '') : null;
-    salvarLembreteWpp(leadId, dataLimpa || null, (nota || '').trim() || null);
+
+    const pop = _containerLembretePopoverWpp();
+    pop.innerHTML = `
+        <label style="font-size:11px; font-weight:600; display:block; margin-bottom:4px;">Lembrar de voltar a falar em:</label>
+        <input type="date" id="wppLembretePopoverData" value="${escapeHTML(lead.lembrete_em || '')}" style="width:100%; padding:6px; margin-bottom:8px; box-sizing:border-box;">
+        <input type="text" id="wppLembretePopoverNota" placeholder="Nota (opcional) — ex: retornar depois do fim de semana" value="${escapeHTML(lead.lembrete_nota || '')}" style="width:100%; padding:6px; margin-bottom:8px; box-sizing:border-box;">
+        <div style="display:flex; gap:6px;">
+            <button type="button" class="btn-primary" style="font-size:11px; padding:5px 10px; flex:1;" id="wppLembretePopoverSalvar"><i class="fa-solid fa-check"></i> Salvar</button>
+            ${lead.lembrete_em ? `<button type="button" class="btn-secondary" style="font-size:11px; padding:5px 10px;" id="wppLembretePopoverRemover">Remover</button>` : ''}
+        </div>
+    `;
+
+    const rect = botaoEl.getBoundingClientRect();
+    pop.style.display = 'block';
+    pop.style.top = `${rect.bottom + 4}px`;
+    pop.style.left = `${Math.min(window.innerWidth - 240, Math.max(4, rect.left))}px`;
+
+    // Nunca deixa um clique DENTRO do popover (inclusive abrir o
+    // calendário nativo do <input type="date">) fechar ele sozinho — só
+    // o listener global abaixo, registrado fora deste elemento, fecha.
+    pop.querySelectorAll('input').forEach(inp => inp.addEventListener('click', (ev) => ev.stopPropagation()));
+
+    document.getElementById('wppLembretePopoverSalvar').addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const data = document.getElementById('wppLembretePopoverData').value || null;
+        const nota = document.getElementById('wppLembretePopoverNota').value.trim() || null;
+        fecharLembretePopoverWpp();
+        salvarLembreteWpp(leadId, data, nota);
+    });
+    const btnRemover = document.getElementById('wppLembretePopoverRemover');
+    if (btnRemover) {
+        btnRemover.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            fecharLembretePopoverWpp();
+            salvarLembreteWpp(leadId, null, null);
+        });
+    }
+
+    setTimeout(() => document.addEventListener('click', fecharLembretePopoverWpp, { once: true }), 0);
 }
 
 async function salvarLembreteWpp(leadId, data, nota) {
