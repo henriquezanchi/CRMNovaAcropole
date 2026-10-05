@@ -2925,14 +2925,22 @@ function voltarEscolhaConviteApi() {
 // relatório final; sucesso também vincula evento_leads (origem 'crm' —
 // é só um convite, não uma inscrição confirmada no Ulisses, mesmo
 // princípio de gerarLinksConviteLote()) e registra em log_atividade.
-const TAMANHO_LOTE_CONVITE_API = 5;
-// Pausa entre lotes de disparo em massa (pedido do usuário, 2026-09-30:
-// "o que pode melhorar" — "sem controle de throughput no disparo em
-// massa além do lote de 5"). Não é uma garantia formal de taxa (a Meta
-// tem seus próprios limites por número/qualidade, ver `messaging_limit`
-// no WhatsApp Manager), só um respiro pra não bater dezenas de lotes de
-// 5 em sequência imediata sem pausa nenhuma.
-const PAUSA_ENTRE_LOTES_MS = 400;
+// Bug real confirmado em produção (2026-10-05): a Meta mandou um aviso
+// de violação de política mesmo com volume DIÁRIO baixo (58 mensagens) —
+// investigando `mensagens_whatsapp` direto, o problema nunca foi o
+// TOTAL, foi a TAXA: `TAMANHO_LOTE_CONVITE_API=5` + `Promise.all()`
+// mandava 5 mensagens praticamente SIMULTÂNEAS (confirmado: 31 de 57
+// intervalos entre envios consecutivos no dia foram < 2s, o menor foi
+// 4ms), com texto de TEMPLATE idêntico pra dezenas de destinatários
+// novos em sequência — exatamente o padrão que os sistemas de detecção
+// de spam/qualidade da Meta tratam como disparo em massa automatizado,
+// independente do volume total do dia. Corrigido: lote de 1 (serializa,
+// nunca 2+ chamadas concorrentes) + pausa bem maior entre cada envio
+// individual — não é garantia formal de taxa (a Meta tem seus próprios
+// limites por número/qualidade, ver `messaging_limit` no WhatsApp
+// Manager), só elimina a assinatura de "rajada" que motivou o aviso.
+const TAMANHO_LOTE_CONVITE_API = 1;
+const PAUSA_ENTRE_LOTES_MS = 1500;
 function pausarWpp(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 async function confirmarEnviarConviteApiLote() {
@@ -3182,7 +3190,11 @@ async function confirmarConviteJanelaAberta() {
     if (corpoEl) corpoEl.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Enviando...</p>';
 
     const resultados = [];
-    const TAMANHO_LOTE = 5;
+    // Lote de 1 + pausa maior (mesma correção de 2026-10-05 do envio em
+    // massa via template, ver TAMANHO_LOTE_CONVITE_API acima) — evita a
+    // mesma assinatura de "rajada" que motivou um aviso de violação de
+    // política da Meta.
+    const TAMANHO_LOTE = 1;
     for (let i = 0; i < candidatos.length; i += TAMANHO_LOTE) {
         const lote = candidatos.slice(i, i + TAMANHO_LOTE);
         const respostas = await Promise.all(lote.map(async (c) => {

@@ -26,7 +26,11 @@ import { supabaseAdmin, NOME_TABELA_MENSAGENS } from "../_shared/supabaseAdmin.t
 // `mensagens_falhas_retriaveis()` (migracao_rpc_falhas_retriaveis.sql) —
 // única fonte de verdade, pra nunca divergir entre o filtro em SQL e um
 // filtro duplicado aqui em TS.
-const TAMANHO_LOTE = 5;
+// Lote de 1 (serializado, mesma correção de 2026-10-05 em js/whatsapp.js
+// — ver TAMANHO_LOTE_CONVITE_API) — 5 reenvios concorrentes também
+// produzem a mesma assinatura de "rajada" que motivou um aviso de
+// violação de política da Meta, mesmo com baixo volume total.
+const TAMANHO_LOTE = 1;
 
 function json(body: unknown, status = 200) {
     return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -125,8 +129,9 @@ Deno.serve(async (req) => {
         }));
         // Pausa entre lotes (pedido do usuário, 2026-09-30: "sem controle
         // de throughput no disparo em massa além do lote de 5") — mesmo
-        // espírito das pausas adicionadas em js/whatsapp.js.
-        if (i + TAMANHO_LOTE < candidatasRetriaveis.length) await new Promise((r) => setTimeout(r, 400));
+        // espírito das pausas adicionadas em js/whatsapp.js. Aumentada em
+        // 2026-10-05 (ver comentário de TAMANHO_LOTE acima).
+        if (i + TAMANHO_LOTE < candidatasRetriaveis.length) await new Promise((r) => setTimeout(r, 1500));
     }
 
     return json({ ok: true, reenviadas, falharam_de_novo: falharamDeNovo, sem_dado_suficiente: semDadoSuficiente, total_candidatas: candidatasRetriaveis.length });

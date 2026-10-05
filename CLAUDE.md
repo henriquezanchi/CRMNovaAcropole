@@ -8432,3 +8432,57 @@ colocando o DDD por conta própria, quando no cadastro não tem?".
   exigindo revisão manual, não é sinal de bug na régua de auto-mesclagem.
   O único bug real confirmado e corrigido foi o DDD fabricado em
   Inativos pra filiais fora de Goiânia.
+
+## Aviso de violação de política da Meta — causa real: RAJADA, não volume (2026-10-05)
+
+Pedido do usuário: "recebemos nova mensagem de que estamos violando a
+política do whatsapp, mas mandei muito menos mensagens via api. Veja
+quantas mensagens mandei hoje, e o que podemos fazer pra evitar disparar
+essa auditoria".
+
+**Investigado com SQL direto, não suposição**: só 58 mensagens de SAÍDA
+no dia (33 template + 25 texto livre, pra 45 destinatários distintos) —
+volume baixo de verdade, confirma a estranheza do usuário. Mas olhando o
+INTERVALO entre envios consecutivos: de 57 intervalos no dia, **31
+foram menores que 2 segundos** (o menor, 4 milissegundos) — um burst
+real de ~33 mensagens de TEMPLATE idêntico ("Olá, {nome}! Aqui quem fala
+é Henrique...") pra dezenas de destinatários NOVOS, concentrado em poucos
+segundos (`14:37:17` a `14:37:20`).
+
+- **Causa raiz confirmada no código**: "Convidar (API)"
+  (`confirmarEnviarConviteApiLote()`) e "Convidar (Janela Aberta)"
+  (`js/whatsapp.js`) mandavam em **lotes de 5 via `Promise.all()`**
+  (5 chamadas praticamente SIMULTÂNEAS à Graph API) com só **400ms** de
+  pausa entre lotes — o mesmo padrão existia em `whatsapp-reenviar-falhas`
+  (Edge Function). O problema nunca foi "quantas mensagens por dia", foi
+  a TAXA instantânea (mensagens/segundo) + conteúdo IDÊNTICO + muitos
+  destinatários NOVOS de uma vez — exatamente o sinal que os sistemas
+  automáticos de detecção de spam/qualidade da Meta tratam como disparo
+  em massa automatizado, independente do volume total do dia.
+- **Corrigido nos 3 pontos**: lote reduzido de 5 pra **1** (serializa —
+  nunca 2+ chamadas concorrentes à Graph API) + pausa aumentada de 400ms
+  pra **1500ms** entre cada envio individual (`TAMANHO_LOTE_CONVITE_API`/
+  `PAUSA_ENTRE_LOTES_MS` em `js/whatsapp.js`, `TAMANHO_LOTE` em
+  `whatsapp-reenviar-falhas/index.ts`). Não é uma garantia formal de taxa
+  (a Meta tem limites próprios por número/qualidade, `messaging_limit` no
+  WhatsApp Manager) — só elimina a ASSINATURA de rajada que motivou o
+  aviso. Custo aceito: uma campanha de 33 pessoas agora leva ~50s em vez
+  de ~3s — trade-off claramente a favor, dado o risco de bloqueio.
+- **Resposta à pergunta "recebemos um 'strike' se o lead bloquear?"**:
+  a WhatsApp Business Platform não funciona com um contador público de
+  "strikes" discretos — o número de telefone tem uma **Quality Rating**
+  (Verde/Amarelo/Vermelho, visível no WhatsApp Manager) calculada a
+  partir de um conjunto de sinais acumulados: bloqueios pelo destinatário,
+  denúncias de spam, feedback negativo, e padrões de envio anômalos
+  (rajada/burst, conteúdo repetido, muitos contatos novos de uma vez —
+  justamente o que causou este aviso). Um único bloqueio isolado não
+  derruba a conta sozinho, mas contribui pro score agregado; se a
+  Quality Rating cair pra Vermelho de forma sustentada, a Meta reduz o
+  `messaging_limit` (teto de conversas novas por 24h) e, em casos
+  persistentes, pode restringir/suspender o envio daquele número — é
+  risco cumulativo, não um "1 bloqueio = banido". **Fora do alcance de
+  código**: a mensagem de aviso em si só aparece no Business
+  Manager/WhatsApp Manager (não chega pelo nosso webhook, que só recebe
+  evento de mensagem/status) — não há como o CRM detectar esse aviso
+  específico sozinho; vale checar o Quality Rating lá periodicamente
+  depois de qualquer disparo em massa.
