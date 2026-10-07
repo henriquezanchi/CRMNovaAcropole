@@ -1,7 +1,12 @@
 :root {
-    --na-green: #005a4b;
-    --na-green-dark: #003d33;
-    --na-gold: #c5a059;
+    /* Cores oficiais do "Guia de uso de marca Nova Acrópole" (2025) —
+       --na-green = Verde Heket (#086357), --na-gold = Amarelo Helios
+       (#FFCA00). --na-green-dark não tem um tom oficial equivalente no
+       guia (só variantes de preto) — é o próprio Verde Heket escurecido,
+       mesma proporção já usada entre o verde antigo e seu "dark". */
+    --na-green: #086357;
+    --na-green-dark: #05433B;
+    --na-gold: #FFCA00;
     --bg-color: #f3f4f6;
     --card-bg: #ffffff;
     --text-dark: #1f2937;
@@ -11,7 +16,7 @@
     --wpp-dark: #166534;
 }
 
-* { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Noto Sans', sans-serif; }
 body { background-color: var(--bg-color); color: var(--text-dark); display: flex; height: 100vh; overflow: hidden; }
 
 /* Identidade visual unificada de TODOS os <select> do CRM (pedido do
@@ -529,7 +534,7 @@ select:hover { border-color: #94a3b8; }
 
 /* Agenda do Dia — Todas as Filiais (topo da aba Visão Geral/Dashboard,
    js/visao-geral.js) — independente da filial selecionada no topo */
-.agenda-geral-card { background: var(--na-green-dark, #0a3d33); border-radius: 12px; padding: 18px; color: white; }
+.agenda-geral-card { background: var(--na-green-dark, #05433B); border-radius: 12px; padding: 18px; color: white; }
 .agenda-geral-header { display: flex; align-items: center; justify-content: space-between; font-size: 15px; font-weight: 700; margin-bottom: 14px; }
 .agenda-geral-actions { display: flex; gap: 8px; }
 .agenda-geral-actions .btn-toggle { background: rgba(255,255,255,0.12); color: white; border: 1px solid rgba(255,255,255,0.25); }
@@ -561,9 +566,9 @@ select:hover { border-color: #94a3b8; }
 .calendario-evento-peso0 i { color: #94a3b8; }
 .calendario-evento-peso1 { background: #eff6ff; border-left: 3px solid #2563eb; }
 .calendario-evento-peso1 i { color: #2563eb; }
-.calendario-evento-peso2 { background: linear-gradient(90deg, #fffbeb, #fef3c7); border-left: 4px solid var(--na-gold, #c9a24b); }
+.calendario-evento-peso2 { background: linear-gradient(90deg, #fffbeb, #fef3c7); border-left: 4px solid var(--na-gold, #FFCA00); }
 .calendario-evento-peso2 .calendario-evento-nome { font-size: 13px; }
-.calendario-evento-peso2 i { color: var(--na-gold, #c9a24b); font-size: 16px; }
+.calendario-evento-peso2 i { color: var(--na-gold, #FFCA00); font-size: 16px; }
 
 .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
 .kpi-card {

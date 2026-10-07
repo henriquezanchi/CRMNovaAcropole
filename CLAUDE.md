@@ -9101,3 +9101,48 @@ encaminhar a foto do evento também nas respostas rápidas".
   o usuário ter pedido essa mudança especificamente nela. Quem quiser
   ativar a foto automática em qualquer resposta (essa ou uma nova) faz
   isso pelo `<select>` novo, por escolha própria.
+
+## Adequação ao Guia de Uso de Marca Nova Acrópole (2025-2026-10-07)
+
+Pedido do usuário: "dê uma olhada nesse guia de uso da marca, e adeque
+tudo o que for necessário" (link do Google Drive pro "Guia de uso de
+marca" oficial, versão 01, 2025).
+
+- **Cores oficiais** (seção 6 do guia, paleta primária): Verde Heket
+  `#086357` e Amarelo Helios `#FFCA00` — as cores que o CRM já tentava
+  aproximar com `--na-green`/`--na-gold`, mas com tons diferentes dos
+  oficiais (`#005a4b`/`#c5a059`, aproximações antigas, não do guia).
+  Corrigido nas variáveis `:root` (`css/style.css`) — como TODO o resto
+  do CSS (72 ocorrências) e os poucos lugares com hex hardcoded
+  duplicando essas cores (`js/app.js`: cores padrão das colunas
+  "Abordagem"/"Matriculados" no Kanban novo; `index.html`: portão de
+  acesso/botão "Entrar"; `js/log-atividade.js`: link de nome no Log de
+  Atividade) já herdam a mudança.
+  - `--na-green-dark` **não tem um tom oficial equivalente no guia**
+    (ele só define "Variantes de preto" pra escurecer, não uma variante
+    escura do Verde Heket) — mantido como um verde mais escuro DERIVADO
+    do novo Verde Heket (`#05433B`), na mesma proporção de escurecimento
+    que já existia entre o verde antigo (`#005a4b`) e seu "dark"
+    (`#003d33`, ~68%) — preserva o visual de superfícies escuras
+    (sidebar, topbar, banners) sem inventar uma cor fora da família.
+- **Tipografia oficial** (seção 8 do guia): **Noto Sans** (Black pra
+  títulos, Regular pro corpo) — "deve ser usada em todas as
+  comunicações impressas e digitais". O CRM usava `Inter` em TUDO
+  (`* { font-family: 'Inter', sans-serif; }`, `css/style.css`) — trocado
+  pro link do Google Fonts (`index.html`) e pro seletor universal, com
+  pesos 400/500/600/700/900 (cobre os `font-weight` já usados no app +
+  900 = "Black" dos títulos, por enquanto só diferenciado por peso, não
+  por regra de título vs. corpo — o app não distingue título/corpo
+  estruturalmente o bastante pra forçar 2 font-family diferentes sem
+  reescrever um monte de CSS; manter 1 família com pesos variados já
+  atende ao pedido central do guia, que é NÃO usar Inter).
+- **Logotipo**: já estava correto (anagrama intacto, nunca distorcido/
+  recolorido/com efeitos — ver `img/logo-nova-acropole.png`, usado como
+  favicon e no topbar/portão de acesso com `onerror` de segurança) — o
+  guia não trouxe nenhum arquivo de logo novo pra substituir, só regras
+  de uso que o app já respeitava.
+- **Não mexido, fora de escopo**: a paleta secundária completa (F1-F6/
+  C1-C10, pensada pra identificadores/submarcas — ver seção 5.3 do
+  guia) e o "Tom de comunicação"/mensagens-chave (seções 2-3, conteúdo
+  editorial, não código) — nenhum texto fixo do app precisou mudar por
+  causa disso.

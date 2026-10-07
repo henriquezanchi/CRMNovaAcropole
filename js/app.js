@@ -131,9 +131,9 @@ function getFiltroColuna(key) {
 function colunasPadrao() {
     return [
         { key: 'Frios', label: 'Frios', color: '#64748b' },
-        { key: 'Abordagem', label: 'Em Abordagem', color: '#c5a059' },
+        { key: 'Abordagem', label: 'Em Abordagem', color: '#FFCA00' },
         { key: 'RSVP', label: 'RSVP Ativo', color: '#3b82f6' },
-        { key: 'Matriculados', label: 'Matriculados', color: '#005a4b' },
+        { key: 'Matriculados', label: 'Matriculados', color: '#086357' },
         // Pedido do usuário (2026-09-15): lead fora do escopo de verdade
         // (mudou de cidade, respondeu com grosseria, é aluno/prospecto de
         // OUTRA escola/franquia etc.) — diferente de "Perdido" (que
@@ -482,7 +482,7 @@ function renderizarColunas() {
         const colEl = document.createElement('div');
         colEl.className = 'kanban-col';
         colEl.id = `kanban-col-wrap-${col.key}`;
-        colEl.style.setProperty('--col-accent', col.color || '#005a4b');
+        colEl.style.setProperty('--col-accent', col.color || '#086357');
         colEl.innerHTML = `
             <div class="col-header">
                 <div class="col-header-top">

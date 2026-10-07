@@ -6,7 +6,7 @@
     <title>CRM Agência - Módulo 2</title>
     <link rel="icon" type="image/png" href="img/logo-nova-acropole.png">
     <!-- Importando fontes e ícones -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- ⚠️ AQUI ESTÁ A MÁGICA: Conectando o seu arquivo CSS externo -->
     <link rel="stylesheet" href="css/style.css">
@@ -15,14 +15,14 @@
 
     <!-- Portão de acesso (senha única do time) — js/acesso.js. Fica escondido
          (display:none) até o script decidir se precisa mostrar. -->
-    <div id="acessoOverlay" style="display:none; position:fixed; inset:0; z-index:99999; background:var(--na-green-dark, #0a3d33); align-items:center; justify-content:center; flex-direction:column; gap:16px; font-family:'Inter',sans-serif;">
+    <div id="acessoOverlay" style="display:none; position:fixed; inset:0; z-index:99999; background:var(--na-green-dark, #05433B); align-items:center; justify-content:center; flex-direction:column; gap:16px; font-family:'Noto Sans',sans-serif;">
         <img src="img/logo-nova-acropole.png" alt="" style="width:64px; height:64px;" onerror="this.style.display='none';">
         <div style="color:white; font-size:18px; font-weight:600;">CRM Nova Acrópole</div>
         <select id="acessoNomeInput" style="padding:10px 14px; border-radius:8px; border:none; width:260px; font-size:14px;">
             <option value="">Carregando usuários...</option>
         </select>
         <input type="password" id="acessoSenhaInput" placeholder="Senha" style="padding:10px 14px; border-radius:8px; border:none; width:240px; font-size:14px;">
-        <button onclick="tentarAcesso()" style="padding:10px 20px; border-radius:8px; border:none; background:var(--na-gold, #c9a24b); color:#3a2e0f; font-weight:600; cursor:pointer;">Entrar</button>
+        <button onclick="tentarAcesso()" style="padding:10px 20px; border-radius:8px; border:none; background:var(--na-gold, #FFCA00); color:#3a2e0f; font-weight:600; cursor:pointer;">Entrar</button>
         <div id="acessoErro" style="display:none; color:#fca5a5; font-size:12px;">Nome ou senha incorretos.</div>
     </div>
 

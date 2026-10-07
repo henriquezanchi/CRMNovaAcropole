@@ -120,7 +120,7 @@ function renderizarNomesLog(ids, mapaNomes) {
     const links = visiveis.map(id => {
         const nome = mapaNomes.get(String(id));
         const rotulo = nome ? escapeHTML(nome) : `lead #${escapeHTML(String(id))} (não encontrado)`;
-        return `<a href="#" onclick="event.preventDefault(); abrirResultadoBuscaGlobal('${escapeHTML(String(id))}');" style="color:var(--na-green-dark,#166534); text-decoration:underline;">${rotulo}</a>`;
+        return `<a href="#" onclick="event.preventDefault(); abrirResultadoBuscaGlobal('${escapeHTML(String(id))}');" style="color:var(--na-green-dark,#05433B); text-decoration:underline;">${rotulo}</a>`;
     });
     return links.join(', ') + (resto > 0 ? ` e mais ${resto}` : '');
 }
