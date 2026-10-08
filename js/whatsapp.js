@@ -3644,6 +3644,26 @@ function pontuarCandidatoPrioridade(tags, diasAteEvento) {
 // analisarGrupoComIaPrioridade().
 const RESERVA_PRIORIDADE = 15;
 
+// Bug real relatado pelo usuário (2026-10-08): "montar fila de hoje"
+// ficava PRESO pra sempre numa filial específica (Goiânia II), mesmo
+// depois da otimização de performance acima — sem NENHUM erro aparecendo
+// na tela. Causa provável: alguma consulta ao Supabase trava/demora
+// demais (rede, RLS, o que for) e, como nada no código tinha timeout
+// nem tratamento de erro, uma promise pendente/rejeitada deixava a tela
+// parada no último status mostrado, pra sempre, sem avisar nada.
+// `comTimeoutPrioridade()` força qualquer consulta a desistir depois de
+// um tempo razoável, virando um ERRO VISÍVEL (nunca mais um travamento
+// silencioso) — usado nas consultas da fila de prioridade; combinado com
+// o try/catch em montarFilaPrioridadeInteligente(), que agora mostra a
+// mensagem de erro real na tela em vez de ficar parado no spinner.
+const TIMEOUT_CONSULTA_PRIORIDADE_MS = 20000;
+function comTimeoutPrioridade(promise, mensagemContexto) {
+    return Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error(`${mensagemContexto} demorou mais de ${Math.round(TIMEOUT_CONSULTA_PRIORIDADE_MS / 1000)}s — tente de novo`)), TIMEOUT_CONSULTA_PRIORIDADE_MS)),
+    ]);
+}
+
 // Monta 1 grupo "ainda não inscrito no evento X" pra 1 filial — busca
 // quem JÁ tem qualquer vínculo em evento_leads (nunca convidar de novo,
 // mesmo quem já recusou — isso já é coberto pelo filtro inteligente, mas
@@ -3652,18 +3672,24 @@ const RESERVA_PRIORIDADE = 15;
 async function montarGrupoNaoInscritoPrioridade(filial, bucket, evento, limite, excluir30Dias) {
     const diasAte = Math.max(0, Math.round((new Date(evento.data) - new Date()) / 86400000));
 
-    const { data: vinculados } = await window.supabaseClient.from('evento_leads').select('pessoaIdentificador').eq('evento_id', evento.id);
+    const { data: vinculados } = await comTimeoutPrioridade(
+        window.supabaseClient.from('evento_leads').select('pessoaIdentificador').eq('evento_id', evento.id),
+        `Buscar inscritos de "${evento.nome}" (${filial})`
+    );
     const setVinculados = new Set((vinculados || []).map(r => String(r.pessoaIdentificador)));
 
     const brutos = [];
     let de = 0;
     while (true) {
-        const { data } = await window.supabaseClient.from(NOME_TABELA)
-            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, tags')
-            .eq('filial', filial).is('lixeira_em', null)
-            .not('pessoaTelefoneNumero', 'is', null)
-            .order('pessoaIdentificador', { ascending: true })
-            .range(de, de + 999);
+        const { data } = await comTimeoutPrioridade(
+            window.supabaseClient.from(NOME_TABELA)
+                .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, tags')
+                .eq('filial', filial).is('lixeira_em', null)
+                .not('pessoaTelefoneNumero', 'is', null)
+                .order('pessoaIdentificador', { ascending: true })
+                .range(de, de + 999),
+            `Buscar leads de ${filial} (página ${Math.floor(de / 1000) + 1})`
+        );
         if (!data || data.length === 0) break;
         brutos.push(...data);
         if (data.length < 1000) break;
@@ -3697,7 +3723,10 @@ async function montarGrupoNaoInscritoPrioridade(filial, bucket, evento, limite, 
     let offsetFiltro = 0;
     while (comInfoValidos.length < alvo && offsetFiltro < poolOrdenado.length) {
         const lote = poolOrdenado.slice(offsetFiltro, offsetFiltro + TAMANHO_LOTE_FILTRO_PRIORIDADE);
-        const { validos, excluidos: excluidosLote } = await filtrarExclusaoInteligenteWpp(lote.map(p => p.pessoaIdentificador), { excluir30Dias });
+        const { validos, excluidos: excluidosLote } = await comTimeoutPrioridade(
+            filtrarExclusaoInteligenteWpp(lote.map(p => p.pessoaIdentificador), { excluir30Dias }),
+            `Filtro inteligente de ${filial} (lote de ${lote.length})`
+        );
         const setValidos = new Set(validos.map(String));
         comInfoValidos.push(...lote.filter(p => setValidos.has(String(p.pessoaIdentificador))));
         excluidos.push(...excluidosLote);
@@ -3727,15 +3756,20 @@ async function montarGrupoLembretePrioridade(filial, eventosProximos, limite, ex
     if (eventosProximos.length === 0) return { filial, bucket: 'lembrete', eventoId: null, eventoNome: null, eventoData: null, candidatos: [], reserva: [], excluidos: [] };
     const eventoIds = eventosProximos.map(e => e.id);
 
-    const { data: confirmados } = await window.supabaseClient.from('evento_leads')
-        .select('pessoaIdentificador, evento_id').in('evento_id', eventoIds).eq('resposta_convite', 'confirmado');
+    const { data: confirmados } = await comTimeoutPrioridade(
+        window.supabaseClient.from('evento_leads').select('pessoaIdentificador, evento_id').in('evento_id', eventoIds).eq('resposta_convite', 'confirmado'),
+        `Buscar confirmados de ${filial}`
+    );
     if (!confirmados || confirmados.length === 0) return { filial, bucket: 'lembrete', eventoId: null, eventoNome: null, eventoData: null, candidatos: [], reserva: [], excluidos: [] };
 
     const eventoAlvoId = eventoIds[0]; // eventosProximos já vem ordenado por data asc
     const idsCandidatos = [...new Set(confirmados.filter(c => c.evento_id === eventoAlvoId).map(c => String(c.pessoaIdentificador)))];
     if (idsCandidatos.length === 0) return { filial, bucket: 'lembrete', eventoId: null, eventoNome: null, eventoData: null, candidatos: [], reserva: [], excluidos: [] };
 
-    const { data: leadsInfo } = await window.supabaseClient.from(NOME_TABELA).select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero').in('pessoaIdentificador', idsCandidatos);
+    const { data: leadsInfo } = await comTimeoutPrioridade(
+        window.supabaseClient.from(NOME_TABELA).select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero').in('pessoaIdentificador', idsCandidatos),
+        `Buscar dados dos confirmados de ${filial}`
+    );
     const mapaLeads = new Map((leadsInfo || []).map(l => [String(l.pessoaIdentificador), l]));
 
     const pool = idsCandidatos
@@ -3743,7 +3777,10 @@ async function montarGrupoLembretePrioridade(filial, eventosProximos, limite, ex
         .filter(l => l && l.pessoaTelefoneDDD && l.pessoaTelefoneNumero && !numeroPareceFixo(l.pessoaTelefoneDDD, l.pessoaTelefoneNumero))
         .map(l => ({ pessoaIdentificador: l.pessoaIdentificador, nome: l.pessoaNome, score: 0 }));
 
-    const { validos, excluidos } = await filtrarExclusaoInteligenteWpp(pool.map(p => p.pessoaIdentificador), { excluir30Dias });
+    const { validos, excluidos } = await comTimeoutPrioridade(
+        filtrarExclusaoInteligenteWpp(pool.map(p => p.pessoaIdentificador), { excluir30Dias }),
+        `Filtro inteligente (lembrete) de ${filial}`
+    );
     const setValidos = new Set(validos.map(String));
     const eventoInfo = eventosProximos.find(e => e.id === eventoAlvoId);
     const comInfo = pool.filter(p => setValidos.has(String(p.pessoaIdentificador))).slice(0, limite + RESERVA_PRIORIDADE)
@@ -3812,70 +3849,83 @@ async function montarFilaPrioridadeInteligente() {
     };
     atualizarStatusMontagemFila('Montando a fila de hoje...');
 
-    const filiaisValidas = convitePrioridadeConfig.filter(cfg => cfg.cota && cfg.cota > 0);
-    for (let idxFilial = 0; idxFilial < filiaisValidas.length; idxFilial++) {
-        const cfg = filiaisValidas[idxFilial];
-        const prefixoStatus = `${cfg.filial} (${idxFilial + 1}/${filiaisValidas.length})`;
-        atualizarStatusMontagemFila(`Buscando leads de ${prefixoStatus}...`);
-        let cotaRestante = cfg.cota;
+    // Bug real relatado pelo usuário (2026-10-08): a tela ficava PRESA no
+    // spinner pra sempre (sem erro nenhum aparecendo) quando alguma
+    // consulta falhava/travava — como nada aqui tinha tratamento de erro,
+    // uma promise rejeitada só "sumia" (unhandled rejection), deixando o
+    // último status na tela congelado. Agora qualquer erro (inclusive os
+    // timeouts de comTimeoutPrioridade(), ver acima) é capturado e vira
+    // uma mensagem clara, com botão pra tentar de novo — nunca mais um
+    // travamento silencioso.
+    try {
+        const filiaisValidas = convitePrioridadeConfig.filter(cfg => cfg.cota && cfg.cota > 0);
+        for (let idxFilial = 0; idxFilial < filiaisValidas.length; idxFilial++) {
+            const cfg = filiaisValidas[idxFilial];
+            const prefixoStatus = `${cfg.filial} (${idxFilial + 1}/${filiaisValidas.length})`;
+            atualizarStatusMontagemFila(`Buscando leads de ${prefixoStatus}...`);
+            let cotaRestante = cfg.cota;
 
-        const { data: eventosFilial } = await window.supabaseClient
-            .from('eventos')
-            .select('id, nome, tipo, data')
-            .eq('filial', cfg.filial)
-            .eq('ativo', true)
-            .gte('data', hojeISO)
-            .order('data', { ascending: true });
-        const lista = eventosFilial || [];
+            const { data: eventosFilial } = await comTimeoutPrioridade(
+                window.supabaseClient.from('eventos').select('id, nome, tipo, data').eq('filial', cfg.filial).eq('ativo', true).gte('data', hojeISO).order('data', { ascending: true }),
+                `Buscar eventos de ${cfg.filial}`
+            );
+            const lista = eventosFilial || [];
 
-        const eventoAbertura = lista.find(e => e.tipo === 'Abertura de Turma');
-        const eventoAula = lista.find(e => e.tipo === 'Aula Inaugural');
-        const eventosProximos10Dias = lista.filter(e => Math.round((new Date(e.data) - new Date(hojeISO)) / 86400000) <= 10);
+            const eventoAbertura = lista.find(e => e.tipo === 'Abertura de Turma');
+            const eventoAula = lista.find(e => e.tipo === 'Aula Inaugural');
+            const eventosProximos10Dias = lista.filter(e => Math.round((new Date(e.data) - new Date(hojeISO)) / 86400000) <= 10);
 
-        if (cotaRestante > 0 && eventoAbertura) {
-            atualizarStatusMontagemFila(`${prefixoStatus} — verificando Abertura de Turma...`);
-            const g = await montarGrupoNaoInscritoPrioridade(cfg.filial, 'abertura', eventoAbertura, cotaRestante, excluir30Dias);
-            if (g.candidatos.length > 0) {
-                candidatosPorBucket.abertura.push(...g.candidatos);
-                excluidosPorBucket.abertura.push(...g.excluidos);
-                reservaPorBucket.abertura.push(...(g.reserva || []));
-                cotaRestante -= g.candidatos.length;
+            if (cotaRestante > 0 && eventoAbertura) {
+                atualizarStatusMontagemFila(`${prefixoStatus} — verificando Abertura de Turma...`);
+                const g = await montarGrupoNaoInscritoPrioridade(cfg.filial, 'abertura', eventoAbertura, cotaRestante, excluir30Dias);
+                if (g.candidatos.length > 0) {
+                    candidatosPorBucket.abertura.push(...g.candidatos);
+                    excluidosPorBucket.abertura.push(...g.excluidos);
+                    reservaPorBucket.abertura.push(...(g.reserva || []));
+                    cotaRestante -= g.candidatos.length;
+                }
+            }
+            if (cotaRestante > 0 && eventoAula) {
+                atualizarStatusMontagemFila(`${prefixoStatus} — verificando Aula Inaugural...`);
+                const g = await montarGrupoNaoInscritoPrioridade(cfg.filial, 'aula_inaugural', eventoAula, cotaRestante, excluir30Dias);
+                if (g.candidatos.length > 0) {
+                    candidatosPorBucket.aula_inaugural.push(...g.candidatos);
+                    excluidosPorBucket.aula_inaugural.push(...g.excluidos);
+                    reservaPorBucket.aula_inaugural.push(...(g.reserva || []));
+                    cotaRestante -= g.candidatos.length;
+                }
+            }
+            if (cotaRestante > 0) {
+                atualizarStatusMontagemFila(`${prefixoStatus} — verificando quem já confirmou presença...`);
+                const g = await montarGrupoLembretePrioridade(cfg.filial, eventosProximos10Dias, cotaRestante, excluir30Dias);
+                if (g.candidatos.length > 0) {
+                    candidatosPorBucket.lembrete.push(...g.candidatos);
+                    excluidosPorBucket.lembrete.push(...g.excluidos);
+                    reservaPorBucket.lembrete.push(...(g.reserva || []));
+                    cotaRestante -= g.candidatos.length;
+                }
             }
         }
-        if (cotaRestante > 0 && eventoAula) {
-            atualizarStatusMontagemFila(`${prefixoStatus} — verificando Aula Inaugural...`);
-            const g = await montarGrupoNaoInscritoPrioridade(cfg.filial, 'aula_inaugural', eventoAula, cotaRestante, excluir30Dias);
-            if (g.candidatos.length > 0) {
-                candidatosPorBucket.aula_inaugural.push(...g.candidatos);
-                excluidosPorBucket.aula_inaugural.push(...g.excluidos);
-                reservaPorBucket.aula_inaugural.push(...(g.reserva || []));
-                cotaRestante -= g.candidatos.length;
-            }
-        }
-        if (cotaRestante > 0) {
-            atualizarStatusMontagemFila(`${prefixoStatus} — verificando quem já confirmou presença...`);
-            const g = await montarGrupoLembretePrioridade(cfg.filial, eventosProximos10Dias, cotaRestante, excluir30Dias);
-            if (g.candidatos.length > 0) {
-                candidatosPorBucket.lembrete.push(...g.candidatos);
-                excluidosPorBucket.lembrete.push(...g.excluidos);
-                reservaPorBucket.lembrete.push(...(g.reserva || []));
-                cotaRestante -= g.candidatos.length;
-            }
-        }
+
+        convitePrioridadeBuckets = ORDEM_BUCKETS_PRIORIDADE
+            .filter(bucket => candidatosPorBucket[bucket].length > 0)
+            .map(bucket => ({
+                bucket,
+                candidatos: candidatosPorBucket[bucket],
+                reserva: reservaPorBucket[bucket],
+                excluidos: excluidosPorBucket[bucket],
+                templateIndice: templatePadraoParaBucket(bucket),
+                analisadoIa: false,
+                excluidosIa: [],
+            }));
+        renderizarFilaPrioridadeInteligente();
+    } catch (e) {
+        console.error('Erro ao montar a fila de prioridade:', e);
+        etapaFila.innerHTML = `
+            <p style="font-size:12px; color:#991b1b; margin-bottom:10px;"><i class="fa-solid fa-triangle-exclamation"></i> Erro ao montar a fila: ${escapeHTML(e.message || String(e))}</p>
+            <button class="btn-secondary" onclick="abrirConvitePrioridadeInteligente()">Voltar e tentar de novo</button>
+        `;
     }
-
-    convitePrioridadeBuckets = ORDEM_BUCKETS_PRIORIDADE
-        .filter(bucket => candidatosPorBucket[bucket].length > 0)
-        .map(bucket => ({
-            bucket,
-            candidatos: candidatosPorBucket[bucket],
-            reserva: reservaPorBucket[bucket],
-            excluidos: excluidosPorBucket[bucket],
-            templateIndice: templatePadraoParaBucket(bucket),
-            analisadoIa: false,
-            excluidosIa: [],
-        }));
-    renderizarFilaPrioridadeInteligente();
 }
 
 // Bug real, confirmado em produção (2026-10-08): "Disparo Inteligente do

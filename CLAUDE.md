@@ -9778,6 +9778,46 @@ processamento realmente demorava demais numa filial grande.
   na próxima sessão de uso real, especialmente numa filial grande como
   Jardim América.
 
+### Trava SILENCIOSA persistente mesmo depois do fix de performance (2026-10-08)
+
+O usuário testou de novo e a tela continuou PRESA exatamente no mesmo
+ponto ("Goiânia II (3/3) — verificando Abertura de Turma..."), mesmo com
+a otimização de performance já no ar — ou seja, não era (só) lentidão, o
+processamento genuinamente nunca terminava, e nenhum erro aparecia em
+lugar nenhum.
+
+- **Causa real**: nenhuma consulta ao Supabase dentro do fluxo de
+  prioridade tinha timeout nem tratamento de erro — se QUALQUER uma
+  travasse (rede, RLS, instabilidade do Supabase) ou rejeitasse, a
+  `exception`/promise pendente nunca era capturada
+  (`montarFilaPrioridadeInteligente()` não tinha `try/catch` nenhum), e o
+  último `innerHTML` de status (o spinner) ficava congelado na tela PRA
+  SEMPRE — um "unhandled promise rejection" silencioso, sem nenhum sinal
+  visível pro usuário nem no console seria óbvio sem abrir o DevTools.
+- **Corrigido com 2 camadas, as duas novas**:
+  1. `comTimeoutPrioridade(promise, contexto)` (`js/whatsapp.js`) — força
+     QUALQUER consulta da fila de prioridade a desistir depois de 20s
+     (`TIMEOUT_CONSULTA_PRIORIDADE_MS`), virando um erro com mensagem
+     clara em vez de pendurar pra sempre. Aplicada em TODAS as consultas
+     de `montarGrupoNaoInscritoPrioridade()`/`montarGrupoLembretePrioridade()`/
+     `montarFilaPrioridadeInteligente()` (eventos, leads, vinculados,
+     confirmados, filtro inteligente).
+  2. `try/catch` em volta de todo o corpo de
+     `montarFilaPrioridadeInteligente()` — qualquer erro (inclusive os
+     timeouts acima) agora substitui o spinner por uma mensagem de erro
+     visível + botão "Voltar e tentar de novo", e também loga no console
+     (`console.error`) pra investigação. Nunca mais um travamento mudo.
+- **Ainda não sabemos a causa ORIGINAL do travamento** (qual consulta
+  específica estava pendurada) — só sabemos que não aparecia erro nenhum
+  antes. Com o timeout em vigor, a PRÓXIMA tentativa vai, no pior caso,
+  mostrar uma mensagem de erro específica (ex: "Buscar leads de Goiânia
+  II (página 1) demorou mais de 20s") depois de no máximo ~20s — isso já
+  resolve o sintoma relatado ("parece que não funcionou") e também dá a
+  pista exata de qual consulta investigar se persistir.
+- **Testado**: `node --check` + lint de globais (sem suspeita nova).
+  **Clique real não testado** (sem Playwright neste ambiente) — validar
+  na próxima sessão de uso real.
+
 ## "Matrículas por Mês" — gráfico redesenhado, percentual sem sentido corrigido (2026-10-08)
 
 Pedido do usuário, vendo a tela real (print): o gráfico ia até Jan/24 à
