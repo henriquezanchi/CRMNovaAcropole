@@ -9542,6 +9542,49 @@ mundo".
   funções tocadas). **Clique real na UI não testado** (sem Playwright
   neste ambiente) — validar na próxima sessão de uso real.
 
+### Bug real, confirmado em produção, logo depois do item acima: "required parameter is missing" pra TODOS os destinatários
+
+O usuário testou (antes do fix acima estar no ar) com o template
+"Convite para evento" (`convite_palestra`, campos manuais "evento (com
+artigo)"/"data") e TODOS os envios falharam com o erro literal da Meta
+`"required parameter is missing"` — a mensagem renderizada mostrava
+"...te convidar para  que deve acontecer no próximo dia ." (os dois
+campos vazios). Confirma exatamente o bug já corrigido acima (campos
+manuais sempre em branco nesta tela) — a Meta recusa o envio INTEIRO
+quando um parâmetro de template resolve pra string vazia, então o
+sintoma era "deu em todo mundo" (qualquer template com campo manual
+falhava pra 100% dos destinatários daquele grupo).
+
+- **2ª camada de proteção, além do fix de resolução automática**: como
+  "Disparo Inteligente do Dia" não tem NENHUM passo de preenchimento
+  manual (diferente do modal normal "Convidar API", que mostra um
+  `<input>` por variável sem fonte automática), um template com campo
+  `chave:null` SEM `papel` reconhecido (ex: `contato_ulisses`, que fala
+  de um evento PASSADO via Ulisses, não do evento futuro do grupo)
+  NUNCA teria como funcionar aqui, mesmo com o fix de resolução
+  automática. Corrigido com `templatePrioridadeEAutomatizavel(tpl)`
+  (`js/whatsapp.js`) — filtra o `<select>` de cada card pra só oferecer
+  templates totalmente automatizáveis nesta tela (toda variável com
+  `chave` OU `papel`); `contato_ulisses` simplesmente não aparece mais
+  como opção aqui (continua disponível no modal normal "Convidar API",
+  onde o SDR pode digitar o campo à mão).
+- **3ª camada, defensiva**: `paramsManuaisPrioridadeOk(tpl, params)` —
+  conferida antes de QUALQUER envio real (1 grupo ou "enviar tudo"); se
+  algum campo manual ainda assim sair vazio (ex: evento sem
+  nome/data cadastrado, caso inesperado), aquele grupo é PULADO com um
+  aviso claro em vez de gastar uma chamada de API que a Meta rejeitaria
+  de qualquer forma — no "enviar tudo", os outros grupos continuam
+  normalmente, e o pulado aparece no relatório final com o motivo.
+- **Select agora reflete `g.templateIndice` de verdade** (`selected`
+  calculado por item) — antes o `<select>` nunca marcava nenhuma opção
+  como selecionada, então sempre MOSTRAVA visualmente a 1ª opção da
+  lista, mesmo que `g.templateIndice` internamente fosse outro (não
+  chegou a causar o bug relatado, mas era uma divergência visual real).
+- **Nenhum lead foi contatado com texto quebrado** — a Meta rejeita o
+  envio ANTES de entregar (erro retornado na hora, ícone de falha no
+  balão), então não houve mensagem malformada chegando de verdade a
+  ninguém; só o tempo gasto tentando foi perdido.
+
 ## "Matrículas por Mês" — gráfico redesenhado, percentual sem sentido corrigido (2026-10-08)
 
 Pedido do usuário, vendo a tela real (print): o gráfico ia até Jan/24 à

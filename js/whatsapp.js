@@ -3687,6 +3687,32 @@ async function montarFilaPrioridadeInteligente() {
     renderizarFilaPrioridadeInteligente();
 }
 
+// Bug real, confirmado em produção (2026-10-08): "Disparo Inteligente do
+// Dia" não tem NENHUM passo de preenchimento manual (diferente do modal
+// normal "Convidar API", que mostra um <input> por variável sem fonte
+// automática) — um template com campo `chave:null` SEM `papel`
+// reconhecido (ex: "contato_ulisses", que fala de um evento PASSADO via
+// Ulisses, não do evento futuro deste grupo) sempre resolvia pra string
+// vazia aqui, e a própria Meta recusa o envio inteiro nesse caso
+// ("required parameter is missing") — confirmado: falhou pra TODOS os
+// destinatários de um disparo de teste. Corrigido restringindo os
+// templates OFERECIDOS nesta tela a só os totalmente automatizáveis
+// (toda variável com `chave` reconhecida OU `papel` ligado ao evento do
+// grupo) — nunca deixa escolher um que nunca teria como funcionar aqui.
+function templatePrioridadeEAutomatizavel(tpl) {
+    return tpl.variaveis.every(v => v.chave !== null || v.papel);
+}
+
+// Última linha de defesa (além do filtro acima) — confere se os params
+// dos campos MANUAIS (chave:null) realmente saíram preenchidos antes de
+// disparar de verdade (ex: grupo sem eventoNome/eventoData por algum
+// motivo inesperado). Nunca deveria disparar com o filtro de template já
+// em vigor, mas é barato conferir antes de gastar uma chamada de API que
+// a Meta rejeitaria de qualquer forma.
+function paramsManuaisPrioridadeOk(tpl, params) {
+    return tpl.variaveis.every((v, i) => v.chave !== null || (params[i] && String(params[i]).trim() !== ''));
+}
+
 function renderizarFilaPrioridadeInteligente() {
     document.getElementById('prioridadeEtapaConfig').style.display = 'none';
     const etapaFila = document.getElementById('prioridadeEtapaFila');
@@ -3707,7 +3733,7 @@ function renderizarFilaPrioridadeInteligente() {
                 <div style="font-weight:700; font-size:13px; margin-bottom:4px;">${escapeHTML(LABELS_BUCKET_PRIORIDADE[g.bucket])} — ${escapeHTML(g.filial)}</div>
                 <div style="font-size:11px; color:var(--text-muted); margin-bottom:8px;">${g.eventoNome ? escapeHTML(g.eventoNome) + ' · ' : ''}${g.candidatos.length} lead(s)${g.excluidos && g.excluidos.length ? ` · ${g.excluidos.length} excluído(s) automaticamente` : ''}</div>
                 <select id="prioridadeTemplate-${i}" style="width:100%; padding:6px; margin-bottom:8px; box-sizing:border-box;" onchange="convitePrioridadeGrupos[${i}].templateIndice = Number(this.value); atualizarPreviewCardPrioridade(${i});">
-                    ${TEMPLATES_WHATSAPP.map((t, ti) => `<option value="${ti}">${escapeHTML(t.label)}</option>`).join('')}
+                    ${TEMPLATES_WHATSAPP.map((t, ti) => templatePrioridadeEAutomatizavel(t) ? `<option value="${ti}" ${ti === g.templateIndice ? 'selected' : ''}>${escapeHTML(t.label)}</option>` : '').join('')}
                 </select>
                 <div id="prioridadePreview-${i}"></div>
                 <details style="margin-bottom:8px;"><summary style="font-size:11px; cursor:pointer; color:var(--text-muted);">Ver quem (${g.candidatos.length})</summary>
@@ -3864,6 +3890,12 @@ async function enviarGrupoPrioridadeInteligente(indice) {
             ? valorAutomaticoCampoManualConviteApi(v.papel, eventoInfoParaManual)
             : (preencherValorAutomatico(v.chave, c.pessoaIdentificador) || '')),
     }));
+
+    if (!paramsManuaisPrioridadeOk(tpl, linhas[0].params)) {
+        alert(`Não dá pra enviar "${tpl.label}" aqui — falta um dado do evento (${escapeHTML(g.filial)}). Escolha outro template ou confira se o evento tem nome/data cadastrados na Agenda.`);
+        return;
+    }
+
     conviteApiPreviaAtual = { templateIndice: g.templateIndice, linhas };
     conviteApiEventoAtual = g.eventoId ? { id: g.eventoId, nome: g.eventoNome } : null;
 
@@ -3911,8 +3943,13 @@ async function enviarTodosGruposPrioridadeInteligente() {
         if (data && data.length > 0) leadsAtuais = [...leadsAtuais, ...data];
     }
 
-    let baseAcumulada = 0;
-    const relatorioPorGrupo = [];
+    // Monta os params de cada grupo ANTES de enviar qualquer coisa — se
+    // algum grupo não tiver como resolver um campo manual (evento sem
+    // nome/data, por algum motivo inesperado), esse grupo é PULADO e
+    // reportado, sem travar o envio dos demais (mesma rede de segurança
+    // de enviarGrupoPrioridadeInteligente(), ver paramsManuaisPrioridadeOk()).
+    const planoEnvio = [];
+    const pulados = [];
     for (const g of grupos) {
         const tpl = TEMPLATES_WHATSAPP[g.templateIndice];
         const eventoInfoParaManual = g.eventoId ? { id: g.eventoId, nome: g.eventoNome, data: g.eventoData } : null;
@@ -3923,15 +3960,26 @@ async function enviarTodosGruposPrioridadeInteligente() {
                 ? valorAutomaticoCampoManualConviteApi(v.papel, eventoInfoParaManual)
                 : (preencherValorAutomatico(v.chave, c.pessoaIdentificador) || '')),
         }));
+        if (!paramsManuaisPrioridadeOk(tpl, linhas[0].params)) {
+            pulados.push({ label: `${LABELS_BUCKET_PRIORIDADE[g.bucket]} — ${g.filial}`, motivo: 'faltou um dado do evento (nome/data)' });
+            continue;
+        }
+        planoEnvio.push({ g, tpl, linhas });
+    }
+
+    const totalPlanejado = planoEnvio.reduce((s, p) => s + p.linhas.length, 0);
+    let baseAcumulada = 0;
+    const relatorioPorGrupo = [];
+    for (const { g, tpl, linhas } of planoEnvio) {
         const base = baseAcumulada;
         const { sucesso, falha } = await enviarTemplateApiLote(tpl, linhas, {
             eventoAtual: g.eventoId ? { id: g.eventoId, nome: g.eventoNome } : null,
-            onProgresso: (atualGrupo) => atualizarProgressoEnvioMassa('prioridadeTodos', { titulo: 'Disparo Inteligente do Dia', atual: base + atualGrupo, total: totalGeral }),
+            onProgresso: (atualGrupo) => atualizarProgressoEnvioMassa('prioridadeTodos', { titulo: 'Disparo Inteligente do Dia', atual: base + atualGrupo, total: totalPlanejado }),
         });
         baseAcumulada += linhas.length;
         relatorioPorGrupo.push({ label: `${LABELS_BUCKET_PRIORIDADE[g.bucket]} — ${g.filial}`, sucesso: sucesso.length, falha: falha.length });
     }
-    atualizarProgressoEnvioMassa('prioridadeTodos', { titulo: 'Disparo Inteligente do Dia', atual: totalGeral, total: totalGeral, concluido: true });
+    if (totalPlanejado > 0) atualizarProgressoEnvioMassa('prioridadeTodos', { titulo: 'Disparo Inteligente do Dia', atual: totalPlanejado, total: totalPlanejado, concluido: true });
 
     etapaFila.innerHTML = `
         <p style="font-size:13px; margin-bottom:8px;"><strong>Envio concluído pra todas as filas.</strong></p>
@@ -3940,6 +3988,12 @@ async function enviarTodosGruposPrioridadeInteligente() {
                 <div style="display:flex; justify-content:space-between; gap:8px; padding:5px 0; font-size:12px; border-bottom:1px dashed var(--border-color);">
                     <span>${escapeHTML(r.label)}</span>
                     <span>${r.sucesso} enviado(s)${r.falha > 0 ? `, <span style="color:#991b1b;">${r.falha} falhou(aram)</span>` : ''}</span>
+                </div>
+            `).join('')}
+            ${pulados.map(p => `
+                <div style="display:flex; justify-content:space-between; gap:8px; padding:5px 0; font-size:12px; border-bottom:1px dashed var(--border-color);">
+                    <span>${escapeHTML(p.label)}</span>
+                    <span style="color:#991b1b;"><i class="fa-solid fa-triangle-exclamation"></i> Pulado — ${escapeHTML(p.motivo)}</span>
                 </div>
             `).join('')}
         </div>
