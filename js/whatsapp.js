@@ -2562,7 +2562,8 @@ async function gerarLinksConviteLote() {
     if (selectModelo && selectModelo.value) localStorage.setItem(CHAVE_STORAGE_MODELO_CONVITE_LOTE, selectModelo.value);
 
     const idsBrutos = Array.from(cardsSelecionados);
-    const { validos: ids, excluidos } = await filtrarExclusaoInteligenteWpp(idsBrutos);
+    const check30Dias = document.getElementById('conviteLoteExcluir30DiasCheck');
+    const { validos: ids, excluidos } = await filtrarExclusaoInteligenteWpp(idsBrutos, { excluir30Dias: !check30Dias || check30Dias.checked });
     const linhas = [];
     let semTelefone = 0;
     const vinculos = [];
@@ -2771,17 +2772,27 @@ let conviteApiSegmentoLeads = [];
 // migracao_tags_contato_recente.sql) evita recontato cedo demais;
 // "Não Contatar" é a tag manual pra opt-out leve ("me tira da lista").
 // Usado por QUALQUER disparo em massa (Link/API/Janela Aberta/Prioridade
-// Inteligente) — 1 ponto único, não duplicado em cada fluxo.
+// Inteligente) — 1 ponto único, não duplicado em cada fluxo. Estas 4
+// SEMPRE excluem, nunca são opcionais.
 const TAGS_EXCLUSAO_CAMPANHA_WPP = ['Não Contatar', 'Convite: Não Pode Ir', 'Convite: Sem Interesse', 'Contato Recente: 7 dias'];
+
+// "Contato Recente: 30 dias" (8-30 dias atrás) é OPCIONAL, diferente das
+// 4 acima — pedido do usuário (2026-10-08): "excluir, mas deixa um
+// 'check' marcado por padrão... garantindo ao SDR a liberdade de manter,
+// caso queira". Cada tela de disparo em massa tem seu próprio checkbox
+// "Evitar quem já falamos nos últimos 30 dias" (marcado por padrão),
+// repassado como `excluir30Dias` pra esta função.
+const TAG_EXCLUSAO_30_DIAS_OPCIONAL = 'Contato Recente: 30 dias';
 
 // Busca tags FRESCAS direto do banco (nunca confia só no que já está em
 // `leadsAtuais`, que pode estar desatualizado — e o modo "segmento" do
 // Convidar API nem devolve `tags`, ver leads_por_tag_filial()). Devolve
 // `{validos, excluidos}` — `excluidos` já vem com o motivo (qual tag
 // bateu), pra mostrar na tela sem esconder a decisão.
-async function filtrarExclusaoInteligenteWpp(ids) {
+async function filtrarExclusaoInteligenteWpp(ids, { excluir30Dias = true } = {}) {
     const unicos = [...new Set((ids || []).map(String))];
     if (unicos.length === 0) return { validos: [], excluidos: [] };
+    const tagsExclusao = excluir30Dias ? [...TAGS_EXCLUSAO_CAMPANHA_WPP, TAG_EXCLUSAO_30_DIAS_OPCIONAL] : TAGS_EXCLUSAO_CAMPANHA_WPP;
     const { data } = await window.supabaseClient.from(NOME_TABELA).select('pessoaIdentificador, pessoaNome, tags').in('pessoaIdentificador', unicos);
     const mapa = new Map((data || []).map(r => [String(r.pessoaIdentificador), r]));
     const validos = [];
@@ -2789,7 +2800,7 @@ async function filtrarExclusaoInteligenteWpp(ids) {
     for (const id of unicos) {
         const r = mapa.get(id);
         const tags = r ? parseTags(r.tags).map(t => String(t).trim()) : [];
-        const motivo = TAGS_EXCLUSAO_CAMPANHA_WPP.find(t => tags.includes(t));
+        const motivo = tagsExclusao.find(t => tags.includes(t));
         if (motivo) excluidos.push({ id, nome: r ? r.pessoaNome : id, motivo });
         else validos.push(id);
     }
@@ -3011,7 +3022,8 @@ async function gerarPreviaConviteApiLote() {
     // "prioridade" já aplica isso sozinho ao montar a fila, mas reaplicar
     // aqui não faz mal nenhum (idempotente) e cobre os outros 2 modos, que
     // nunca tinham essa checagem antes.
-    const { validos: ids, excluidos } = await filtrarExclusaoInteligenteWpp(idsBrutos.filter(id => !idsJaConfirmados.has(String(id))));
+    const check30DiasApi = document.getElementById('conviteApiExcluir30DiasCheck');
+    const { validos: ids, excluidos } = await filtrarExclusaoInteligenteWpp(idsBrutos.filter(id => !idsJaConfirmados.has(String(id))), { excluir30Dias: !check30DiasApi || check30DiasApi.checked });
 
     const linhas = [];
     let semTelefone = 0;
@@ -3083,12 +3095,33 @@ function voltarEscolhaConviteApi() {
 // novos em sequência — exatamente o padrão que os sistemas de detecção
 // de spam/qualidade da Meta tratam como disparo em massa automatizado,
 // independente do volume total do dia. Corrigido: lote de 1 (serializa,
-// nunca 2+ chamadas concorrentes) + pausa bem maior entre cada envio
-// individual — não é garantia formal de taxa (a Meta tem seus próprios
-// limites por número/qualidade, ver `messaging_limit` no WhatsApp
-// Manager), só elimina a assinatura de "rajada" que motivou o aviso.
+// nunca 2+ chamadas concorrentes) + pausa entre cada envio individual —
+// não é garantia formal de taxa (a Meta tem seus próprios limites por
+// número/qualidade, ver `messaging_limit` no WhatsApp Manager), só
+// elimina a assinatura de "rajada" que motivou o aviso.
 const TAMANHO_LOTE_CONVITE_API = 1;
-const PAUSA_ENTRE_LOTES_MS = 1500;
+
+// Pedido do usuário (2026-10-08): "o total de contatos hoje começa em
+// 250 (o limite diário da API da Meta)... quero mais respiro entre uma
+// mensagem e outra, mas tem que levar no máximo 1 hora no total" — a
+// pausa fixa de 1,5s (rápida demais pra "respirar" de verdade) virou um
+// intervalo-ALVO calibrado pra 250 mensagens caberem em ~1h: 3.600.000ms
+// / 249 intervalos (250 mensagens têm 249 "espaços" entre si) ≈ 14.458ms
+// (~14,5s) entre cada envio — quase 10x mais espaçado que antes.
+// Generalizado pra qualquer N (não só 250): um disparo MENOR usa o MESMO
+// intervalo-alvo e termina bem antes de 1h (sem problema, não tem
+// porquê esticar artificialmente pra preencher a hora toda); um disparo
+// MAIOR que 250 encurta o intervalo o suficiente pra nunca estourar o
+// teto de 1h — nunca mais rápido que isso seria arriscar a mesma rajada
+// que já gerou o aviso de violação de política.
+const TEMPO_MAXIMO_ENVIO_MASSA_MS = 60 * 60 * 1000; // 1h — teto absoluto, nunca ultrapassado
+const PAUSA_ALVO_ENVIO_MASSA_MS = Math.round(TEMPO_MAXIMO_ENVIO_MASSA_MS / 249); // ~14.458ms, calibrado pra 250 msgs/1h
+
+function calcularPausaEnvioMassa(totalMensagens) {
+    if (totalMensagens <= 1) return 0;
+    const pausaParaCaberNoTeto = TEMPO_MAXIMO_ENVIO_MASSA_MS / (totalMensagens - 1);
+    return Math.min(PAUSA_ALVO_ENVIO_MASSA_MS, pausaParaCaberNoTeto);
+}
 
 // Indicador de progresso FLUTUANTE, persistente mesmo com o modal
 // fechado (pedido do usuário, 2026-10-06: "fechar essa tela interrompe
@@ -3119,15 +3152,22 @@ function atualizarProgressoEnvioMassa(idOperacao, { titulo, atual, total, conclu
 function pausarWpp(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 // Envia 1 template aprovado pra uma lista de leads já com params
-// resolvidos, em lotes pequenos (mesmo tamanho/pausa de sempre) —
-// extraída pra ser compartilhada entre o envio de 1 grupo só (via modal
-// "Convidar API") e o envio de TODOS os grupos do "Disparo Inteligente
-// do Dia" de uma vez (ver enviarTodosGruposPrioridadeInteligente()).
-// `idProgresso` é opcional — quando ausente, quem chama controla o
-// próprio indicador de progresso via `onProgresso` (necessário pra somar
-// o progresso de vários grupos num único indicador, em vez de cada
-// grupo resetar o indicador do zero).
-async function enviarTemplateApiLote(tpl, linhas, { idProgresso, titulo, eventoAtual, onProgresso } = {}) {
+// resolvidos, em lotes pequenos — extraída pra ser compartilhada entre o
+// envio de 1 grupo só (via modal "Convidar API") e o envio de TODOS os
+// grupos do "Disparo Inteligente do Dia" de uma vez (ver
+// enviarTodosGruposPrioridadeInteligente()). `idProgresso` é opcional —
+// quando ausente, quem chama controla o próprio indicador de progresso
+// via `onProgresso` (necessário pra somar o progresso de vários grupos
+// num único indicador, em vez de cada grupo resetar o indicador do
+// zero). `pausaMs` também é opcional — por padrão calibra o intervalo
+// pelo TAMANHO DESTA lista (`calcularPausaEnvioMassa()`); quem dispara
+// pra VÁRIOS grupos em sequência (enviarTodosGruposPrioridadeInteligente())
+// passa um `pausaMs` já calculado pelo TOTAL agregado de todos os
+// grupos juntos — senão cada grupo recalcularia sozinho achando que é
+// "o disparo inteiro", e a soma de vários grupos de ~14,5s cada
+// facilmente estouraria o teto de 1h pensado pro disparo do dia INTEIRO.
+async function enviarTemplateApiLote(tpl, linhas, { idProgresso, titulo, eventoAtual, onProgresso, pausaMs } = {}) {
+    const pausa = typeof pausaMs === 'number' ? pausaMs : calcularPausaEnvioMassa(linhas.length);
     const resultados = [];
     for (let i = 0; i < linhas.length; i += TAMANHO_LOTE_CONVITE_API) {
         const lote = linhas.slice(i, i + TAMANHO_LOTE_CONVITE_API);
@@ -3156,7 +3196,7 @@ async function enviarTemplateApiLote(tpl, linhas, { idProgresso, titulo, eventoA
         resultados.push(...respostas);
         if (idProgresso) atualizarProgressoEnvioMassa(idProgresso, { titulo, atual: resultados.length, total: linhas.length });
         if (typeof onProgresso === 'function') onProgresso(resultados.length, linhas.length);
-        if (i + TAMANHO_LOTE_CONVITE_API < linhas.length) await pausarWpp(PAUSA_ENTRE_LOTES_MS);
+        if (i + TAMANHO_LOTE_CONVITE_API < linhas.length) await pausarWpp(pausa);
     }
     if (idProgresso) atualizarProgressoEnvioMassa(idProgresso, { titulo, atual: resultados.length, total: linhas.length, concluido: true });
 
@@ -3327,7 +3367,8 @@ async function iniciarConviteJanelaAberta() {
     // 6) Filtro inteligente (ver filtrarExclusaoInteligenteWpp() acima) —
     // mesmo quem acabou de responder pode já ter dito "não vou" ou pedido
     // pra não ser contatado numa conversa anterior.
-    const { validos: idsValidos, excluidos: excluidosInteligente } = await filtrarExclusaoInteligenteWpp(semConfirmado.map(c => c.pessoaIdentificador));
+    const check30DiasJanela = document.getElementById('conviteJanelaAbertaExcluir30DiasCheck');
+    const { validos: idsValidos, excluidos: excluidosInteligente } = await filtrarExclusaoInteligenteWpp(semConfirmado.map(c => c.pessoaIdentificador), { excluir30Dias: !check30DiasJanela || check30DiasJanela.checked });
     const setValidos = new Set(idsValidos.map(String));
     conviteJanelaAbertaCandidatos = semConfirmado.filter(c => setValidos.has(String(c.pessoaIdentificador)));
     conviteJanelaAbertaExcluidosInteligente = excluidosInteligente;
@@ -3396,11 +3437,14 @@ async function confirmarConviteJanelaAberta() {
     if (corpoEl) corpoEl.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Enviando em segundo plano — acompanhe o progresso no canto inferior direito, pode fechar esta tela sem interromper.</p>';
 
     const resultados = [];
-    // Lote de 1 + pausa maior (mesma correção de 2026-10-05 do envio em
-    // massa via template, ver TAMANHO_LOTE_CONVITE_API acima) — evita a
-    // mesma assinatura de "rajada" que motivou um aviso de violação de
-    // política da Meta.
+    // Lote de 1 + pausa calibrada por calcularPausaEnvioMassa() (mesma
+    // correção de 2026-10-05/2026-10-08 do envio em massa via template,
+    // ver TAMANHO_LOTE_CONVITE_API/PAUSA_ALVO_ENVIO_MASSA_MS acima) —
+    // evita a mesma assinatura de "rajada" que motivou um aviso de
+    // violação de política da Meta, e garante o mesmo teto de 1h pro
+    // disparo inteiro, não só por lote individual.
     const TAMANHO_LOTE = 1;
+    const pausaMs = calcularPausaEnvioMassa(candidatos.length);
     for (let i = 0; i < candidatos.length; i += TAMANHO_LOTE) {
         const lote = candidatos.slice(i, i + TAMANHO_LOTE);
         const respostas = await Promise.all(lote.map(async (c) => {
@@ -3416,7 +3460,7 @@ async function confirmarConviteJanelaAberta() {
         }));
         resultados.push(...respostas);
         atualizarProgressoEnvioMassa('conviteJanelaAberta', { titulo: 'Convidar (Janela Aberta)', atual: resultados.length, total: candidatos.length });
-        if (i + TAMANHO_LOTE < candidatos.length) await pausarWpp(PAUSA_ENTRE_LOTES_MS);
+        if (i + TAMANHO_LOTE < candidatos.length) await pausarWpp(pausaMs);
     }
     atualizarProgressoEnvioMassa('conviteJanelaAberta', { titulo: 'Convidar (Janela Aberta)', atual: resultados.length, total: candidatos.length, concluido: true });
 
@@ -3576,7 +3620,7 @@ function pontuarCandidatoPrioridade(tags, diasAteEvento) {
 // mesmo quem já recusou — isso já é coberto pelo filtro inteligente, mas
 // não faz sentido convidar de novo nem quem só está "pendente"), aplica
 // pontuação + filtro inteligente, corta pela cota restante da filial.
-async function montarGrupoNaoInscritoPrioridade(filial, bucket, evento, limite) {
+async function montarGrupoNaoInscritoPrioridade(filial, bucket, evento, limite, excluir30Dias) {
     const diasAte = Math.max(0, Math.round((new Date(evento.data) - new Date()) / 86400000));
 
     const { data: vinculados } = await window.supabaseClient.from('evento_leads').select('pessoaIdentificador').eq('evento_id', evento.id);
@@ -3605,7 +3649,7 @@ async function montarGrupoNaoInscritoPrioridade(filial, bucket, evento, limite) 
             return { pessoaIdentificador: l.pessoaIdentificador, nome: l.pessoaNome, score: pontuarCandidatoPrioridade(tags, diasAte) };
         });
 
-    const { validos, excluidos } = await filtrarExclusaoInteligenteWpp(pool.map(p => p.pessoaIdentificador));
+    const { validos, excluidos } = await filtrarExclusaoInteligenteWpp(pool.map(p => p.pessoaIdentificador), { excluir30Dias });
     const setValidos = new Set(validos.map(String));
     const final = pool.filter(p => setValidos.has(String(p.pessoaIdentificador))).sort((a, b) => b.score - a.score).slice(0, limite);
 
@@ -3617,7 +3661,7 @@ async function montarGrupoNaoInscritoPrioridade(filial, bucket, evento, limite) 
 // do evento. Só olha o evento MAIS PRÓXIMO com confirmados (simplificação
 // deliberada — se a filial tiver 2+ eventos próximos com gente
 // confirmada ao mesmo tempo, só o mais próximo entra nesta rodada).
-async function montarGrupoLembretePrioridade(filial, eventosProximos, limite) {
+async function montarGrupoLembretePrioridade(filial, eventosProximos, limite, excluir30Dias) {
     if (eventosProximos.length === 0) return { filial, bucket: 'lembrete', eventoId: null, eventoNome: null, eventoData: null, candidatos: [], excluidos: [] };
     const eventoIds = eventosProximos.map(e => e.id);
 
@@ -3637,7 +3681,7 @@ async function montarGrupoLembretePrioridade(filial, eventosProximos, limite) {
         .filter(l => l && l.pessoaTelefoneDDD && l.pessoaTelefoneNumero && !numeroPareceFixo(l.pessoaTelefoneDDD, l.pessoaTelefoneNumero))
         .map(l => ({ pessoaIdentificador: l.pessoaIdentificador, nome: l.pessoaNome, score: 0 }));
 
-    const { validos, excluidos } = await filtrarExclusaoInteligenteWpp(pool.map(p => p.pessoaIdentificador));
+    const { validos, excluidos } = await filtrarExclusaoInteligenteWpp(pool.map(p => p.pessoaIdentificador), { excluir30Dias });
     const setValidos = new Set(validos.map(String));
     const final = pool.filter(p => setValidos.has(String(p.pessoaIdentificador))).slice(0, limite);
 
@@ -3650,6 +3694,8 @@ async function montarGrupoLembretePrioridade(filial, eventosProximos, limite) {
 // "desce" pro próximo balde se sobrar depois do anterior).
 async function montarFilaPrioridadeInteligente() {
     const hojeISO = new Date().toISOString().slice(0, 10);
+    const checkExcluir30Dias = document.getElementById('prioridadeExcluir30DiasCheck');
+    const excluir30Dias = !checkExcluir30Dias || checkExcluir30Dias.checked;
     const grupos = [];
 
     for (const cfg of convitePrioridadeConfig) {
@@ -3670,15 +3716,15 @@ async function montarFilaPrioridadeInteligente() {
         const eventosProximos10Dias = lista.filter(e => Math.round((new Date(e.data) - new Date(hojeISO)) / 86400000) <= 10);
 
         if (cotaRestante > 0 && eventoAbertura) {
-            const g = await montarGrupoNaoInscritoPrioridade(cfg.filial, 'abertura', eventoAbertura, cotaRestante);
+            const g = await montarGrupoNaoInscritoPrioridade(cfg.filial, 'abertura', eventoAbertura, cotaRestante, excluir30Dias);
             if (g.candidatos.length > 0) { grupos.push(g); cotaRestante -= g.candidatos.length; }
         }
         if (cotaRestante > 0 && eventoAula) {
-            const g = await montarGrupoNaoInscritoPrioridade(cfg.filial, 'aula_inaugural', eventoAula, cotaRestante);
+            const g = await montarGrupoNaoInscritoPrioridade(cfg.filial, 'aula_inaugural', eventoAula, cotaRestante, excluir30Dias);
             if (g.candidatos.length > 0) { grupos.push(g); cotaRestante -= g.candidatos.length; }
         }
         if (cotaRestante > 0) {
-            const g = await montarGrupoLembretePrioridade(cfg.filial, eventosProximos10Dias, cotaRestante);
+            const g = await montarGrupoLembretePrioridade(cfg.filial, eventosProximos10Dias, cotaRestante, excluir30Dias);
             if (g.candidatos.length > 0) { grupos.push(g); cotaRestante -= g.candidatos.length; }
         }
     }
@@ -3968,16 +4014,29 @@ async function enviarTodosGruposPrioridadeInteligente() {
     }
 
     const totalPlanejado = planoEnvio.reduce((s, p) => s + p.linhas.length, 0);
+    // Pausa calculada pelo TOTAL agregado de todos os grupos juntos (não
+    // por grupo individual) — senão cada filial recalcularia sozinha
+    // achando que é "o disparo inteiro" e a soma de vários grupos
+    // facilmente estouraria o teto de 1h pensado pro disparo do DIA
+    // inteiro (ver comentário de enviarTemplateApiLote()).
+    const pausaMs = calcularPausaEnvioMassa(totalPlanejado);
     let baseAcumulada = 0;
     const relatorioPorGrupo = [];
-    for (const { g, tpl, linhas } of planoEnvio) {
+    for (let idx = 0; idx < planoEnvio.length; idx++) {
+        const { g, tpl, linhas } = planoEnvio[idx];
         const base = baseAcumulada;
         const { sucesso, falha } = await enviarTemplateApiLote(tpl, linhas, {
             eventoAtual: g.eventoId ? { id: g.eventoId, nome: g.eventoNome } : null,
+            pausaMs,
             onProgresso: (atualGrupo) => atualizarProgressoEnvioMassa('prioridadeTodos', { titulo: 'Disparo Inteligente do Dia', atual: base + atualGrupo, total: totalPlanejado }),
         });
         baseAcumulada += linhas.length;
         relatorioPorGrupo.push({ label: `${LABELS_BUCKET_PRIORIDADE[g.bucket]} — ${g.filial}`, sucesso: sucesso.length, falha: falha.length });
+        // Pausa também na TRANSIÇÃO entre grupos (senão o último envio de
+        // 1 filial e o 1º da próxima saem sem respiro nenhum entre si,
+        // já que o loop interno de enviarTemplateApiLote() só pausa ENTRE
+        // itens do MESMO grupo).
+        if (idx < planoEnvio.length - 1) await pausarWpp(pausaMs);
     }
     if (totalPlanejado > 0) atualizarProgressoEnvioMassa('prioridadeTodos', { titulo: 'Disparo Inteligente do Dia', atual: totalPlanejado, total: totalPlanejado, concluido: true });
 

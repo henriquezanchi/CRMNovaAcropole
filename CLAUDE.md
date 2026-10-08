@@ -9585,6 +9585,58 @@ falhava pra 100% dos destinatários daquele grupo).
   balão), então não houve mensagem malformada chegando de verdade a
   ninguém; só o tempo gasto tentando foi perdido.
 
+### Pausa dinâmica (máx. 1h pro disparo) + exclusão opcional de 30 dias (2026-10-08)
+
+Pedido do usuário: "o total de contatos hoje começa em 250 (o limite
+diário da API da Meta). Quero que levemos mais tempo para enviar, para
+garantir o respiro entre uma mensagem e outra, mas tem que levar no
+máximo 1 hora no total" + "o disparo inteligente está considerando
+pessoas que falamos nos últimos 7 ou 30 dias?".
+
+- **Pausa deixou de ser fixa (1,5s)** — virou `calcularPausaEnvioMassa(N)`
+  (`js/whatsapp.js`): intervalo-alvo calibrado pra 250 mensagens caberem
+  em 1h (3.600.000ms / 249 intervalos ≈ **14.458ms, ~14,5s entre cada
+  mensagem**). Pra N ≤ 250, usa sempre esse intervalo-alvo (termina bem
+  antes de 1h, sem problema); pra N > 250, encurta sozinho o suficiente
+  pra nunca estourar o teto de 1h (`TEMPO_MAXIMO_ENVIO_MASSA_MS`).
+  Aplicada nos 3 pontos de disparo em massa: `confirmarEnviarConviteApiLote()`
+  ("Convidar API"), `confirmarConviteJanelaAberta()` ("Convidar Janela
+  Aberta") e `enviarTemplateApiLote()` (usada tanto pelo envio de 1
+  filial quanto por "Enviar tudo" do Disparo Inteligente).
+  - **"Enviar tudo" calcula a pausa pelo TOTAL agregado de todas as
+    filiais juntas** (não por filial isolada) — senão 5 filiais de 50
+    cada, cada uma "achando" que é o disparo inteiro, somariam 5x mais
+    que 1h. Também adicionada pausa na TRANSIÇÃO entre uma filial e
+    outra (antes só pausava dentro da mesma filial — o último envio de
+    uma e o 1º da próxima saíam sem respiro nenhum entre si).
+  - `whatsapp-reenviar-falhas` (Edge Function de reenvio automático de
+    falhas temporárias, cron 3h) **não foi tocada** — tem característica
+    de volume/risco diferente (reenvio de quem já falhou antes, não um
+    disparo novo pra gente nova), fora do escopo deste pedido.
+- **Exclusão de quem foi contatado nos últimos 8-30 dias — agora
+  OPCIONAL, com checkbox marcado por padrão**: antes,
+  `TAGS_EXCLUSAO_CAMPANHA_WPP` só continha `"Contato Recente: 7 dias"`
+  — quem foi contatado entre 8-30 dias atrás (tag `"Contato Recente: 30
+  dias"`) NUNCA era excluído por nenhum dos 3 pontos de disparo em
+  massa. Pedido do usuário: excluir também, mas "deixa um check marcado
+  por padrão... garantindo ao SDR a liberdade de manter, caso queira".
+  - `filtrarExclusaoInteligenteWpp(ids, {excluir30Dias = true})` —
+    `TAG_EXCLUSAO_30_DIAS_OPCIONAL` só entra na lista de exclusão quando
+    `excluir30Dias` for `true` (padrão). As outras 4 tags (`"Não
+    Contatar"`/`"Convite: Não Pode Ir"`/`"Convite: Sem Interesse"`/
+    `"Contato Recente: 7 dias"`) continuam SEMPRE excluindo, nunca
+    opcionais.
+  - Checkbox **"Evitar quem já falamos nos últimos 30 dias (não só 7)"**,
+    marcado por padrão, adicionado nos 4 lugares que chamam essa função:
+    "Convidar (Link)", "Convidar (API)", "Convidar (Janela Aberta)"
+    (`onchange` já reprocessa a lista de candidatos) e a tela de
+    configuração do "Disparo Inteligente do Dia" (lido 1x ao montar a
+    fila, repassado pros 2 montadores de grupo). Cada checkbox é
+    independente — desmarcar numa tela não afeta as outras.
+- **Testado**: `node --check` + lint de globais (sem suspeita nova).
+  **Clique real na UI não testado** (sem Playwright neste ambiente) —
+  validar na próxima sessão de uso real.
+
 ## "Matrículas por Mês" — gráfico redesenhado, percentual sem sentido corrigido (2026-10-08)
 
 Pedido do usuário, vendo a tela real (print): o gráfico ia até Jan/24 à
