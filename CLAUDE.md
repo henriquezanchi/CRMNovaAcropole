@@ -9725,6 +9725,27 @@ que precisam do mesmo motivo hoje:
   crédito/credencial da Anthropic — ver limitações já documentadas) —
   validar na próxima sessão de uso real.
 
+### "Montar fila de hoje" sem indicativo de carregamento (2026-10-08)
+
+Relatado pelo usuário: "montar fila de hoje está demorando, e não mostra
+um indicativo de que esteja 'carregando'. Dá a impressão que não
+funcionou". Causa real: `montarFilaPrioridadeInteligente()` busca cada
+filial paginada (1000 em 1000) em até 3 buckets — numa filial grande
+(ex: Jardim América, 2700+ leads) isso leva vários segundos — mas só
+chamava `renderizarFilaPrioridadeInteligente()` (que troca a tela)
+DEPOIS do loop inteiro terminar, deixando a tela de configuração parada,
+sem nenhum sinal visual, por todo esse tempo.
+
+- **Corrigido**: a troca pra etapa da fila (`#prioridadeEtapaFila`)
+  agora acontece NA HORA do clique, com spinner + status progressivo por
+  filial ("Buscando leads de Goiânia - Jardim América... (1/4)"),
+  atualizado a cada filial processada — nunca mais parece "travado"/"não
+  funcionou" numa cota grande. Quando o loop termina,
+  `renderizarFilaPrioridadeInteligente()` substitui o spinner pelo
+  conteúdo real normalmente.
+- **Testado**: `node --check` + lint de globais (sem suspeita nova).
+  **Clique real não testado** (sem Playwright neste ambiente).
+
 ## "Matrículas por Mês" — gráfico redesenhado, percentual sem sentido corrigido (2026-10-08)
 
 Pedido do usuário, vendo a tela real (print): o gráfico ia até Jan/24 à

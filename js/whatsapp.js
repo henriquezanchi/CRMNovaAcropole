@@ -3773,8 +3773,26 @@ async function montarFilaPrioridadeInteligente() {
     const excluidosPorBucket = { abertura: [], aula_inaugural: [], lembrete: [] };
     const reservaPorBucket = { abertura: [], aula_inaugural: [], lembrete: [] };
 
-    for (const cfg of convitePrioridadeConfig) {
-        if (!cfg.cota || cfg.cota <= 0) continue;
+    // Pedido do usuário (2026-10-08): "montar fila de hoje está demorando,
+    // e não mostra um indicativo de que esteja carregando. Dá a impressão
+    // que não funcionou" — cada filial é buscada paginada (1000 em 1000)
+    // em até 3 buckets, o que pode levar vários segundos numa filial
+    // grande (ex: Jardim América, 2700+ leads). Troca pra etapa da fila
+    // JÁ com spinner + status progressivo por filial, ANTES de qualquer
+    // query rodar — nunca deixa a tela de configuração parada sem
+    // feedback nenhum enquanto o trabalho de verdade acontece.
+    document.getElementById('prioridadeEtapaConfig').style.display = 'none';
+    const etapaFila = document.getElementById('prioridadeEtapaFila');
+    etapaFila.style.display = 'block';
+    const atualizarStatusMontagemFila = (texto) => {
+        etapaFila.innerHTML = `<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> ${escapeHTML(texto)}</p>`;
+    };
+    atualizarStatusMontagemFila('Montando a fila de hoje...');
+
+    const filiaisValidas = convitePrioridadeConfig.filter(cfg => cfg.cota && cfg.cota > 0);
+    for (let idxFilial = 0; idxFilial < filiaisValidas.length; idxFilial++) {
+        const cfg = filiaisValidas[idxFilial];
+        atualizarStatusMontagemFila(`Buscando leads de ${cfg.filial}... (${idxFilial + 1}/${filiaisValidas.length})`);
         let cotaRestante = cfg.cota;
 
         const { data: eventosFilial } = await window.supabaseClient
