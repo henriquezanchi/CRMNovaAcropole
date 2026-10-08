@@ -9637,6 +9637,94 @@ pessoas que falamos nos últimos 7 ou 30 dias?".
   **Clique real na UI não testado** (sem Playwright neste ambiente) —
   validar na próxima sessão de uso real.
 
+### Fila agregada por MOTIVO (não mais por filial) + reposição automática da reserva com IA (2026-10-08)
+
+Pedido do usuário, vendo a tela real pela 1ª vez (print: 3 filiais com
+Abertura de Turma, cada uma com seu próprio card/template/botão): "não é
+necessário criar três modelos, três telas, três botões... o disparo
+inteligente já pressupõe que será tudo igual para todos os [leads do
+dia]. Do contrário eu uso o botão Convidar por API. Então, analisar com
+IA também deve ser um botão só... Selecionar o motivo (convite para
+evento) também serve para todos; o disparo inteligente também deveria
+ter visto que temos abertura de turma em 3 unidades hoje... e já propor
+envio de convite para a abertura de turma." Na sequência, mais um
+pedido: "no disparo inteligente, ele deve excluir alguém quando der
+incompatibilidade, e deve puxar o próximo da fila, e rodar novamente a
+leitura com IA... imagino que já deva ter uma fila em segundo plano de
+mais umas 10 ou 15 pessoas, e rodar a leitura de IA com as 10 ou 15 (se
+rodar de uma em uma perdemos tempo)".
+
+**Reestruturação completa** — a fila deixou de ser 1 card por
+`(filial × motivo)` e passou a ser 1 card por MOTIVO (bucket:
+Abertura de Turma/Aula Inaugural/Lembrete), agregando TODAS as filiais
+que precisam do mesmo motivo hoje:
+
+- `convitePrioridadeGrupos` (array de grupos filial×bucket) virou
+  `convitePrioridadeBuckets` (array de buckets, 1 por motivo ativo hoje,
+  ordem fixa `ORDEM_BUCKETS_PRIORIDADE = ['abertura', 'aula_inaugural',
+  'lembrete']`) — cada um com `{bucket, candidatos, reserva, excluidos,
+  templateIndice, analisadoIa, excluidosIa}`. **1 template/"Analisar com
+  IA"/"Enviar" só, pra TODAS as filiais daquele motivo** — o print do
+  usuário (3 filiais com Abertura de Turma) viraria 1 card só, não 3.
+- **Cada CANDIDATO (não mais o grupo) carrega sua própria
+  `filial`/`eventoId`/`eventoNome`/`eventoData`**
+  (`montarGrupoNaoInscritoPrioridade()`/`montarGrupoLembretePrioridade()`,
+  `js/whatsapp.js`) — necessário porque filiais diferentes no mesmo
+  motivo têm eventos/datas PRÓPRIOS (ex: Garavelo 05/10, Jardim
+  América/Setor Oeste 08/10, mesma campanha "Novas turmas..."). O
+  preview, o envio e a vinculação de `evento_leads` continuam resolvendo
+  o evento certo por lead, mesmo dentro do mesmo card agregado.
+  - `enviarTemplateApiLote()` ganhou um 2º modo de vincular
+    `evento_leads`: além do já existente (`eventoAtual`, 1 evento pra
+    TODO o lote — usado pelo "Convidar API" normal), agora aceita
+    `r.eventoId` POR LINHA (usado pelo Disparo Inteligente, que nunca
+    passa `eventoAtual`) — o `log_atividade` também lista os nomes de
+    evento DISTINTOS do lote em vez de assumir 1 só.
+  - `paramsManuaisPrioridadeOk()` passou a conferir TODAS as linhas (não
+    só a 1ª) — um bucket agregado pode ter uma filial com evento ok e
+    outra sem (nome/data faltando); a checagem agora é POR LEAD, então só
+    o candidato problemático é pulado (com aviso), nunca o motivo
+    inteiro.
+- **Template padrão PROPOSTO automaticamente** (`templatePadraoParaBucket()`)
+  — resposta direta a "já propor envio de convite para a abertura de
+  turma": buckets `abertura`/`aula_inaugural` abrem já com "Convite para
+  evento" (`convite_palestra`) pré-selecionado (antes sempre abria no
+  1º template da lista, "Contato inicial", genérico demais); `lembrete`
+  cai no 1º template automatizável disponível (não há um template
+  dedicado de lembrete aprovado ainda).
+- **Resumo por filial dentro do card agregado**
+  (`resumoFiliaisBucketPrioridade()`) — mostra "Jardim América — Novas
+  turmas... (08/10) · 209 &nbsp;·&nbsp; Setor Oeste — ... (08/10) · 22"
+  etc., pra não perder a visibilidade de QUAIS filiais/datas foram
+  juntadas sob o mesmo motivo, mesmo sem mais 1 card por filial.
+
+**Fila de reserva + reposição automática com IA, em lote** (2º pedido):
+
+- `RESERVA_PRIORIDADE = 15` — cada busca de candidatos já traz
+  `limite + 15` (mesma query, sem custo extra — já buscava a base
+  inteira da filial), guardando o excedente como `reserva` por bucket
+  (agregada entre filiais igual aos candidatos).
+- `analisarGrupoComIaPrioridade()` virou um LOOP (até
+  `MAX_RODADAS_REPOSICAO_IA = 6` rodadas de segurança): analisa o lote
+  atual (Camada 2+3, extraída pra `analisarLoteComIaPrioridade()`,
+  reaproveitada em cada rodada); pra cada exclusão, puxa a MESMA
+  quantidade da `reserva` (sempre em LOTE — nunca 1 por 1, exatamente o
+  pedido "se rodar de uma em uma perdemos tempo"); reanalisa SÓ os
+  recém-repostos na próxima rodada (nunca reanalisa quem já passou);
+  repete até não sobrar exclusão nenhuma na rodada, ou a reserva acabar.
+- Card mostra quantos foram repostos da reserva e quantos ainda sobram
+  nela (`b.totalRepostosIa`/`b.reserva.length`), ao lado do aviso de
+  quem a IA excluiu — transparência total, nunca esconde a decisão.
+- **Limitação aceita, documentada**: a reserva é um BUFFER FIXO (15),
+  não uma garantia de preencher a cota exata — se as exclusões da IA
+  superarem o buffer disponível, a fila final fica um pouco abaixo da
+  cota original (reportado na tela, nunca trava nem inventa candidato).
+- **Testado**: `node --check` + lint de globais (sem suspeita nova nas
+  funções tocadas). **Clique real na UI não testado** (sem Playwright
+  neste ambiente, e a Edge Function `priorizar-convite-ia` depende de
+  crédito/credencial da Anthropic — ver limitações já documentadas) —
+  validar na próxima sessão de uso real.
+
 ## "Matrículas por Mês" — gráfico redesenhado, percentual sem sentido corrigido (2026-10-08)
 
 Pedido do usuário, vendo a tela real (print): o gráfico ia até Jan/24 à

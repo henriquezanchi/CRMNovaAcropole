@@ -3204,18 +3204,28 @@ async function enviarTemplateApiLote(tpl, linhas, { idProgresso, titulo, eventoA
     const falha = resultados.filter(r => !r.ok);
 
     // Vincula evento_leads só pra quem o envio de fato saiu (nunca cria
-    // um "convidado" fantasma pra quem a Meta rejeitou).
-    if (eventoAtual && sucesso.length > 0) {
-        const vinculos = sucesso.map(r => ({ evento_id: eventoAtual.id, pessoaIdentificador: r.pessoaIdentificador, origem: 'crm' }));
-        await window.supabaseClient
-            .from(typeof NOME_TABELA_EVENTO_LEADS !== 'undefined' ? NOME_TABELA_EVENTO_LEADS : 'evento_leads')
-            .upsert(vinculos, { onConflict: 'evento_id,pessoaIdentificador', ignoreDuplicates: true });
+    // um "convidado" fantasma pra quem a Meta rejeitou). 2 modos: UM
+    // evento só pra TODO o lote (`eventoAtual`, fluxo normal de
+    // "Convidar API" — 1 evento escolhido vale pra todo mundo) OU 1
+    // evento POR LEAD (`l.eventoId`, usado pelo "Disparo Inteligente do
+    // Dia" quando o mesmo motivo/bucket junta filiais com datas/eventos
+    // diferentes — ver enviarGrupoPrioridadeInteligente()).
+    if (sucesso.length > 0) {
+        const vinculos = sucesso
+            .map(r => ({ evento_id: eventoAtual ? eventoAtual.id : r.eventoId, pessoaIdentificador: r.pessoaIdentificador, origem: 'crm' }))
+            .filter(v => v.evento_id);
+        if (vinculos.length > 0) {
+            await window.supabaseClient
+                .from(typeof NOME_TABELA_EVENTO_LEADS !== 'undefined' ? NOME_TABELA_EVENTO_LEADS : 'evento_leads')
+                .upsert(vinculos, { onConflict: 'evento_id,pessoaIdentificador', ignoreDuplicates: true });
+        }
     }
 
     if (typeof registrarLogAtividade === 'function' && (sucesso.length > 0 || falha.length > 0)) {
+        const nomesEventos = eventoAtual ? [eventoAtual.nome] : [...new Set(sucesso.map(r => r.eventoNome).filter(Boolean))];
         registrarLogAtividade('convite_whatsapp_api_lote', {
             pessoaIds: sucesso.map(r => r.pessoaIdentificador),
-            detalhes: { template: tpl.label, evento: eventoAtual ? eventoAtual.nome : null, enviados: sucesso.length, falhas: falha.length },
+            detalhes: { template: tpl.label, evento: nomesEventos.length > 0 ? nomesEventos.join(', ') : null, enviados: sucesso.length, falhas: falha.length },
         });
     }
 
@@ -3512,20 +3522,29 @@ function fecharModalConviteJanelaAberta() {
 // manual; um futuro disparo por cronjob usaria o mesmo cálculo sem a
 // etapa de ajuste manual.
 //
-// Camada 1 (grátis — só tags + proximidade de evento, SEM IA nenhuma):
-// é o que está implementado agora. Camada 2 (reaproveitar resumo_ia já
-// existente, se ainda "fresco") e Camada 3 (ler a conversa de verdade
-// por IA pros top-da-fila, registrando o resumo sozinho) ficam como
-// próximo incremento natural — ver CLAUDE.md.
+// 3 camadas, da mais barata pra mais cara: Camada 1 (grátis — tags +
+// proximidade de evento, pontuarCandidatoPrioridade()); Camada 2 (grátis
+// — reaproveita resumo_ia já existente se ainda "fresco", pula quem não
+// precisa de leitura nova); Camada 3 (custa IA — lê a conversa de
+// verdade via priorizar-convite-ia, registrando o resumo sozinho, só pra
+// quem a Camada 2 não resolveu). Quem a Camada 3 excluir é REPOSTO
+// automaticamente por quem está na fila de reserva (RESERVA_PRIORIDADE),
+// reanalisado em LOTE (nunca 1 por 1) — ver
+// analisarGrupoComIaPrioridade()/analisarLoteComIaPrioridade().
 //
 // Reaproveita 100% o envio real de "Convidar (API)"
-// (confirmarEnviarConviteApiLote()) — cada grupo (filial × tipo de
-// necessidade × evento) popula as MESMAS variáveis globais que aquele
-// fluxo já espera, em vez de duplicar a lógica de envio/relatório/log/
-// mover pra Abordagem.
+// (confirmarEnviarConviteApiLote()) — a fila é organizada por MOTIVO
+// (bucket: Abertura de Turma/Aula Inaugural/Lembrete), agregando TODAS
+// as filiais que precisam do mesmo motivo hoje num único grupo — 1 só
+// template/"Analisar com IA"/"Enviar" pra todo mundo daquele motivo
+// (pedido do usuário, 2026-10-08: "não é necessário criar três modelos,
+// três telas, três botões... já pressupõe que será tudo igual"). Cada
+// candidato carrega seu PRÓPRIO evento/filial, então o envio continua
+// resolvendo nome do evento/data corretos por lead mesmo vindo de
+// filiais/datas diferentes dentro do mesmo motivo.
 // ==========================================================
 let convitePrioridadeConfig = [];
-let convitePrioridadeGrupos = [];
+let convitePrioridadeBuckets = [];
 
 const LABELS_BUCKET_PRIORIDADE = {
     abertura: 'Convidar pra Abertura de Turma',
@@ -3615,6 +3634,16 @@ function pontuarCandidatoPrioridade(tags, diasAteEvento) {
     return pontos;
 }
 
+// Pedido do usuário (2026-10-08): "ele deve excluir alguém quando der
+// incompatibilidade [a IA], e deve puxar o próximo da fila... imagino
+// que já deva ter uma fila em segundo plano de mais umas 10 ou 15
+// pessoas". Cada grupo busca sempre `limite + RESERVA_PRIORIDADE`
+// candidatos (mesma query, sem custo extra nenhum — já estava trazendo a
+// base inteira da filial) e devolve os excedentes como `reserva`, pronta
+// pra REPOR quem a Camada 3 (IA) excluir depois — ver
+// analisarGrupoComIaPrioridade().
+const RESERVA_PRIORIDADE = 15;
+
 // Monta 1 grupo "ainda não inscrito no evento X" pra 1 filial — busca
 // quem JÁ tem qualquer vínculo em evento_leads (nunca convidar de novo,
 // mesmo quem já recusou — isso já é coberto pelo filtro inteligente, mas
@@ -3651,9 +3680,19 @@ async function montarGrupoNaoInscritoPrioridade(filial, bucket, evento, limite, 
 
     const { validos, excluidos } = await filtrarExclusaoInteligenteWpp(pool.map(p => p.pessoaIdentificador), { excluir30Dias });
     const setValidos = new Set(validos.map(String));
-    const final = pool.filter(p => setValidos.has(String(p.pessoaIdentificador))).sort((a, b) => b.score - a.score).slice(0, limite);
+    // Cada candidato carrega sua PRÓPRIA filial/evento (não só o grupo) —
+    // necessário pra agregar por MOTIVO (bucket) entre várias filiais ao
+    // mesmo tempo, já que cada uma tem seu próprio evento/data (ver
+    // montarFilaPrioridadeInteligente()). Corta em `limite +
+    // RESERVA_PRIORIDADE` — os primeiros `limite` viram candidatos reais,
+    // o excedente vira `reserva` (fila de reposição pra Camada 3/IA).
+    const comInfo = pool.filter(p => setValidos.has(String(p.pessoaIdentificador))).sort((a, b) => b.score - a.score)
+        .slice(0, limite + RESERVA_PRIORIDADE)
+        .map(c => ({ ...c, filial, eventoId: evento.id, eventoNome: evento.nome, eventoData: evento.data }));
+    const final = comInfo.slice(0, limite);
+    const reserva = comInfo.slice(limite);
 
-    return { filial, bucket, eventoId: evento.id, eventoNome: evento.nome, eventoData: evento.data, candidatos: final, excluidos };
+    return { filial, bucket, eventoId: evento.id, eventoNome: evento.nome, eventoData: evento.data, candidatos: final, reserva, excluidos };
 }
 
 // Monta o grupo "lembrete" — quem já confirmou presença num evento
@@ -3662,16 +3701,16 @@ async function montarGrupoNaoInscritoPrioridade(filial, bucket, evento, limite, 
 // deliberada — se a filial tiver 2+ eventos próximos com gente
 // confirmada ao mesmo tempo, só o mais próximo entra nesta rodada).
 async function montarGrupoLembretePrioridade(filial, eventosProximos, limite, excluir30Dias) {
-    if (eventosProximos.length === 0) return { filial, bucket: 'lembrete', eventoId: null, eventoNome: null, eventoData: null, candidatos: [], excluidos: [] };
+    if (eventosProximos.length === 0) return { filial, bucket: 'lembrete', eventoId: null, eventoNome: null, eventoData: null, candidatos: [], reserva: [], excluidos: [] };
     const eventoIds = eventosProximos.map(e => e.id);
 
     const { data: confirmados } = await window.supabaseClient.from('evento_leads')
         .select('pessoaIdentificador, evento_id').in('evento_id', eventoIds).eq('resposta_convite', 'confirmado');
-    if (!confirmados || confirmados.length === 0) return { filial, bucket: 'lembrete', eventoId: null, eventoNome: null, eventoData: null, candidatos: [], excluidos: [] };
+    if (!confirmados || confirmados.length === 0) return { filial, bucket: 'lembrete', eventoId: null, eventoNome: null, eventoData: null, candidatos: [], reserva: [], excluidos: [] };
 
     const eventoAlvoId = eventoIds[0]; // eventosProximos já vem ordenado por data asc
     const idsCandidatos = [...new Set(confirmados.filter(c => c.evento_id === eventoAlvoId).map(c => String(c.pessoaIdentificador)))];
-    if (idsCandidatos.length === 0) return { filial, bucket: 'lembrete', eventoId: null, eventoNome: null, eventoData: null, candidatos: [], excluidos: [] };
+    if (idsCandidatos.length === 0) return { filial, bucket: 'lembrete', eventoId: null, eventoNome: null, eventoData: null, candidatos: [], reserva: [], excluidos: [] };
 
     const { data: leadsInfo } = await window.supabaseClient.from(NOME_TABELA).select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero').in('pessoaIdentificador', idsCandidatos);
     const mapaLeads = new Map((leadsInfo || []).map(l => [String(l.pessoaIdentificador), l]));
@@ -3683,20 +3722,56 @@ async function montarGrupoLembretePrioridade(filial, eventosProximos, limite, ex
 
     const { validos, excluidos } = await filtrarExclusaoInteligenteWpp(pool.map(p => p.pessoaIdentificador), { excluir30Dias });
     const setValidos = new Set(validos.map(String));
-    const final = pool.filter(p => setValidos.has(String(p.pessoaIdentificador))).slice(0, limite);
-
     const eventoInfo = eventosProximos.find(e => e.id === eventoAlvoId);
-    return { filial, bucket: 'lembrete', eventoId: eventoAlvoId, eventoNome: eventoInfo ? eventoInfo.nome : null, eventoData: eventoInfo ? eventoInfo.data : null, candidatos: final, excluidos };
+    const comInfo = pool.filter(p => setValidos.has(String(p.pessoaIdentificador))).slice(0, limite + RESERVA_PRIORIDADE)
+        .map(c => ({ ...c, filial, eventoId: eventoAlvoId, eventoNome: eventoInfo ? eventoInfo.nome : null, eventoData: eventoInfo ? eventoInfo.data : null }));
+    const final = comInfo.slice(0, limite);
+    const reserva = comInfo.slice(limite);
+
+    return { filial, bucket: 'lembrete', eventoId: eventoAlvoId, eventoNome: eventoInfo ? eventoInfo.nome : null, eventoData: eventoInfo ? eventoInfo.data : null, candidatos: final, reserva, excluidos };
+}
+
+// Ordem fixa dos motivos (buckets), do mais urgente pro menos.
+const ORDEM_BUCKETS_PRIORIDADE = ['abertura', 'aula_inaugural', 'lembrete'];
+
+// Template padrão por motivo — pedido do usuário (2026-10-08): "o
+// disparo inteligente também deveria ter visto que temos abertura de
+// turma em 3 unidades hoje... e já propor envio de convite para a
+// abertura de turma", em vez de sempre abrir no 1º template da lista
+// (genérico demais) e exigir escolher manualmente toda vez. "abertura"/
+// "aula_inaugural" são convite pra um evento futuro -> "Convite para
+// evento" (convite_palestra) encaixa bem; "lembrete" não tem um
+// template dedicado aprovado ainda, cai no 1º automatizável disponível.
+function templatePadraoParaBucket(bucket) {
+    if (bucket === 'abertura' || bucket === 'aula_inaugural') {
+        const idx = TEMPLATES_WHATSAPP.findIndex(t => t.nome === 'convite_palestra' && templatePrioridadeEAutomatizavel(t));
+        if (idx >= 0) return idx;
+    }
+    const idxSeguro = TEMPLATES_WHATSAPP.findIndex(t => templatePrioridadeEAutomatizavel(t));
+    return idxSeguro >= 0 ? idxSeguro : 0;
 }
 
 // Monta a fila completa — pra CADA filial configurada, aloca sua cota
 // NESTA ORDEM: Abertura de Turma > Aula Inaugural > Lembrete (a cota só
-// "desce" pro próximo balde se sobrar depois do anterior).
+// "desce" pro próximo balde se sobrar depois do anterior). Pedido do
+// usuário (2026-10-08): "não é necessário criar três modelos, três
+// telas, três botões... o disparo inteligente já pressupõe que será
+// tudo igual para todos os [leads do dia]" — em vez de 1 card por
+// (filial × motivo), as filiais são AGREGADAS por MOTIVO (bucket): 1 só
+// template/"Analisar com IA"/"Enviar" pra TODAS as filiais que
+// precisarem do MESMO tipo de convite hoje (ex: 3 filiais com Abertura
+// de Turma viram 1 card só, "Convidar pra Abertura de Turma", com todos
+// os 240 leads juntos). Cada candidato carrega sua PRÓPRIA filial/evento
+// (ver montarGrupoNaoInscritoPrioridade()/montarGrupoLembretePrioridade()),
+// então o envio continua resolvendo nome do evento/data corretos por
+// lead, mesmo vindo de filiais/datas diferentes dentro do mesmo motivo.
 async function montarFilaPrioridadeInteligente() {
     const hojeISO = new Date().toISOString().slice(0, 10);
     const checkExcluir30Dias = document.getElementById('prioridadeExcluir30DiasCheck');
     const excluir30Dias = !checkExcluir30Dias || checkExcluir30Dias.checked;
-    const grupos = [];
+    const candidatosPorBucket = { abertura: [], aula_inaugural: [], lembrete: [] };
+    const excluidosPorBucket = { abertura: [], aula_inaugural: [], lembrete: [] };
+    const reservaPorBucket = { abertura: [], aula_inaugural: [], lembrete: [] };
 
     for (const cfg of convitePrioridadeConfig) {
         if (!cfg.cota || cfg.cota <= 0) continue;
@@ -3717,19 +3792,44 @@ async function montarFilaPrioridadeInteligente() {
 
         if (cotaRestante > 0 && eventoAbertura) {
             const g = await montarGrupoNaoInscritoPrioridade(cfg.filial, 'abertura', eventoAbertura, cotaRestante, excluir30Dias);
-            if (g.candidatos.length > 0) { grupos.push(g); cotaRestante -= g.candidatos.length; }
+            if (g.candidatos.length > 0) {
+                candidatosPorBucket.abertura.push(...g.candidatos);
+                excluidosPorBucket.abertura.push(...g.excluidos);
+                reservaPorBucket.abertura.push(...(g.reserva || []));
+                cotaRestante -= g.candidatos.length;
+            }
         }
         if (cotaRestante > 0 && eventoAula) {
             const g = await montarGrupoNaoInscritoPrioridade(cfg.filial, 'aula_inaugural', eventoAula, cotaRestante, excluir30Dias);
-            if (g.candidatos.length > 0) { grupos.push(g); cotaRestante -= g.candidatos.length; }
+            if (g.candidatos.length > 0) {
+                candidatosPorBucket.aula_inaugural.push(...g.candidatos);
+                excluidosPorBucket.aula_inaugural.push(...g.excluidos);
+                reservaPorBucket.aula_inaugural.push(...(g.reserva || []));
+                cotaRestante -= g.candidatos.length;
+            }
         }
         if (cotaRestante > 0) {
             const g = await montarGrupoLembretePrioridade(cfg.filial, eventosProximos10Dias, cotaRestante, excluir30Dias);
-            if (g.candidatos.length > 0) { grupos.push(g); cotaRestante -= g.candidatos.length; }
+            if (g.candidatos.length > 0) {
+                candidatosPorBucket.lembrete.push(...g.candidatos);
+                excluidosPorBucket.lembrete.push(...g.excluidos);
+                reservaPorBucket.lembrete.push(...(g.reserva || []));
+                cotaRestante -= g.candidatos.length;
+            }
         }
     }
 
-    convitePrioridadeGrupos = grupos.map(g => ({ ...g, templateIndice: 0 }));
+    convitePrioridadeBuckets = ORDEM_BUCKETS_PRIORIDADE
+        .filter(bucket => candidatosPorBucket[bucket].length > 0)
+        .map(bucket => ({
+            bucket,
+            candidatos: candidatosPorBucket[bucket],
+            reserva: reservaPorBucket[bucket],
+            excluidos: excluidosPorBucket[bucket],
+            templateIndice: templatePadraoParaBucket(bucket),
+            analisadoIa: false,
+            excluidosIa: [],
+        }));
     renderizarFilaPrioridadeInteligente();
 }
 
@@ -3751,12 +3851,32 @@ function templatePrioridadeEAutomatizavel(tpl) {
 
 // Última linha de defesa (além do filtro acima) — confere se os params
 // dos campos MANUAIS (chave:null) realmente saíram preenchidos antes de
-// disparar de verdade (ex: grupo sem eventoNome/eventoData por algum
-// motivo inesperado). Nunca deveria disparar com o filtro de template já
-// em vigor, mas é barato conferir antes de gastar uma chamada de API que
-// a Meta rejeitaria de qualquer forma.
-function paramsManuaisPrioridadeOk(tpl, params) {
-    return tpl.variaveis.every((v, i) => v.chave !== null || (params[i] && String(params[i]).trim() !== ''));
+// disparar de verdade. Confere TODAS as linhas (não só a 1ª) — um bucket
+// agora agrega filiais com eventos DIFERENTES entre si (mesmo motivo,
+// datas distintas), então um evento sem nome/data numa filial específica
+// não é pego só olhando o 1º candidato do lote. Nunca deveria disparar
+// com o filtro de template já em vigor, mas é barato conferir antes de
+// gastar uma chamada de API que a Meta rejeitaria de qualquer forma.
+function paramsManuaisPrioridadeOk(tpl, linhas) {
+    return linhas.every(l => tpl.variaveis.every((v, i) => v.chave !== null || (l.params[i] && String(l.params[i]).trim() !== '')));
+}
+
+// Resumo "Filial (N lead(s)) · evento (data)" por filial dentro de um
+// bucket já agregado — pra deixar claro, de relance, quais unidades e
+// eventos foram juntados sob o mesmo motivo (ex: "Jardim América —
+// Novas turmas... (08/10) · 209 · Setor Oeste — Novas turmas... (08/10)
+// · 22"), sem precisar abrir "Ver quem" pra descobrir.
+function resumoFiliaisBucketPrioridade(bucket) {
+    const porFilial = new Map();
+    bucket.candidatos.forEach(c => {
+        if (!porFilial.has(c.filial)) porFilial.set(c.filial, { eventoNome: c.eventoNome, eventoData: c.eventoData, qtd: 0 });
+        porFilial.get(c.filial).qtd++;
+    });
+    return [...porFilial.entries()].map(([filial, info]) => {
+        const dataFmt = info.eventoData && typeof formatarDataCurtaEvento === 'function' ? formatarDataCurtaEvento(info.eventoData) : info.eventoData;
+        const sufixoEvento = info.eventoNome ? ` — ${escapeHTML(info.eventoNome)}${dataFmt ? ` (${escapeHTML(dataFmt)})` : ''}` : '';
+        return `${escapeHTML(filial)}${sufixoEvento} · ${info.qtd}`;
+    }).join(' &nbsp;·&nbsp; ');
 }
 
 function renderizarFilaPrioridadeInteligente() {
@@ -3764,30 +3884,30 @@ function renderizarFilaPrioridadeInteligente() {
     const etapaFila = document.getElementById('prioridadeEtapaFila');
     etapaFila.style.display = 'block';
 
-    if (convitePrioridadeGrupos.length === 0) {
+    if (convitePrioridadeBuckets.length === 0) {
         etapaFila.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Nenhum candidato encontrado pra hoje (cota zerada, ou sem evento futuro cadastrado nas filiais escolhidas).</p><button class="btn-secondary" onclick="abrirConvitePrioridadeInteligente()">Voltar</button>';
         return;
     }
 
-    const totalGeral = convitePrioridadeGrupos.reduce((s, g) => s + g.candidatos.length, 0);
+    const totalGeral = convitePrioridadeBuckets.reduce((s, b) => s + b.candidatos.length, 0);
 
     etapaFila.innerHTML = `
         <button class="btn-secondary" style="margin-bottom:10px;" onclick="abrirConvitePrioridadeInteligente()"><i class="fa-solid fa-arrow-left"></i> Voltar</button>
-        ${totalGeral > 0 ? `<button class="btn-primary" style="width:100%; margin-bottom:14px;" onclick="enviarTodosGruposPrioridadeInteligente()"><i class="fa-solid fa-paper-plane"></i> Enviar pra todas as filiais de uma vez (${totalGeral})</button>` : ''}
-        ${convitePrioridadeGrupos.map((g, i) => `
+        ${totalGeral > 0 ? `<button class="btn-primary" style="width:100%; margin-bottom:14px;" onclick="enviarTodosGruposPrioridadeInteligente()"><i class="fa-solid fa-paper-plane"></i> Enviar pra todos os motivos de uma vez (${totalGeral})</button>` : ''}
+        ${convitePrioridadeBuckets.map((b, i) => `
             <div style="border:1px solid var(--border-color); border-radius:8px; padding:12px; margin-bottom:12px;">
-                <div style="font-weight:700; font-size:13px; margin-bottom:4px;">${escapeHTML(LABELS_BUCKET_PRIORIDADE[g.bucket])} — ${escapeHTML(g.filial)}</div>
-                <div style="font-size:11px; color:var(--text-muted); margin-bottom:8px;">${g.eventoNome ? escapeHTML(g.eventoNome) + ' · ' : ''}${g.candidatos.length} lead(s)${g.excluidos && g.excluidos.length ? ` · ${g.excluidos.length} excluído(s) automaticamente` : ''}</div>
-                <select id="prioridadeTemplate-${i}" style="width:100%; padding:6px; margin-bottom:8px; box-sizing:border-box;" onchange="convitePrioridadeGrupos[${i}].templateIndice = Number(this.value); atualizarPreviewCardPrioridade(${i});">
-                    ${TEMPLATES_WHATSAPP.map((t, ti) => templatePrioridadeEAutomatizavel(t) ? `<option value="${ti}" ${ti === g.templateIndice ? 'selected' : ''}>${escapeHTML(t.label)}</option>` : '').join('')}
+                <div style="font-weight:700; font-size:13px; margin-bottom:4px;">${escapeHTML(LABELS_BUCKET_PRIORIDADE[b.bucket])}</div>
+                <div style="font-size:11px; color:var(--text-muted); margin-bottom:8px;">${resumoFiliaisBucketPrioridade(b)} &nbsp;·&nbsp; <strong>${b.candidatos.length} lead(s) no total</strong>${b.excluidos && b.excluidos.length ? ` · ${b.excluidos.length} excluído(s) automaticamente` : ''}</div>
+                <select id="prioridadeTemplate-${i}" style="width:100%; padding:6px; margin-bottom:8px; box-sizing:border-box;" onchange="convitePrioridadeBuckets[${i}].templateIndice = Number(this.value); atualizarPreviewCardPrioridade(${i});">
+                    ${TEMPLATES_WHATSAPP.map((t, ti) => templatePrioridadeEAutomatizavel(t) ? `<option value="${ti}" ${ti === b.templateIndice ? 'selected' : ''}>${escapeHTML(t.label)}</option>` : '').join('')}
                 </select>
                 <div id="prioridadePreview-${i}"></div>
-                <details style="margin-bottom:8px;"><summary style="font-size:11px; cursor:pointer; color:var(--text-muted);">Ver quem (${g.candidatos.length})</summary>
-                    <div style="max-height:140px; overflow-y:auto; font-size:11px; margin-top:4px;">${g.candidatos.map(c => escapeHTML(c.nome || 'Sem nome')).join('<br>')}</div>
+                <details style="margin-bottom:8px;"><summary style="font-size:11px; cursor:pointer; color:var(--text-muted);">Ver quem (${b.candidatos.length})</summary>
+                    <div style="max-height:140px; overflow-y:auto; font-size:11px; margin-top:4px;">${b.candidatos.map(c => `${escapeHTML(c.nome || 'Sem nome')} <span style="color:var(--text-muted);">— ${escapeHTML(c.filial)}</span>`).join('<br>')}</div>
                 </details>
-                ${g.excluidosIa && g.excluidosIa.length > 0 ? `<p style="font-size:11px; color:var(--text-muted); margin-bottom:8px;"><i class="fa-solid fa-robot"></i> IA excluiu ${g.excluidosIa.length} desta campanha (sem tag permanente): <details style="margin-top:2px;"><summary style="cursor:pointer;">Ver quem e por quê</summary>${g.excluidosIa.map(e => `${escapeHTML(e.nome || 'Sem nome')} — <em>${escapeHTML(e.motivo || '')}</em>`).join('<br>')}</details></p>` : ''}
+                ${b.excluidosIa && b.excluidosIa.length > 0 ? `<p style="font-size:11px; color:var(--text-muted); margin-bottom:8px;"><i class="fa-solid fa-robot"></i> IA excluiu ${b.excluidosIa.length} desta campanha (sem tag permanente)${b.totalRepostosIa ? ` — ${b.totalRepostosIa} repost${b.totalRepostosIa === 1 ? 'o' : 'os'} automaticamente da reserva` : ''}${b.reserva && b.reserva.length > 0 ? `, ${b.reserva.length} ainda na reserva` : b.reserva ? ', reserva esgotada' : ''}: <details style="margin-top:2px;"><summary style="cursor:pointer;">Ver quem e por quê</summary>${b.excluidosIa.map(e => `${escapeHTML(e.nome || 'Sem nome')} — <em>${escapeHTML(e.motivo || '')}</em>`).join('<br>')}</details></p>` : ''}
                 <div style="display:flex; gap:8px;">
-                    ${!g.analisadoIa ? `<button id="prioridadeBtnIa-${i}" class="btn-secondary" style="font-size:12px;" onclick="analisarGrupoComIaPrioridade(${i})"><i class="fa-solid fa-wand-magic-sparkles"></i> Analisar com IA</button>` : `<span style="font-size:11px; color:var(--text-muted); align-self:center;"><i class="fa-solid fa-circle-check"></i> Já analisado por IA</span>`}
+                    ${!b.analisadoIa ? `<button id="prioridadeBtnIa-${i}" class="btn-secondary" style="font-size:12px;" onclick="analisarGrupoComIaPrioridade(${i})"><i class="fa-solid fa-wand-magic-sparkles"></i> Analisar com IA</button>` : `<span style="font-size:11px; color:var(--text-muted); align-self:center;"><i class="fa-solid fa-circle-check"></i> Já analisado por IA</span>`}
                     <button class="btn-secondary" style="font-size:12px; flex:1;" onclick="enviarGrupoPrioridadeInteligente(${i})"><i class="fa-solid fa-paper-plane"></i> Enviar só esta (${g.candidatos.length})</button>
                 </div>
             </div>
@@ -3797,38 +3917,38 @@ function renderizarFilaPrioridadeInteligente() {
     // Preview de cada card é async (pode precisar buscar o lead de
     // exemplo no banco) — dispara todas sem esperar, cada uma escreve no
     // seu próprio <div>, sem travar a renderização da lista inteira.
-    convitePrioridadeGrupos.forEach((g, i) => { if (g.candidatos.length > 0) atualizarPreviewCardPrioridade(i); });
+    convitePrioridadeBuckets.forEach((b, i) => { if (b.candidatos.length > 0) atualizarPreviewCardPrioridade(i); });
 }
 
 // Mostra um MODELO REAL de como a mensagem vai chegar — pedido do
 // usuário depois de ver a tela sem nenhuma prévia do texto, só o nome do
 // template ("seria bom mostrar um modelo da mensagem, para garantir").
-// Usa o 1º candidato do grupo como exemplo (nome/filial reais) e
-// reaproveita a MESMA resolução de variáveis automáticas já usada no
-// envio de verdade (preencherValorAutomatico()/
-// valorAutomaticoCampoManualConviteApi()) — nunca mostra um texto
-// fictício, é exatamente o que vai sair.
+// Usa o 1º candidato do bucket como exemplo (nome/filial/evento PRÓPRIOS
+// dele, já que um bucket agrega filiais diferentes) e reaproveita a
+// MESMA resolução de variáveis automáticas já usada no envio de verdade
+// (preencherValorAutomatico()/valorAutomaticoCampoManualConviteApi()) —
+// nunca mostra um texto fictício, é exatamente o que vai sair.
 async function atualizarPreviewCardPrioridade(indice) {
-    const g = convitePrioridadeGrupos[indice];
+    const b = convitePrioridadeBuckets[indice];
     const previewEl = document.getElementById(`prioridadePreview-${indice}`);
-    if (!g || !previewEl) return;
-    const tpl = TEMPLATES_WHATSAPP[g.templateIndice];
-    if (!tpl || g.candidatos.length === 0) { previewEl.innerHTML = ''; return; }
+    if (!b || !previewEl) return;
+    const tpl = TEMPLATES_WHATSAPP[b.templateIndice];
+    if (!tpl || b.candidatos.length === 0) { previewEl.innerHTML = ''; return; }
 
     previewEl.innerHTML = '<p style="font-size:11px; color:var(--text-muted); margin-bottom:8px;"><i class="fa-solid fa-spinner fa-spin"></i> Montando modelo da mensagem...</p>';
 
-    const exemplo = g.candidatos[0];
+    const exemplo = b.candidatos[0];
     if (!leadsAtuais.some(l => String(l.pessoaIdentificador) === String(exemplo.pessoaIdentificador))) {
         const { data } = await window.supabaseClient.from(NOME_TABELA).select('*').eq('pessoaIdentificador', exemplo.pessoaIdentificador).maybeSingle();
         if (data) leadsAtuais = [...leadsAtuais, data];
     }
 
-    // Confere se o grupo/template ainda é o mesmo (o usuário pode ter
+    // Confere se o bucket/template ainda é o mesmo (o usuário pode ter
     // trocado de template de novo enquanto esta busca rodava).
-    const gAtual = convitePrioridadeGrupos[indice];
-    if (!gAtual || gAtual.templateIndice !== g.templateIndice) return;
+    const bAtual = convitePrioridadeBuckets[indice];
+    if (!bAtual || bAtual.templateIndice !== b.templateIndice) return;
 
-    const eventoInfoParaManual = g.eventoId ? { id: g.eventoId, nome: g.eventoNome, data: g.eventoData } : null;
+    const eventoInfoParaManual = exemplo.eventoId ? { id: exemplo.eventoId, nome: exemplo.eventoNome, data: exemplo.eventoData } : null;
     const params = tpl.variaveis.map(v => v.chave === null
         ? valorAutomaticoCampoManualConviteApi(v.papel, eventoInfoParaManual)
         : (preencherValorAutomatico(v.chave, exemplo.pessoaIdentificador) || ''));
@@ -3837,7 +3957,7 @@ async function atualizarPreviewCardPrioridade(indice) {
     if (!document.getElementById(`prioridadePreview-${indice}`)) return; // card pode ter sido removido/re-renderizado nesse meio tempo
     previewEl.innerHTML = `
         <div style="background:#eef7ee; border:1px solid var(--border-color); border-radius:8px; padding:8px 10px; font-size:12px; white-space:pre-wrap; margin-bottom:8px;">
-            <div style="font-size:10px; color:var(--text-muted); margin-bottom:4px; font-weight:600;"><i class="fa-solid fa-eye"></i> Modelo real da mensagem (exemplo: ${escapeHTML(exemplo.nome || 'lead')}):</div>
+            <div style="font-size:10px; color:var(--text-muted); margin-bottom:4px; font-weight:600;"><i class="fa-solid fa-eye"></i> Modelo real da mensagem (exemplo: ${escapeHTML(exemplo.nome || 'lead')} — ${escapeHTML(exemplo.filial || '')}):</div>
             ${escapeHTML(texto).replace(/\n/g, '<br>')}
         </div>
     `;
@@ -3850,14 +3970,15 @@ async function atualizarPreviewCardPrioridade(indice) {
 // estamos pagando pela leitura) e, quando acha sinal claro de recusa/
 // opt-out, tira o lead SÓ desta campanha (decisão confirmada com o
 // usuário: nunca aplica tag permanente sozinha).
-async function analisarGrupoComIaPrioridade(indice) {
-    const g = convitePrioridadeGrupos[indice];
-    if (!g || g.candidatos.length === 0) return;
-
-    const btn = document.getElementById(`prioridadeBtnIa-${indice}`);
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Lendo conversas...'; }
-
-    const ids = g.candidatos.map(c => String(c.pessoaIdentificador));
+//
+// Roda Camada 2+3 sobre UM LOTE específico de candidatos (não o bucket
+// inteiro) — devolve os que a IA mandou excluir desse lote (ids), e
+// ACUMULA o motivo em `acumuladorExcluidosIa` (array passado por
+// referência). Extraída pra ser reaproveitada tanto na 1ª leitura quanto
+// nas rodadas de REPOSIÇÃO (ver analisarGrupoComIaPrioridade() abaixo).
+async function analisarLoteComIaPrioridade(lote, acumuladorExcluidosIa) {
+    if (lote.length === 0) return [];
+    const ids = lote.map(c => String(c.pessoaIdentificador));
     const [{ data: leadsInfo }, { data: conversas }] = await Promise.all([
         window.supabaseClient.from(NOME_TABELA).select('pessoaIdentificador, resumo_ia_atualizado_em').in('pessoaIdentificador', ids),
         window.supabaseClient.from('vw_wpp_conversas').select('"pessoaIdentificador", ultima_mensagem_em').in('pessoaIdentificador', ids),
@@ -3865,42 +3986,83 @@ async function analisarGrupoComIaPrioridade(indice) {
     const mapaResumo = new Map((leadsInfo || []).map(l => [String(l.pessoaIdentificador), l.resumo_ia_atualizado_em]));
     const mapaConversa = new Map((conversas || []).map(c => [String(c.pessoaIdentificador), c.ultima_mensagem_em]));
 
-    const precisamLeitura = g.candidatos.filter(c => {
+    const precisamLeitura = lote.filter(c => {
         const ultimaMsg = mapaConversa.get(String(c.pessoaIdentificador));
         if (!ultimaMsg) return false; // sem conversa nenhuma — nada pra ler, não custa nada
         const resumoEm = mapaResumo.get(String(c.pessoaIdentificador));
         return !resumoEm || new Date(resumoEm) < new Date(ultimaMsg);
     });
-
-    if (precisamLeitura.length === 0) {
-        g.analisadoIa = true;
-        renderizarFilaPrioridadeInteligente();
-        return;
-    }
+    if (precisamLeitura.length === 0) return [];
 
     const { data, error } = await window.supabaseClient.functions.invoke('priorizar-convite-ia', {
-        body: { candidatos: precisamLeitura.map(c => ({ pessoaIdentificador: c.pessoaIdentificador, nome: c.nome, eventoNome: g.eventoNome })) },
+        body: { candidatos: precisamLeitura.map(c => ({ pessoaIdentificador: c.pessoaIdentificador, nome: c.nome, eventoNome: c.eventoNome })) },
     });
-
     if (error || !data || data.ok === false) {
+        throw new Error((data && data.erro) || (error && error.message) || 'desconhecido');
+    }
+
+    const idsExcluidos = [];
+    (data.resultados || []).forEach(r => {
+        if (r.avaliado && r.excluirDestaCampanha) {
+            idsExcluidos.push(String(r.pessoaIdentificador));
+            const candidato = lote.find(c => String(c.pessoaIdentificador) === String(r.pessoaIdentificador));
+            acumuladorExcluidosIa.push({ nome: candidato ? candidato.nome : r.pessoaIdentificador, motivo: r.motivo });
+        }
+    });
+    return idsExcluidos;
+}
+
+// Pedido do usuário (2026-10-08): "ele deve excluir alguém quando der
+// incompatibilidade, e deve puxar o próximo da fila, e rodar novamente a
+// leitura com IA para saber se ele serve... rodar a leitura com as 10 ou
+// 15 (se rodar de uma em uma perdemos tempo)". Loop: analisa o bucket
+// inteiro; pra cada exclusão, puxa UMA REPOSIÇÃO da `reserva` (já
+// buscada/pontuada/filtrada junto com os candidatos originais — ver
+// RESERVA_PRIORIDADE), e roda a Camada 2+3 de novo só NOS RECÉM-PUXADOS
+// (nunca reanalisa quem já passou), em LOTE (todos os repostos da rodada
+// de uma vez, não um por um). Repete até não sobrar exclusão nenhuma
+// nesta rodada, ou a reserva acabar, com um teto de segurança de rodadas
+// pra nunca rodar pra sempre.
+const MAX_RODADAS_REPOSICAO_IA = 6;
+async function analisarGrupoComIaPrioridade(indice) {
+    const b = convitePrioridadeBuckets[indice];
+    if (!b || b.candidatos.length === 0) return;
+
+    const btn = document.getElementById(`prioridadeBtnIa-${indice}`);
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Lendo conversas...'; }
+
+    let candidatosAtuais = b.candidatos.slice();
+    let reserva = (b.reserva || []).slice();
+    const excluidosIaTotal = (b.excluidosIa || []).slice();
+    let totalRepostos = 0;
+
+    try {
+        let lote = candidatosAtuais;
+        for (let rodada = 0; rodada < MAX_RODADAS_REPOSICAO_IA; rodada++) {
+            const idsExcluidos = await analisarLoteComIaPrioridade(lote, excluidosIaTotal);
+            if (idsExcluidos.length === 0) break; // ninguém excluído nesta rodada — terminou
+            const setExcl = new Set(idsExcluidos);
+            candidatosAtuais = candidatosAtuais.filter(c => !setExcl.has(String(c.pessoaIdentificador)));
+            if (reserva.length === 0) break; // sem mais reserva pra repor
+
+            const reposicao = reserva.slice(0, idsExcluidos.length);
+            reserva = reserva.slice(idsExcluidos.length);
+            candidatosAtuais = candidatosAtuais.concat(reposicao);
+            totalRepostos += reposicao.length;
+            if (btn) btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Repondo ${reposicao.length} da reserva e reanalisando...`;
+            lote = reposicao; // próxima rodada só analisa quem é NOVO
+        }
+    } catch (e) {
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Erro — tentar de novo'; }
-        alert('Erro ao analisar com IA: ' + ((data && data.erro) || (error && error.message) || 'desconhecido'));
+        alert('Erro ao analisar com IA: ' + e.message);
         return;
     }
 
-    const setExcluidos = new Set();
-    const excluidosIa = [];
-    (data.resultados || []).forEach(r => {
-        if (r.avaliado && r.excluirDestaCampanha) {
-            setExcluidos.add(String(r.pessoaIdentificador));
-            const candidato = g.candidatos.find(c => String(c.pessoaIdentificador) === String(r.pessoaIdentificador));
-            excluidosIa.push({ nome: candidato ? candidato.nome : r.pessoaIdentificador, motivo: r.motivo });
-        }
-    });
-
-    g.candidatos = g.candidatos.filter(c => !setExcluidos.has(String(c.pessoaIdentificador)));
-    g.excluidosIa = excluidosIa;
-    g.analisadoIa = true;
+    b.candidatos = candidatosAtuais;
+    b.reserva = reserva;
+    b.excluidosIa = excluidosIaTotal;
+    b.totalRepostosIa = (b.totalRepostosIa || 0) + totalRepostos;
+    b.analisadoIa = true;
     renderizarFilaPrioridadeInteligente();
 }
 
@@ -3909,41 +4071,52 @@ async function analisarGrupoComIaPrioridade(indice) {
 // globais que aquele fluxo já espera (conviteApiPreviaAtual/
 // conviteApiEventoAtual) e abre o MESMO modal de revisão, já na etapa
 // "revisar antes de enviar" — nunca duplica a lógica de envio/relatório/
-// log/mover-pra-Abordagem. Pensado pra revisar/enviar 1 filial de cada
-// vez — pra mandar pra TODAS de uma vez só, ver
+// log/mover-pra-Abordagem. Envia pra TODAS as filiais deste MOTIVO de
+// uma vez (não é mais 1 filial por vez) — cada candidato já carrega seu
+// PRÓPRIO evento (ver montarGrupoNaoInscritoPrioridade()), então
+// `conviteApiEventoAtual` fica `null` (sem evento único pro lote
+// inteiro) e enviarTemplateApiLote() vincula evento_leads por LINHA. Pra
+// mandar TODOS os motivos de uma vez só, ver
 // enviarTodosGruposPrioridadeInteligente() abaixo.
 async function enviarGrupoPrioridadeInteligente(indice) {
-    const g = convitePrioridadeGrupos[indice];
-    const tpl = TEMPLATES_WHATSAPP[g.templateIndice];
-    if (!tpl || g.candidatos.length === 0) return;
+    const b = convitePrioridadeBuckets[indice];
+    const tpl = TEMPLATES_WHATSAPP[b.templateIndice];
+    if (!tpl || b.candidatos.length === 0) return;
 
-    const idsFaltando = g.candidatos.map(c => String(c.pessoaIdentificador)).filter(id => !leadsAtuais.some(l => String(l.pessoaIdentificador) === id));
+    const idsFaltando = b.candidatos.map(c => String(c.pessoaIdentificador)).filter(id => !leadsAtuais.some(l => String(l.pessoaIdentificador) === id));
     if (idsFaltando.length > 0) {
         const { data } = await window.supabaseClient.from(NOME_TABELA).select('*').in('pessoaIdentificador', idsFaltando);
         if (data && data.length > 0) leadsAtuais = [...leadsAtuais, ...data];
     }
 
-    // Campos "manuais" do template (chave:null, ex: evento/data) também
-    // precisam ser resolvidos a partir do evento do grupo — bug real: a
-    // 1ª versão deixava sempre em branco, mesmo quando o template exigia
-    // "evento (com artigo)"/"data" (ver atualizarTemplateConviteApi(),
-    // mesma lógica usada no fluxo normal de "Convidar API").
-    const eventoInfoParaManual = g.eventoId ? { id: g.eventoId, nome: g.eventoNome, data: g.eventoData } : null;
-    const linhas = g.candidatos.map(c => ({
-        pessoaIdentificador: c.pessoaIdentificador,
-        nome: c.nome || 'Sem nome',
-        params: tpl.variaveis.map(v => v.chave === null
-            ? valorAutomaticoCampoManualConviteApi(v.papel, eventoInfoParaManual)
-            : (preencherValorAutomatico(v.chave, c.pessoaIdentificador) || '')),
-    }));
-
-    if (!paramsManuaisPrioridadeOk(tpl, linhas[0].params)) {
-        alert(`Não dá pra enviar "${tpl.label}" aqui — falta um dado do evento (${escapeHTML(g.filial)}). Escolha outro template ou confira se o evento tem nome/data cadastrados na Agenda.`);
+    // Campos "manuais" do template (chave:null, ex: evento/data) são
+    // resolvidos a partir do evento de CADA candidato (não 1 só pro
+    // bucket inteiro — filiais diferentes no mesmo motivo podem ter
+    // datas diferentes).
+    const todasLinhas = b.candidatos.map(c => {
+        const eventoInfoParaManual = c.eventoId ? { id: c.eventoId, nome: c.eventoNome, data: c.eventoData } : null;
+        return {
+            pessoaIdentificador: c.pessoaIdentificador,
+            nome: c.nome || 'Sem nome',
+            eventoId: c.eventoId,
+            eventoNome: c.eventoNome,
+            params: tpl.variaveis.map(v => v.chave === null
+                ? valorAutomaticoCampoManualConviteApi(v.papel, eventoInfoParaManual)
+                : (preencherValorAutomatico(v.chave, c.pessoaIdentificador) || '')),
+        };
+    });
+    // Checagem POR LEAD (não mais por grupo inteiro) — um bucket junta
+    // filiais com eventos diferentes, então só o candidato específico
+    // sem dado do evento é descartado, nunca a fila inteira.
+    const linhas = todasLinhas.filter(l => paramsManuaisPrioridadeOk(tpl, [l]));
+    const puladas = todasLinhas.length - linhas.length;
+    if (linhas.length === 0) {
+        alert(`Não dá pra enviar "${tpl.label}" aqui — falta um dado do evento em todos os candidatos. Escolha outro template ou confira se o evento tem nome/data cadastrados na Agenda.`);
         return;
     }
 
-    conviteApiPreviaAtual = { templateIndice: g.templateIndice, linhas };
-    conviteApiEventoAtual = g.eventoId ? { id: g.eventoId, nome: g.eventoNome } : null;
+    conviteApiPreviaAtual = { templateIndice: b.templateIndice, linhas };
+    conviteApiEventoAtual = null;
 
     fecharModalConvitePrioridade();
     document.getElementById('modalConviteLoteApi').classList.add('open');
@@ -3953,7 +4126,7 @@ async function enviarGrupoPrioridadeInteligente(indice) {
     const previaEl = document.getElementById('conviteApiPrevia');
     previaEl.style.display = 'block';
     previaEl.innerHTML = `
-        <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">Vai enviar <strong>"${escapeHTML(tpl.label)}"</strong> pra ${linhas.length} lead(s) de verdade, pela API (${escapeHTML(LABELS_BUCKET_PRIORIDADE[g.bucket])} — ${escapeHTML(g.filial)}).</p>
+        <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">Vai enviar <strong>"${escapeHTML(tpl.label)}"</strong> pra ${linhas.length} lead(s) de verdade, pela API (${escapeHTML(LABELS_BUCKET_PRIORIDADE[b.bucket])}: ${resumoFiliaisBucketPrioridade(b)})${puladas > 0 ? ` — ${puladas} pulado(s) por falta de dado do evento` : ''}.</p>
         <div style="background:#eef7ee; border:1px solid var(--border-color); border-radius:8px; padding:8px 10px; font-size:12px; white-space:pre-wrap; margin-bottom:8px;">
             <div style="font-size:10px; color:var(--text-muted); margin-bottom:4px; font-weight:600;"><i class="fa-solid fa-eye"></i> Modelo real (exemplo: ${escapeHTML(linhas[0].nome)}):</div>
             ${escapeHTML(montarPreviewTemplate(tpl, linhas[0].params)).replace(/\n/g, '<br>')}
@@ -3965,94 +4138,97 @@ async function enviarGrupoPrioridadeInteligente(indice) {
     `;
 }
 
-// Pedido do usuário: 1 clique só pra disparar pra TODAS as filiais/
-// grupos da fila de uma vez, em vez de abrir o modal de revisão 1 por 1.
-// Reaproveita o MESMO enviarTemplateApiLote() usado por
+// Pedido do usuário: 1 clique só pra disparar pra TODOS os motivos
+// (buckets) da fila de uma vez, em vez de abrir o modal de revisão 1 por
+// 1. Reaproveita o MESMO enviarTemplateApiLote() usado por
 // confirmarEnviarConviteApiLote() (texto aprovado, lotes pequenos,
 // pausa entre lotes, evento_leads/log_atividade/mover pra Abordagem) —
-// só roda uma vez por grupo, em sequência (nunca em paralelo — mesma
+// só roda uma vez por bucket, em sequência (nunca em paralelo — mesma
 // cautela já documentada sobre rajada de envio disparando auditoria da
-// Meta), acumulando 1 relatório final com todos os grupos juntos.
+// Meta), acumulando 1 relatório final com todos os motivos juntos.
 async function enviarTodosGruposPrioridadeInteligente() {
-    const grupos = convitePrioridadeGrupos.filter(g => g.candidatos.length > 0 && TEMPLATES_WHATSAPP[g.templateIndice]);
-    if (grupos.length === 0) return;
-    const totalGeral = grupos.reduce((s, g) => s + g.candidatos.length, 0);
-    if (!confirm(`Confirma o envio automático pra ${totalGeral} lead(s), de TODAS as ${grupos.length} fila(s) acima, via API da Meta? Essa ação não pode ser desfeita.`)) return;
+    const buckets = convitePrioridadeBuckets.filter(b => b.candidatos.length > 0 && TEMPLATES_WHATSAPP[b.templateIndice]);
+    if (buckets.length === 0) return;
+    const totalGeral = buckets.reduce((s, b) => s + b.candidatos.length, 0);
+    if (!confirm(`Confirma o envio automático pra ${totalGeral} lead(s), de TODOS os ${buckets.length} motivo(s) acima, via API da Meta? Essa ação não pode ser desfeita.`)) return;
 
     const etapaFila = document.getElementById('prioridadeEtapaFila');
-    etapaFila.innerHTML = '<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Enviando pra todas as filas de uma vez — acompanhe o progresso no canto da tela, pode fechar esta janela sem interromper o envio.</p>';
+    etapaFila.innerHTML = '<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Enviando pra todos os motivos de uma vez — acompanhe o progresso no canto da tela, pode fechar esta janela sem interromper o envio.</p>';
 
-    const idsFaltando = [...new Set(grupos.flatMap(g => g.candidatos.map(c => String(c.pessoaIdentificador))))]
+    const idsFaltando = [...new Set(buckets.flatMap(b => b.candidatos.map(c => String(c.pessoaIdentificador))))]
         .filter(id => !leadsAtuais.some(l => String(l.pessoaIdentificador) === id));
     if (idsFaltando.length > 0) {
         const { data } = await window.supabaseClient.from(NOME_TABELA).select('*').in('pessoaIdentificador', idsFaltando);
         if (data && data.length > 0) leadsAtuais = [...leadsAtuais, ...data];
     }
 
-    // Monta os params de cada grupo ANTES de enviar qualquer coisa — se
-    // algum grupo não tiver como resolver um campo manual (evento sem
-    // nome/data, por algum motivo inesperado), esse grupo é PULADO e
-    // reportado, sem travar o envio dos demais (mesma rede de segurança
-    // de enviarGrupoPrioridadeInteligente(), ver paramsManuaisPrioridadeOk()).
+    // Monta os params de cada bucket ANTES de enviar qualquer coisa —
+    // como um bucket agora pode juntar filiais com eventos diferentes, a
+    // checagem é POR LEAD (não mais por grupo inteiro): só o candidato
+    // específico sem dado do evento é pulado, os outros do mesmo motivo
+    // seguem normalmente (mesma rede de segurança de
+    // enviarGrupoPrioridadeInteligente(), ver paramsManuaisPrioridadeOk()).
     const planoEnvio = [];
-    const pulados = [];
-    for (const g of grupos) {
-        const tpl = TEMPLATES_WHATSAPP[g.templateIndice];
-        const eventoInfoParaManual = g.eventoId ? { id: g.eventoId, nome: g.eventoNome, data: g.eventoData } : null;
-        const linhas = g.candidatos.map(c => ({
-            pessoaIdentificador: c.pessoaIdentificador,
-            nome: c.nome || 'Sem nome',
-            params: tpl.variaveis.map(v => v.chave === null
-                ? valorAutomaticoCampoManualConviteApi(v.papel, eventoInfoParaManual)
-                : (preencherValorAutomatico(v.chave, c.pessoaIdentificador) || '')),
-        }));
-        if (!paramsManuaisPrioridadeOk(tpl, linhas[0].params)) {
-            pulados.push({ label: `${LABELS_BUCKET_PRIORIDADE[g.bucket]} — ${g.filial}`, motivo: 'faltou um dado do evento (nome/data)' });
-            continue;
-        }
-        planoEnvio.push({ g, tpl, linhas });
+    const puladosPorMotivo = {};
+    for (const b of buckets) {
+        const tpl = TEMPLATES_WHATSAPP[b.templateIndice];
+        const todasLinhas = b.candidatos.map(c => {
+            const eventoInfoParaManual = c.eventoId ? { id: c.eventoId, nome: c.eventoNome, data: c.eventoData } : null;
+            return {
+                pessoaIdentificador: c.pessoaIdentificador,
+                nome: c.nome || 'Sem nome',
+                eventoId: c.eventoId,
+                eventoNome: c.eventoNome,
+                params: tpl.variaveis.map(v => v.chave === null
+                    ? valorAutomaticoCampoManualConviteApi(v.papel, eventoInfoParaManual)
+                    : (preencherValorAutomatico(v.chave, c.pessoaIdentificador) || '')),
+            };
+        });
+        const linhas = todasLinhas.filter(l => paramsManuaisPrioridadeOk(tpl, [l]));
+        const puladas = todasLinhas.length - linhas.length;
+        if (puladas > 0) puladosPorMotivo[b.bucket] = (puladosPorMotivo[b.bucket] || 0) + puladas;
+        if (linhas.length > 0) planoEnvio.push({ b, tpl, linhas });
     }
 
     const totalPlanejado = planoEnvio.reduce((s, p) => s + p.linhas.length, 0);
-    // Pausa calculada pelo TOTAL agregado de todos os grupos juntos (não
-    // por grupo individual) — senão cada filial recalcularia sozinha
-    // achando que é "o disparo inteiro" e a soma de vários grupos
+    // Pausa calculada pelo TOTAL agregado de todos os motivos juntos (não
+    // por motivo individual) — senão cada bucket recalcularia sozinho
+    // achando que é "o disparo inteiro" e a soma de vários motivos
     // facilmente estouraria o teto de 1h pensado pro disparo do DIA
     // inteiro (ver comentário de enviarTemplateApiLote()).
     const pausaMs = calcularPausaEnvioMassa(totalPlanejado);
     let baseAcumulada = 0;
-    const relatorioPorGrupo = [];
+    const relatorioPorMotivo = [];
     for (let idx = 0; idx < planoEnvio.length; idx++) {
-        const { g, tpl, linhas } = planoEnvio[idx];
+        const { b, tpl, linhas } = planoEnvio[idx];
         const base = baseAcumulada;
         const { sucesso, falha } = await enviarTemplateApiLote(tpl, linhas, {
-            eventoAtual: g.eventoId ? { id: g.eventoId, nome: g.eventoNome } : null,
             pausaMs,
             onProgresso: (atualGrupo) => atualizarProgressoEnvioMassa('prioridadeTodos', { titulo: 'Disparo Inteligente do Dia', atual: base + atualGrupo, total: totalPlanejado }),
         });
         baseAcumulada += linhas.length;
-        relatorioPorGrupo.push({ label: `${LABELS_BUCKET_PRIORIDADE[g.bucket]} — ${g.filial}`, sucesso: sucesso.length, falha: falha.length });
-        // Pausa também na TRANSIÇÃO entre grupos (senão o último envio de
-        // 1 filial e o 1º da próxima saem sem respiro nenhum entre si,
+        relatorioPorMotivo.push({ label: LABELS_BUCKET_PRIORIDADE[b.bucket], sucesso: sucesso.length, falha: falha.length });
+        // Pausa também na TRANSIÇÃO entre motivos (senão o último envio de
+        // 1 motivo e o 1º do próximo saem sem respiro nenhum entre si,
         // já que o loop interno de enviarTemplateApiLote() só pausa ENTRE
-        // itens do MESMO grupo).
+        // itens do MESMO motivo).
         if (idx < planoEnvio.length - 1) await pausarWpp(pausaMs);
     }
     if (totalPlanejado > 0) atualizarProgressoEnvioMassa('prioridadeTodos', { titulo: 'Disparo Inteligente do Dia', atual: totalPlanejado, total: totalPlanejado, concluido: true });
 
     etapaFila.innerHTML = `
-        <p style="font-size:13px; margin-bottom:8px;"><strong>Envio concluído pra todas as filas.</strong></p>
+        <p style="font-size:13px; margin-bottom:8px;"><strong>Envio concluído pra todos os motivos.</strong></p>
         <div style="border:1px solid var(--border-color); border-radius:6px; padding:8px; margin-bottom:12px;">
-            ${relatorioPorGrupo.map(r => `
+            ${relatorioPorMotivo.map(r => `
                 <div style="display:flex; justify-content:space-between; gap:8px; padding:5px 0; font-size:12px; border-bottom:1px dashed var(--border-color);">
                     <span>${escapeHTML(r.label)}</span>
                     <span>${r.sucesso} enviado(s)${r.falha > 0 ? `, <span style="color:#991b1b;">${r.falha} falhou(aram)</span>` : ''}</span>
                 </div>
             `).join('')}
-            ${pulados.map(p => `
+            ${Object.entries(puladosPorMotivo).map(([bucket, qtd]) => `
                 <div style="display:flex; justify-content:space-between; gap:8px; padding:5px 0; font-size:12px; border-bottom:1px dashed var(--border-color);">
-                    <span>${escapeHTML(p.label)}</span>
-                    <span style="color:#991b1b;"><i class="fa-solid fa-triangle-exclamation"></i> Pulado — ${escapeHTML(p.motivo)}</span>
+                    <span>${escapeHTML(LABELS_BUCKET_PRIORIDADE[bucket])}</span>
+                    <span style="color:#991b1b;"><i class="fa-solid fa-triangle-exclamation"></i> ${qtd} pulado(s) — faltou um dado do evento</span>
                 </div>
             `).join('')}
         </div>
