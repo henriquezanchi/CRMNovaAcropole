@@ -4003,7 +4003,7 @@ function renderizarFilaPrioridadeInteligente() {
                 ${b.excluidosIa && b.excluidosIa.length > 0 ? `<p style="font-size:11px; color:var(--text-muted); margin-bottom:8px;"><i class="fa-solid fa-robot"></i> IA excluiu ${b.excluidosIa.length} desta campanha (sem tag permanente)${b.totalRepostosIa ? ` — ${b.totalRepostosIa} repost${b.totalRepostosIa === 1 ? 'o' : 'os'} automaticamente da reserva` : ''}${b.reserva && b.reserva.length > 0 ? `, ${b.reserva.length} ainda na reserva` : b.reserva ? ', reserva esgotada' : ''}: <details style="margin-top:2px;"><summary style="cursor:pointer;">Ver quem e por quê</summary>${b.excluidosIa.map(e => `${escapeHTML(e.nome || 'Sem nome')} — <em>${escapeHTML(e.motivo || '')}</em>`).join('<br>')}</details></p>` : ''}
                 <div style="display:flex; gap:8px;">
                     ${!b.analisadoIa ? `<button id="prioridadeBtnIa-${i}" class="btn-secondary" style="font-size:12px;" onclick="analisarGrupoComIaPrioridade(${i})"><i class="fa-solid fa-wand-magic-sparkles"></i> Analisar com IA</button>` : `<span style="font-size:11px; color:var(--text-muted); align-self:center;"><i class="fa-solid fa-circle-check"></i> Já analisado por IA</span>`}
-                    <button class="btn-secondary" style="font-size:12px; flex:1;" onclick="enviarGrupoPrioridadeInteligente(${i})"><i class="fa-solid fa-paper-plane"></i> Enviar só esta (${g.candidatos.length})</button>
+                    <button class="btn-secondary" style="font-size:12px; flex:1;" onclick="enviarGrupoPrioridadeInteligente(${i})"><i class="fa-solid fa-paper-plane"></i> Enviar só esta (${b.candidatos.length})</button>
                 </div>
             </div>
         `).join('')}
