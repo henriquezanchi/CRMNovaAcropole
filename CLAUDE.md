@@ -9177,6 +9177,30 @@ Kanban aparecia com 0 leads.
     (`valor_fixo_mensal_agencia` em `filiais`, editável em "Gerenciar
     Filiais", somado ao total desta tela) — não construído ainda, só
     documentado como gap real.
+  - **Testado ao vivo pelo próprio usuário** (print real, mesmo dia) —
+    confirmado funcionando contra produção, com 1 ajuste de bug pequeno
+    corrigido nesta mesma sessão (linha `let [ano, mes]` virou
+    `[anoRotulo, mesRotulo]` dentro de `rotuloMes()` só pra evitar um
+    falso-positivo do linter — sem mudança de comportamento).
+  - **"Valor fixo de cada escola" + "ativador de comissões" — construído
+    (2026-10-08, pedido direto do usuário vendo a tela nova)**: 2 colunas
+    novas em `filiais` (`migracao_filial_cobranca.sql`):
+    - `valor_fixo_mensal_agencia` (numeric, nullable) — taxa FIXA mensal
+      que a agência cobra da escola pelo serviço (independente de
+      matrícula nova), editável em "Gerenciar Filiais"
+      (`atualizarValorFixoFilial()`), somada à comissão no "Total a
+      Cobrar" da tela. **Ainda sem valores preenchidos** — o usuário
+      preenche os números reais pela própria tela, não adivinhado aqui.
+    - `cobra_comissao` (boolean, default `true`) — o "ativador de
+      comissões": desligar (`atualizarCobraComissaoFilial()`) NUNCA
+      esconde a filial do relatório (matrículas/receita continuam
+      calculados normalmente, pra não perder visibilidade do trabalho
+      real) — só tira ela do "Total a Cobrar" e marca a linha com badge
+      "Não cobrada" (opacidade reduzida). **Já ligado `false` pra "Barra
+      do Garças/MT"** nesta própria migração, a pedido explícito do
+      usuário ("está sendo trabalhada, mas não será cobrada").
+    - Tabela ganhou 2 colunas (Valor Fixo, Total a Cobrar) + export CSV
+      atualizado com as mesmas colunas + "Cobra Comissão? Sim/Não".
   - **Não testado clicando pela UI** (sem Playwright neste ambiente,
     limitação de sempre) — confirmar na próxima sessão de uso real.
 

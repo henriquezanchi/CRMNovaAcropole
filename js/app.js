@@ -2392,10 +2392,14 @@ async function renderizarListaFiliaisModal() {
                 <label class="col-tag-option" style="white-space:nowrap;" title="Padrão pra esta filial no WhatsApp Unificado — pode ser desligado individualmente por conversa">
                     <input type="checkbox" ${f.ia_sugestao_resposta_habilitada !== false ? 'checked' : ''} onchange="atualizarIaSugestaoFilial(${f.id}, this.checked)"> Sugestão de IA no WhatsApp
                 </label>
+                <label class="col-tag-option" style="white-space:nowrap;" title="Desligado = filial em fase de teste/trabalho que ainda não entra na cobrança oficial (ex: Barra do Garças/MT) — continua aparecendo no relatório pra visibilidade, só sai do TOTAL a cobrar">
+                    <input type="checkbox" ${f.cobra_comissao !== false ? 'checked' : ''} onchange="atualizarCobraComissaoFilial(${f.id}, this.checked)"> Cobra comissão/valor fixo
+                </label>
             </div>
             <input type="text" value="${escapeHTML(f.nome_com_preposicao || '')}" placeholder="Como falar dela naturalmente (ex: do Jardim América, de Barra do Garças)" onchange="atualizarPreposicaoFilial(${f.id}, this.value)">
             <input type="text" value="${escapeHTML(f.whatsapp_chefe_numero || '')}" placeholder="WhatsApp do chefe de filial (E.164, ex: 5562991234567) — aviso de aniversário e resumo de lead" onchange="atualizarWhatsappChefeFilial(${f.id}, this.value)">
-            <input type="number" step="0.01" min="0" value="${f.valor_mensalidade != null ? f.valor_mensalidade : ''}" placeholder="Valor da mensalidade (R$) — base do relatório de receita/comissão" onchange="atualizarValorMensalidadeFilial(${f.id}, this.value)">
+            <input type="number" step="0.01" min="0" value="${f.valor_mensalidade != null ? f.valor_mensalidade : ''}" placeholder="Valor da mensalidade do ALUNO (R$) — base do cálculo de comissão de 30%" onchange="atualizarValorMensalidadeFilial(${f.id}, this.value)">
+            <input type="number" step="0.01" min="0" value="${f.valor_fixo_mensal_agencia != null ? f.valor_fixo_mensal_agencia : ''}" placeholder="Valor FIXO mensal que a agência cobra desta escola (R$) — somado à comissão no total a cobrar" onchange="atualizarValorFixoFilial(${f.id}, this.value)">
             <input type="text" value="${escapeHTML(f.endereco || '')}" placeholder="Endereço completo — aparece na gaveta de qualquer lead desta filial" onchange="atualizarEnderecoFilial(${f.id}, this.value)">
         </div>
     `).join('');
@@ -2453,6 +2457,25 @@ async function atualizarWhatsappChefeFilial(id, novoValor) {
 async function atualizarValorMensalidadeFilial(id, novoValor) {
     const numero = novoValor.trim() === '' ? null : parseFloat(novoValor.replace(',', '.'));
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ valor_mensalidade: (numero === null || isNaN(numero)) ? null : numero }).eq('id', id);
+    if (error) alert('Erro ao salvar: ' + error.message);
+}
+
+// Taxa FIXA mensal que a agência cobra da escola (independente de
+// matrícula nova) — diferente de valor_mensalidade (do aluno). Somada à
+// comissão de 30% no total a cobrar da tela "Comissão do SDR — Todas as
+// Filiais". Ver migracao_filial_cobranca.sql.
+async function atualizarValorFixoFilial(id, novoValor) {
+    const numero = novoValor.trim() === '' ? null : parseFloat(novoValor.replace(',', '.'));
+    const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ valor_fixo_mensal_agencia: (numero === null || isNaN(numero)) ? null : numero }).eq('id', id);
+    if (error) alert('Erro ao salvar: ' + error.message);
+}
+
+// "Ativador de comissões" — filial em teste/trabalho que ainda não entra
+// na cobrança oficial (ex: Barra do Garças/MT). Desligar NUNCA some com
+// o dado do relatório (matrículas/receita continuam calculados), só tira
+// a filial do TOTAL a cobrar. Ver migracao_filial_cobranca.sql.
+async function atualizarCobraComissaoFilial(id, cobra) {
+    const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ cobra_comissao: cobra }).eq('id', id);
     if (error) alert('Erro ao salvar: ' + error.message);
 }
 
@@ -3546,16 +3569,24 @@ async function renderizarComissaoSdrTodasFiliais() {
         const valorMensalidade = f.valor_mensalidade != null ? Number(f.valor_mensalidade) : null;
         const receita = valorMensalidade != null ? qtd * valorMensalidade : null;
         const comissao = receita != null ? receita * 0.30 : null;
-        return { nome: f.nome, qtd, valorMensalidade, receita, comissao };
+        const valorFixo = f.valor_fixo_mensal_agencia != null ? Number(f.valor_fixo_mensal_agencia) : null;
+        const cobraComissao = f.cobra_comissao !== false; // "ativador de comissões" — default true, ver migracao_filial_cobranca.sql
+        const totalCobrar = cobraComissao ? (comissao || 0) + (valorFixo || 0) : 0;
+        return { nome: f.nome, qtd, valorMensalidade, receita, comissao, valorFixo, cobraComissao, totalCobrar };
     }));
 
     const formatarReal = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
     const totalQtd = resultados.reduce((s, r) => s + r.qtd, 0);
+    // Totais de receita/comissão continuam somando TODO MUNDO (é informativo,
+    // reflete o trabalho real feito) — só o "Total a Cobrar" abaixo respeita
+    // o ativador de comissões por filial.
     const totalReceita = resultados.reduce((s, r) => s + (r.receita || 0), 0);
     const totalComissao = resultados.reduce((s, r) => s + (r.comissao || 0), 0);
+    const totalValorFixo = resultados.reduce((s, r) => s + (r.cobraComissao ? (r.valorFixo || 0) : 0), 0);
+    const totalACobrar = resultados.reduce((s, r) => s + r.totalCobrar, 0);
     const algumSemValor = resultados.some(r => r.valorMensalidade == null && r.qtd > 0);
 
-    ultimoResultadoComissaoSdr = { mes: mesSelecionadoComissaoSdr, rotulo: rotuloMes(mesSelecionadoComissaoSdr), resultados, totalQtd, totalReceita, totalComissao };
+    ultimoResultadoComissaoSdr = { mes: mesSelecionadoComissaoSdr, rotulo: rotuloMes(mesSelecionadoComissaoSdr), resultados, totalQtd, totalReceita, totalComissao, totalValorFixo, totalACobrar };
 
     container.innerHTML = `
         <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px; flex-wrap:wrap;">
@@ -3566,15 +3597,17 @@ async function renderizarComissaoSdrTodasFiliais() {
             <button class="btn-secondary" style="font-size:11px; padding:6px 10px;" onclick="exportarComissaoSdrCSV()"><i class="fa-solid fa-file-csv"></i> Exportar CSV</button>
         </div>
         <table class="tabela-relatorio">
-            <thead><tr><th>Filial</th><th>Matrículas</th><th>Mensalidade</th><th>Receita (1º mês)</th><th>Comissão SDR (30%)</th></tr></thead>
+            <thead><tr><th>Filial</th><th>Matrículas</th><th>Mensalidade</th><th>Receita (1º mês)</th><th>Comissão SDR (30%)</th><th>Valor Fixo</th><th>Total a Cobrar</th></tr></thead>
             <tbody>
                 ${resultados.map(r => `
-                    <tr class="${r.nome === filialAtual ? 'linha-filial-atual' : ''}">
-                        <td>${escapeHTML(r.nome)}</td>
+                    <tr class="${r.nome === filialAtual ? 'linha-filial-atual' : ''}" style="${r.cobraComissao ? '' : 'opacity:0.55;'}">
+                        <td>${escapeHTML(r.nome)} ${r.cobraComissao ? '' : '<span class="tag tag-warning" style="font-size:10px;" title="Ativador de comissões desligado em Gerenciar Filiais — não entra no total a cobrar">Não cobrada</span>'}</td>
                         <td>${r.qtd}</td>
                         <td>${r.valorMensalidade != null ? formatarReal(r.valorMensalidade) : '—'}</td>
                         <td>${r.receita != null ? formatarReal(r.receita) : '—'}</td>
-                        <td><strong>${r.comissao != null ? formatarReal(r.comissao) : '—'}</strong></td>
+                        <td>${r.comissao != null ? formatarReal(r.comissao) : '—'}</td>
+                        <td>${r.valorFixo != null ? formatarReal(r.valorFixo) : '—'}</td>
+                        <td><strong>${formatarReal(r.totalCobrar)}</strong></td>
                     </tr>
                 `).join('')}
             </tbody>
@@ -3585,11 +3618,14 @@ async function renderizarComissaoSdrTodasFiliais() {
                     <td></td>
                     <td>${formatarReal(totalReceita)}</td>
                     <td>${formatarReal(totalComissao)}</td>
+                    <td>${formatarReal(totalValorFixo)}</td>
+                    <td>${formatarReal(totalACobrar)}</td>
                 </tr>
             </tfoot>
         </table>
         ${algumSemValor ? '<p style="font-size:11px; color:var(--text-muted); margin-top:8px;"><i class="fa-solid fa-circle-info"></i> Filial com matrícula mas sem valor de mensalidade configurado fica de fora do total de receita/comissão — configure em "Gerenciar Filiais".</p>' : ''}
-        <p style="font-size:11px; color:var(--text-muted); margin-top:8px;"><i class="fa-solid fa-circle-info"></i> Baseado em <code>data_matricula</code> (busca direta no banco) — não depende de em qual coluna do Kanban o lead está hoje. Ver aviso na seção "Matrículas por Mês" sobre a diferença entre os dois.</p>
+        <p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> "Total a Cobrar" = comissão (30%) + valor fixo mensal, só pra filiais com o "ativador de comissões" ligado (Gerenciar Filiais) — filial "Não cobrada" continua mostrando matrículas/receita reais, só não entra nesse total.</p>
+        <p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> Baseado em <code>data_matricula</code> (busca direta no banco) — não depende de em qual coluna do Kanban o lead está hoje. Ver aviso na seção "Matrículas por Mês" sobre a diferença entre os dois.</p>
     `;
 }
 
@@ -3598,17 +3634,20 @@ function exportarComissaoSdrCSV() {
         alert('Aguarde o relatório de Comissão do SDR carregar antes de exportar.');
         return;
     }
-    const { rotulo, resultados, totalQtd, totalReceita, totalComissao } = ultimoResultadoComissaoSdr;
-    const cabecalho = ['Filial', 'Mês', 'Matrículas', 'Mensalidade', 'Receita (1º mês)', 'Comissão SDR (30%)'];
+    const { rotulo, resultados, totalQtd, totalReceita, totalComissao, totalValorFixo, totalACobrar } = ultimoResultadoComissaoSdr;
+    const cabecalho = ['Filial', 'Mês', 'Matrículas', 'Mensalidade', 'Receita (1º mês)', 'Comissão SDR (30%)', 'Valor Fixo', 'Cobra Comissão?', 'Total a Cobrar'];
     const linhas = resultados.map(r => [
         r.nome,
         rotulo,
         r.qtd,
         r.valorMensalidade != null ? r.valorMensalidade.toFixed(2) : '',
         r.receita != null ? r.receita.toFixed(2) : '',
-        r.comissao != null ? r.comissao.toFixed(2) : ''
+        r.comissao != null ? r.comissao.toFixed(2) : '',
+        r.valorFixo != null ? r.valorFixo.toFixed(2) : '',
+        r.cobraComissao ? 'Sim' : 'Não',
+        r.totalCobrar.toFixed(2)
     ]);
-    linhas.push(['Total', rotulo, totalQtd, '', totalReceita.toFixed(2), totalComissao.toFixed(2)]);
+    linhas.push(['Total', rotulo, totalQtd, '', totalReceita.toFixed(2), totalComissao.toFixed(2), totalValorFixo.toFixed(2), '', totalACobrar.toFixed(2)]);
 
     const csv = [cabecalho, ...linhas].map(linha => linha.map(csvEscapeCampo).join(',')).join('\r\n');
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }); // BOM pro Excel abrir acentuação certa
