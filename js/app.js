@@ -3417,6 +3417,23 @@ let mesSelecionadoMatriculas = null; // "AAAA-MM" — persiste a escolha do usu�
 let mesSelecionadoComissaoSdr = null; // mesmo padrão, mas pro relatório cross-filial de comissão
 let ultimoResultadoComissaoSdr = null; // guarda o último cálculo renderizado, pra exportarComissaoSdrCSV() não precisar reconsultar o banco
 
+// Pedido do usuário (2026-10-08): pra efeito de REMUNERAÇÃO/comissão,
+// nem toda data_matricula preenchida conta como "matrícula" — só os
+// níveis PP (1º mês)/N1 (entrada)/CA (Círculo de Amigos) — NUNCA Janos
+// (JN, adolescentes) nem Merlin/TA (Távola/Correntinha, infantil), que
+// têm outro modelo comercial. "Membro" (N2-N7) só conta quando for
+// confirmadamente um REINGRESSO (tag "Recuperado", aplicada pelo scraper
+// quando confirma a reativação na tela HISTÓRICO do Mercúrio) — ninguém
+// começa fresco nesse nível (ver "BUG GRAVÍSSIMO... data_matricula" no
+// CLAUDE.md). Usado em TODOS os relatórios de matrícula/comissão, pra
+// nunca divergir entre eles.
+function contaComoMatriculaRemuneravel(tagsLead) {
+    const tags = (tagsLead || []).map(t => String(t).trim());
+    if (tags.includes('PP') || tags.includes('N1') || tags.includes('CA')) return true;
+    if (tags.includes('Membro') && tags.includes('Recuperado')) return true;
+    return false;
+}
+
 async function renderizarRelatorioMatriculasPorMes() {
     const container = document.getElementById('relatorioMatriculasPorMes');
     if (!container || !filialAtual) return;
@@ -3427,7 +3444,7 @@ async function renderizarRelatorioMatriculasPorMes() {
     while (true) {
         const { data, error } = await window.supabaseClient
             .from(NOME_TABELA)
-            .select('data_matricula')
+            .select('data_matricula, tags')
             .eq('filial', filialAtual)
             .not('data_matricula', 'is', null)
             .order('data_matricula', { ascending: true })
@@ -3438,8 +3455,12 @@ async function renderizarRelatorioMatriculasPorMes() {
         pagina++;
     }
 
+    // Só conta quem bate o critério de remuneração (ver contaComoMatriculaRemuneravel()
+    // acima) — nunca a quantidade bruta de data_matricula preenchida.
+    todos = todos.filter(l => contaComoMatriculaRemuneravel(parseTags(l.tags)));
+
     if (todos.length === 0) {
-        container.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Nenhuma matrícula registrada ainda (data_matricula vazio pra todos os leads desta filial — ver migracao_data_matricula.sql).</p>';
+        container.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Nenhuma matrícula REMUNERÁVEL registrada ainda nesta filial (PP/N1/CA, ou Membro reingressado) — ver critério em contaComoMatriculaRemuneravel().</p>';
         return;
     }
 
@@ -3558,12 +3579,35 @@ function calcularValorFixoModulo2(filial) {
     return 600;
 }
 
+// Conta matrículas REMUNERÁVEIS (ver contaComoMatriculaRemuneravel()) de
+// 1 filial num período — paginado 1000 em 1000 (mesmo padrão de sempre),
+// já que precisa ler `tags` de cada lead pra filtrar, não dá mais pra
+// usar count:'exact',head:true (que não baixa nenhuma linha).
+async function contarMatriculasRemuneraveisNoPeriodo(filial, inicio, fim) {
+    let total = 0;
+    let de = 0;
+    while (true) {
+        const { data, error } = await window.supabaseClient
+            .from(NOME_TABELA)
+            .select('tags')
+            .eq('filial', filial)
+            .gte('data_matricula', inicio)
+            .lt('data_matricula', fim)
+            .range(de, de + 999);
+        if (error || !data) break;
+        total += data.filter(l => contaComoMatriculaRemuneravel(parseTags(l.tags))).length;
+        if (data.length < 1000) break;
+        de += 1000;
+    }
+    return total;
+}
+
 // Comissão do SDR — TODAS as filiais de uma vez, no mesmo mês (pedido do
 // usuário, 2026-10-08: precisa de 1 tela só pra fechar a cobrança mensal,
 // sem trocar de filial uma a uma em "Matrículas por Mês"). Mesma base de
 // cálculo daquele relatório (data_matricula x valor_mensalidade x 30%),
-// só que agregada: 1 query de contagem por filial (count exato, head:true
-// — não baixa linha nenhuma), em paralelo.
+// só que agregada — 1 contagem por filial, em paralelo, já aplicando o
+// critério de remuneração (PP/N1/CA, ou Membro reingressado).
 async function renderizarComissaoSdrTodasFiliais() {
     const container = document.getElementById('relatorioComissaoSdrTodasFiliais');
     if (!container) return;
@@ -3606,13 +3650,11 @@ async function renderizarComissaoSdrTodasFiliais() {
     const fim = `${proximoMesData.getFullYear()}-${String(proximoMesData.getMonth() + 1).padStart(2, '0')}-01`;
 
     const resultados = await Promise.all(filiais.map(async f => {
-        const { count, error } = await window.supabaseClient
-            .from(NOME_TABELA)
-            .select('*', { count: 'exact', head: true })
-            .eq('filial', f.nome)
-            .gte('data_matricula', inicio)
-            .lt('data_matricula', fim);
-        const qtd = error ? 0 : (count || 0);
+        // Não dá mais pra usar count:'exact',head:true (não baixa linha
+        // nenhuma) — precisa ler `tags` de cada lead pra aplicar o
+        // critério de remuneração (contaComoMatriculaRemuneravel()), então
+        // vira uma busca paginada normal, só que filtrando no fim.
+        const qtd = await contarMatriculasRemuneraveisNoPeriodo(f.nome, inicio, fim);
         const valorMensalidade = f.valor_mensalidade != null ? Number(f.valor_mensalidade) : null;
         const receita = valorMensalidade != null ? qtd * valorMensalidade : null;
         const comissao = receita != null ? receita * 0.30 : null;
@@ -3676,6 +3718,7 @@ async function renderizarComissaoSdrTodasFiliais() {
         ${algumSemValor ? '<p style="font-size:11px; color:var(--text-muted); margin-top:8px;"><i class="fa-solid fa-circle-info"></i> Filial com matrícula mas sem valor de mensalidade configurado fica de fora do total de receita/comissão — configure em "Gerenciar Filiais".</p>' : ''}
         <p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> "Fixo (Módulo 2)" = faixa por quantidade de Membros (&lt;=30 R$250, &lt;=80 R$450, &gt;80 R$600) — "Membros" é manual (categoria própria do Mercúrio, atualize em Gerenciar Filiais). "Total a Cobrar" = Comissão + Fixo, só pra filiais com Módulo 2 ligado — "Não cobrada" continua mostrando matrículas/receita reais, só não entra nesse total.</p>
         <p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> Matrículas baseadas em <code>data_matricula</code> (busca direta no banco) — não dependem de em qual coluna do Kanban o lead está hoje. Ver aviso na seção "Matrículas por Mês" sobre a diferença entre os dois.</p>
+        <p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> Só conta pra remuneração: níveis PP/N1/CA, ou "Membro" quando for reingresso confirmado (tag "Recuperado") — Janos e Merlin nunca entram, têm outro modelo comercial.</p>
         <p style="font-size:11px; color:#b45309; margin-top:4px;"><i class="fa-solid fa-triangle-exclamation"></i> O scraper já está sendo ajustado pra corrigir <code>data_matricula</code> pela data real de Ingresso do Mercúrio (turma por turma, de forma automática) — antes de fechar a cobrança do mês, confirme que os números abaixo já refletem essa correção.</p>
     `;
 }
@@ -3782,14 +3825,16 @@ async function exportarComissaoSdrExcel() {
             for (;;) {
                 const { data, error } = await window.supabaseClient
                     .from(NOME_TABELA)
-                    .select('pessoaNome, data_matricula')
+                    .select('pessoaNome, data_matricula, tags')
                     .eq('filial', r.nome)
                     .gte('data_matricula', inicio)
                     .lt('data_matricula', fim)
                     .order('data_matricula', { ascending: true })
                     .range(de, de + TAMANHO_PAGINA - 1);
                 if (error) { console.warn(`[excel-comissao] Falha ao buscar matriculados de "${r.nome}":`, error.message); break; }
-                membrosFilial.push(...(data || []));
+                // Só entra quem conta pra remuneração (PP/N1/CA, ou Membro
+                // reingressado) — mesmo critério de contaComoMatriculaRemuneravel().
+                membrosFilial.push(...(data || []).filter(l => contaComoMatriculaRemuneravel(parseTags(l.tags))));
                 if (!data || data.length < TAMANHO_PAGINA) break;
                 de += TAMANHO_PAGINA;
             }
