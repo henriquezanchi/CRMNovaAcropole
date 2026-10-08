@@ -2383,23 +2383,24 @@ async function renderizarListaFiliaisModal() {
     filiaisModalCache = data || [];
     container.innerHTML = filiaisModalCache.map((f, i) => `
         <div class="coluna-row" data-idx="${i}" draggable="true" ondragstart="iniciarArrastoLista(event, '${f.id}')" ondragend="this.style.opacity='1'" ondragover="event.preventDefault()" ondrop="soltarNaLista(event, 'filiais', '${f.id}')" style="flex-direction:column; align-items:stretch; gap:8px;">
-            <div style="display:flex; align-items:center; gap:8px;">
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                 <i class="fa-solid fa-grip-vertical" style="color:var(--text-muted); cursor:grab;" title="Arraste pra reordenar"></i>
-                <input type="text" value="${escapeHTML(f.nome)}" onchange="atualizarNomeFilial(${f.id}, this.value)" style="flex:1;">
+                <input type="text" value="${escapeHTML(f.nome)}" onchange="atualizarNomeFilial(${f.id}, this.value)" style="flex:1; min-width:160px;">
                 <label class="col-tag-option" style="white-space:nowrap;">
                     <input type="checkbox" ${f.ativo ? 'checked' : ''} onchange="atualizarAtivoFilial(${f.id}, this.checked)"> Ativa
                 </label>
                 <label class="col-tag-option" style="white-space:nowrap;" title="Padrão pra esta filial no WhatsApp Unificado — pode ser desligado individualmente por conversa">
-                    <input type="checkbox" ${f.ia_sugestao_resposta_habilitada !== false ? 'checked' : ''} onchange="atualizarIaSugestaoFilial(${f.id}, this.checked)"> Sugestão de IA no WhatsApp
+                    <input type="checkbox" ${f.ia_sugestao_resposta_habilitada !== false ? 'checked' : ''} onchange="atualizarIaSugestaoFilial(${f.id}, this.checked)"> Sugestão de IA
                 </label>
                 <label class="col-tag-option" style="white-space:nowrap;" title="Desligado = filial em fase de teste/trabalho que ainda não entra na cobrança oficial (ex: Barra do Garças/MT) — continua aparecendo no relatório pra visibilidade, só sai do TOTAL a cobrar">
-                    <input type="checkbox" ${f.cobra_comissao !== false ? 'checked' : ''} onchange="atualizarCobraComissaoFilial(${f.id}, this.checked)"> Cobra comissão/valor fixo
+                    <input type="checkbox" ${f.modulo2_contratado !== false ? 'checked' : ''} onchange="atualizarModulo2ContratadoFilial(${f.id}, this.checked)"> Módulo 2 (SDR)
                 </label>
             </div>
             <input type="text" value="${escapeHTML(f.nome_com_preposicao || '')}" placeholder="Como falar dela naturalmente (ex: do Jardim América, de Barra do Garças)" onchange="atualizarPreposicaoFilial(${f.id}, this.value)">
             <input type="text" value="${escapeHTML(f.whatsapp_chefe_numero || '')}" placeholder="WhatsApp do chefe de filial (E.164, ex: 5562991234567) — aviso de aniversário e resumo de lead" onchange="atualizarWhatsappChefeFilial(${f.id}, this.value)">
             <input type="number" step="0.01" min="0" value="${f.valor_mensalidade != null ? f.valor_mensalidade : ''}" placeholder="Valor da mensalidade do ALUNO (R$) — base do cálculo de comissão de 30%" onchange="atualizarValorMensalidadeFilial(${f.id}, this.value)">
-            <input type="number" step="0.01" min="0" value="${f.valor_fixo_mensal_agencia != null ? f.valor_fixo_mensal_agencia : ''}" placeholder="Valor FIXO mensal que a agência cobra desta escola (R$) — somado à comissão no total a cobrar" onchange="atualizarValorFixoFilial(${f.id}, this.value)">
+            <input type="number" step="1" min="0" value="${f.membros != null ? f.membros : ''}" placeholder="Quantidade de MEMBROS (categoria própria do Mercúrio — atualize periodicamente) — define a faixa do Fixo do Módulo 2" onchange="atualizarMembrosFilial(${f.id}, this.value)">
+            <input type="number" step="0.01" min="0" value="${f.valor_fixo_mensal_agencia != null ? f.valor_fixo_mensal_agencia : ''}" placeholder="Ajuste manual do Valor Fixo (R$) — se preenchido, SUBSTITUI o cálculo automático pela faixa de membros" onchange="atualizarValorFixoFilial(${f.id}, this.value)">
             <input type="text" value="${escapeHTML(f.endereco || '')}" placeholder="Endereço completo — aparece na gaveta de qualquer lead desta filial" onchange="atualizarEnderecoFilial(${f.id}, this.value)">
         </div>
     `).join('');
@@ -2470,12 +2471,25 @@ async function atualizarValorFixoFilial(id, novoValor) {
     if (error) alert('Erro ao salvar: ' + error.message);
 }
 
-// "Ativador de comissões" — filial em teste/trabalho que ainda não entra
-// na cobrança oficial (ex: Barra do Garças/MT). Desligar NUNCA some com
-// o dado do relatório (matrículas/receita continuam calculados), só tira
-// a filial do TOTAL a cobrar. Ver migracao_filial_cobranca.sql.
-async function atualizarCobraComissaoFilial(id, cobra) {
-    const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ cobra_comissao: cobra }).eq('id', id);
+// Módulo 2 (Máquina/SDR) contratado? — filial em teste/trabalho que
+// ainda não entra na cobrança oficial (ex: Barra do Garças/MT). Desligar
+// NUNCA some com o dado do relatório (matrículas/receita continuam
+// calculados), só tira a filial do TOTAL a cobrar e do Fixo/Sucesso.
+// Ver migracao_filial_pricing_proposta.sql (renomeado de cobra_comissao).
+async function atualizarModulo2ContratadoFilial(id, contratado) {
+    const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ modulo2_contratado: contratado }).eq('id', id);
+    if (error) alert('Erro ao salvar: ' + error.message);
+}
+
+// Quantidade de MEMBROS — categoria própria do Mercúrio (menu "Membros",
+// NÃO é o mesmo que a tag "Ativo" nem "Ativo+Membro" do CRM, testado e
+// confirmado diferente) — manual, atualizado periodicamente pelo
+// usuário a partir do Mercúrio. Base da faixa de preço do Fixo do Módulo
+// 2: <=30 => R$250, <=80 => R$450, >80 => R$600. Ver
+// migracao_filial_pricing_proposta.sql.
+async function atualizarMembrosFilial(id, novoValor) {
+    const numero = novoValor.trim() === '' ? null : parseInt(novoValor, 10);
+    const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ membros: (numero === null || isNaN(numero)) ? null : numero }).eq('id', id);
     if (error) alert('Erro ao salvar: ' + error.message);
 }
 
@@ -3511,6 +3525,21 @@ async function renderizarRelatorioMatriculasPorMes() {
     `;
 }
 
+// Faixa de preço do Fixo mensal do Módulo 2 (Máquina/SDR), por
+// quantidade de MEMBROS (filiais.membros — categoria própria do
+// Mercúrio, manual, ver migracao_filial_pricing_proposta.sql). Testado
+// contra a planilha real do usuário: Jardim América 252 membros =>
+// R$600; Garavelo 25 => R$250; Setor Oeste 45 => R$450; Goiânia II 31
+// => R$450 — bateu exato nos 4 casos.
+function calcularValorFixoModulo2(filial) {
+    if (filial.valor_fixo_mensal_agencia != null) return Number(filial.valor_fixo_mensal_agencia); // override manual sempre vence
+    if (filial.membros == null) return null; // sem dado nenhum — não inventa valor
+    const membros = Number(filial.membros);
+    if (membros <= 30) return 250;
+    if (membros <= 80) return 450;
+    return 600;
+}
+
 // Comissão do SDR — TODAS as filiais de uma vez, no mesmo mês (pedido do
 // usuário, 2026-10-08: precisa de 1 tela só pra fechar a cobrança mensal,
 // sem trocar de filial uma a uma em "Matrículas por Mês"). Mesma base de
@@ -3569,10 +3598,10 @@ async function renderizarComissaoSdrTodasFiliais() {
         const valorMensalidade = f.valor_mensalidade != null ? Number(f.valor_mensalidade) : null;
         const receita = valorMensalidade != null ? qtd * valorMensalidade : null;
         const comissao = receita != null ? receita * 0.30 : null;
-        const valorFixo = f.valor_fixo_mensal_agencia != null ? Number(f.valor_fixo_mensal_agencia) : null;
-        const cobraComissao = f.cobra_comissao !== false; // "ativador de comissões" — default true, ver migracao_filial_cobranca.sql
+        const valorFixo = calcularValorFixoModulo2(f);
+        const cobraComissao = f.modulo2_contratado !== false; // Módulo 2 (SDR) contratado? — default true, ver migracao_filial_pricing_proposta.sql
         const totalCobrar = cobraComissao ? (comissao || 0) + (valorFixo || 0) : 0;
-        return { nome: f.nome, qtd, valorMensalidade, receita, comissao, valorFixo, cobraComissao, totalCobrar };
+        return { nome: f.nome, qtd, valorMensalidade, membros: f.membros ?? null, receita, comissao, valorFixo, cobraComissao, totalCobrar };
     }));
 
     const formatarReal = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -3597,13 +3626,14 @@ async function renderizarComissaoSdrTodasFiliais() {
             <button class="btn-secondary" style="font-size:11px; padding:6px 10px;" onclick="exportarComissaoSdrCSV()"><i class="fa-solid fa-file-csv"></i> Exportar CSV</button>
         </div>
         <table class="tabela-relatorio">
-            <thead><tr><th>Filial</th><th>Matrículas</th><th>Mensalidade</th><th>Receita (1º mês)</th><th>Comissão SDR (30%)</th><th>Valor Fixo</th><th>Total a Cobrar</th></tr></thead>
+            <thead><tr><th>Filial</th><th>Mensalidade</th><th>Membros</th><th>Matrículas</th><th>Receita (1º mês)</th><th>Comissão (30%)</th><th>Fixo (Módulo 2)</th><th>Total a Cobrar</th></tr></thead>
             <tbody>
                 ${resultados.map(r => `
                     <tr class="${r.nome === filialAtual ? 'linha-filial-atual' : ''}" style="${r.cobraComissao ? '' : 'opacity:0.55;'}">
-                        <td>${escapeHTML(r.nome)} ${r.cobraComissao ? '' : '<span class="tag tag-warning" style="font-size:10px;" title="Ativador de comissões desligado em Gerenciar Filiais — não entra no total a cobrar">Não cobrada</span>'}</td>
-                        <td>${r.qtd}</td>
+                        <td>${escapeHTML(r.nome)} ${r.cobraComissao ? '' : '<span class="tag tag-warning" style="font-size:10px;" title="Módulo 2 desligado em Gerenciar Filiais — não entra no total a cobrar">Não cobrada</span>'}</td>
                         <td>${r.valorMensalidade != null ? formatarReal(r.valorMensalidade) : '—'}</td>
+                        <td>${r.membros != null ? r.membros : '<span title="Preencha em Gerenciar Filiais pra calcular o Fixo">—</span>'}</td>
+                        <td>${r.qtd}</td>
                         <td>${r.receita != null ? formatarReal(r.receita) : '—'}</td>
                         <td>${r.comissao != null ? formatarReal(r.comissao) : '—'}</td>
                         <td>${r.valorFixo != null ? formatarReal(r.valorFixo) : '—'}</td>
@@ -3614,8 +3644,9 @@ async function renderizarComissaoSdrTodasFiliais() {
             <tfoot>
                 <tr style="font-weight:700; border-top:2px solid var(--na-green-dark);">
                     <td>Total</td>
-                    <td>${totalQtd}</td>
                     <td></td>
+                    <td></td>
+                    <td>${totalQtd}</td>
                     <td>${formatarReal(totalReceita)}</td>
                     <td>${formatarReal(totalComissao)}</td>
                     <td>${formatarReal(totalValorFixo)}</td>
@@ -3624,8 +3655,8 @@ async function renderizarComissaoSdrTodasFiliais() {
             </tfoot>
         </table>
         ${algumSemValor ? '<p style="font-size:11px; color:var(--text-muted); margin-top:8px;"><i class="fa-solid fa-circle-info"></i> Filial com matrícula mas sem valor de mensalidade configurado fica de fora do total de receita/comissão — configure em "Gerenciar Filiais".</p>' : ''}
-        <p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> "Total a Cobrar" = comissão (30%) + valor fixo mensal, só pra filiais com o "ativador de comissões" ligado (Gerenciar Filiais) — filial "Não cobrada" continua mostrando matrículas/receita reais, só não entra nesse total.</p>
-        <p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> Baseado em <code>data_matricula</code> (busca direta no banco) — não depende de em qual coluna do Kanban o lead está hoje. Ver aviso na seção "Matrículas por Mês" sobre a diferença entre os dois.</p>
+        <p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> "Fixo (Módulo 2)" = faixa por quantidade de Membros (&lt;=30 R$250, &lt;=80 R$450, &gt;80 R$600) — "Membros" é manual (categoria própria do Mercúrio, atualize em Gerenciar Filiais). "Total a Cobrar" = Comissão + Fixo, só pra filiais com Módulo 2 ligado — "Não cobrada" continua mostrando matrículas/receita reais, só não entra nesse total.</p>
+        <p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> Matrículas baseadas em <code>data_matricula</code> (busca direta no banco) — não dependem de em qual coluna do Kanban o lead está hoje. Ver aviso na seção "Matrículas por Mês" sobre a diferença entre os dois.</p>
     `;
 }
 
@@ -3635,19 +3666,20 @@ function exportarComissaoSdrCSV() {
         return;
     }
     const { rotulo, resultados, totalQtd, totalReceita, totalComissao, totalValorFixo, totalACobrar } = ultimoResultadoComissaoSdr;
-    const cabecalho = ['Filial', 'Mês', 'Matrículas', 'Mensalidade', 'Receita (1º mês)', 'Comissão SDR (30%)', 'Valor Fixo', 'Cobra Comissão?', 'Total a Cobrar'];
+    const cabecalho = ['Filial', 'Mês', 'Mensalidade', 'Membros', 'Matrículas', 'Receita (1º mês)', 'Comissão SDR (30%)', 'Fixo (Módulo 2)', 'Módulo 2 Contratado?', 'Total a Cobrar'];
     const linhas = resultados.map(r => [
         r.nome,
         rotulo,
-        r.qtd,
         r.valorMensalidade != null ? r.valorMensalidade.toFixed(2) : '',
+        r.membros != null ? r.membros : '',
+        r.qtd,
         r.receita != null ? r.receita.toFixed(2) : '',
         r.comissao != null ? r.comissao.toFixed(2) : '',
         r.valorFixo != null ? r.valorFixo.toFixed(2) : '',
         r.cobraComissao ? 'Sim' : 'Não',
         r.totalCobrar.toFixed(2)
     ]);
-    linhas.push(['Total', rotulo, totalQtd, '', totalReceita.toFixed(2), totalComissao.toFixed(2), totalValorFixo.toFixed(2), '', totalACobrar.toFixed(2)]);
+    linhas.push(['Total', rotulo, '', '', totalQtd, totalReceita.toFixed(2), totalComissao.toFixed(2), totalValorFixo.toFixed(2), '', totalACobrar.toFixed(2)]);
 
     const csv = [cabecalho, ...linhas].map(linha => linha.map(csvEscapeCampo).join(',')).join('\r\n');
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }); // BOM pro Excel abrir acentuação certa

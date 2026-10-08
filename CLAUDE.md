@@ -9204,6 +9204,101 @@ Kanban aparecia com 0 leads.
   - **Não testado clicando pela UI** (sem Playwright neste ambiente,
     limitação de sempre) — confirmar na próxima sessão de uso real.
 
+## Preço real do Módulo 2 (Máquina/SDR) — por faixa de Membros (2026-10-08)
+
+Pedido do usuário, com a proposta comercial real anexada ("Proposta
+Executiva: Agência de Captação e Gestão Digital End-to-End") e, na
+sequência, a planilha real de cobrança que já usam: **este CRM só cobre
+o Módulo 2** (Máquina/SDR — prospecção/atendimento) — o Módulo 1
+(Vitrine/redes sociais) é faturado inteiramente fora deste sistema, e
+NÃO entra na tela "Comissão do SDR".
+
+- **"Membros" ≠ "Ativo" nem "Ativo + tag Membro"** — testado e
+  confirmado diferente dos dois: a contagem real (252/25/45/31 pra
+  Jardim América/Garavelo/Setor Oeste/Goiânia II) vem de uma categoria
+  PRÓPRIA do Mercúrio (menu lateral "Membros", separado de "Ativos") que
+  ainda não scrapamos. Por isso `filiais.membros` (int, nullable,
+  `migracao_filial_pricing_proposta.sql`) é **manual** — o usuário
+  atualiza periodicamente a partir do Mercúrio/planilha própria, editável
+  em "Gerenciar Filiais" — em vez de uma heurística de tag que já se
+  mostrou imprecisa.
+- **Faixa do Fixo mensal** (`calcularValorFixoModulo2()`, `js/app.js`):
+  `<=30 membros => R$250`, `<=80 => R$450`, `>80 => R$600`. **Testado
+  contra a planilha real do usuário, bateu exato nos 4 casos**
+  (Jardim América 252→R$600, Garavelo 25→R$250, Setor Oeste 45→R$450,
+  Goiânia II 31→R$450).
+- **`cobra_comissao` renomeada pra `modulo2_contratado`** (mesma
+  migração) — mesmo campo/comportamento de antes (gate do Fixo + da
+  comissão de 30%, "ativador" por filial, Barra do Garças/MT = false),
+  só com nome mais claro do que realmente representa.
+- **`valor_fixo_mensal_agencia`** (já existia) continua como OVERRIDE
+  manual — se preenchido, substitui o cálculo automático por faixa (pra
+  contratos que fogem da tabela padrão); vazio = calculado pela faixa de
+  `membros`.
+- Tabela "Comissão do SDR — Todas as Filiais" ganhou a coluna "Membros" e
+  renomeou "Valor Fixo"→"Fixo (Módulo 2)"; CSV export acompanhou.
+
+## BUG GRAVÍSSIMO, achado pelo usuário conferindo no Mercúrio real: `data_matricula` não é a data de ingresso real (2026-10-08)
+
+Achado pelo usuário cruzando manualmente o Mercúrio: **"LEONARDO
+GONÇALVES BARIANI"** (matr. 9426, Jardim América, aluno desde
+01/07/2012, nível N2) apareceu na lista de "Matriculados em Outubro" —
+e **"RICARDO VOLPATTO"** (matr. 52796, ingresso real 12/08/2026,
+"esse entrou em agosto") também. **Confirmado: NENHUM dos 2 é uma
+matrícula de outubro de verdade.**
+
+- **Causa raiz**: `data_matricula` só é gravada automaticamente dentro de
+  `confirmarEnviarImportacao()` (`js/importador.js`) quando a importação
+  diária detecta que um lead virou `"Ativo"` pela 1ª vez NA NOSSA BASE
+  (`!estavaAtivo && agoraAtivo && !dataMatriculaFinal` → grava `hoje`) —
+  **isso mede "quando o NOSSO sistema notou essa pessoa como Ativo pela
+  1ª vez", não "quando ela realmente matriculou"**. Pra alguém que: (a)
+  é veterano mas só apareceu na nossa base recentemente por causa de uma
+  transferência de filial/erro de import histórico, ou (b) matriculou de
+  verdade há 1-2 meses mas nossa sincronização só o pegou agora (lacuna
+  de importação já documentada à exaustão neste arquivo), o resultado é
+  o MESMO: `data_matricula = hoje`, mesmo a pessoa tendo entrado há anos
+  ou meses atrás.
+- **A informação real existe e já é scrapada por outro motivo**: a tela
+  "ALTERAR INFORMAÇÕES DE TURMAS" do Mercúrio (que `processarTurmas()`,
+  `scraper/mercurio.js`, já visita pra telefone/reingresso) lista, por
+  ALUNO, a coluna **"Ingresso"** — a data real. Confirmado com print real
+  do usuário: a turma "JAM-ANUBIS-2-N1" (Jardim América) tem 20 alunos,
+  NENHUM com ingresso em outubro (datas reais entre Jan e Set/2026) —
+  mas vários deles estavam contados como "matriculados em outubro" no
+  nosso banco.
+- **Correção aplicada AGORA, pontual, pra essa 1 turma** (17 de 20 nomes
+  casados por nome normalizado + filial, 3 sem match — provável variação
+  de acento/grafia, não investigado ainda): `data_matricula` corrigida
+  pro Ingresso real via SQL direto, logado em `log_atividade`
+  (`acao='correcao_data_matricula_ingresso_real'`). Resultado: **5
+  pessoas saíram do total de outubro** (Elissandra, Lorena, Marina,
+  Oberdan, Ricardo — matricularam de Jun a Set, não Out) e **12 pessoas
+  ganharam `data_matricula` que nunca tinham antes** (nenhum efeito no
+  mês de outubro, só corrige o histórico — essas 12 nunca tinham sido
+  contadas em NENHUM mês, não só outubro).
+- **Escopo do problema, NÃO totalmente resolvido**: essa foi só 1 turma
+  (20 de ~250+ membros de Jardim América). Jardim América sozinha tinha
+  69 "matriculados em outubro" ANTES desta correção pontual — a mesma
+  classe de erro provavelmente afeta boa parte do resto (79 dos 130
+  matriculados de outubro, em TODAS as filiais, já são tag `"Membro"`
+  — nível 2+, o que por si só é MUITO suspeito pra "matrícula nova",
+  já que ninguém começa direto no nível 2). **Recomendação explícita ao
+  usuário: NÃO fechar a cobrança de outubro com os números atuais sem
+  continuar essa correção** (seja colando mais turmas, seja esperando o
+  fix definitivo do scraper abaixo).
+- **Fix definitivo, NÃO construído ainda** (próximo passo natural): fazer
+  `processarTurmas()` capturar a coluna "Ingresso" de CADA aluno (não só
+  dos candidatos a reingresso) e usar esse valor como `data_matricula`
+  SEMPRE que disponível — corrigindo/substituindo o "hoje" aproximado da
+  importação diária, não só preenchendo quando vazio. Isso só roda na
+  máquina de confiança do usuário (`C:\Scrapper`, Playwright) — não pode
+  ser testado neste ambiente.
+- **Excel de cobrança gerado antes desta descoberta** (`Comissao_SDR_Outubro2026.xlsx`)
+  **NÃO deve ser enviado como está** — os números de Jardim América (e
+  possivelmente outras filiais) ainda incluem matrículas antigas mal
+  classificadas como "outubro".
+
 ## Adequação ao Guia de Uso de Marca Nova Acrópole (2025-2026-10-07)
 
 Pedido do usuário: "dê uma olhada nesse guia de uso da marca, e adeque

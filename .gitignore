@@ -10,3 +10,4 @@ scraper/playwright-report/
 scraper/test-results/
 scraper/exports/
 scraper/debug/
+*.xlsx
