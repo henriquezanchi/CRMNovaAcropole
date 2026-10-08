@@ -3988,7 +3988,7 @@ function renderizarFilaPrioridadeInteligente() {
 
     etapaFila.innerHTML = `
         <button class="btn-secondary" style="margin-bottom:10px;" onclick="abrirConvitePrioridadeInteligente()"><i class="fa-solid fa-arrow-left"></i> Voltar</button>
-        ${totalGeral > 0 ? `<button class="btn-primary" style="width:100%; margin-bottom:14px;" onclick="enviarTodosGruposPrioridadeInteligente()"><i class="fa-solid fa-paper-plane"></i> Enviar pra todos os motivos de uma vez (${totalGeral})</button>` : ''}
+        ${totalGeral > 0 ? `<button class="btn-primary" style="width:100%; margin-bottom:14px;" onclick="enviarTodosGruposPrioridadeInteligente()"><i class="fa-solid fa-paper-plane"></i> ${convitePrioridadeBuckets.length > 1 ? `Enviar pra todos os motivos de uma vez (${totalGeral})` : `Enviar agora (${totalGeral})`}</button>` : ''}
         ${convitePrioridadeBuckets.map((b, i) => `
             <div style="border:1px solid var(--border-color); border-radius:8px; padding:12px; margin-bottom:12px;">
                 <div style="font-weight:700; font-size:13px; margin-bottom:4px;">${escapeHTML(LABELS_BUCKET_PRIORIDADE[b.bucket])}</div>
@@ -4002,8 +4002,8 @@ function renderizarFilaPrioridadeInteligente() {
                 </details>
                 ${b.excluidosIa && b.excluidosIa.length > 0 ? `<p style="font-size:11px; color:var(--text-muted); margin-bottom:8px;"><i class="fa-solid fa-robot"></i> IA excluiu ${b.excluidosIa.length} desta campanha (sem tag permanente)${b.totalRepostosIa ? ` — ${b.totalRepostosIa} repost${b.totalRepostosIa === 1 ? 'o' : 'os'} automaticamente da reserva` : ''}${b.reserva && b.reserva.length > 0 ? `, ${b.reserva.length} ainda na reserva` : b.reserva ? ', reserva esgotada' : ''}: <details style="margin-top:2px;"><summary style="cursor:pointer;">Ver quem e por quê</summary>${b.excluidosIa.map(e => `${escapeHTML(e.nome || 'Sem nome')} — <em>${escapeHTML(e.motivo || '')}</em>`).join('<br>')}</details></p>` : ''}
                 <div style="display:flex; gap:8px;">
-                    ${!b.analisadoIa ? `<button id="prioridadeBtnIa-${i}" class="btn-secondary" style="font-size:12px;" onclick="analisarGrupoComIaPrioridade(${i})"><i class="fa-solid fa-wand-magic-sparkles"></i> Analisar com IA</button>` : `<span style="font-size:11px; color:var(--text-muted); align-self:center;"><i class="fa-solid fa-circle-check"></i> Já analisado por IA</span>`}
-                    <button class="btn-secondary" style="font-size:12px; flex:1;" onclick="enviarGrupoPrioridadeInteligente(${i})"><i class="fa-solid fa-paper-plane"></i> Enviar só esta (${b.candidatos.length})</button>
+                    ${!b.analisadoIa ? `<button id="prioridadeBtnIa-${i}" class="btn-secondary" style="font-size:12px; ${convitePrioridadeBuckets.length <= 1 ? 'flex:1;' : ''}" onclick="analisarGrupoComIaPrioridade(${i})"><i class="fa-solid fa-wand-magic-sparkles"></i> Analisar com IA</button>` : `<span style="font-size:11px; color:var(--text-muted); align-self:center; ${convitePrioridadeBuckets.length <= 1 ? 'flex:1;' : ''}"><i class="fa-solid fa-circle-check"></i> Já analisado por IA</span>`}
+                    ${convitePrioridadeBuckets.length > 1 ? `<button class="btn-secondary" style="font-size:12px; flex:1;" onclick="enviarGrupoPrioridadeInteligente(${i})"><i class="fa-solid fa-paper-plane"></i> Enviar só esta (${b.candidatos.length})</button>` : ''}
                 </div>
             </div>
         `).join('')}
