@@ -9814,6 +9814,40 @@ lugar nenhum.
   II (página 1) demorou mais de 20s") depois de no máximo ~20s — isso já
   resolve o sintoma relatado ("parece que não funcionou") e também dá a
   pista exata de qual consulta investigar se persistir.
+- **CAUSA REAL encontrada na hora, graças ao próprio try/catch**: o
+  usuário testou de novo e o erro apareceu na tela — `"g is not
+  defined"` — não era lentidão nem rede, era um `ReferenceError`
+  JavaScript de verdade. Resíduo da renomeação de `convitePrioridadeGrupos`
+  (variável `g`, 1 card por filial) pra `convitePrioridadeBuckets`
+  (variável `b`, 1 card por motivo, ver seção "Fila agregada por MOTIVO"
+  acima): dentro do template do botão "Enviar só esta", em
+  `renderizarFilaPrioridadeInteligente()`, sobrou **UMA** referência à
+  variável antiga (`${g.candidatos.length}`) que o `.replace`/busca
+  global da refatoração não pegou, porque `g` nunca existia como
+  identificador solto ali — só dentro de uma template string. Isso
+  quebrava a geração do HTML do card inteiro (exception síncrona dentro
+  de `renderizarFilaPrioridadeInteligente()`, chamada no fim de
+  `montarFilaPrioridadeInteligente()`) — e ANTES do try/catch existir,
+  essa exceção some silenciosamente (nenhum "unhandled rejection" nem
+  chance de aparecer no fluxo normal), travando a tela pra sempre
+  exatamente como relatado. Corrigido (`${g.candidatos.length}` →
+  `${b.candidatos.length}`) — confirmado que não sobrou mais nenhuma
+  referência a `g.candidatos`/`g.bucket`/`g.excluidos`/etc. fora do
+  escopo correto (`grep` no arquivo inteiro).
+- **Lição**: o linter de globais do projeto
+  (`tools/lint/verificar-globais.mjs`) NÃO pegou este caso — sua
+  heurística só rastreia identificadores dentro do corpo da função de
+  NÍVEL SUPERIOR (aqui, `renderizarFilaPrioridadeInteligente`), sem
+  entender que um `.map((b, i) => ...)` aninhado introduz um escopo novo
+  com seu PRÓPRIO parâmetro (`b`) — então não reconheceu `g` como "fora
+  de escopo" nem `b` como "dentro". Vale lembrar isso na próxima
+  refatoração que renomeia uma variável usada dentro de um `.map()`/
+  callback aninhado: o linter não substitui uma revisão manual nesse
+  caso específico.
+- **Exatamente esse incidente é a prova de que o try/catch valeu a
+  pena**: sem ele, esse bug ficaria invisível pra sempre (o usuário só
+  veria "travou", sem pista nenhuma) — com ele, o erro apareceu na HORA,
+  com o nome exato da variável quebrada, resolvido no mesmo dia.
 - **Testado**: `node --check` + lint de globais (sem suspeita nova).
   **Clique real não testado** (sem Playwright neste ambiente) — validar
   na próxima sessão de uso real.
