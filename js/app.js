@@ -3174,6 +3174,7 @@ function atualizarRelatorios() {
 
     renderizarRelatorioTemasEvento();
     renderizarRelatorioMatriculasPorMes();
+    renderizarComissaoSdrTodasFiliais();
     renderizarRelatorioComparacaoFiliais();
     renderizarRelatorioJornadaBase();
     if (typeof carregarRelatoriosWhatsApp === 'function') carregarRelatoriosWhatsApp();
@@ -3376,6 +3377,8 @@ function renderizarRelatorioTemasEvento() {
 // com ORDER BY estável) — a exatidão importa mais que a velocidade aqui,
 // já que é uma métrica de negócio (não um KPI-proxy do dia a dia).
 let mesSelecionadoMatriculas = null; // "AAAA-MM" — persiste a escolha do usuário entre re-renders da mesma sessão
+let mesSelecionadoComissaoSdr = null; // mesmo padrão, mas pro relatório cross-filial de comissão
+let ultimoResultadoComissaoSdr = null; // guarda o último cálculo renderizado, pra exportarComissaoSdrCSV() não precisar reconsultar o banco
 
 async function renderizarRelatorioMatriculasPorMes() {
     const container = document.getElementById('relatorioMatriculasPorMes');
@@ -3485,10 +3488,143 @@ async function renderizarRelatorioMatriculasPorMes() {
     `;
 }
 
-// Único relatório que olha pra TODAS as filiais de uma vez (os outros são
-// escopados à filial atual, como o resto do app) — usa count exato do
-// PostgREST (head:true não baixa nenhuma linha, só o total) em vez de
-// buscar tudo pra contar no navegador.
+// Comissão do SDR — TODAS as filiais de uma vez, no mesmo mês (pedido do
+// usuário, 2026-10-08: precisa de 1 tela só pra fechar a cobrança mensal,
+// sem trocar de filial uma a uma em "Matrículas por Mês"). Mesma base de
+// cálculo daquele relatório (data_matricula x valor_mensalidade x 30%),
+// só que agregada: 1 query de contagem por filial (count exato, head:true
+// — não baixa linha nenhuma), em paralelo.
+async function renderizarComissaoSdrTodasFiliais() {
+    const container = document.getElementById('relatorioComissaoSdrTodasFiliais');
+    if (!container) return;
+    const filiais = (typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : []);
+    if (filiais.length === 0) { container.innerHTML = ''; return; }
+
+    container.innerHTML = '<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin"></i> Carregando...</p>';
+
+    // Descobre o intervalo real de meses com matrícula (global, todas as
+    // filiais) com só 2 queries de 1 linha cada — evita baixar a base
+    // inteira só pra montar a lista do <select>.
+    const [{ data: maisAntiga }, { data: maisRecente }] = await Promise.all([
+        window.supabaseClient.from(NOME_TABELA).select('data_matricula').not('data_matricula', 'is', null).order('data_matricula', { ascending: true }).limit(1),
+        window.supabaseClient.from(NOME_TABELA).select('data_matricula').not('data_matricula', 'is', null).order('data_matricula', { ascending: false }).limit(1),
+    ]);
+    if (!maisAntiga || !maisAntiga[0] || !maisRecente || !maisRecente[0]) {
+        container.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Nenhuma matrícula registrada ainda em nenhuma filial (data_matricula vazio pra todo mundo).</p>';
+        return;
+    }
+
+    const NOMES_MES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+    const rotuloMes = (m) => { const [anoRotulo, mesRotulo] = m.split('-'); return `${NOMES_MES[Number(mesRotulo) - 1]}/${anoRotulo}`; };
+
+    const mesesOrdenados = [];
+    let [ano, mes] = String(maisAntiga[0].data_matricula).slice(0, 7).split('-').map(Number);
+    const [anoFim, mesFim] = String(maisRecente[0].data_matricula).slice(0, 7).split('-').map(Number);
+    while (ano < anoFim || (ano === anoFim && mes <= mesFim)) {
+        mesesOrdenados.push(`${ano}-${String(mes).padStart(2, '0')}`);
+        mes++;
+        if (mes > 12) { mes = 1; ano++; }
+    }
+
+    if (!mesSelecionadoComissaoSdr || !mesesOrdenados.includes(mesSelecionadoComissaoSdr)) {
+        mesSelecionadoComissaoSdr = mesesOrdenados[mesesOrdenados.length - 1];
+    }
+
+    const inicio = `${mesSelecionadoComissaoSdr}-01`;
+    const [anoSel, mesSel] = mesSelecionadoComissaoSdr.split('-').map(Number);
+    const proximoMesData = new Date(anoSel, mesSel, 1); // mesSel já "é" o próximo mês em índice 0-based do Date
+    const fim = `${proximoMesData.getFullYear()}-${String(proximoMesData.getMonth() + 1).padStart(2, '0')}-01`;
+
+    const resultados = await Promise.all(filiais.map(async f => {
+        const { count, error } = await window.supabaseClient
+            .from(NOME_TABELA)
+            .select('*', { count: 'exact', head: true })
+            .eq('filial', f.nome)
+            .gte('data_matricula', inicio)
+            .lt('data_matricula', fim);
+        const qtd = error ? 0 : (count || 0);
+        const valorMensalidade = f.valor_mensalidade != null ? Number(f.valor_mensalidade) : null;
+        const receita = valorMensalidade != null ? qtd * valorMensalidade : null;
+        const comissao = receita != null ? receita * 0.30 : null;
+        return { nome: f.nome, qtd, valorMensalidade, receita, comissao };
+    }));
+
+    const formatarReal = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    const totalQtd = resultados.reduce((s, r) => s + r.qtd, 0);
+    const totalReceita = resultados.reduce((s, r) => s + (r.receita || 0), 0);
+    const totalComissao = resultados.reduce((s, r) => s + (r.comissao || 0), 0);
+    const algumSemValor = resultados.some(r => r.valorMensalidade == null && r.qtd > 0);
+
+    ultimoResultadoComissaoSdr = { mes: mesSelecionadoComissaoSdr, rotulo: rotuloMes(mesSelecionadoComissaoSdr), resultados, totalQtd, totalReceita, totalComissao };
+
+    container.innerHTML = `
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px; flex-wrap:wrap;">
+            <label style="font-size:12px; font-weight:600; color:var(--text-dark);">Mês:</label>
+            <select onchange="mesSelecionadoComissaoSdr = this.value; renderizarComissaoSdrTodasFiliais();" style="padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; outline:none;">
+                ${mesesOrdenados.slice().reverse().map(m => `<option value="${m}" ${m === mesSelecionadoComissaoSdr ? 'selected' : ''}>${rotuloMes(m)}</option>`).join('')}
+            </select>
+            <button class="btn-secondary" style="font-size:11px; padding:6px 10px;" onclick="exportarComissaoSdrCSV()"><i class="fa-solid fa-file-csv"></i> Exportar CSV</button>
+        </div>
+        <table class="tabela-relatorio">
+            <thead><tr><th>Filial</th><th>Matrículas</th><th>Mensalidade</th><th>Receita (1º mês)</th><th>Comissão SDR (30%)</th></tr></thead>
+            <tbody>
+                ${resultados.map(r => `
+                    <tr class="${r.nome === filialAtual ? 'linha-filial-atual' : ''}">
+                        <td>${escapeHTML(r.nome)}</td>
+                        <td>${r.qtd}</td>
+                        <td>${r.valorMensalidade != null ? formatarReal(r.valorMensalidade) : '—'}</td>
+                        <td>${r.receita != null ? formatarReal(r.receita) : '—'}</td>
+                        <td><strong>${r.comissao != null ? formatarReal(r.comissao) : '—'}</strong></td>
+                    </tr>
+                `).join('')}
+            </tbody>
+            <tfoot>
+                <tr style="font-weight:700; border-top:2px solid var(--na-green-dark);">
+                    <td>Total</td>
+                    <td>${totalQtd}</td>
+                    <td></td>
+                    <td>${formatarReal(totalReceita)}</td>
+                    <td>${formatarReal(totalComissao)}</td>
+                </tr>
+            </tfoot>
+        </table>
+        ${algumSemValor ? '<p style="font-size:11px; color:var(--text-muted); margin-top:8px;"><i class="fa-solid fa-circle-info"></i> Filial com matrícula mas sem valor de mensalidade configurado fica de fora do total de receita/comissão — configure em "Gerenciar Filiais".</p>' : ''}
+        <p style="font-size:11px; color:var(--text-muted); margin-top:8px;"><i class="fa-solid fa-circle-info"></i> Baseado em <code>data_matricula</code> (busca direta no banco) — não depende de em qual coluna do Kanban o lead está hoje. Ver aviso na seção "Matrículas por Mês" sobre a diferença entre os dois.</p>
+    `;
+}
+
+function exportarComissaoSdrCSV() {
+    if (!ultimoResultadoComissaoSdr) {
+        alert('Aguarde o relatório de Comissão do SDR carregar antes de exportar.');
+        return;
+    }
+    const { rotulo, resultados, totalQtd, totalReceita, totalComissao } = ultimoResultadoComissaoSdr;
+    const cabecalho = ['Filial', 'Mês', 'Matrículas', 'Mensalidade', 'Receita (1º mês)', 'Comissão SDR (30%)'];
+    const linhas = resultados.map(r => [
+        r.nome,
+        rotulo,
+        r.qtd,
+        r.valorMensalidade != null ? r.valorMensalidade.toFixed(2) : '',
+        r.receita != null ? r.receita.toFixed(2) : '',
+        r.comissao != null ? r.comissao.toFixed(2) : ''
+    ]);
+    linhas.push(['Total', rotulo, totalQtd, '', totalReceita.toFixed(2), totalComissao.toFixed(2)]);
+
+    const csv = [cabecalho, ...linhas].map(linha => linha.map(csvEscapeCampo).join(',')).join('\r\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }); // BOM pro Excel abrir acentuação certa
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `comissao_sdr_${ultimoResultadoComissaoSdr.mes}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+// Cross-filial também (ver renderizarComissaoSdrTodasFiliais() acima) —
+// usa count exato do PostgREST (head:true não baixa nenhuma linha, só o
+// total) em vez de buscar tudo pra contar no navegador.
 async function renderizarRelatorioComparacaoFiliais() {
     const container = document.getElementById('relatorioComparacaoFiliais');
     if (!container) return;

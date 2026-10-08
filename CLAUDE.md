@@ -9102,6 +9102,84 @@ encaminhar a foto do evento também nas respostas rápidas".
   ativar a foto automática em qualquer resposta (essa ou uma nova) faz
   isso pelo `<select>` novo, por escolha própria.
 
+## Comissão do SDR — consolidado cross-filial + por que "Matriculados" no Kanban diverge do relatório (2026-10-08)
+
+Pedido do usuário, pra fechar a cobrança mensal: "preciso saber quantas
+matrículas foram feitas esse mês, em quais escolas, e qual o valor de
+cada matrícula, pra recolher 30% em cima disso" — reportou estranhar que
+Jardim América mostrava 69 matrículas em "Matrículas por Mês" (relatório
+por filial, já existente) mas a coluna "Matriculados em Outubro" do
+Kanban aparecia com 0 leads.
+
+- **Investigado direto no banco, não suposição**: as 69 pessoas com
+  `data_matricula` em outubro/2026 em Jardim América têm, TODAS, `funil_agencia
+  = 'Frios'` — nenhuma está na coluna "Matriculados". Causa raiz, achada
+  em `confirmarEnviarImportacao()` (`js/importador.js`, fix de
+  2026-10-01, comentário "Bug real GRAVE achado numa avaliação de
+  conversão"): a importação diária automática de Ativos/Inativos do
+  Mercúrio passou a gravar `data_matricula = hoje` sozinha, na PRIMEIRA
+  vez que um lead vira `"Ativo"` (antes disso, 505 de 507 Ativos reais
+  nunca tinham essa coluna preenchida, o que inutilizava o relatório) —
+  mas esse fix, de propósito, **nunca mexe em `funil_agencia`** (reimportar
+  sempre preserva a coluna atual do Kanban, regra de ouro do projeto
+  inteiro). Resultado: um lead pode virar "matrícula" pro relatório sem
+  NUNCA ser movido pra coluna "Matriculados" — ele só se move de lá se
+  alguém arrastar manualmente, ou se passar pelo fluxo de "Matriculado:
+  Sim" num evento, ou pela importação de matrícula via print/scraper.
+  **A coluna "Matriculados em Outubro" do Kanban sempre foi (documentado
+  antes nesta sessão) uma contagem por POSIÇÃO atual, sem filtro de mês
+  nenhum** — "Outubro" no nome é só cosmético. As duas métricas sempre
+  foram independentes; só ficou visível agora que o volume de
+  "virou Ativo pela 1ª vez" é grande o bastante pra divergir muito.
+- **Conclusão prática pro usuário**: os números do relatório "Matrículas
+  por Mês" (baseado em `data_matricula`) **são confiáveis pra cobrança** —
+  cada pessoa conta 1 vez só, na data em que virou Ativo pela 1ª vez
+  (nunca duplica em reimportações seguintes, por design). A coluna do
+  Kanban **não é e nunca foi** uma boa fonte pra esse número — é só
+  posição no funil, pensada pra fluxo de trabalho do SDR, não pra
+  contagem financeira. **Efeito colateral real, não corrigido nesta
+  rodada** (fora do pedido, decisão de maior impacto): esses 69 leads
+  continuam fisicamente em "Frios" — contam pro SLA de coluna fria /
+  "nunca contatado" como se fossem prospectos frios, quando já são
+  alunos matriculados. Mover isso em lote é uma ação de maior escopo,
+  não feita sem confirmação explícita do usuário.
+- **Nova área "Comissão do SDR — Todas as Filiais"** (aba Relatórios,
+  `renderizarComissaoSdrTodasFiliais()` em `js/app.js`, container
+  `#relatorioComissaoSdrTodasFiliais` em `index.html`, chamada de dentro
+  de `atualizarRelatorios()`): MESMO cálculo de "Matrículas por Mês"
+  (contagem por `data_matricula` × `filiais.valor_mensalidade` × 30%),
+  só que consolidado — 1 tela só com TODAS as filiais ativas no mesmo
+  mês, sem precisar trocar o seletor de filial do topbar um de cada vez.
+  Seletor de mês próprio (`mesSelecionadoComissaoSdr`), com a lista de
+  meses disponíveis calculada com só 2 queries de 1 linha (mais antiga/
+  mais recente `data_matricula` de QUALQUER filial) — não baixa a base
+  inteira só pra montar o `<select>`. Tabela com Filial/Matrículas/
+  Mensalidade/Receita/Comissão + linha de TOTAL, e botão "Exportar CSV"
+  (`exportarComissaoSdrCSV()`, reaproveita `csvEscapeCampo()` já
+  existente) — pensado como o documento de apoio pra fechar a cobrança
+  do mês com o cliente. **Sem migração nova** — usa só colunas já
+  existentes (`data_matricula`, `filiais.valor_mensalidade`).
+  - **Testado contra produção (SQL direto) antes de confiar no
+    resultado**: Out/2026 — Jardim América 69 (R$140/mês → R$9.660,00,
+    comissão R$2.898,00), Setor Oeste 28 (R$140 → R$3.920, comissão
+    R$1.176), Garavelo 7 (R$120 → R$840, comissão R$252), Barra do
+    Garças/MT 6 (R$120 → R$720, comissão R$216), Goiânia II 16 (R$150 →
+    R$2.400, comissão R$720) — total 126 matrículas, R$17.540 de
+    receita, R$5.262 de comissão no mês. Números batem com os já
+    exibidos no relatório por filial (confirma que a lógica nova só
+    agrega o que já existia, sem recalcular diferente).
+  - **"Valor fixo de cada escola" (pergunta do usuário) — NÃO existe no
+    CRM hoje**: `filiais.valor_mensalidade` é só a mensalidade do
+    ALUNO (base da comissão de 30% sobre matrícula nova) — não há
+    nenhum campo pra uma taxa fixa mensal que a agência cobre de cada
+    escola pelo serviço do CRM/CRM em si. Se isso precisar entrar na
+    tela de cobrança, é uma decisão em aberto: criar um campo novo
+    (`valor_fixo_mensal_agencia` em `filiais`, editável em "Gerenciar
+    Filiais", somado ao total desta tela) — não construído ainda, só
+    documentado como gap real.
+  - **Não testado clicando pela UI** (sem Playwright neste ambiente,
+    limitação de sempre) — confirmar na próxima sessão de uso real.
+
 ## Adequação ao Guia de Uso de Marca Nova Acrópole (2025-2026-10-07)
 
 Pedido do usuário: "dê uma olhada nesse guia de uso da marca, e adeque
