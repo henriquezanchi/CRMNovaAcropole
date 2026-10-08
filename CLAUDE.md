@@ -9496,6 +9496,52 @@ Botão próprio no topo da aba CRM, ao lado de "Convidar em Massa".
   lint + o teste direto da Edge Function via `curl`/`node -e fetch`
   acima. Validar clicando de verdade na próxima sessão de uso real.
 
+### Preview do modelo de mensagem + "Enviar tudo" num clique só (2026-10-08)
+
+2 pedidos do usuário logo depois de ver a tela pela 1ª vez: "seria bom
+mostrar um modelo de como será a mensagem, para garantir" e "ele exigiu
+um clique para cada filial. Queria um clique para disparar para todo
+mundo".
+
+- **Preview real, não texto fictício** —
+  `atualizarPreviewCardPrioridade(indice)` (`js/whatsapp.js`): cada card
+  da fila ganhou um bloco mostrando o texto EXATO que vai sair (não um
+  exemplo genérico), usando o 1º candidato do grupo como exemplo — monta
+  os parâmetros com a MESMA resolução automática do envio de verdade
+  (`preencherValorAutomatico()` pras variáveis `nome`/`atendente`/
+  `filial`, `valorAutomaticoCampoManualConviteApi()` pros campos manuais
+  tipo "evento (com artigo)"/"data") e renderiza com
+  `montarPreviewTemplate()`. Atualiza sozinho ao trocar o template do
+  `<select>` de cada card, e de novo dentro do modal de confirmação (1
+  grupo ou todos) antes do clique final de envio.
+  - **Bug real corrigido no caminho**: os campos "manuais" do template
+    (`chave: null`, ex: evento/data em `convite_palestra`) sempre
+    ficavam em BRANCO no envio pela fila de prioridade — a função
+    original nunca chamava `valorAutomaticoCampoManualConviteApi()`
+    (usada pelo fluxo normal de "Convidar API"), só pelas variáveis
+    `nome`/`atendente`/`filial`. Corrigido guardando `eventoData` em
+    cada grupo (`montarGrupoNaoInscritoPrioridade()`/
+    `montarGrupoLembretePrioridade()`, campo novo além de
+    `eventoId`/`eventoNome`) e resolvendo os campos manuais com ele em
+    TODOS os pontos que montam `params` (preview, envio de 1 grupo,
+    envio de todos).
+- **"Enviar pra todas as filiais de uma vez"** — botão novo, topo da
+  fila (`enviarTodosGruposPrioridadeInteligente()`), ao lado dos botões
+  "Enviar só esta" que já existiam por card (renomeados, mantidos pra
+  quem quiser revisar/disparar 1 filial isolada). Reaproveita a MESMA
+  lógica de envio (extraída pra `enviarTemplateApiLote(tpl, linhas,
+  opções)`, compartilhada com `confirmarEnviarConviteApiLote()` do
+  "Convidar API" normal) — roda os grupos em SEQUÊNCIA, nunca em
+  paralelo (mesma cautela já documentada sobre rajada de envio
+  disparando auditoria de política da Meta), com 1 único `confirm()` e 1
+  único indicador de progresso acumulado (`onProgresso`, soma o
+  progresso de cada grupo num total geral em vez de cada grupo resetar o
+  indicador do zero) e 1 relatório final consolidado (enviados/falhas
+  por filial × necessidade).
+- **Testado**: `node --check` + lint de globais (sem suspeita nova nas
+  funções tocadas). **Clique real na UI não testado** (sem Playwright
+  neste ambiente) — validar na próxima sessão de uso real.
+
 ## "Matrículas por Mês" — gráfico redesenhado, percentual sem sentido corrigido (2026-10-08)
 
 Pedido do usuário, vendo a tela real (print): o gráfico ia até Jan/24 à
