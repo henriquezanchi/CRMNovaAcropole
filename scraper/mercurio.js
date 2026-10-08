@@ -1026,7 +1026,7 @@ async function carregarMapaLeadsPorNome(filialCrm) {
     for (let de = 0; ; de += TAMANHO_PAGINA) {
         const { data, error } = await supabaseAdmin
             .from('leads_inscricoes')
-            .select('pessoaIdentificador, pessoaNome, tags, cidade, uf, telefone_alternativo, pessoaEmail, pessoaTelefoneDDD, pessoaTelefoneNumero, profissao, data_matricula')
+            .select('pessoaIdentificador, pessoaNome, tags, cidade, uf, telefone_alternativo, pessoaEmail, pessoaTelefoneDDD, pessoaTelefoneNumero, profissao, data_matricula, data_matricula_verificada_mercurio_em')
             .eq('filial', filialCrm)
             .order('pessoaIdentificador', { ascending: true })
             .range(de, de + TAMANHO_PAGINA - 1);
@@ -1045,6 +1045,7 @@ async function carregarMapaLeadsPorNome(filialCrm) {
                 pessoaTelefoneNumero: lead.pessoaTelefoneNumero || '',
                 profissao: lead.profissao || '',
                 dataMatricula: lead.data_matricula || null,
+                dataMatriculaVerificadaEm: lead.data_matricula_verificada_mercurio_em || null,
                 ambiguo: false,
             });
         }
@@ -1150,6 +1151,27 @@ async function corrigirDataMatriculaReal(filialCrm, leadInfo, nomeAluno, dataISO
         detalhes: { nome: nomeAluno, dataAnterior, dataNova: dataISO, origem },
     }).then(({ error: erroLog }) => { if (erroLog) console.warn('[log-atividade] Falha ao registrar correção de data_matricula:', erroLog.message); });
     return true;
+}
+
+// Bug real, confirmado pelo usuário (2026-10-08, print do Mercúrio real):
+// JANICE MORAIS OLIVEIRA, Recuperado desde 2012, ficou com data_matricula
+// presa em outubro/2026 — a tag "Recuperado" (permanente) servia de sinal
+// pro código acima NUNCA mais revisitar a ficha dela, assumindo (errado,
+// pra quem ganhou a tag ANTES deste mecanismo existir) que a correção já
+// tinha rodado junto. Esta função marca, separadamente da tag, "já
+// conferimos o Ingresso/Reingresso real desta pessoa desde que este
+// mecanismo existe" — chamada sempre que a ficha é reaberta por causa de
+// `precisaHistorico` (ver processarTurmas()), independente do resultado
+// (mesmo se `dados.recuperado` vier inesperadamente falso), pra nunca
+// reabrir a MESMA ficha de novo só por causa deste backfill.
+async function marcarDataMatriculaVerificada(leadInfo) {
+    if (leadInfo.dataMatriculaVerificadaEm) return;
+    const agora = new Date().toISOString();
+    const { error } = await supabaseAdmin.from('leads_inscricoes')
+        .update({ data_matricula_verificada_mercurio_em: agora })
+        .eq('pessoaIdentificador', leadInfo.pessoaIdentificador);
+    if (error) { console.warn('[data-matricula] Falha ao marcar verificação:', error.message); return; }
+    leadInfo.dataMatriculaVerificadaEm = agora;
 }
 
 // Grava e-mail/cidade/UF/telefone alternativo lidos da tela ENDEREÇOS
@@ -1558,12 +1580,27 @@ async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = f
             // ficha aberta. Só entra aqui quem casou com EXATAMENTE 1 lead
             // (nome ambíguo/sem lead correspondente fica de fora — arriscar
             // o lead errado é pior que pular).
+            //
+            // Bug real (2026-10-08, caso Janice Morais Oliveira): quem JÁ
+            // tem a tag "Recuperado" nunca entrava aqui de novo (dedup por
+            // tag) — correto pra quem ganhou a tag DEPOIS que
+            // marcarDataMatriculaVerificada() passou a existir, mas deixava
+            // pra sempre com data_matricula errada quem já tinha a tag de
+            // ANTES (a correção nunca chegava a rodar pra eles). Agora
+            // `precisaHistorico` também fica true pra "Recuperado, mas
+            // nunca verificado por este mecanismo" — reabre a ficha 1 vez
+            // só (marcarDataMatriculaVerificada() evita reabrir de novo
+            // depois), fazendo o backfill se espalhar sozinho conforme o
+            // scraper visita cada turma nos próximos dias.
             const alvos = alunosLidos
                 .map(a => ({ aluno: a, lead: mapaLeads.get(normalizarNomeMercurio(a.nome)) }))
                 .filter(({ lead }) => lead && !lead.ambiguo)
                 .map(({ aluno, lead }) => {
                     const ingressoData = dataBRParaDate(aluno.ingresso);
-                    const precisaHistorico = !!(inicioTurmaData && ingressoData && ingressoData < inicioTurmaData && !lead.tags.includes('Recuperado'));
+                    const jaRecuperado = lead.tags.includes('Recuperado');
+                    const candidatoNovo = !!(inicioTurmaData && ingressoData && ingressoData < inicioTurmaData && !jaRecuperado);
+                    const recuperadoNuncaVerificado = jaRecuperado && !lead.dataMatriculaVerificadaEm;
+                    const precisaHistorico = candidatoNovo || recuperadoNuncaVerificado;
                     return { aluno, lead, precisaHistorico };
                 })
                 .filter(({ precisaHistorico }) => precisaHistorico || modoCompleto);
@@ -1599,6 +1636,12 @@ async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = f
                     if (await linkNomeAtual.count() === 0) { console.warn(`[ficha-aluno] Link de "${aluno.nome}" (matr ${aluno.matr}) não encontrado de novo na turma "${nomeTurma}".`); continue; }
 
                     const dados = await processarFichaAluno(page, linkNomeAtual, { verificarHistorico: precisaHistorico, verificarEnderecos: modoCompleto });
+
+                    // Marca ANTES de checar dados.recuperado — mesmo se vier
+                    // inesperadamente false (tag "Recuperado" aplicada por
+                    // engano/UI mudou), já conferimos a ficha desta pessoa
+                    // agora; nunca mais reabrir só por causa deste backfill.
+                    if (precisaHistorico) await marcarDataMatriculaVerificada(lead);
 
                     if (precisaHistorico && dados.recuperado) {
                         const gravou = await aplicarTagRecuperado(filialCrm, lead, aluno.nome, dados.dataReingresso);
