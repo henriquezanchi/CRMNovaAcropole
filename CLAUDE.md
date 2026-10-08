@@ -9746,6 +9746,38 @@ sem nenhum sinal visual, por todo esse tempo.
 - **Testado**: `node --check` + lint de globais (sem suspeita nova).
   **Clique real não testado** (sem Playwright neste ambiente).
 
+### Gargalo real de performance, achado pelo usuário logo depois (2026-10-08): "montar fila" travando de verdade (não só sem indicador)
+
+Com o indicador de carregamento já funcionando, o usuário relatou que a
+tela ficava parada por bastante tempo mesmo assim, presa em "Buscando
+leads de Goiânia II... (3/3)" — não era só falta de feedback visual, o
+processamento realmente demorava demais numa filial grande.
+
+- **Causa raiz**: `montarGrupoNaoInscritoPrioridade()` rodava
+  `filtrarExclusaoInteligenteWpp()` (que consulta tags FRESCAS no banco
+  via `.in('pessoaIdentificador', ids)`) contra o POOL INTEIRO de leads
+  elegíveis da filial — podem ser milhares (Jardim América tem 3404
+  leads carregados, Goiânia II 865) — mesmo só precisando, no final, de
+  `limite + RESERVA_PRIORIDADE` (normalmente uma centena) depois de
+  ordenar por pontuação. Uma única query com milhares de ids no `.in()`
+  é lenta e ineficiente.
+- **Corrigido**: a pontuação (`pontuarCandidatoPrioridade()`, 100% local,
+  sem IA/banco) agora roda e ORDENA o pool INTEIRO primeiro (barato — só
+  processamento em memória); o filtro inteligente (caro — consulta o
+  banco) passou a rodar em LOTES, começando pelos candidatos MELHOR
+  pontuados, e PARA assim que já tiver candidatos suficientes pra cota +
+  reserva — nunca mais gasta uma consulta de milhares de ids quando só
+  precisa de uma fração disso. `montarGrupoLembretePrioridade()` não foi
+  tocada (seu pool já vem naturalmente pequeno — só quem confirmou
+  presença num evento próximo, não a base inteira da filial).
+- **Status progressivo também ganhou mais detalhe** — agora mostra qual
+  MOTIVO está sendo verificado dentro de cada filial ("Goiânia II (3/3)
+  — verificando Abertura de Turma..."), não só o nome da filial.
+- **Testado**: `node --check` + lint de globais (sem suspeita nova).
+  **Clique real não testado** (sem Playwright neste ambiente) — validar
+  na próxima sessão de uso real, especialmente numa filial grande como
+  Jardim América.
+
 ## "Matrículas por Mês" — gráfico redesenhado, percentual sem sentido corrigido (2026-10-08)
 
 Pedido do usuário, vendo a tela real (print): o gráfico ia até Jan/24 à

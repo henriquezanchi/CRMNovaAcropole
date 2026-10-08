@@ -3670,24 +3670,47 @@ async function montarGrupoNaoInscritoPrioridade(filial, bucket, evento, limite, 
         de += 1000;
     }
 
-    const pool = brutos
+    const poolOrdenado = brutos
         .filter(l => !setVinculados.has(String(l.pessoaIdentificador)))
         .filter(l => l.pessoaTelefoneDDD && l.pessoaTelefoneNumero && !numeroPareceFixo(l.pessoaTelefoneDDD, l.pessoaTelefoneNumero))
         .map(l => {
             const tags = parseTags(l.tags).map(t => String(t).trim());
             return { pessoaIdentificador: l.pessoaIdentificador, nome: l.pessoaNome, score: pontuarCandidatoPrioridade(tags, diasAte) };
-        });
+        })
+        .sort((a, b) => b.score - a.score);
 
-    const { validos, excluidos } = await filtrarExclusaoInteligenteWpp(pool.map(p => p.pessoaIdentificador), { excluir30Dias });
-    const setValidos = new Set(validos.map(String));
+    // Bug real de performance, relatado pelo usuário (2026-10-08):
+    // "montar fila de hoje está demorando" muito numa filial grande
+    // (Goiânia II: 865 leads; Jardim América: 3404). A causa era rodar
+    // filtrarExclusaoInteligenteWpp() (consulta tags FRESCAS no banco,
+    // `.in('pessoaIdentificador', ids)`) contra o POOL INTEIRO da filial
+    // — milhares de ids numa única query — mesmo só precisando de
+    // `limite + RESERVA_PRIORIDADE` (normalmente uma centena) no final.
+    // Corrigido: já ordenado por score (acima), confere o filtro em
+    // LOTES começando pelos mais bem pontuados, e PARA assim que já tiver
+    // candidatos suficientes — nunca gasta uma consulta de milhares de
+    // ids quando só precisa de uma fração disso.
+    const alvo = limite + RESERVA_PRIORIDADE;
+    const TAMANHO_LOTE_FILTRO_PRIORIDADE = Math.max(alvo, 150);
+    const comInfoValidos = [];
+    const excluidos = [];
+    let offsetFiltro = 0;
+    while (comInfoValidos.length < alvo && offsetFiltro < poolOrdenado.length) {
+        const lote = poolOrdenado.slice(offsetFiltro, offsetFiltro + TAMANHO_LOTE_FILTRO_PRIORIDADE);
+        const { validos, excluidos: excluidosLote } = await filtrarExclusaoInteligenteWpp(lote.map(p => p.pessoaIdentificador), { excluir30Dias });
+        const setValidos = new Set(validos.map(String));
+        comInfoValidos.push(...lote.filter(p => setValidos.has(String(p.pessoaIdentificador))));
+        excluidos.push(...excluidosLote);
+        offsetFiltro += TAMANHO_LOTE_FILTRO_PRIORIDADE;
+    }
+
     // Cada candidato carrega sua PRÓPRIA filial/evento (não só o grupo) —
     // necessário pra agregar por MOTIVO (bucket) entre várias filiais ao
     // mesmo tempo, já que cada uma tem seu próprio evento/data (ver
     // montarFilaPrioridadeInteligente()). Corta em `limite +
     // RESERVA_PRIORIDADE` — os primeiros `limite` viram candidatos reais,
     // o excedente vira `reserva` (fila de reposição pra Camada 3/IA).
-    const comInfo = pool.filter(p => setValidos.has(String(p.pessoaIdentificador))).sort((a, b) => b.score - a.score)
-        .slice(0, limite + RESERVA_PRIORIDADE)
+    const comInfo = comInfoValidos.slice(0, alvo)
         .map(c => ({ ...c, filial, eventoId: evento.id, eventoNome: evento.nome, eventoData: evento.data }));
     const final = comInfo.slice(0, limite);
     const reserva = comInfo.slice(limite);
@@ -3792,7 +3815,8 @@ async function montarFilaPrioridadeInteligente() {
     const filiaisValidas = convitePrioridadeConfig.filter(cfg => cfg.cota && cfg.cota > 0);
     for (let idxFilial = 0; idxFilial < filiaisValidas.length; idxFilial++) {
         const cfg = filiaisValidas[idxFilial];
-        atualizarStatusMontagemFila(`Buscando leads de ${cfg.filial}... (${idxFilial + 1}/${filiaisValidas.length})`);
+        const prefixoStatus = `${cfg.filial} (${idxFilial + 1}/${filiaisValidas.length})`;
+        atualizarStatusMontagemFila(`Buscando leads de ${prefixoStatus}...`);
         let cotaRestante = cfg.cota;
 
         const { data: eventosFilial } = await window.supabaseClient
@@ -3809,6 +3833,7 @@ async function montarFilaPrioridadeInteligente() {
         const eventosProximos10Dias = lista.filter(e => Math.round((new Date(e.data) - new Date(hojeISO)) / 86400000) <= 10);
 
         if (cotaRestante > 0 && eventoAbertura) {
+            atualizarStatusMontagemFila(`${prefixoStatus} — verificando Abertura de Turma...`);
             const g = await montarGrupoNaoInscritoPrioridade(cfg.filial, 'abertura', eventoAbertura, cotaRestante, excluir30Dias);
             if (g.candidatos.length > 0) {
                 candidatosPorBucket.abertura.push(...g.candidatos);
@@ -3818,6 +3843,7 @@ async function montarFilaPrioridadeInteligente() {
             }
         }
         if (cotaRestante > 0 && eventoAula) {
+            atualizarStatusMontagemFila(`${prefixoStatus} — verificando Aula Inaugural...`);
             const g = await montarGrupoNaoInscritoPrioridade(cfg.filial, 'aula_inaugural', eventoAula, cotaRestante, excluir30Dias);
             if (g.candidatos.length > 0) {
                 candidatosPorBucket.aula_inaugural.push(...g.candidatos);
@@ -3827,6 +3853,7 @@ async function montarFilaPrioridadeInteligente() {
             }
         }
         if (cotaRestante > 0) {
+            atualizarStatusMontagemFila(`${prefixoStatus} — verificando quem já confirmou presença...`);
             const g = await montarGrupoLembretePrioridade(cfg.filial, eventosProximos10Dias, cotaRestante, excluir30Dias);
             if (g.candidatos.length > 0) {
                 candidatosPorBucket.lembrete.push(...g.candidatos);
