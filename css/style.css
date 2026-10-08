@@ -994,6 +994,24 @@ select:hover { border-color: #94a3b8; }
 .funnel-bar { height: 100%; background: linear-gradient(90deg, var(--na-green), var(--na-gold)); display: flex; align-items: center; padding-left: 14px; color: white; font-weight: 600; font-size: 12px; border-radius: 6px; transition: width 0.5s ease; white-space: nowrap; }
 .funnel-count { width: 70px; font-size: 13px; font-weight: 700; color: var(--na-green-dark); flex-shrink: 0; }
 
+/* "Matrículas por Mês" (aba Relatórios) — visual PRÓPRIO, não reaproveita
+   .funnel/.funnel-bar (compartilhado com Motivos de Perda/Funil de
+   Conversão, ver comentário logo abaixo) — pedido do usuário (2026-10-08,
+   achou a tela "feia" e o percentual antigo confuso). Cor sólida (Verde
+   Heket) em vez do degradê verde->dourado de antes; o mês SELECIONADO
+   ganha destaque em Amarelo Helios pra ficar óbvio qual está sendo visto
+   nos KPIs acima. Linha inteira é clicável (troca o mês selecionado). */
+.matriculas-mes-grafico { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; max-width: 760px; }
+.matriculas-mes-linha { display: flex; align-items: center; gap: 14px; padding: 6px 8px; border-radius: 8px; cursor: pointer; transition: background 0.15s ease; }
+.matriculas-mes-linha:hover { background: #f8fafc; }
+.matriculas-mes-linha-ativa { background: #f0fdf4; }
+.matriculas-mes-label { width: 64px; font-size: 12px; font-weight: 600; color: var(--text-dark); flex-shrink: 0; }
+.matriculas-mes-barra-wrap { flex: 1; background: #eef2f6; border-radius: 5px; overflow: hidden; height: 20px; }
+.matriculas-mes-barra { height: 100%; background: var(--na-green); border-radius: 5px; transition: width 0.4s ease; }
+.matriculas-mes-barra-ativa { background: var(--na-gold); }
+.matriculas-mes-valor { width: 34px; font-size: 13px; font-weight: 700; color: var(--na-green-dark); text-align: right; flex-shrink: 0; }
+.matriculas-mes-pct { width: 44px; font-size: 11px; color: var(--text-muted); text-align: right; flex-shrink: 0; }
+
 /* Funil de Conversão e Jornada da Base (aba Relatórios) — cards
    empilhados e CENTRALIZADOS, afunilando de verdade (largura sempre
    decrescente, ver calcularLargurasFunil() em js/app.js), cor por etapa

@@ -9386,6 +9386,143 @@ meio — igual ao resto do app ("sem servidor próprio de aplicação").
   Relatórios, depois que a correção de `data_matricula` acima já tiver
   rodado pelo menos 1 ciclo completo do scraper.
 
+## Filtro inteligente + "Disparo Inteligente do Dia" (2026-10-08)
+
+Pedido do usuário, vendo a tela "Convidar via API" (print real): "não
+ficar robotizado demais... não enviar pra quem já disse que não iria, ou
+que está viajando, ou que pediu para excluir o número". Além disso:
+distribuir o número de contatos do dia entre as filiais que estamos
+trabalhando, com prioridade geral por evento mais próximo (Abertura de
+Turma > Aula Inaugural > lembrete de quem já confirmou).
+
+### Filtro inteligente (`filtrarExclusaoInteligenteWpp()`, `js/whatsapp.js`)
+
+Reaproveita sinais que JÁ existem, **sem custo novo de IA**: a
+classificação automática de resposta a convite (`classificar-resposta-convite`,
+cron 15 min) já aplica `"Convite: Não Pode Ir"`/`"Convite: Sem Interesse"`;
+`"Contato Recente: 7 dias"` evita recontato cedo demais. Nova tag manual
+**`"Não Contatar"`** (família própria em `FAMILIAS_TAG`, cor forte igual
+"Perdido", adicionada a `TAGS_SISTEMA_SUGERIDAS_MANUALMENTE`) cobre o
+"pediu pra excluir o número" — opt-out leve, mais simples que o fluxo
+LGPD completo, bloqueia qualquer disparo em massa até alguém remover a
+tag manualmente.
+
+Busca as tags FRESCAS direto do banco (nunca confia só em `leadsAtuais`,
+que pode estar desatualizado — o modo "segmento" do Convidar API nem
+devolve `tags` na RPC) e devolve `{validos, excluidos}` com o motivo de
+cada exclusão, mostrado na tela (nunca esconde a decisão). **Ligado nos
+3 fluxos de disparo em massa já existentes** (Convidar Link/API/Janela
+Aberta) — nenhum tinha essa checagem antes.
+
+### Disparo Inteligente do Dia (`abrirConvitePrioridadeInteligente()`, novo modal)
+
+Botão próprio no topo da aba CRM, ao lado de "Convidar em Massa".
+
+- **Cota NÃO é um número fixo salvo por filial** — pedido do usuário,
+  correção no MEIO da sessão: "cota diária por filial limita demais...
+  faça esse cálculo com base nos leads frios e divida proporcionalmente".
+  `calcularCotaProporcionalPrioridade()` conta leads na 1ª coluna do
+  funil (`columnsConfig[0].key`, mesma noção de "frio" já usada em
+  `moverParaAbordagemAposEnvio()`) de cada filial marcada, e distribui um
+  total diário (editável, default 100) proporcionalmente a essa
+  contagem — resultado numa tabela com cada valor ainda editável antes
+  de montar a fila. **"A alteração pode ser feita quando o disparo é
+  acionado manualmente"** — um futuro cronjob chamaria o MESMO cálculo e
+  seguiria direto pra `montarFilaPrioridadeInteligente()`, sem essa etapa
+  de ajuste (não construído ainda — só o cálculo reutilizável existe).
+- **Prioridade dentro da cota de cada filial, nesta ordem** (a cota só
+  "desce" pro próximo balde se sobrar): (1) quem ainda não está inscrito
+  (nenhum vínculo em `evento_leads`) na **Abertura de Turma** mais
+  próxima; (2) quem ainda não está inscrito na **Aula Inaugural** mais
+  próxima; (3) **lembrete** pra quem já confirmou presença (`resposta_convite='confirmado'`)
+  num evento (qualquer tipo) dos próximos 10 dias — pensado pra
+  reforçar endereço/tirar dúvida antes do evento.
+- **Pontuação (Camada 1, grátis)**: `pontuarCandidatoPrioridade()` —
+  proximidade do evento (até +300) + Lead Forte 1/2/3 (+150/+90/+40) +
+  Jornada: Engajado (+60) + já pediu informação sobre um convite (+80).
+- Cada grupo final (filial × tipo de necessidade × evento) vira 1 card
+  com `<select>` de template aprovado + botão "Enviar via API pra N" —
+  reaproveita **100% o pipeline de envio já existente**
+  (`confirmarEnviarConviteApiLote()`, de "Convidar API") só populando as
+  mesmas variáveis globais (`conviteApiPreviaAtual`/`conviteApiEventoAtual`)
+  antes de chamá-lo — nenhuma lógica de envio/relatório/log/mover-pra-
+  Abordagem duplicada.
+- **Por que grupos separados por filial, não 1 envio cross-filial só**:
+  cada filial tem seu próprio evento (Abertura de Turma/Aula Inaugural
+  são datas DIFERENTES por unidade) — o pipeline de envio existente
+  assume 1 evento só por lote (usado pra registrar `evento_leads` e
+  preencher `{{evento}}`/`{{data}}` automaticamente); agrupar por
+  (filial, tipo, evento) evita um refactor maior sem perder a visão
+  consolidada (a tela mostra TODOS os grupos de TODAS as filiais de
+  uma vez, só o clique de "Enviar" é por grupo).
+
+### Camada 2 (grátis) + Camada 3 (IA) — construídas e testadas (2026-10-08)
+
+- **Camada 2** (`analisarGrupoComIaPrioridade()`, `js/whatsapp.js`): pra
+  cada candidato do grupo, busca `resumo_ia_atualizado_em` (lead) +
+  `ultima_mensagem_em` (`vw_wpp_conversas`) — sem conversa nenhuma, pula
+  (nada pra ler, custo zero); com resumo mais NOVO que a última mensagem,
+  também pula (nada mudou desde a última leitura). Só quem sobra vai pra
+  Camada 3.
+- **Camada 3**: nova Edge Function **`priorizar-convite-ia`**
+  (`supabase/functions/priorizar-convite-ia/`, chamada SOB DEMANDA pelo
+  botão "Analisar com IA" em cada grupo — nunca por cron). Lê até 30
+  mensagens recentes + tags/resumo atual do lead, e devolve por lead:
+  `resumo` (grava sozinho em `resumo_ia`/`resumo_ia_atualizado_em` — "já
+  que estamos pagando pela leitura, registra o resumo", pedido do
+  usuário) e `excluirDestaCampanha`/`motivo` — **nunca aplica tag
+  permanente** (decisão já confirmada: exclusão vale só pra esta
+  campanha/clique, o lead pode voltar a aparecer numa fila futura). Na
+  dúvida, o prompt instrui a NÃO excluir (pior excluir à toa um bom
+  candidato do que deixar passar um caso ambíguo, que ainda passa pela
+  revisão humana normal antes do envio).
+- **Mesma lição de cache de prompt já documentada no projeto**: o bloco
+  cacheável precisou de ~30 exemplos reais (excluir vs. não excluir) pra
+  passar dos 4.096 tokens mínimos do Haiku 4.5 — medido com um endpoint
+  de diagnóstico temporário (`?medir_cacheavel=1`, removido depois de
+  confirmar), ficou em 4.328 tokens, confirmado `cache_creation_input_tokens`/
+  `cache_read_input_tokens` funcionando nas 2 chamadas seguintes.
+- **Testado ao vivo, ponta a ponta, contra produção** (lead de teste
+  904000019): inserida conversa de teste com um "vou viajar esse mês, só
+  volto depois" — a function corretamente devolveu
+  `excluirDestaCampanha: true` com motivo preciso, E gravou
+  `resumo_ia`/`resumo_ia_atualizado_em` no banco. Dados de teste já
+  removidos depois de confirmar.
+- Nenhuma automação por cronjob do "Disparo Inteligente" foi criada
+  (só o cálculo proporcional já é reutilizável por uma, se um dia fizer
+  sentido).
+- **Botão "Analisar com IA" em si (clique real na UI) não foi clicado
+  nesta sessão** — sem Playwright neste ambiente, só `node --check` +
+  lint + o teste direto da Edge Function via `curl`/`node -e fetch`
+  acima. Validar clicando de verdade na próxima sessão de uso real.
+
+## "Matrículas por Mês" — gráfico redesenhado, percentual sem sentido corrigido (2026-10-08)
+
+Pedido do usuário, vendo a tela real (print): o gráfico ia até Jan/24 à
+toa (poluição visual), e a cada barra mostrava um "%" que na real só
+media a largura relativa à barra MAIS CHEIA do histórico inteiro — "100%
+em outubro" não significava nada (não é taxa de conversão nem
+participação de verdade, só escala visual). Corrigido em
+`renderizarRelatorioMatriculasPorMes()` (`js/app.js`):
+
+- **Só os últimos 6 meses** no gráfico (`mesesOrdenados.slice(-6)`) — o
+  `<select>` de mês continua com o histórico completo (serve pra ver os
+  KPIs de qualquer mês antigo), só o GRÁFICO ficou mais enxuto.
+- **Percentual agora é participação no total do período mostrado**
+  (`valor / totalPeriodo`, soma 100% entre os 6 meses) — substitui
+  "% da barra mais cheia" por um número que responde uma pergunta real
+  ("que fatia das matrículas dos últimos 6 meses esse mês representa").
+- **Visual próprio** (`.matriculas-mes-*`, `css/style.css`) —
+  deliberadamente SEM reaproveitar `.funnel`/`.funnel-bar` (compartilhado
+  com Motivos de Perda/Funil de Conversão, que não foram tocados): barra
+  sólida em Verde Heket (cor oficial, ver guia de marca), mês SELECIONADO
+  destacado em Amarelo Helios, linha inteira clicável (troca o mês
+  selecionado sem precisar usar o `<select>`), legenda explicando o que o
+  percentual significa.
+- Card "Comissão SDR" (KPI acima do gráfico) trocou o azul (`#3b82f6`,
+  fora da paleta oficial) por um tom neutro (`#f1f5f9`/verde-escuro) —
+  mesmo ajuste de paleta já feito em outras telas nesta sessão.
+
 ## Adequação ao Guia de Uso de Marca Nova Acrópole (2025-2026-10-07)
 
 Pedido do usuário: "dê uma olhada nesse guia de uso da marca, e adeque
@@ -9430,3 +9567,60 @@ marca" oficial, versão 01, 2025).
   guia) e o "Tom de comunicação"/mensagens-chave (seções 2-3, conteúdo
   editorial, não código) — nenhum texto fixo do app precisou mudar por
   causa disso.
+
+## Mapeamento exploratório do Mercúrio (`scraper/mapear-mercurio.js`, 2026-10-08)
+
+Pedido do usuário: a equipe do Mercúrio (professor JG) vai liberar uma
+**view automática** (sempre atualizada, substitui exportação manual de
+arquivo) com os dados de Cadastro/Tesouraria — mas pediu explicitamente
+que a gente diga ANTES exatamente quais dados precisa, "para evitar um
+trabalho excessivo sobre algo que pode não ser útil" (conversa real do
+usuário com ele, colada na sessão). `scraper/mapear-mercurio.js` é a
+ferramenta pra levantar isso com precisão, em vez de pedir "tudo".
+
+- **NÃO é um job automático** — nunca chamado por `main()` de
+  `mercurio.js`, nunca roda sozinho/agendado. É rodado manualmente, 1 vez
+  (ou poucas), só pra RECONHECIMENTO de estrutura.
+- **Só inventaria estrutura, nunca dado de aluno**: pra cada tela visitada,
+  lê o CABEÇALHO (1ª linha) de toda `<table>` com 2+ colunas + o nome/tipo
+  de todo campo de formulário (`input`/`select`/`textarea` com `name`) —
+  nunca lê uma 2ª linha de tabela nenhuma. Resultado: um JSON com a
+  ESTRUTURA de cada tela (nomes de coluna/campo), não uma extração de
+  dado real.
+- **Explora TODAS as áreas do menu pós-login de 1 filial só** — a função
+  nova `listarTodosLinksPorFilial()` (`mercurio.js`, versão ampliada de
+  `listarLinksCadastro()` — essa continua intocada, só pro job diário)
+  devolve QUALQUER link encontrado na tabela de menu daquela filial
+  (CADASTRO, TESOURARIA, ou o que mais existir — sem supor nome nenhum
+  de antemão). Só 1 filial é mapeada (a estrutura/schema é a mesma pra
+  todas — mapear mais seria repetir à toa, o oposto do que o professor
+  JG pediu).
+- **Navegação em 2 níveis, com fallback genérico**: pra cada área (ex:
+  "CADASTRO"), tenta o padrão já confirmado (frame "indice" = submenu
+  lateral, clica cada item, inventaria o frame "principal" resultante,
+  mesmo mecanismo de `processarTurmas()`); se essa área não tiver um
+  frame "indice" reconhecível (TESOURARIA pode ter layout bem diferente
+  — nunca visitada antes, não dá pra supor), cai num fallback que
+  inventaria TODOS os frames da página atual, sem supor nome nenhum —
+  best-effort em cada etapa, nunca trava a exploração inteira.
+- **Trava de segurança automática**: chama `verificarRodadaJaEmAndamento()`
+  (já existente, usada por `main()`) antes de logar — aborta com aviso
+  claro se o job diário/disparo manual ainda estiver rodando (mesma
+  credencial compartilhada do Mercúrio; 2 sessões simultâneas já
+  corromperam dado entre filiais antes, ver "Bug real GRAVÍSSIMO" na
+  seção do scraper acima). Mesmo assim, vale conferir "Sincronização
+  Automática" (aba Importar) antes de rodar manualmente.
+- **Uso**: `npm run mapear-mercurio` (todas as filiais, pega a 1ª da
+  lista) ou `npm run mapear-mercurio -- "Jardim América"` (filial
+  específica), sempre em `C:\Scrapper` (Playwright não roda de forma
+  confiável em `G:\`). Chromium visível de propósito (`headless:
+  false`) — é exploração supervisionada, não um job automático. Salva
+  `scraper/exports/mapa-mercurio-<filial>.json` e pede pra colar o
+  conteúdo de volta na conversa.
+- **NÃO rodado ainda** nesta sessão (só escrito e com sintaxe verificada,
+  `node --check`) — depende do usuário rodar em `C:\Scrapper`, já que
+  Playwright não executa neste ambiente. Resultado esperado: confirmar
+  se existe mesmo um módulo "TESOURARIA" paralelo a "CADASTRO" na tela
+  pós-login (hipótese ainda não confirmada), e levantar a lista completa
+  de campos disponíveis em cada um — base pra compilar o pedido final ao
+  professor JG.

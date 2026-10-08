@@ -3451,7 +3451,6 @@ async function renderizarRelatorioMatriculasPorMes() {
 
     const NOMES_MES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
     const mesesOrdenados = Array.from(porMes.keys()).sort();
-    const maiorValor = Math.max(1, ...porMes.values());
     const rotuloMes = (mes) => { const [ano, mesNum] = mes.split('-'); return `${NOMES_MES[Number(mesNum) - 1]}/${ano}`; };
 
     // Mês selecionado no <select> abaixo — padrão é o mais recente com
@@ -3492,14 +3491,14 @@ async function renderizarRelatorioMatriculasPorMes() {
                 </div>
             </div>
             <div class="kpi-card">
-                <div class="kpi-icon" style="background:#fdfaf5; color:var(--na-gold);"><i class="fa-solid fa-sack-dollar"></i></div>
+                <div class="kpi-icon" style="background:#fffbeb; color:var(--na-gold);"><i class="fa-solid fa-sack-dollar"></i></div>
                 <div class="kpi-info">
                     <div class="kpi-value">${receita != null ? formatarReal(receita) : '—'}</div>
                     <div class="kpi-label">Receita (1º mês)</div>
                 </div>
             </div>
             <div class="kpi-card">
-                <div class="kpi-icon" style="background:#eff6ff; color:#3b82f6;"><i class="fa-solid fa-hand-holding-dollar"></i></div>
+                <div class="kpi-icon" style="background:#f1f5f9; color:var(--na-green-dark);"><i class="fa-solid fa-hand-holding-dollar"></i></div>
                 <div class="kpi-info">
                     <div class="kpi-value">${comissaoSdr != null ? formatarReal(comissaoSdr) : '—'}</div>
                     <div class="kpi-label">Comissão SDR (30%)</div>
@@ -3508,20 +3507,39 @@ async function renderizarRelatorioMatriculasPorMes() {
         </div>
         ${valorMensalidade == null ? '<p style="font-size:11px; color:var(--text-muted); margin:-14px 0 16px;"><i class="fa-solid fa-circle-info"></i> Configure o valor da mensalidade desta filial em "Gerenciar Filiais" pra calcular receita e comissão.</p>' : ''}
 
-        <div class="funnel">
-            ${mesesOrdenados.map(mes => {
-                const [ano, mesNum] = mes.split('-');
-                const valor = porMes.get(mes);
-                const pct = Math.max(4, Math.round((valor / maiorValor) * 100));
-                return `
-                    <div class="funnel-stage">
-                        <div class="funnel-label">${NOMES_MES[Number(mesNum) - 1]}/${ano.slice(2)}</div>
-                        <div class="funnel-bar-wrapper"><div class="funnel-bar" style="width:${pct}%;">${pct}%</div></div>
-                        <div class="funnel-count">${valor}</div>
-                    </div>
-                `;
-            }).join('')}
-        </div>
+        ${(() => {
+            // Redesenho pedido pelo usuário (2026-10-08, vendo a tela real):
+            // (1) só os últimos 6 meses (o gráfico voltava até 2024 à toa);
+            // (2) o percentual antigo era só "% da barra mais CHEIA" (só
+            // servia pra escalar a largura visual, "100%" não significava
+            // nada sozinho — confuso) — agora é a PARTICIPAÇÃO de cada mês
+            // no total dos 6 meses mostrados (soma 100% no período); (3)
+            // visual próprio (.matriculas-mes-*, css/style.css), SEM
+            // reaproveitar `.funnel`/`.funnel-bar` compartilhado com Motivos
+            // de Perda/Funil de Conversão — evita mudar aqueles por tabela.
+            const ultimosMeses = mesesOrdenados.slice(-6);
+            const totalPeriodo = ultimosMeses.reduce((s, m) => s + porMes.get(m), 0) || 1;
+            const maiorValorPeriodo = Math.max(1, ...ultimosMeses.map(m => porMes.get(m)));
+            return `
+                <div class="matriculas-mes-grafico">
+                    ${ultimosMeses.map(mes => {
+                        const valor = porMes.get(mes);
+                        const larguraBarra = Math.max(6, Math.round((valor / maiorValorPeriodo) * 100));
+                        const participacao = Math.round((valor / totalPeriodo) * 100);
+                        const ativo = mes === mesSelecionadoMatriculas;
+                        return `
+                            <div class="matriculas-mes-linha ${ativo ? 'matriculas-mes-linha-ativa' : ''}" onclick="mesSelecionadoMatriculas='${mes}'; renderizarRelatorioMatriculasPorMes();" title="Ver KPIs de ${rotuloMes(mes)}">
+                                <div class="matriculas-mes-label">${rotuloMes(mes)}</div>
+                                <div class="matriculas-mes-barra-wrap"><div class="matriculas-mes-barra ${ativo ? 'matriculas-mes-barra-ativa' : ''}" style="width:${larguraBarra}%;"></div></div>
+                                <div class="matriculas-mes-valor">${valor}</div>
+                                <div class="matriculas-mes-pct">${participacao}%</div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+                <p class="report-sub" style="margin-top:10px;">Últimos 6 meses com matrícula registrada — clique num mês pra ver os KPIs dele acima. O percentual é a participação de cada mês no total do período mostrado (soma 100%), não é taxa de conversão.</p>
+            `;
+        })()}
     `;
 }
 
@@ -3901,7 +3919,7 @@ async function carregarTagsSugeridas() {
 // adicionar uma tag manualmente: a importação casa por nome/telefone
 // normalizado, então às vezes deixa passar batido alguém que É Ativo ou
 // Inativo de verdade — isso dá um jeito rápido de corrigir na mão.
-const TAGS_SISTEMA_SUGERIDAS_MANUALMENTE = ['Ativo', 'Inativo'];
+const TAGS_SISTEMA_SUGERIDAS_MANUALMENTE = ['Ativo', 'Inativo', 'Não Contatar'];
 
 function montarDatalistTagsSugeridas() {
     const datalist = document.getElementById('tagsSugeridasList');
@@ -4120,6 +4138,13 @@ const FAMILIAS_TAG = [
     // migracao_tags_contato_recente.sql). Cor neutra/informativa — não é
     // um alerta, é só um "já foi contatado, cuidado pra não repetir".
     { label: 'Contato Recente', testar: t => /^Contato Recente: /i.test(t), classe: () => 'tag-contato-recente' },
+    // "Não Contatar" — opt-out leve pedido pelo próprio lead ("me tira da
+    // lista", sem passar pelo fluxo formal de LGPD/remoção completa) —
+    // pedido do usuário (2026-10-08). Bloqueia QUALQUER disparo em massa
+    // (Convidar Link/API/Janela Aberta/Prioridade Inteligente) pra esse
+    // lead, até alguém remover a tag manualmente — cor forte (igual
+    // "Perdido"), é um bloqueio ativo, não uma classificação neutra.
+    { label: 'Não Contatar', testar: t => t === 'Não Contatar', classe: () => 'tag-perdido' },
     { label: 'Cadastro', testar: t => /^(Sem (Telefone|E-mail)|Conferir Telefone)$/i.test(t), classe: () => 'tag-warning' },
     { label: 'Engajamento / SDR', testar: t => /(n[ãa]o atende|caixa postal|n[ãa]o responde|inv[áa]lido|no-?show)/i.test(t), classe: () => 'tag-error' },
     { label: 'Objeções', testar: t => /^objeç[ãa]o/i.test(t), classe: () => 'tag-warning' },
@@ -4604,12 +4629,18 @@ async function salvarResumoIA() {
     const newText = document.getElementById('ai-summary-input').value;
     const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(currentLeadId));
     const textoAntigo = leadsAtuais[leadIndex].resumo_ia || '';
+    const agora = new Date().toISOString();
     leadsAtuais[leadIndex].resumo_ia = newText;
+    leadsAtuais[leadIndex].resumo_ia_atualizado_em = agora;
     renderAISummary();
 
+    // resumo_ia_atualizado_em — base do "Convidar (API) — Prioridade
+    // Inteligente" (ver js/whatsapp.js): um resumo mais novo que a última
+    // mensagem da conversa é considerado "fresco", economizando 1 leitura
+    // por IA na hora de montar a fila de prioridade.
     await window.supabaseClient
         .from(NOME_TABELA)
-        .update({ resumo_ia: newText })
+        .update({ resumo_ia: newText, resumo_ia_atualizado_em: agora })
         .eq('pessoaIdentificador', currentLeadId);
 
     registrarMencoesResumo(currentLeadId, leadsAtuais[leadIndex].pessoaNome, textoAntigo, newText)

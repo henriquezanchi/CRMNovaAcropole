@@ -2561,7 +2561,8 @@ async function gerarLinksConviteLote() {
     const selectModelo = document.getElementById('conviteLoteModeloSelect');
     if (selectModelo && selectModelo.value) localStorage.setItem(CHAVE_STORAGE_MODELO_CONVITE_LOTE, selectModelo.value);
 
-    const ids = Array.from(cardsSelecionados);
+    const idsBrutos = Array.from(cardsSelecionados);
+    const { validos: ids, excluidos } = await filtrarExclusaoInteligenteWpp(idsBrutos);
     const linhas = [];
     let semTelefone = 0;
     const vinculos = [];
@@ -2599,6 +2600,7 @@ async function gerarLinksConviteLote() {
             <p style="font-size:12px; color:var(--text-muted); margin:0;">Clique em cada link — ele abre o WhatsApp Web já com o convite pronto, você só confere e aperta Enviar. Marque conforme for enviando: isso grava no Log de Atividade quem foi contatado de verdade, pra aparecer no relatório. Fechar esta tela não perde a lista — reabrir por "Convidar (Link)" volta exatamente aqui.</p>
             <button type="button" class="btn-secondary" style="font-size:11px; padding:4px 8px; white-space:nowrap;" onclick="reiniciarConviteLote()"><i class="fa-solid fa-rotate-left"></i> Novo lote</button>
         </div>
+        ${htmlAvisoExclusaoInteligenteWpp(excluidos)}
         ${avisoSemTelefone}
         <div style="display:flex; flex-direction:column; gap:6px; max-height:340px; overflow-y:auto;">
             ${linhas.map(l => `
@@ -2758,6 +2760,48 @@ let conviteApiPreviaAtual = { templateIndice: 0, linhas: [] };
 // não só quem já está carregado em leadsAtuais.
 let conviteApiModoSelecao = 'kanban';
 let conviteApiSegmentoLeads = [];
+
+// Filtro inteligente — pedido do usuário (2026-10-08, vendo a tela de
+// "Convidar via API"): "não ficar robotizado... não enviar pra quem já
+// disse que não iria, ou que está viajando, ou que pediu pra excluir o
+// número". Reaproveita sinais que JÁ existem, sem custo novo nenhum de
+// IA: a classificação automática de resposta a convite
+// (classificar-resposta-convite, cron 15 min) já aplica "Convite: Não
+// Pode Ir"/"Convite: Sem Interesse"; "Contato Recente: 7 dias" (ver
+// migracao_tags_contato_recente.sql) evita recontato cedo demais;
+// "Não Contatar" é a tag manual pra opt-out leve ("me tira da lista").
+// Usado por QUALQUER disparo em massa (Link/API/Janela Aberta/Prioridade
+// Inteligente) — 1 ponto único, não duplicado em cada fluxo.
+const TAGS_EXCLUSAO_CAMPANHA_WPP = ['Não Contatar', 'Convite: Não Pode Ir', 'Convite: Sem Interesse', 'Contato Recente: 7 dias'];
+
+// Busca tags FRESCAS direto do banco (nunca confia só no que já está em
+// `leadsAtuais`, que pode estar desatualizado — e o modo "segmento" do
+// Convidar API nem devolve `tags`, ver leads_por_tag_filial()). Devolve
+// `{validos, excluidos}` — `excluidos` já vem com o motivo (qual tag
+// bateu), pra mostrar na tela sem esconder a decisão.
+async function filtrarExclusaoInteligenteWpp(ids) {
+    const unicos = [...new Set((ids || []).map(String))];
+    if (unicos.length === 0) return { validos: [], excluidos: [] };
+    const { data } = await window.supabaseClient.from(NOME_TABELA).select('pessoaIdentificador, pessoaNome, tags').in('pessoaIdentificador', unicos);
+    const mapa = new Map((data || []).map(r => [String(r.pessoaIdentificador), r]));
+    const validos = [];
+    const excluidos = [];
+    for (const id of unicos) {
+        const r = mapa.get(id);
+        const tags = r ? parseTags(r.tags).map(t => String(t).trim()) : [];
+        const motivo = TAGS_EXCLUSAO_CAMPANHA_WPP.find(t => tags.includes(t));
+        if (motivo) excluidos.push({ id, nome: r ? r.pessoaNome : id, motivo });
+        else validos.push(id);
+    }
+    return { validos, excluidos };
+}
+
+// HTML padrão do aviso "N excluído(s) automaticamente" — reaproveitado
+// nos 3 pontos de disparo em massa, pra não repetir o mesmo markup.
+function htmlAvisoExclusaoInteligenteWpp(excluidos) {
+    if (!excluidos || excluidos.length === 0) return '';
+    return `<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-shield-halved"></i> ${excluidos.length} lead(s) excluído(s) automaticamente (já disseram que não vão, pediram pra não ser contatados, ou já falamos com eles recentemente). <details style="margin-top:4px;"><summary style="cursor:pointer;">Ver quem e por quê</summary>${excluidos.map(e => `${escapeHTML(e.nome)} — <em>${escapeHTML(e.motivo)}</em>`).join('<br>')}</details></p>`;
+}
 
 // Tags mais úteis pra uma campanha de convite — sistema (sempre existem)
 // + catálogo customizado (TAGS_SUGERIDAS, já carregado globalmente).
@@ -2942,29 +2986,38 @@ async function gerarPreviaConviteApiLote() {
     // Fonte da lista de candidatos — "Kanban" (seleção manual de sempre)
     // ou "segmento" (busca por tag em toda a filial,
     // buscarLeadsPorSegmentoConviteApi(), pedido do usuário 2026-09-28).
-    const ids = conviteApiModoSelecao === 'segmento'
+    // O "Disparo Inteligente do Dia" (pedido do usuário 2026-10-08) é um
+    // fluxo PRÓPRIO, separado deste modal (ver enviarGrupoPrioridadeInteligente()),
+    // que só reaproveita o ENVIO final (confirmarEnviarConviteApiLote()) —
+    // nunca passa por esta função.
+    const idsBrutos = conviteApiModoSelecao === 'segmento'
         ? conviteApiSegmentoLeads.map(l => String(l.pessoaIdentificador))
         : Array.from(cardsSelecionados);
 
     // Quem já confirmou presença nesse evento não precisa ser convidado
     // de novo — só verificado quando um evento foi escolhido.
     let idsJaConfirmados = new Set();
-    if (eventoId && ids.length > 0) {
+    if (eventoId && idsBrutos.length > 0) {
         const { data: jaConfirmados } = await window.supabaseClient
             .from('evento_leads')
             .select('pessoaIdentificador')
             .eq('evento_id', eventoId)
             .eq('resposta_convite', 'confirmado')
-            .in('pessoaIdentificador', ids);
+            .in('pessoaIdentificador', idsBrutos);
         idsJaConfirmados = new Set((jaConfirmados || []).map(r => String(r.pessoaIdentificador)));
     }
 
+    // Filtro inteligente (ver filtrarExclusaoInteligenteWpp() acima) — modo
+    // "prioridade" já aplica isso sozinho ao montar a fila, mas reaplicar
+    // aqui não faz mal nenhum (idempotente) e cobre os outros 2 modos, que
+    // nunca tinham essa checagem antes.
+    const { validos: ids, excluidos } = await filtrarExclusaoInteligenteWpp(idsBrutos.filter(id => !idsJaConfirmados.has(String(id))));
+
     const linhas = [];
     let semTelefone = 0;
-    let jaConfirmadosIgnorados = 0;
+    let jaConfirmadosIgnorados = idsBrutos.length - ids.length - excluidos.length; // aproximação: o que sobrou fora de ids/excluidos veio do corte de confirmados acima
 
     ids.forEach(id => {
-        if (idsJaConfirmados.has(String(id))) { jaConfirmadosIgnorados++; return; }
         const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(id));
         if (!lead) return;
         if (!lead.pessoaTelefoneDDD || !lead.pessoaTelefoneNumero) { semTelefone++; return; }
@@ -2989,11 +3042,13 @@ async function gerarPreviaConviteApiLote() {
     const avisoJaConfirmados = jaConfirmadosIgnorados > 0
         ? `<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-circle-check"></i> ${jaConfirmadosIgnorados} lead(s) já confirmados nesse evento foram ignorados (não precisam de convite de novo).</p>`
         : '';
+    const avisoExclusaoInteligente = htmlAvisoExclusaoInteligenteWpp(excluidos);
 
     document.getElementById('conviteApiEscolha').style.display = 'none';
     const previaEl = document.getElementById('conviteApiPrevia');
     previaEl.style.display = 'block';
     previaEl.innerHTML = `
+        ${avisoExclusaoInteligente}
         ${avisoSemTelefone}
         ${avisoJaConfirmados}
         <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">Vai enviar <strong>"${escapeHTML(tpl.label)}"</strong> pra ${linhas.length} lead(s) de verdade, pela API. Confira os nomes antes de confirmar:</p>
@@ -3161,6 +3216,7 @@ async function confirmarEnviarConviteApiLote() {
 // pode ter uma data diferente).
 // ==========================================================
 let conviteJanelaAbertaCandidatos = [];
+let conviteJanelaAbertaExcluidosInteligente = [];
 
 async function carregarProximaAberturaTurmaPorFilial() {
     const hojeISO = new Date().toISOString().slice(0, 10);
@@ -3237,6 +3293,7 @@ async function iniciarConviteJanelaAberta() {
 
     // 5) Exclui quem já confirmou presença na Abertura de Turma da
     // própria filial — não convidar de novo quem já vai.
+    let semConfirmado = candidatos;
     if (candidatos.length > 0) {
         const eventoIds = [...new Set(candidatos.map(c => c.evento.id))];
         const { data: jaConfirmados } = await window.supabaseClient
@@ -3245,10 +3302,16 @@ async function iniciarConviteJanelaAberta() {
             .in('evento_id', eventoIds)
             .eq('resposta_convite', 'confirmado');
         const setConfirmados = new Set((jaConfirmados || []).map(r => `${r.evento_id}:${r.pessoaIdentificador}`));
-        conviteJanelaAbertaCandidatos = candidatos.filter(c => !setConfirmados.has(`${c.evento.id}:${c.pessoaIdentificador}`));
-    } else {
-        conviteJanelaAbertaCandidatos = [];
+        semConfirmado = candidatos.filter(c => !setConfirmados.has(`${c.evento.id}:${c.pessoaIdentificador}`));
     }
+
+    // 6) Filtro inteligente (ver filtrarExclusaoInteligenteWpp() acima) —
+    // mesmo quem acabou de responder pode já ter dito "não vou" ou pedido
+    // pra não ser contatado numa conversa anterior.
+    const { validos: idsValidos, excluidos: excluidosInteligente } = await filtrarExclusaoInteligenteWpp(semConfirmado.map(c => c.pessoaIdentificador));
+    const setValidos = new Set(idsValidos.map(String));
+    conviteJanelaAbertaCandidatos = semConfirmado.filter(c => setValidos.has(String(c.pessoaIdentificador)));
+    conviteJanelaAbertaExcluidosInteligente = excluidosInteligente;
 
     renderizarPreviaConviteJanelaAberta(semEventoNaFilial, abertas.length);
 }
@@ -3260,14 +3323,16 @@ function renderizarPreviaConviteJanelaAberta(semEventoNaFilial, totalAbertas) {
     const avisoSemEvento = semEventoNaFilial > 0
         ? `<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-triangle-exclamation"></i> ${semEventoNaFilial} conversa(s) com janela aberta ignorada(s) — a filial deles não tem uma Abertura de Turma futura cadastrada na Agenda.</p>`
         : '';
+    const avisoExclusaoInteligente = htmlAvisoExclusaoInteligenteWpp(conviteJanelaAbertaExcluidosInteligente);
 
     if (conviteJanelaAbertaCandidatos.length === 0) {
-        corpoEl.innerHTML = `${avisoSemEvento}<p style="font-size:12px; color:var(--text-muted);">Nenhum candidato pra convidar agora (de ${totalAbertas} conversa(s) com janela aberta).</p><button class="btn-secondary" onclick="fecharModalConviteJanelaAberta()">Fechar</button>`;
+        corpoEl.innerHTML = `${avisoSemEvento}${avisoExclusaoInteligente}<p style="font-size:12px; color:var(--text-muted);">Nenhum candidato pra convidar agora (de ${totalAbertas} conversa(s) com janela aberta).</p><button class="btn-secondary" onclick="fecharModalConviteJanelaAberta()">Fechar</button>`;
         return;
     }
 
     corpoEl.innerHTML = `
         ${avisoSemEvento}
+        ${avisoExclusaoInteligente}
         <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">Vai enviar de verdade pra <strong>${conviteJanelaAbertaCandidatos.length}</strong> lead(s), cada um com o texto personalizado da Abertura de Turma da própria filial:</p>
         <div style="max-height:280px; overflow-y:auto; border:1px solid var(--border-color); border-radius:6px; padding:6px; margin-bottom:12px;">
             ${conviteJanelaAbertaCandidatos.map((c, i) => `
@@ -3370,6 +3435,371 @@ async function confirmarConviteJanelaAberta() {
 function fecharModalConviteJanelaAberta() {
     document.getElementById('modalConviteJanelaAberta').classList.remove('open');
     document.getElementById('overlayModalConviteJanelaAberta').classList.remove('active');
+}
+
+// ==========================================================
+// Disparo Inteligente do Dia — pedido do usuário (2026-10-08): "não
+// ficar robotizado... priorizar por evento mais próximo (Abertura de
+// Turma > Aula Inaugural > lembrete de quem já confirmou), e distribuir
+// o número de contatos que temos por dia entre as filiais que estamos
+// trabalhando". Correção no MEIO da sessão: cota fixa por filial "limita
+// demais" — em vez disso, a cota é calculada proporcionalmente à
+// contagem de leads FRIOS de cada filial (quem tem mais trabalho
+// acumulado recebe mais cota), sempre editável na hora do disparo
+// manual; um futuro disparo por cronjob usaria o mesmo cálculo sem a
+// etapa de ajuste manual.
+//
+// Camada 1 (grátis — só tags + proximidade de evento, SEM IA nenhuma):
+// é o que está implementado agora. Camada 2 (reaproveitar resumo_ia já
+// existente, se ainda "fresco") e Camada 3 (ler a conversa de verdade
+// por IA pros top-da-fila, registrando o resumo sozinho) ficam como
+// próximo incremento natural — ver CLAUDE.md.
+//
+// Reaproveita 100% o envio real de "Convidar (API)"
+// (confirmarEnviarConviteApiLote()) — cada grupo (filial × tipo de
+// necessidade × evento) popula as MESMAS variáveis globais que aquele
+// fluxo já espera, em vez de duplicar a lógica de envio/relatório/log/
+// mover pra Abordagem.
+// ==========================================================
+let convitePrioridadeConfig = [];
+let convitePrioridadeGrupos = [];
+
+const LABELS_BUCKET_PRIORIDADE = {
+    abertura: 'Convidar pra Abertura de Turma',
+    aula_inaugural: 'Convidar pra Aula Inaugural',
+    lembrete: 'Lembrete — já confirmou presença',
+};
+
+function abrirConvitePrioridadeInteligente() {
+    const filiais = (typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : []);
+    const listaEl = document.getElementById('prioridadeFiliaisLista');
+    if (listaEl) {
+        // Default: filiais com Módulo 2 (Máquina/SDR) contratado — é a
+        // melhor proxy já existente de "filiais que estamos trabalhando"
+        // (ver calcularValorFixoModulo2()/modulo2_contratado).
+        listaEl.innerHTML = filiais.map(f => `
+            <label style="display:flex; align-items:center; gap:6px; font-size:12px; padding:3px 0;">
+                <input type="checkbox" class="prioridade-filial-check" value="${escapeHTML(f.nome)}" ${f.modulo2_contratado !== false ? 'checked' : ''}>
+                ${escapeHTML(f.nome)}
+            </label>
+        `).join('') || '<p style="font-size:12px; color:var(--text-muted);">Nenhuma filial cadastrada.</p>';
+    }
+    document.getElementById('prioridadeCotaResultado').innerHTML = '';
+    document.getElementById('prioridadeEtapaConfig').style.display = 'block';
+    document.getElementById('prioridadeEtapaFila').style.display = 'none';
+    document.getElementById('modalConvitePrioridade').classList.add('open');
+    document.getElementById('overlayModalConvitePrioridade').classList.add('active');
+}
+
+function fecharModalConvitePrioridade() {
+    document.getElementById('modalConvitePrioridade').classList.remove('open');
+    document.getElementById('overlayModalConvitePrioridade').classList.remove('active');
+}
+
+// Conta leads FRIOS (1ª coluna do funil — mesma noção já usada em
+// moverParaAbordagemAposEnvio()) de cada filial marcada, e distribui o
+// total diário PROPORCIONALMENTE a essa contagem. Resultado fica numa
+// tabela editável linha a linha antes de montar a fila de verdade — só
+// o disparo MANUAL passa por essa edição; um cronjob futuro chamaria
+// este mesmo cálculo e seguiria direto pra montarFilaPrioridadeInteligente()
+// sem esperar ajuste nenhum.
+async function calcularCotaProporcionalPrioridade() {
+    const checks = Array.from(document.querySelectorAll('.prioridade-filial-check:checked')).map(c => c.value);
+    const totalInput = document.getElementById('prioridadeTotalDiario');
+    const total = Math.max(1, Number(totalInput ? totalInput.value : 0) || 100);
+    const colunaFria = (typeof columnsConfig !== 'undefined' && columnsConfig[0]) ? columnsConfig[0].key : 'Frios';
+
+    const resultadoEl = document.getElementById('prioridadeCotaResultado');
+    if (!resultadoEl) return;
+    if (checks.length === 0) { resultadoEl.innerHTML = '<p style="font-size:12px; color:#b91c1c;">Marque pelo menos 1 filial.</p>'; return; }
+    resultadoEl.innerHTML = '<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Contando leads frios de cada filial...</p>';
+
+    const contagens = await Promise.all(checks.map(async f => {
+        const { count } = await window.supabaseClient.from(NOME_TABELA).select('*', { count: 'exact', head: true }).eq('filial', f).eq('funil_agencia', colunaFria);
+        return { filial: f, frios: count || 0 };
+    }));
+    const somaFrios = contagens.reduce((s, c) => s + c.frios, 0) || 1;
+    convitePrioridadeConfig = contagens.map(c => ({ ...c, cota: c.frios > 0 ? Math.max(1, Math.round(total * c.frios / somaFrios)) : 0 }));
+
+    resultadoEl.innerHTML = `
+        <table class="tabela-relatorio" style="max-width:100%;">
+            <thead><tr><th>Filial</th><th>Leads Frios</th><th>Cota hoje</th></tr></thead>
+            <tbody>
+                ${convitePrioridadeConfig.map((c, i) => `
+                    <tr>
+                        <td>${escapeHTML(c.filial)}</td>
+                        <td>${c.frios}</td>
+                        <td><input type="number" min="0" value="${c.cota}" style="width:70px; padding:4px;" onchange="convitePrioridadeConfig[${i}].cota = Math.max(0, Number(this.value)||0)"></td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+        <p style="font-size:11px; color:var(--text-muted); margin-top:6px;">Calculado proporcionalmente aos leads frios de cada filial — edite qualquer valor antes de montar a fila.</p>
+        <button class="btn-primary" style="margin-top:10px;" onclick="montarFilaPrioridadeInteligente()"><i class="fa-solid fa-list-check"></i> Montar fila de hoje</button>
+    `;
+}
+
+// Camada 1 de pontuação (grátis): quanto mais perto o evento, mais
+// pontos (até +300), somado ao sinal de engajamento que já existe em
+// tags (Lead Forte/Jornada/já pediu informação sobre um convite).
+function pontuarCandidatoPrioridade(tags, diasAteEvento) {
+    let pontos = Math.max(0, 60 - diasAteEvento) * 5;
+    if (tags.includes('Lead Forte 1')) pontos += 150;
+    else if (tags.includes('Lead Forte 2')) pontos += 90;
+    else if (tags.includes('Lead Forte 3')) pontos += 40;
+    if (tags.includes('Jornada: Engajado')) pontos += 60;
+    if (tags.includes('Convite: Pediu Informação')) pontos += 80;
+    return pontos;
+}
+
+// Monta 1 grupo "ainda não inscrito no evento X" pra 1 filial — busca
+// quem JÁ tem qualquer vínculo em evento_leads (nunca convidar de novo,
+// mesmo quem já recusou — isso já é coberto pelo filtro inteligente, mas
+// não faz sentido convidar de novo nem quem só está "pendente"), aplica
+// pontuação + filtro inteligente, corta pela cota restante da filial.
+async function montarGrupoNaoInscritoPrioridade(filial, bucket, evento, limite) {
+    const diasAte = Math.max(0, Math.round((new Date(evento.data) - new Date()) / 86400000));
+
+    const { data: vinculados } = await window.supabaseClient.from('evento_leads').select('pessoaIdentificador').eq('evento_id', evento.id);
+    const setVinculados = new Set((vinculados || []).map(r => String(r.pessoaIdentificador)));
+
+    const brutos = [];
+    let de = 0;
+    while (true) {
+        const { data } = await window.supabaseClient.from(NOME_TABELA)
+            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, tags')
+            .eq('filial', filial).is('lixeira_em', null)
+            .not('pessoaTelefoneNumero', 'is', null)
+            .order('pessoaIdentificador', { ascending: true })
+            .range(de, de + 999);
+        if (!data || data.length === 0) break;
+        brutos.push(...data);
+        if (data.length < 1000) break;
+        de += 1000;
+    }
+
+    const pool = brutos
+        .filter(l => !setVinculados.has(String(l.pessoaIdentificador)))
+        .filter(l => l.pessoaTelefoneDDD && l.pessoaTelefoneNumero && !numeroPareceFixo(l.pessoaTelefoneDDD, l.pessoaTelefoneNumero))
+        .map(l => {
+            const tags = parseTags(l.tags).map(t => String(t).trim());
+            return { pessoaIdentificador: l.pessoaIdentificador, nome: l.pessoaNome, score: pontuarCandidatoPrioridade(tags, diasAte) };
+        });
+
+    const { validos, excluidos } = await filtrarExclusaoInteligenteWpp(pool.map(p => p.pessoaIdentificador));
+    const setValidos = new Set(validos.map(String));
+    const final = pool.filter(p => setValidos.has(String(p.pessoaIdentificador))).sort((a, b) => b.score - a.score).slice(0, limite);
+
+    return { filial, bucket, eventoId: evento.id, eventoNome: evento.nome, candidatos: final, excluidos };
+}
+
+// Monta o grupo "lembrete" — quem já confirmou presença num evento
+// próximo (qualquer tipo) da filial, pra reforçar endereço/dúvidas antes
+// do evento. Só olha o evento MAIS PRÓXIMO com confirmados (simplificação
+// deliberada — se a filial tiver 2+ eventos próximos com gente
+// confirmada ao mesmo tempo, só o mais próximo entra nesta rodada).
+async function montarGrupoLembretePrioridade(filial, eventosProximos, limite) {
+    if (eventosProximos.length === 0) return { filial, bucket: 'lembrete', eventoId: null, eventoNome: null, candidatos: [], excluidos: [] };
+    const eventoIds = eventosProximos.map(e => e.id);
+
+    const { data: confirmados } = await window.supabaseClient.from('evento_leads')
+        .select('pessoaIdentificador, evento_id').in('evento_id', eventoIds).eq('resposta_convite', 'confirmado');
+    if (!confirmados || confirmados.length === 0) return { filial, bucket: 'lembrete', eventoId: null, eventoNome: null, candidatos: [], excluidos: [] };
+
+    const eventoAlvoId = eventoIds[0]; // eventosProximos já vem ordenado por data asc
+    const idsCandidatos = [...new Set(confirmados.filter(c => c.evento_id === eventoAlvoId).map(c => String(c.pessoaIdentificador)))];
+    if (idsCandidatos.length === 0) return { filial, bucket: 'lembrete', eventoId: null, eventoNome: null, candidatos: [], excluidos: [] };
+
+    const { data: leadsInfo } = await window.supabaseClient.from(NOME_TABELA).select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero').in('pessoaIdentificador', idsCandidatos);
+    const mapaLeads = new Map((leadsInfo || []).map(l => [String(l.pessoaIdentificador), l]));
+
+    const pool = idsCandidatos
+        .map(id => mapaLeads.get(id))
+        .filter(l => l && l.pessoaTelefoneDDD && l.pessoaTelefoneNumero && !numeroPareceFixo(l.pessoaTelefoneDDD, l.pessoaTelefoneNumero))
+        .map(l => ({ pessoaIdentificador: l.pessoaIdentificador, nome: l.pessoaNome, score: 0 }));
+
+    const { validos, excluidos } = await filtrarExclusaoInteligenteWpp(pool.map(p => p.pessoaIdentificador));
+    const setValidos = new Set(validos.map(String));
+    const final = pool.filter(p => setValidos.has(String(p.pessoaIdentificador))).slice(0, limite);
+
+    const eventoInfo = eventosProximos.find(e => e.id === eventoAlvoId);
+    return { filial, bucket: 'lembrete', eventoId: eventoAlvoId, eventoNome: eventoInfo ? eventoInfo.nome : null, candidatos: final, excluidos };
+}
+
+// Monta a fila completa — pra CADA filial configurada, aloca sua cota
+// NESTA ORDEM: Abertura de Turma > Aula Inaugural > Lembrete (a cota só
+// "desce" pro próximo balde se sobrar depois do anterior).
+async function montarFilaPrioridadeInteligente() {
+    const hojeISO = new Date().toISOString().slice(0, 10);
+    const grupos = [];
+
+    for (const cfg of convitePrioridadeConfig) {
+        if (!cfg.cota || cfg.cota <= 0) continue;
+        let cotaRestante = cfg.cota;
+
+        const { data: eventosFilial } = await window.supabaseClient
+            .from('eventos')
+            .select('id, nome, tipo, data')
+            .eq('filial', cfg.filial)
+            .eq('ativo', true)
+            .gte('data', hojeISO)
+            .order('data', { ascending: true });
+        const lista = eventosFilial || [];
+
+        const eventoAbertura = lista.find(e => e.tipo === 'Abertura de Turma');
+        const eventoAula = lista.find(e => e.tipo === 'Aula Inaugural');
+        const eventosProximos10Dias = lista.filter(e => Math.round((new Date(e.data) - new Date(hojeISO)) / 86400000) <= 10);
+
+        if (cotaRestante > 0 && eventoAbertura) {
+            const g = await montarGrupoNaoInscritoPrioridade(cfg.filial, 'abertura', eventoAbertura, cotaRestante);
+            if (g.candidatos.length > 0) { grupos.push(g); cotaRestante -= g.candidatos.length; }
+        }
+        if (cotaRestante > 0 && eventoAula) {
+            const g = await montarGrupoNaoInscritoPrioridade(cfg.filial, 'aula_inaugural', eventoAula, cotaRestante);
+            if (g.candidatos.length > 0) { grupos.push(g); cotaRestante -= g.candidatos.length; }
+        }
+        if (cotaRestante > 0) {
+            const g = await montarGrupoLembretePrioridade(cfg.filial, eventosProximos10Dias, cotaRestante);
+            if (g.candidatos.length > 0) { grupos.push(g); cotaRestante -= g.candidatos.length; }
+        }
+    }
+
+    convitePrioridadeGrupos = grupos.map(g => ({ ...g, templateIndice: 0 }));
+    renderizarFilaPrioridadeInteligente();
+}
+
+function renderizarFilaPrioridadeInteligente() {
+    document.getElementById('prioridadeEtapaConfig').style.display = 'none';
+    const etapaFila = document.getElementById('prioridadeEtapaFila');
+    etapaFila.style.display = 'block';
+
+    if (convitePrioridadeGrupos.length === 0) {
+        etapaFila.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Nenhum candidato encontrado pra hoje (cota zerada, ou sem evento futuro cadastrado nas filiais escolhidas).</p><button class="btn-secondary" onclick="abrirConvitePrioridadeInteligente()">Voltar</button>';
+        return;
+    }
+
+    etapaFila.innerHTML = `
+        <button class="btn-secondary" style="margin-bottom:10px;" onclick="abrirConvitePrioridadeInteligente()"><i class="fa-solid fa-arrow-left"></i> Voltar</button>
+        ${convitePrioridadeGrupos.map((g, i) => `
+            <div style="border:1px solid var(--border-color); border-radius:8px; padding:12px; margin-bottom:12px;">
+                <div style="font-weight:700; font-size:13px; margin-bottom:4px;">${escapeHTML(LABELS_BUCKET_PRIORIDADE[g.bucket])} — ${escapeHTML(g.filial)}</div>
+                <div style="font-size:11px; color:var(--text-muted); margin-bottom:8px;">${g.eventoNome ? escapeHTML(g.eventoNome) + ' · ' : ''}${g.candidatos.length} lead(s)${g.excluidos && g.excluidos.length ? ` · ${g.excluidos.length} excluído(s) automaticamente` : ''}</div>
+                <select id="prioridadeTemplate-${i}" style="width:100%; padding:6px; margin-bottom:8px; box-sizing:border-box;" onchange="convitePrioridadeGrupos[${i}].templateIndice = Number(this.value)">
+                    ${TEMPLATES_WHATSAPP.map((t, ti) => `<option value="${ti}">${escapeHTML(t.label)}</option>`).join('')}
+                </select>
+                <details style="margin-bottom:8px;"><summary style="font-size:11px; cursor:pointer; color:var(--text-muted);">Ver quem (${g.candidatos.length})</summary>
+                    <div style="max-height:140px; overflow-y:auto; font-size:11px; margin-top:4px;">${g.candidatos.map(c => escapeHTML(c.nome || 'Sem nome')).join('<br>')}</div>
+                </details>
+                ${g.excluidosIa && g.excluidosIa.length > 0 ? `<p style="font-size:11px; color:var(--text-muted); margin-bottom:8px;"><i class="fa-solid fa-robot"></i> IA excluiu ${g.excluidosIa.length} desta campanha (sem tag permanente): <details style="margin-top:2px;"><summary style="cursor:pointer;">Ver quem e por quê</summary>${g.excluidosIa.map(e => `${escapeHTML(e.nome || 'Sem nome')} — <em>${escapeHTML(e.motivo || '')}</em>`).join('<br>')}</details></p>` : ''}
+                <div style="display:flex; gap:8px;">
+                    ${!g.analisadoIa ? `<button id="prioridadeBtnIa-${i}" class="btn-secondary" style="font-size:12px;" onclick="analisarGrupoComIaPrioridade(${i})"><i class="fa-solid fa-wand-magic-sparkles"></i> Analisar com IA</button>` : `<span style="font-size:11px; color:var(--text-muted); align-self:center;"><i class="fa-solid fa-circle-check"></i> Já analisado por IA</span>`}
+                    <button class="btn-primary" style="font-size:12px; flex:1;" onclick="enviarGrupoPrioridadeInteligente(${i})"><i class="fa-solid fa-paper-plane"></i> Enviar via API pra ${g.candidatos.length}</button>
+                </div>
+            </div>
+        `).join('')}
+    `;
+}
+
+// Camada 2 (grátis — só lê o que já existe, sem IA): pula quem já tem
+// resumo_ia mais NOVO que a última mensagem da conversa (nada mudou desde
+// a última leitura). Camada 3 (ler de verdade, custa IA): só pros
+// restantes, via priorizar-convite-ia — grava o resumo sozinho (já que
+// estamos pagando pela leitura) e, quando acha sinal claro de recusa/
+// opt-out, tira o lead SÓ desta campanha (decisão confirmada com o
+// usuário: nunca aplica tag permanente sozinha).
+async function analisarGrupoComIaPrioridade(indice) {
+    const g = convitePrioridadeGrupos[indice];
+    if (!g || g.candidatos.length === 0) return;
+
+    const btn = document.getElementById(`prioridadeBtnIa-${indice}`);
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Lendo conversas...'; }
+
+    const ids = g.candidatos.map(c => String(c.pessoaIdentificador));
+    const [{ data: leadsInfo }, { data: conversas }] = await Promise.all([
+        window.supabaseClient.from(NOME_TABELA).select('pessoaIdentificador, resumo_ia_atualizado_em').in('pessoaIdentificador', ids),
+        window.supabaseClient.from('vw_wpp_conversas').select('"pessoaIdentificador", ultima_mensagem_em').in('pessoaIdentificador', ids),
+    ]);
+    const mapaResumo = new Map((leadsInfo || []).map(l => [String(l.pessoaIdentificador), l.resumo_ia_atualizado_em]));
+    const mapaConversa = new Map((conversas || []).map(c => [String(c.pessoaIdentificador), c.ultima_mensagem_em]));
+
+    const precisamLeitura = g.candidatos.filter(c => {
+        const ultimaMsg = mapaConversa.get(String(c.pessoaIdentificador));
+        if (!ultimaMsg) return false; // sem conversa nenhuma — nada pra ler, não custa nada
+        const resumoEm = mapaResumo.get(String(c.pessoaIdentificador));
+        return !resumoEm || new Date(resumoEm) < new Date(ultimaMsg);
+    });
+
+    if (precisamLeitura.length === 0) {
+        g.analisadoIa = true;
+        renderizarFilaPrioridadeInteligente();
+        return;
+    }
+
+    const { data, error } = await window.supabaseClient.functions.invoke('priorizar-convite-ia', {
+        body: { candidatos: precisamLeitura.map(c => ({ pessoaIdentificador: c.pessoaIdentificador, nome: c.nome, eventoNome: g.eventoNome })) },
+    });
+
+    if (error || !data || data.ok === false) {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Erro — tentar de novo'; }
+        alert('Erro ao analisar com IA: ' + ((data && data.erro) || (error && error.message) || 'desconhecido'));
+        return;
+    }
+
+    const setExcluidos = new Set();
+    const excluidosIa = [];
+    (data.resultados || []).forEach(r => {
+        if (r.avaliado && r.excluirDestaCampanha) {
+            setExcluidos.add(String(r.pessoaIdentificador));
+            const candidato = g.candidatos.find(c => String(c.pessoaIdentificador) === String(r.pessoaIdentificador));
+            excluidosIa.push({ nome: candidato ? candidato.nome : r.pessoaIdentificador, motivo: r.motivo });
+        }
+    });
+
+    g.candidatos = g.candidatos.filter(c => !setExcluidos.has(String(c.pessoaIdentificador)));
+    g.excluidosIa = excluidosIa;
+    g.analisadoIa = true;
+    renderizarFilaPrioridadeInteligente();
+}
+
+// Reaproveita 100% o pipeline de envio já existente de "Convidar (API)"
+// (confirmarEnviarConviteApiLote()) — só popula as mesmas variáveis
+// globais que aquele fluxo já espera (conviteApiPreviaAtual/
+// conviteApiEventoAtual) e abre o MESMO modal de revisão, já na etapa
+// "revisar antes de enviar" — nunca duplica a lógica de envio/relatório/
+// log/mover-pra-Abordagem.
+async function enviarGrupoPrioridadeInteligente(indice) {
+    const g = convitePrioridadeGrupos[indice];
+    const tpl = TEMPLATES_WHATSAPP[g.templateIndice];
+    if (!tpl || g.candidatos.length === 0) return;
+
+    const idsFaltando = g.candidatos.map(c => String(c.pessoaIdentificador)).filter(id => !leadsAtuais.some(l => String(l.pessoaIdentificador) === id));
+    if (idsFaltando.length > 0) {
+        const { data } = await window.supabaseClient.from(NOME_TABELA).select('*').in('pessoaIdentificador', idsFaltando);
+        if (data && data.length > 0) leadsAtuais = [...leadsAtuais, ...data];
+    }
+
+    const linhas = g.candidatos.map(c => ({
+        pessoaIdentificador: c.pessoaIdentificador,
+        nome: c.nome || 'Sem nome',
+        params: tpl.variaveis.map(v => v.chave === null ? '' : (preencherValorAutomatico(v.chave, c.pessoaIdentificador) || '')),
+    }));
+    conviteApiPreviaAtual = { templateIndice: g.templateIndice, linhas };
+    conviteApiEventoAtual = g.eventoId ? { id: g.eventoId, nome: g.eventoNome } : null;
+
+    fecharModalConvitePrioridade();
+    document.getElementById('modalConviteLoteApi').classList.add('open');
+    document.getElementById('overlayModalConviteLoteApi').classList.add('active');
+    document.getElementById('conviteApiEscolha').style.display = 'none';
+    document.getElementById('conviteApiResultado').style.display = 'none';
+    const previaEl = document.getElementById('conviteApiPrevia');
+    previaEl.style.display = 'block';
+    previaEl.innerHTML = `
+        <p style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">Vai enviar <strong>"${escapeHTML(tpl.label)}"</strong> pra ${linhas.length} lead(s) de verdade, pela API (${escapeHTML(LABELS_BUCKET_PRIORIDADE[g.bucket])} — ${escapeHTML(g.filial)}).</p>
+        <div style="display:flex; gap:8px;">
+            <button class="btn-secondary" onclick="fecharModalConviteLoteApi()">Cancelar</button>
+            <button class="btn-primary" style="flex:1;" onclick="confirmarEnviarConviteApiLote()"><i class="fa-solid fa-paper-plane"></i> Enviar Agora (via API)</button>
+        </div>
+    `;
 }
 
 // ==========================================================

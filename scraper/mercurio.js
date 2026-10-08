@@ -28,8 +28,8 @@ import { filiaisAtivas as filiaisAtivasUlisses } from './ulisses-api.js';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const URL_LOGIN = 'https://mercurio.oinabn.com.br/';
-const URL_FUNCOES = 'https://mercurio.oinabn.com.br/ger_frame.php';
+export const URL_LOGIN = 'https://mercurio.oinabn.com.br/';
+export const URL_FUNCOES = 'https://mercurio.oinabn.com.br/ger_frame.php';
 const PASTA_EXPORTS = 'exports';
 
 async function preencherComFallback(contexto, getByLabelRegex, seletorFallback, valor) {
@@ -45,7 +45,7 @@ async function preencherComFallback(contexto, getByLabelRegex, seletorFallback, 
     }
 }
 
-async function loginMercurio(page, matricula, senha) {
+export async function loginMercurio(page, matricula, senha) {
     await page.goto(URL_LOGIN, { waitUntil: 'domcontentloaded' });
 
     // Confirmado por print real: o form de Matrícula/Senha carrega e
@@ -109,7 +109,7 @@ async function acharContextoComTexto(page, textoAlvo, timeoutMs = 10000) {
 // bug real: "Turma" batia tanto na tabela de Ativos quanto no item de
 // menu "Turmas" do próprio menu lateral, sempre presente, fazendo o
 // código pensar que já estava na tela certa antes de realmente estar).
-async function esperarFrame(page, nome, regexUrl, timeoutMs = 10000) {
+export async function esperarFrame(page, nome, regexUrl, timeoutMs = 10000) {
     const fim = Date.now() + timeoutMs;
     while (Date.now() < fim) {
         const frame = page.frame({ name: nome });
@@ -196,6 +196,37 @@ async function listarLinksCadastro(page) {
             if (texto) label = texto;
         } catch { /* mantém o rótulo genérico */ }
         resultado.push({ label, indice: i });
+    }
+    return resultado;
+}
+
+// Versão AMPLIADA de listarLinksCadastro() acima — pensada só pro
+// mapeamento exploratório (scraper/mapear-mercurio.js), NUNCA pro job
+// diário: em vez de procurar só o link "CADASTRO", devolve TODOS os
+// links de cada tabela de menu por filial — pode incluir "TESOURARIA"
+// ou qualquer outro módulo que exista ali, sem supor nome nenhum de
+// antemão (pedido do usuário, 2026-10-08: mapear TODA a área de
+// cadastro e tesouraria pra saber o que pedir ao Mercúrio numa view).
+export async function listarTodosLinksPorFilial(page) {
+    const framePrincipal = await esperarFrame(page, 'principal', /ger_funcao\.php/, 15000);
+    const tabelasMenu = framePrincipal.locator('table.menu');
+    const total = await tabelasMenu.count();
+    const resultado = [];
+    for (let i = 0; i < total; i++) {
+        const tabela = tabelasMenu.nth(i);
+        let nomeFilial = `filial_${i + 1}`;
+        try {
+            const texto = (await tabela.locator('a.menu_tit').first().innerText()).replace(/\s+/g, ' ').trim();
+            if (texto) nomeFilial = texto;
+        } catch { /* mantém genérico */ }
+        const links = tabela.locator('a');
+        const totalLinks = await links.count();
+        const nomesLinks = [];
+        for (let j = 0; j < totalLinks; j++) {
+            const texto = (await links.nth(j).innerText().catch(() => '')).trim();
+            if (texto && texto !== nomeFilial) nomesLinks.push(texto);
+        }
+        resultado.push({ filial: nomeFilial, links: [...new Set(nomesLinks)] });
     }
     return resultado;
 }
@@ -1681,7 +1712,7 @@ async function verificarLembreteImportacaoUlisses() {
 // effort (erro na leitura nunca bloqueia, só a leitura de um progresso
 // genuinamente ativo bloqueia).
 const LIMITE_RODADA_ATIVA_MS = 5 * 60 * 1000; // mesmo limiar de "travado" do indicador (js/scraper-progresso.js)
-async function verificarRodadaJaEmAndamento() {
+export async function verificarRodadaJaEmAndamento() {
     try {
         const { data } = await supabaseAdmin.from('scraper_progresso').select('*').eq('id', 'mercurio').maybeSingle();
         if (!data || data.concluido || !data.atualizado_em) return null;
