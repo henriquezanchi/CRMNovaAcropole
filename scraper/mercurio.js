@@ -995,7 +995,7 @@ async function carregarMapaLeadsPorNome(filialCrm) {
     for (let de = 0; ; de += TAMANHO_PAGINA) {
         const { data, error } = await supabaseAdmin
             .from('leads_inscricoes')
-            .select('pessoaIdentificador, pessoaNome, tags, cidade, uf, telefone_alternativo, pessoaEmail, pessoaTelefoneDDD, pessoaTelefoneNumero, profissao')
+            .select('pessoaIdentificador, pessoaNome, tags, cidade, uf, telefone_alternativo, pessoaEmail, pessoaTelefoneDDD, pessoaTelefoneNumero, profissao, data_matricula')
             .eq('filial', filialCrm)
             .order('pessoaIdentificador', { ascending: true })
             .range(de, de + TAMANHO_PAGINA - 1);
@@ -1013,6 +1013,7 @@ async function carregarMapaLeadsPorNome(filialCrm) {
                 pessoaEmail: lead.pessoaEmail || '',
                 pessoaTelefoneNumero: lead.pessoaTelefoneNumero || '',
                 profissao: lead.profissao || '',
+                dataMatricula: lead.data_matricula || null,
                 ambiguo: false,
             });
         }
@@ -1086,6 +1087,37 @@ async function aplicarTagRecuperado(filialCrm, leadInfo, nomeAluno, dataReingres
         filial: filialCrm, acao: 'recuperacao_detectada_scraper', autor: 'Scraper Mercúrio',
         pessoa_ids: [String(leadInfo.pessoaIdentificador)], detalhes: { nome: nomeAluno, dataReingresso: dataReingresso || null },
     }).then(({ error: erroLog }) => { if (erroLog) console.warn('[log-atividade] Falha ao registrar recuperação:', erroLog.message); });
+    return true;
+}
+
+// FIX DEFINITIVO do bug gravíssimo documentado no CLAUDE.md: a importação
+// diária de Ativos/Inativos (js/importador.js) estampa `data_matricula =
+// hoje` na 1ª vez que um lead aparece como "Ativo" NA NOSSA BASE — uma
+// aproximação que pode estar completamente errada (aluno antigo só
+// sincronizado agora, matrícula de mês anterior detectada com atraso,
+// transferência entre turmas/filiais). Esta função corrige/substitui esse
+// valor aproximado pelo dado REAL do Mercúrio — a coluna "Ingresso" da
+// lista de alunos de cada turma (capturada de graça pra TODO aluno de
+// TODA turma visitada, nos 2 modos, ver processarTurmas()) — que é bem
+// mais confiável que qualquer heurística do lado do CRM.
+// NUNCA grava `dataISO` vazio/ilegível (preserva o que já existe nesse
+// caso) e só faz UPDATE quando o valor realmente MUDA — idempotente e
+// auto-limitante: depois da 1ª correção de cada lead, as rodadas
+// seguintes não geram escrita nenhuma pra ele.
+async function corrigirDataMatriculaReal(filialCrm, leadInfo, nomeAluno, dataISO, origem) {
+    if (!dataISO) return false;
+    if (leadInfo.dataMatricula === dataISO) return false; // já está certo — nada a fazer
+    const dataAnterior = leadInfo.dataMatricula || null;
+    const { error } = await supabaseAdmin.from('leads_inscricoes')
+        .update({ data_matricula: dataISO })
+        .eq('pessoaIdentificador', leadInfo.pessoaIdentificador);
+    if (error) { console.warn(`[data-matricula] Falha ao corrigir "${nomeAluno}":`, error.message); return false; }
+    leadInfo.dataMatricula = dataISO;
+    await supabaseAdmin.from('log_atividade').insert({
+        filial: filialCrm, acao: 'correcao_data_matricula_ingresso_real', autor: 'Scraper Mercúrio',
+        pessoa_ids: [String(leadInfo.pessoaIdentificador)],
+        detalhes: { nome: nomeAluno, dataAnterior, dataNova: dataISO, origem },
+    }).then(({ error: erroLog }) => { if (erroLog) console.warn('[log-atividade] Falha ao registrar correção de data_matricula:', erroLog.message); });
     return true;
 }
 
@@ -1293,6 +1325,7 @@ async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = f
     let totalRecuperados = 0;
     let totalEnderecosAtualizados = 0;
     let totalTelefonesPreenchidos = 0;
+    let totalDatasMatriculaCorrigidas = 0;
 
     const mapaLeads = await carregarMapaLeadsPorNome(filialCrm);
 
@@ -1458,6 +1491,19 @@ async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = f
                 if (!lead || lead.ambiguo) continue;
                 const preencheu = await aplicarTelefoneDaTurma(lead, aluno.nome, aluno.fone);
                 if (preencheu) totalTelefonesPreenchidos++;
+
+                // Corrige data_matricula com o "Ingresso" real desta turma —
+                // SKIPA quem já tem a tag "Recuperado": pra esses, a data
+                // autoritativa é o REINGRESSO (mais recente), gravado no
+                // bloco de ficha abaixo — deixar este laço geral mexer
+                // de novo aqui reintroduziria a data antiga/original a cada
+                // rodada (resíduo igual ao bug original, só que causado por
+                // este próprio fix).
+                if (!lead.tags.includes('Recuperado')) {
+                    const ingressoISO = dataBRParaISO(aluno.ingresso);
+                    const corrigiu = await corrigirDataMatriculaReal(filialCrm, lead, aluno.nome, ingressoISO, 'ingresso_turma');
+                    if (corrigiu) totalDatasMatriculaCorrigidas++;
+                }
             }
 
             if (recentes.length > 0) {
@@ -1526,6 +1572,15 @@ async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = f
                     if (precisaHistorico && dados.recuperado) {
                         const gravou = await aplicarTagRecuperado(filialCrm, lead, aluno.nome, dados.dataReingresso);
                         if (gravou) { totalRecuperados++; console.log(`[recuperado] "${aluno.nome}" (${filialCrm}) marcado como Recuperado (reingresso em ${dados.dataReingresso || '?'}).`); }
+                        // Sobrescreve a data_matricula (que o laço geral acima
+                        // já tinha gravado como o "Ingresso" ORIGINAL, anterior
+                        // à turma atual) pela data do REINGRESSO — essa sim é
+                        // a matrícula "ativa" de verdade pra fins de cobrança/
+                        // relatório, mesmo que a pessoa já tenha sido aluna
+                        // antes.
+                        const dataReingressoISO = dataBRParaISO(dados.dataReingresso);
+                        const corrigiuReingresso = await corrigirDataMatriculaReal(filialCrm, lead, aluno.nome, dataReingressoISO, 'reingresso_confirmado');
+                        if (corrigiuReingresso) totalDatasMatriculaCorrigidas++;
                     }
                     if (modoCompleto && (dados.email || dados.cidade || dados.uf || dados.telefoneAlternativo || dados.profissao || dados.nomeCompleto)) {
                         const gravou = await aplicarDadosEndereco(lead, aluno.nome, dados);
@@ -1549,8 +1604,8 @@ async function processarTurmas(page, pageCrm, filialCrm, label, modoCompleto = f
         } catch { /* se falhar aqui, a próxima iteração do for vai falhar rápido e seguir também */ }
     }
 
-    console.log(`[turmas] ${totalAlunosLidos} aluno(s) lidos no total em ${filialCrm}; ${totalProcessadas} matrícula(s) de ${mesAtual}; ${totalRecuperados} recuperação(ões) detectada(s); ${totalEnderecosAtualizados} ficha(s) de endereço atualizada(s); ${totalTelefonesPreenchidos} telefone(s) preenchido(s) via lista de turma.`);
-    return { totalProcessadas, totalRecuperados, totalEnderecosAtualizados, totalTelefonesPreenchidos };
+    console.log(`[turmas] ${totalAlunosLidos} aluno(s) lidos no total em ${filialCrm}; ${totalProcessadas} matrícula(s) de ${mesAtual}; ${totalRecuperados} recuperação(ões) detectada(s); ${totalEnderecosAtualizados} ficha(s) de endereço atualizada(s); ${totalTelefonesPreenchidos} telefone(s) preenchido(s) via lista de turma; ${totalDatasMatriculaCorrigidas} data(s) de matrícula corrigida(s) pro Ingresso real.`);
+    return { totalProcessadas, totalRecuperados, totalEnderecosAtualizados, totalTelefonesPreenchidos, totalDatasMatriculaCorrigidas };
 }
 
 // O Ulisses NUNCA vai rodar sozinho (Cloudflare exige login manual — ver
@@ -2048,7 +2103,7 @@ async function main() {
                     const resultadoTurmas = await processarTurmas(page, pageCrm, filialCrm, label, modoCompleto, filtroTurma);
                     totalRecuperadosGeral += resultadoTurmas.totalRecuperados;
                     totalEnderecosGeral += resultadoTurmas.totalEnderecosAtualizados;
-                    console.log(`[turmas] ${label}: ${resultadoTurmas.totalProcessadas} matrícula(s) do mês corrente, ${resultadoTurmas.totalRecuperados} recuperação(ões), ${resultadoTurmas.totalEnderecosAtualizados} endereço(s) atualizado(s), ${resultadoTurmas.totalTelefonesPreenchidos} telefone(s) preenchido(s).`);
+                    console.log(`[turmas] ${label}: ${resultadoTurmas.totalProcessadas} matrícula(s) do mês corrente, ${resultadoTurmas.totalRecuperados} recuperação(ões), ${resultadoTurmas.totalEnderecosAtualizados} endereço(s) atualizado(s), ${resultadoTurmas.totalTelefonesPreenchidos} telefone(s) preenchido(s), ${resultadoTurmas.totalDatasMatriculaCorrigidas} data(s) de matrícula corrigida(s).`);
                 }
             } catch (e) {
                 algumaFalha = true;

@@ -9287,17 +9287,104 @@ matrícula de outubro de verdade.**
   usuário: NÃO fechar a cobrança de outubro com os números atuais sem
   continuar essa correção** (seja colando mais turmas, seja esperando o
   fix definitivo do scraper abaixo).
-- **Fix definitivo, NÃO construído ainda** (próximo passo natural): fazer
-  `processarTurmas()` capturar a coluna "Ingresso" de CADA aluno (não só
-  dos candidatos a reingresso) e usar esse valor como `data_matricula`
-  SEMPRE que disponível — corrigindo/substituindo o "hoje" aproximado da
-  importação diária, não só preenchendo quando vazio. Isso só roda na
-  máquina de confiança do usuário (`C:\Scrapper`, Playwright) — não pode
-  ser testado neste ambiente.
 - **Excel de cobrança gerado antes desta descoberta** (`Comissao_SDR_Outubro2026.xlsx`)
   **NÃO deve ser enviado como está** — os números de Jardim América (e
   possivelmente outras filiais) ainda incluem matrículas antigas mal
   classificadas como "outubro".
+
+### Fix definitivo construído (2026-10-08) — `processarTurmas()` agora corrige `data_matricula` sozinho, todo dia
+
+Pedido do usuário: "construa o fix definitivo. Use o scraper para mapear
+as telas do mercúrio, e descobrir essa informação". **Não foi preciso
+mapear tela nenhuma nova** — a coluna "Ingresso" por aluno já era lida de
+graça pra TODO aluno de TODA turma visitada (`alunosLidos`, dentro de
+`processarTurmas()`, `scraper/mercurio.js`), nos 2 modos (Incremental e
+Completo) — só nunca tinha sido usada pra corrigir `data_matricula`, só
+pra decidir "é matrícula deste mês?"/"é candidato a reingresso?".
+
+- **Nova função `corrigirDataMatriculaReal(filialCrm, leadInfo, nomeAluno,
+  dataISO, origem)`**: só faz `UPDATE` quando `dataISO` é diferente do
+  `data_matricula` já gravado (idempotente — depois da 1ª correção de
+  cada lead, roda de graça pros dias seguintes) e grava 1 linha em
+  `log_atividade` (`acao='correcao_data_matricula_ingresso_real'`,
+  `detalhes.origem` distinguindo a fonte) pra auditoria.
+- **2 pontos de chamada, em ORDEM dentro do mesmo laço de turma**:
+  1. Pra TODO aluno de `alunosLidos` (mesmo laço que já faz o backfill de
+     telefone) — corrige pro "Ingresso" lido na própria lista da turma
+     (`dataBRParaISO(aluno.ingresso)`), **exceto** quem já tem a tag
+     `"Recuperado"` (ver item 2 — nesses casos a data autoritativa é
+     outra, e deixar este laço geral mexer de novo reintroduziria a data
+     antiga a cada rodada).
+  2. Pra quem tem reingresso CONFIRMADO na ficha (`dados.recuperado`,
+     mesmo bloco que já aplica a tag `"Recuperado"`) — **sobrescreve** de
+     novo com `dataBRParaISO(dados.dataReingresso)`, que é mais recente/
+     autoritativa que o "Ingresso" original da turma (alguém que
+     reingressou tem um "Ingresso" na lista que ainda reflete a 1ª
+     matrícula de anos atrás, não a reativação atual).
+- **Por que isso resolve os 2 casos reais do usuário**: Leonardo Gonçalves
+  Bariani (aluno desde 2012, SEM reingresso confirmado) passa a ter
+  `data_matricula` corrigida pro "Ingresso" real de 2012 — sai
+  automaticamente de "matriculados deste mês" na próxima vez que a turma
+  dele for visitada. Ricardo Volpatto (ingresso real em agosto) também —
+  o "Ingresso" lido na lista da turma já é 12/08/2026, corrige sozinho.
+- **Autolimitante/escalável por design**: roda todo dia, pra TODA turma,
+  sem navegação extra (dado já lido por outro motivo) — o job diário vai
+  "curando" a base inteira conforme visita cada turma, sem precisar de
+  nenhuma intervenção manual/colagem de print adicional. `processarTurmas()`
+  e o `main()` (linha que já logava o resumo da rodada) agora também
+  contam/reportam `totalDatasMatriculaCorrigidas`.
+- **NÃO testado contra o Mercúrio real** (só `node --check` + lint neste
+  ambiente — Playwright só roda em `C:\Scrapper`, na máquina de confiança
+  do usuário) — a próxima rodada real (`npm run mercurio` ou o botão
+  "Rodar Mercúrio Agora") valida e começa a corrigir a base de verdade,
+  turma por turma, à medida que cada uma for visitada. **Recomendação
+  mantida**: não fechar a cobrança de um mês sem antes rodar ao menos 1
+  ciclo completo do scraper nas 5 filiais depois deste fix, e conferir o
+  relatório "Comissão do SDR" de novo.
+
+## Gerador de Excel de Cobrança no CRM (2026-10-08)
+
+Pedido do usuário: "construa o gerador no crm. só vou utilizá-lo quando
+os dados estiverem batendo direitinho" — substitui o script Python avulso
+usado manualmente nesta sessão (`montar_comissao_xlsx.py`, fora do
+repositório, exigia extrair JSON do Supabase e rodar localmente) por um
+botão **client-side** de verdade, sem nenhum servidor/Edge Function no
+meio — igual ao resto do app ("sem servidor próprio de aplicação").
+
+- **Biblioteca**: SheetJS (`XLSX`, CDN `cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js`,
+  `index.html`) — mesmo padrão de carregar lib externa só via `<script>`
+  CDN, sem build step, já usado por Papa Parse/JSZip.
+- **Botão "Gerar Excel de Cobrança"** (`#btnGerarExcelComissaoSdr`, ao
+  lado de "Exportar CSV" na seção "Comissão do SDR — Todas as Filiais",
+  `js/app.js`): `exportarComissaoSdrExcel()` reaproveita 100% os números
+  já calculados em `ultimoResultadoComissaoSdr` (populado por
+  `renderizarComissaoSdrTodasFiliais()`) pra montar a aba **"Resumo"** —
+  nenhuma recontagem, é o MESMO número já exibido na tela. Pra a lista
+  NOMINAL de matriculados (1 aba por filial — Nome/Data de Ingresso/Valor
+  da Contribuição/Comissão), faz uma busca nova (`pessoaNome, data_matricula`
+  por filial, paginada 1000 em 1000, mesmo padrão de exatidão de
+  "Matrículas por Mês"/Leads a Tratar), já que o relatório na tela só
+  guarda contagens agregadas.
+- **Mês escolhido**: o mesmo já selecionado no `<select>` de mês do
+  relatório (`ultimoResultadoComissaoSdr.mes`) — não existe um seletor
+  de mês separado pro Excel, é sempre "gera o Excel do que está na tela
+  agora".
+- **Sem fórmula, só valor já calculado**: diferente do script Python
+  (que escrevia fórmulas `SUM`/multiplicação, nunca verificadas nesta
+  sessão por falta de LibreOffice local), o gerador client-side escreve
+  os números JÁ CALCULADOS em JS — mais simples e sem risco de fórmula
+  quebrada; formatação de moeda aplicada por célula (`cell.z`, helper
+  `aplicarFormatoMoedaColunasExcel()`) nas colunas de R$.
+- **Aviso de precisão** na própria tela, logo abaixo da tabela: lembra
+  que `data_matricula` ainda está em correção (ver seção acima) antes de
+  confiar no Excel gerado pra fechar cobrança de verdade — mesmo
+  princípio do pedido do usuário ("só vou utilizá-lo quando os dados
+  estiverem batendo direitinho").
+- **Testado**: `node --check js/app.js` + lint do projeto, sem erro novo.
+  **Não clicado de verdade no navegador** nesta sessão (sem Playwright
+  neste ambiente) — validar na próxima vez que o usuário abrir a aba
+  Relatórios, depois que a correção de `data_matricula` acima já tiver
+  rodado pelo menos 1 ciclo completo do scraper.
 
 ## Adequação ao Guia de Uso de Marca Nova Acrópole (2025-2026-10-07)
 

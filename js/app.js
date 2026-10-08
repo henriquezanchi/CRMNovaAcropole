@@ -3624,6 +3624,7 @@ async function renderizarComissaoSdrTodasFiliais() {
                 ${mesesOrdenados.slice().reverse().map(m => `<option value="${m}" ${m === mesSelecionadoComissaoSdr ? 'selected' : ''}>${rotuloMes(m)}</option>`).join('')}
             </select>
             <button class="btn-secondary" style="font-size:11px; padding:6px 10px;" onclick="exportarComissaoSdrCSV()"><i class="fa-solid fa-file-csv"></i> Exportar CSV</button>
+            <button id="btnGerarExcelComissaoSdr" class="btn-secondary" style="font-size:11px; padding:6px 10px;" onclick="exportarComissaoSdrExcel()"><i class="fa-solid fa-file-excel"></i> Gerar Excel de Cobrança</button>
         </div>
         <table class="tabela-relatorio">
             <thead><tr><th>Filial</th><th>Mensalidade</th><th>Membros</th><th>Matrículas</th><th>Receita (1º mês)</th><th>Comissão (30%)</th><th>Fixo (Módulo 2)</th><th>Total a Cobrar</th></tr></thead>
@@ -3657,6 +3658,7 @@ async function renderizarComissaoSdrTodasFiliais() {
         ${algumSemValor ? '<p style="font-size:11px; color:var(--text-muted); margin-top:8px;"><i class="fa-solid fa-circle-info"></i> Filial com matrícula mas sem valor de mensalidade configurado fica de fora do total de receita/comissão — configure em "Gerenciar Filiais".</p>' : ''}
         <p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> "Fixo (Módulo 2)" = faixa por quantidade de Membros (&lt;=30 R$250, &lt;=80 R$450, &gt;80 R$600) — "Membros" é manual (categoria própria do Mercúrio, atualize em Gerenciar Filiais). "Total a Cobrar" = Comissão + Fixo, só pra filiais com Módulo 2 ligado — "Não cobrada" continua mostrando matrículas/receita reais, só não entra nesse total.</p>
         <p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> Matrículas baseadas em <code>data_matricula</code> (busca direta no banco) — não dependem de em qual coluna do Kanban o lead está hoje. Ver aviso na seção "Matrículas por Mês" sobre a diferença entre os dois.</p>
+        <p style="font-size:11px; color:#b45309; margin-top:4px;"><i class="fa-solid fa-triangle-exclamation"></i> O scraper já está sendo ajustado pra corrigir <code>data_matricula</code> pela data real de Ingresso do Mercúrio (turma por turma, de forma automática) — antes de fechar a cobrança do mês, confirme que os números abaixo já refletem essa correção.</p>
     `;
 }
 
@@ -3691,6 +3693,131 @@ function exportarComissaoSdrCSV() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+}
+
+// Gerador de Excel de cobrança DENTRO do CRM (pedido do usuário,
+// 2026-10-08: "quero a opção de gerar no crm, escolhendo o mês em
+// questão") — substitui o script Python avulso usado manualmente nesta
+// sessão (montar_comissao_xlsx.py, fora do repositório) por um botão
+// client-side de verdade, usando SheetJS (XLSX, CDN em index.html), sem
+// nenhum servidor/Edge Function no meio. Mesmo formato de 6+ abas: 1
+// "Resumo" com os totais já calculados por renderizarComissaoSdrTodasFiliais()
+// (reaproveitado de ultimoResultadoComissaoSdr, sem recalcular nada) + 1
+// aba por filial com a lista nominal de matriculados do mês (nome, data
+// de ingresso, valor da contribuição, comissão) — só essa parte precisa
+// de uma busca nova (nome/data_matricula por lead, paginada 1000 em 1000,
+// mesmo padrão de exatidão já usado em "Matrículas por Mês"/Leads a
+// Tratar), já que o relatório na tela só guarda CONTAGENS agregadas.
+//
+// ATENÇÃO (ver CLAUDE.md, seção "BUG GRAVÍSSIMO... data_matricula não é
+// a data de ingresso real"): a precisão de `data_matricula` ainda está
+// sendo corrigida na fonte (scraper/mercurio.js, processarTurmas()) —
+// até essa correção rodar em TODAS as turmas de TODAS as filiais, os
+// números aqui podem incluir matrícula antiga mal classificada. O botão
+// funciona normalmente, mas só deve ser usado pra fechar cobrança de
+// verdade depois de confirmar que os números batem com o Mercúrio.
+async function exportarComissaoSdrExcel() {
+    if (typeof XLSX === 'undefined') {
+        alert('Biblioteca de geração de Excel (SheetJS) ainda não carregou — recarregue a página e tente de novo.');
+        return;
+    }
+    if (!ultimoResultadoComissaoSdr) {
+        alert('Aguarde o relatório de Comissão do SDR carregar antes de gerar o Excel.');
+        return;
+    }
+
+    const btn = document.getElementById('btnGerarExcelComissaoSdr');
+    const textoOriginalBtn = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Gerando...'; }
+
+    try {
+        const { mes, rotulo, resultados, totalQtd, totalReceita, totalComissao, totalValorFixo, totalACobrar } = ultimoResultadoComissaoSdr;
+        const inicio = `${mes}-01`;
+        const [anoSel, mesSel] = mes.split('-').map(Number);
+        const proximoMesData = new Date(anoSel, mesSel, 1); // mesSel já "é" o próximo mês em índice 0-based do Date
+        const fim = `${proximoMesData.getFullYear()}-${String(proximoMesData.getMonth() + 1).padStart(2, '0')}-01`;
+
+        const wb = XLSX.utils.book_new();
+        const MONEY_FMT = '"R$" #,##0.00';
+
+        // ---- Aba "Resumo" — mesmos números já calculados na tela ----
+        const cabResumo = ['Filial', 'Membros', 'Matrículas', 'Mensalidade (R$)', 'Receita 1º Mês (R$)', 'Comissão SDR 30% (R$)', 'Fixo Módulo 2 (R$)', 'Módulo 2 Contratado?', 'Total a Cobrar (R$)'];
+        const linhasResumo = [cabResumo];
+        for (const r of resultados) {
+            linhasResumo.push([
+                r.nome, r.membros ?? '', r.qtd,
+                r.valorMensalidade ?? '', r.receita ?? '', r.comissao ?? '', r.valorFixo ?? '',
+                r.cobraComissao ? 'Sim' : 'Não', r.totalCobrar,
+            ]);
+        }
+        linhasResumo.push(['TOTAL', '', totalQtd, '', totalReceita, totalComissao, totalValorFixo, '', totalACobrar]);
+        const wsResumo = XLSX.utils.aoa_to_sheet(linhasResumo);
+        wsResumo['!cols'] = [{ wch: 28 }, { wch: 10 }, { wch: 12 }, { wch: 16 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 18 }, { wch: 16 }];
+        aplicarFormatoMoedaColunasExcel(wsResumo, [4, 5, 6, 7, 9], linhasResumo.length, MONEY_FMT);
+        XLSX.utils.book_append_sheet(wb, wsResumo, 'Resumo');
+
+        // ---- 1 aba por filial — lista nominal dos matriculados do mês ----
+        for (const r of resultados) {
+            const membrosFilial = [];
+            let de = 0;
+            const TAMANHO_PAGINA = 1000;
+            for (;;) {
+                const { data, error } = await window.supabaseClient
+                    .from(NOME_TABELA)
+                    .select('pessoaNome, data_matricula')
+                    .eq('filial', r.nome)
+                    .gte('data_matricula', inicio)
+                    .lt('data_matricula', fim)
+                    .order('data_matricula', { ascending: true })
+                    .range(de, de + TAMANHO_PAGINA - 1);
+                if (error) { console.warn(`[excel-comissao] Falha ao buscar matriculados de "${r.nome}":`, error.message); break; }
+                membrosFilial.push(...(data || []));
+                if (!data || data.length < TAMANHO_PAGINA) break;
+                de += TAMANHO_PAGINA;
+            }
+
+            const valorMensalidade = r.valorMensalidade || 0;
+            const linhas = [['Nome do Aluno', 'Data de Ingresso', 'Valor da Contribuição (1º Mês, R$)', 'Comissão (30%, R$)']];
+            for (const m of membrosFilial) {
+                const partes = String(m.data_matricula || '').split('-');
+                const dataFmt = partes.length === 3 ? `${partes[2]}/${partes[1]}/${partes[0]}` : (m.data_matricula || '');
+                linhas.push([m.pessoaNome || '(sem nome)', dataFmt, valorMensalidade, valorMensalidade * 0.3]);
+            }
+            linhas.push(membrosFilial.length > 0
+                ? [`TOTAL (${membrosFilial.length} matrícula(s))`, '', membrosFilial.length * valorMensalidade, membrosFilial.length * valorMensalidade * 0.3]
+                : ['Nenhuma matrícula neste mês nesta filial.', '', '', '']);
+
+            const ws = XLSX.utils.aoa_to_sheet(linhas);
+            ws['!cols'] = [{ wch: 34 }, { wch: 16 }, { wch: 26 }, { wch: 18 }];
+            aplicarFormatoMoedaColunasExcel(ws, [3, 4], linhas.length, MONEY_FMT);
+            XLSX.utils.book_append_sheet(wb, ws, sanitizarNomeAbaExcel(r.nome));
+        }
+
+        XLSX.writeFile(wb, `Comissao_SDR_${rotulo.replace('/', '_')}.xlsx`);
+    } catch (e) {
+        alert('Erro ao gerar o Excel: ' + e.message);
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = textoOriginalBtn; }
+    }
+}
+
+// Excel proíbe / \ ? * [ ] : no nome de uma aba, e limita a 31 caracteres
+// — mesma sanitização já usada (em Python) no script avulso desta sessão.
+function sanitizarNomeAbaExcel(nome) {
+    return String(nome || 'Filial').replace(/[\\/?*[\]:]/g, '-').slice(0, 31);
+}
+
+// SheetJS escreve formato numérico por CÉLULA (`cell.z`), não por coluna
+// inteira — helper pra aplicar "R$ #.##0,00" só nas colunas de dinheiro,
+// pulando o cabeçalho (linha 1).
+function aplicarFormatoMoedaColunasExcel(ws, colunasBase1, totalLinhas, formato) {
+    for (let linha = 2; linha <= totalLinhas; linha++) {
+        for (const col of colunasBase1) {
+            const endereco = XLSX.utils.encode_cell({ r: linha - 1, c: col - 1 });
+            const cell = ws[endereco];
+            if (cell && typeof cell.v === 'number') cell.z = formato;
+        }
+    }
 }
 
 // Cross-filial também (ver renderizarComissaoSdrTodasFiliais() acima) —
