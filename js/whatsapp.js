@@ -3588,7 +3588,7 @@ function fecharModalConvitePrioridade() {
 async function calcularCotaProporcionalPrioridade() {
     const checks = Array.from(document.querySelectorAll('.prioridade-filial-check:checked')).map(c => c.value);
     const totalInput = document.getElementById('prioridadeTotalDiario');
-    const total = Math.max(1, Number(totalInput ? totalInput.value : 0) || 100);
+    const total = Math.max(1, Number(totalInput ? totalInput.value : 0) || 250);
     const colunaFria = (typeof columnsConfig !== 'undefined' && columnsConfig[0]) ? columnsConfig[0].key : 'Frios';
 
     const resultadoEl = document.getElementById('prioridadeCotaResultado');
