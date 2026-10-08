@@ -19,7 +19,35 @@ let notificacoesAtuais = []; // [{id, icone, titulo, mensagem, criadoEm, lida, a
 // "icone" é a classe COMPLETA do Font Awesome (ex: "fa-solid fa-fire",
 // "fa-brands fa-whatsapp") — não só o nome, já que ícones de marca usam
 // um prefixo diferente de fa-solid.
-function adicionarNotificacao({ icone, titulo, mensagem, aoClicar }) {
+// `chave`, opcional — pedido do usuário (2026-10-08, print real: várias
+// notificações seguidas de "DIEGO GUSTAVO DE FARIA" empilhadas no painel
+// do sino): "aparecendo várias notificações da mesma conversa. Queria
+// agrupar isso". Mesmo espírito já usado no popup flutuante
+// (mostrarPopupWhatsApp(), ver toastsWppAtivosPorContato abaixo), agora
+// também no painel do sino — enquanto já existir uma notificação NÃO
+// LIDA com a mesma `chave`, uma nova chegada só ATUALIZA ela (texto mais
+// recente, sobe pro topo, soma 1 em `quantidade`) em vez de empilhar uma
+// linha nova. Uma vez marcada como lida, a próxima mensagem da mesma
+// pessoa volta a abrir uma notificação nova (faz sentido avisar de novo —
+// a pessoa já viu a anterior).
+function adicionarNotificacao({ icone, titulo, mensagem, aoClicar, chave }) {
+    if (chave) {
+        const existente = notificacoesAtuais.find(n => n.chave === chave && !n.lida);
+        if (existente) {
+            existente.quantidade = (existente.quantidade || 1) + 1;
+            existente.titulo = titulo;
+            existente.mensagem = mensagem;
+            existente.criadoEm = new Date();
+            if (aoClicar) existente.aoClicar = aoClicar;
+            notificacoesAtuais = [existente, ...notificacoesAtuais.filter(n => n !== existente)];
+            renderizarNotificacoes();
+            if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                try { new Notification(titulo, { body: mensagem, icon: 'img/logo-nova-acropole.png' }); } catch (e) { /* ignora */ }
+            }
+            return;
+        }
+    }
+
     const notif = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
         icone: icone || 'fa-solid fa-bell',
@@ -28,6 +56,8 @@ function adicionarNotificacao({ icone, titulo, mensagem, aoClicar }) {
         criadoEm: new Date(),
         lida: false,
         aoClicar: aoClicar || null,
+        chave: chave || null,
+        quantidade: 1,
     };
     notificacoesAtuais.unshift(notif);
     if (notificacoesAtuais.length > 30) notificacoesAtuais.length = 30; // não deixa crescer sem limite numa sessão longa
@@ -60,7 +90,7 @@ function renderizarNotificacoes() {
         <div class="notificacao-item ${n.lida ? '' : 'notificacao-nao-lida'}" onclick="clicarNotificacao('${n.id}')">
             <i class="${n.icone}"></i>
             <div class="notificacao-corpo">
-                <div class="notificacao-titulo">${escapeHTML(n.titulo)}</div>
+                <div class="notificacao-titulo">${escapeHTML(n.titulo)}${n.quantidade > 1 ? ` <span class="notificacao-contador">(${n.quantidade})</span>` : ''}</div>
                 <div class="notificacao-mensagem">${escapeHTML(n.mensagem)}</div>
                 <div class="notificacao-hora">${n.criadoEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</div>
             </div>
@@ -308,6 +338,7 @@ function iniciarNotificacoesWhatsAppGlobais() {
                 titulo: `Nova mensagem de ${nome}`,
                 mensagem: (msg.corpo_texto || '').slice(0, 100),
                 aoClicar,
+                chave: msg.pessoaIdentificador || msg.telefone_whatsapp,
             });
 
             // Pop-up visível na tela (pedido do usuário: "coloque um pop

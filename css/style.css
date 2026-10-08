@@ -167,6 +167,7 @@ select:hover { border-color: #94a3b8; }
 .notificacao-nao-lida i { color: var(--na-green); }
 .notificacao-corpo { min-width: 0; }
 .notificacao-titulo { font-weight: 700; color: var(--text-dark); }
+.notificacao-contador { font-weight: 400; color: var(--text-muted); font-size: 11px; }
 .notificacao-mensagem { color: var(--text-muted); margin-top: 2px; overflow-wrap: break-word; }
 .notificacao-hora { font-size: 10px; color: #94a3b8; margin-top: 4px; }
 .notificacoes-vazio { padding: 20px 14px; font-size: 12px; color: var(--text-muted); text-align: center; }
