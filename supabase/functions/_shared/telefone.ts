@@ -55,3 +55,17 @@ export function candidatosNumeroBR(numeroLocal: string): string[] {
     if (digitos.length === 8) candidatos.add("9" + digitos);
     return [...candidatos];
 }
+
+// Compara o `from` de uma mensagem recebida (webhook) contra o número fixo
+// do admin (secret WHATSAPP_NUMERO_ADMIN, mesmo formato — E.164 sem "+")
+// — pedido do usuário (2026-10-08): responder o Resumo Diário com um
+// comando deve ser reconhecido mesmo com a variação do 9º dígito dos 2
+// lados (mesma tolerância já usada pro casamento de lead por telefone).
+export function numeroBateComAdmin(from: string, numeroAdmin: string): boolean {
+    if (!numeroAdmin) return false;
+    const a = separarFromMeta(from);
+    const b = separarFromMeta(numeroAdmin);
+    if (!a.ddd || a.ddd !== b.ddd) return false;
+    const candsB = new Set(candidatosNumeroBR(b.numero));
+    return candidatosNumeroBR(a.numero).some((c) => candsB.has(c));
+}

@@ -4172,6 +4172,12 @@ const FAMILIAS_TAG = [
             if (/J[áa] [ée] Aluno$/i.test(t)) return 'tag-convite-confirmou';
             if (/Objeç[ãa]o$/i.test(t)) return 'tag-convite-info';
             if (/Sem Interesse$/i.test(t)) return 'tag-convite-negativo';
+            // "Mudou de Cidade" (2026-10-08, plano "Qualificação do
+            // Lead") — mesma cor de "Sem Interesse": também é um sinal
+            // de exclusão automática de campanha em massa (ver
+            // TAGS_EXCLUSAO_CAMPANHA_WPP, js/whatsapp.js), não só
+            // informativo.
+            if (/Mudou de Cidade$/i.test(t)) return 'tag-convite-negativo';
             return 'tag-convite-neutro';
         },
     },

@@ -9980,3 +9980,526 @@ ferramenta pra levantar isso com precisão, em vez de pedir "tudo".
   pós-login (hipótese ainda não confirmada), e levantar a lista completa
   de campos disponíveis em cada um — base pra compilar o pedido final ao
   professor JG.
+
+## Qualificação do Lead — parar de incomodar quem não deve ser incomodado (2026-10-08)
+
+Pedido do usuário, visão de produto: a função central de um CRM é
+qualificar o lead como PESSOA REAL — saber quem é, sua jornada, o que
+gosta, pra ser "um grande amigo do lead" e saber o que oferecer, quando e
+como. Apontou 3 falhas concretas: mandar mensagem pra quem já está ativo
+em outra escola/unidade, quem mudou de cidade, e quem já pediu
+explicitamente pra não ser incomodado.
+
+**Achado central**: o projeto já tinha quase toda a infraestrutura pra
+resolver isso — só estava desconectada. 3 sinais concretos já existiam
+e nunca eram usados pra excluir alguém de uma campanha em massa:
+`sugerir-resposta-whatsapp` já classificava `"Conversa: Já é Aluno"` mas
+`filtrarExclusaoInteligenteWpp()` nunca a excluía; `pessoas_ativas_rede`
+(Rede de Ativos/Inativos) já sabia quando um lead estava "Ativo" numa
+unidade NOSSA diferente, mas só virava badge informativo no Kanban,
+nunca filtro de campanha; e um pedido explícito de opt-out ("pare de me
+mandar mensagem") sempre caía em `sem_interesse`/`ambiguo`, nunca na tag
+`"Não Contatar"` (que já existia, mas só era aplicada manualmente).
+**Nenhuma migração de banco foi necessária** — tudo já vivia em colunas/
+tabelas existentes (`tags`, `pessoas_ativas_rede`, `cidade`/`uf`).
+
+- **`filtrarExclusaoInteligenteWpp()`** (`js/whatsapp.js`, o único portão
+  usado pelos 4 fluxos de disparo em massa — Convidar Link/API/Janela
+  Aberta/Disparo Inteligente) ganhou 2 sinais novos, SEMPRE excluídos
+  (sem checkbox pra desligar, diferente do opcional de 30 dias): a tag
+  `"Conversa: Já é Aluno"` (adicionada a `TAGS_EXCLUSAO_CAMPANHA_WPP`) e
+  uma checagem dinâmica contra a Rede de Ativos/Inativos
+  (`mapaRedeAtivosInativosTelefone`/`Email`, `buscarStatusRedeAtivosInativos()`,
+  já carregados globalmente em `js/app.js` — reaproveitados sem query
+  nova, já que os 2 arquivos dividem o mesmo escopo de `<script>` clássico):
+  se o lead está `"Ativo"` numa filial DIFERENTE da própria, é excluído
+  com o motivo `"Ativo em outra unidade (NomeDaFilial)"`.
+  `garantirRedeAtivosInativosCarregada()` tenta carregar o cache 1x por
+  sessão se ainda estiver vazio. **Limitação honesta, deixada clara pro
+  usuário**: isso só cobre nossa PRÓPRIA rede (outras unidades Nova
+  Acrópole já scrapadas) — nunca vai saber de uma escola concorrente
+  externa, não temos esse dado em lugar nenhum.
+- **2 categorias novas em `sugerir-resposta-whatsapp`** (Edge Function
+  que já lê QUALQUER resposta recebida de WhatsApp, cron 15 min):
+  - `"pediu_remocao"` — detecta um pedido explícito de opt-out ("pare de
+    me mandar mensagem", "me tira da lista", "não me contate mais").
+    **Tratada DIFERENTE das outras categorias**: em vez de
+    `aplicarTagConversa()` (que SUBSTITUI qualquer `"Conversa: X"`
+    anterior — errado pra um opt-out, que nunca pode ser silenciosamente
+    revogado por uma classificação futura), uma função nova,
+    `aplicarTagNaoContatar()`, só ADICIONA a tag `"Não Contatar"` se
+    ainda não existir, nunca remove sozinha. Aplicada sem revisão
+    humana, mesmo nível de confiança já usado hoje pra qualquer
+    `tag_sugerida` — o custo de parar de mandar mensagem à toa é muito
+    menor que o de insistir com quem pediu pra parar.
+  - `"mudou_de_cidade"` — detecta quando o lead diz que não mora mais na
+    região ("me mudei pra Brasília"). Segue o caminho normal
+    (`aplicarTagConversa(id, 'Conversa: Mudou de Cidade')`, família
+    `"Conversa"` já existente em `FAMILIAS_TAG`/`js/app.js` via regex
+    `/^Conversa: /i` — ganhou um branch de cor próprio, `tag-convite-negativo`,
+    já que também é um sinal de exclusão, não só informativo) e também
+    entra em `TAGS_EXCLUSAO_CAMPANHA_WPP`.
+  - Distinção explícita no prompt entre `"sem_interesse"` (recusou ESTA
+    oferta) e `"pediu_remocao"` (pediu pra PARAR DE SER CONTATADO) — na
+    dúvida, prefere `"sem_interesse"` (mais conservador).
+  - **Testado ao vivo, ponta a ponta, contra produção** (lead/mensagem de
+    teste via a Edge Function `whatsapp-importar-conversa` — `mensagens_whatsapp`
+    não aceita INSERT direto da chave publishable — dados apagados
+    depois): "Pare de me mandar mensagem..." → `tags` virou exatamente
+    `["Não Contatar"]`; "me mudei pra Brasília..." → `tags` virou
+    exatamente `["Conversa: Mudou de Cidade"]`. Os 2 confirmam que a tag
+    certa foi aplicada sem nenhum efeito colateral nas outras.
+- **Aviso + bloqueio no próprio chat** (não só em campanha em massa) —
+  dentro de `criarChatController()` (compartilhado entre WhatsApp
+  Unificado e a gaveta do lead), `atualizarAvisoNaoContatar(tagsLead,
+  iniciadaPeloLead)` mostra uma barra fixa acima da caixa de texto
+  sempre que o lead aberto já tem a tag `"Não Contatar"` — busca fresca
+  de `tags` a cada `abrir()` (nunca confia só no cache). **Endurecido no
+  mesmo dia** (pedido do usuário: "vamos bloquear o envio manual, a
+  menos que a própria pessoa tenha iniciado a conversa"):
+  `conversaIniciadaPeloLead(mensagens)` olha a mensagem MAIS ANTIGA já
+  carregada — se foi NÓS quem escrevemos primeiro (`direcao: 'saida'`),
+  a caixa de texto/botão de enviar ficam DESABILITADOS de verdade
+  (`bloqueioNaoContatar`, checado em `enviarMensagem()` antes de
+  qualquer envio — nunca confia só no `disabled` do HTML) e a barra vira
+  vermelha/de bloqueio; se foi ELA quem procurou a escola primeiro
+  (`direcao: 'entrada'`), o SDR continua podendo responder — só avisa,
+  não bloqueia. Limitação aceita: conversas com mais de 200 mensagens
+  (`TAMANHO_PAGINA_HISTORICO_WPP`) só enxergam a mais antiga da PÁGINA já
+  carregada, não a 1ª de todos os tempos. CSS `.wpp-nao-contatar-bar`/
+  `.chat-input:disabled`/`.btn-send:disabled` em `css/style.css`.
+- **Bônus (Fase 3 do plano) — `priorizar-convite-ia` (Camada 3 do
+  Disparo Inteligente) também recebe `cidade`/`uf`/`filial`** de cada
+  candidato agora (propagados desde `montarGrupoNaoInscritoPrioridade()`/
+  `montarGrupoLembretePrioridade()`, que passaram a selecionar essas 2
+  colunas — já populadas pelo scraper do Mercúrio, nunca usadas em lógica
+  nenhuma antes) — mais um sinal de CONTEXTO pro prompt, nunca uma regra
+  fixa de exclusão: a instrução deixa explícito que cidade/UF cadastrada
+  sozinha é "indício fraco" (dado pode estar vazio/desatualizado) e só
+  deve contar pro motivo de exclusão quando a PRÓPRIA CONVERSA também
+  sugerir algo nessa linha — nunca excluir só por "mora em outra cidade"
+  sem nenhum apoio na conversa. **Testado ao vivo**: candidato sem
+  conversa nenhuma, com cidade bem diferente da filial, corretamente NÃO
+  foi excluído (confirma que o dado sozinho não força exclusão).
+- **Não construído nesta rodada, documentado como próximo passo
+  natural**: um "perfil estruturado" do lead (interesses/tópicos
+  filosóficos, profissão etc. extraídos de conversa pra uma coluna jsonb
+  nova) — a visão de "amigo de verdade" de mais longo prazo, mas é um
+  projeto maior (nova migração, vocabulário controlado, decidir onde
+  aparece na UI); detectar escola concorrente EXTERNA também fica de
+  fora — sem fonte de dado externa, não tem como, só a Rede de
+  Ativos/Inativos (unidades próprias) é alcançável hoje.
+- **Não testado clicando pela UI** (sem Playwright neste ambiente) — a
+  barra de aviso no chat e o comportamento ponta a ponta de uma campanha
+  excluindo alguém de verdade ficam pra confirmar na próxima sessão de
+  uso real do usuário.
+- **Bloqueio de verdade no chat (mesmo dia)** — pedido do usuário logo
+  depois: "vamos bloquear o envio manual, a menos que a própria pessoa
+  tenha iniciado a conversa". `conversaIniciadaPeloLead(mensagens)`
+  (`js/whatsapp.js`) olha a mensagem MAIS ANTIGA já carregada — se foi
+  NÓS quem escrevemos primeiro (`direcao: 'saida'`), a caixa de texto/
+  botão de enviar ficam DESABILITADOS de verdade (`bloqueioNaoContatar`,
+  checado em `enviarMensagem()` antes de qualquer envio — nunca confia
+  só no `disabled` do HTML) e a barra de aviso vira vermelha/de bloqueio;
+  se foi ELA quem procurou a escola primeiro, o SDR continua podendo
+  responder — só avisa. Limitação aceita: conversas com mais de 200
+  mensagens só enxergam a mais antiga da PÁGINA já carregada, não a 1ª
+  de todos os tempos. CSS `.chat-input:disabled`/`.btn-send:disabled`.
+- **"Já matriculado" entrou na exclusão automática (2026-10-08)** —
+  `filtrarExclusaoInteligenteWpp()` agora também traz `data_matricula`
+  no `.select()` e exclui quem tiver esse campo preenchido (motivo
+  `"Já matriculado"`, sempre excluído, sem checkbox pra desligar) —
+  achado real: 69+ leads em Jardim América sozinha, já matriculados,
+  ainda fisicamente na coluna "Frios", que uma campanha de convite
+  "venha conhecer a escola" tentaria contatar sem perceber que já são
+  alunos. Risco aceito e documentado: `data_matricula` ainda está em
+  processo de correção pelo scraper (ver seção "BUG GRAVÍSSIMO...data_matricula"
+  mais abaixo), então pode excluir à toa algum prospect com data
+  errada — mais barato que convidar quem já é aluno.
+
+## Resumo Diário no WhatsApp do admin + comando "SIM" aprova sugestões da IA (2026-10-08)
+
+Pedido do usuário: "quero que manda uma mensagem para o meu telefone, a
+partir do crm, dando um resumo das mensagens (se o ulisses rodou, se o
+mercúrio rodou, se alguém mandou mensagem, se tem janela fechando, etc)
+um pequeno relatório do que tem pra ser feito no dia, com foco no que
+não pode ser adiado." + "Existe uma possibilidade de eu responder a esse
+relatório com um comando para o bot de ia responder às pessoas?" —
+**decisão confirmada com o usuário**: o comando só aprova e ENVIA
+sugestões de resposta que a IA JÁ preparou e deixou esperando aprovação
+(`sugestoes_resposta_wpp`, `status='pendente'`) — nunca interpretação
+livre, a IA não decide nada novo na hora do comando.
+
+- **Nova Edge Function `resumo-diario-admin`** — reúne 5 sinais, todos
+  via query direta sobre tabelas/views já existentes (nenhuma migração
+  de schema nova precisou existir):
+  1. `status_sincronizacao_automatica` — Mercúrio/Ulisses rodaram HOJE
+     (em America/Sao_Paulo) e com sucesso? Mesma técnica de "pegar só a
+     linha mais recente por sistema" já usada em
+     `verificarNotificacoesSincronizacao()` (`js/notificacoes.js`), sem
+     precisar de `distinct on`/RPC nova.
+  2. `mensagens_whatsapp` — contagem de mensagens de ENTRADA nas últimas
+     24h.
+  3. `vw_wpp_conversas` — mesma lógica EXATA de
+     `verificarNotificacoesJanelaFechando()` (`js/notificacoes.js`,
+     `HORAS_AVISO_JANELA_FECHANDO=4`), replicada aqui server-side —
+     conta e lista até 8 nomes de quem está prestes a fechar a janela.
+  4. `sugestoes_resposta_wpp` — contagem GLOBAL (todas as filiais) de
+     `status='pendente'` — não existia nenhum contador assim antes
+     (os 2 usos anteriores eram sempre escopados por lead/lista
+     carregada).
+  5. "O que não pode esperar hoje" — `eventos` com `data = hoje` (mesmo
+     padrão de `carregarAgendaGeralCalendarioEventos()`,
+     `js/visao-geral.js`, trocando `.gte` por `.eq`) + leads com
+     `lembrete_em <= hoje` (mesmo conceito de
+     `atualizarLembretesPendentes()`, `js/app.js`, mas cross-filial).
+  Monta 1 texto único e chama `lembrete-scraper` servidor-a-servidor
+  (`fetch` + `Authorization: Bearer SUPABASE_SERVICE_ROLE_KEY`, mesmo
+  padrão de `resumo-semanal-chefe` → `whatsapp-notificar-chefe-filial`)
+  — reaproveita 100% a lógica de Graph API/número do admin já existente,
+  nenhuma duplicação. `modoPreview: true` no body devolve o texto sem
+  mandar nada (mesmo padrão de `resumo-semanal-chefe`), usado só pra
+  teste/depuração nesta sessão.
+- **Agendamento**: `migracao_agendamento_resumo_diario_admin.sql`
+  (`pg_cron`/`net.http_post`, `0 11 * * *` = 08:00 Brasília TODO DIA,
+  mesmo molde de `migracao_agendamento_resumo_semanal.sql`) — depois do
+  horário em que o Mercúrio automático tipicamente já terminou. JÁ
+  RODADA nesta sessão via `supabase db query --linked` (jobid 16).
+- **Comando "SIM" no WhatsApp** — `supabase/functions/_shared/telefone.ts`
+  ganhou `numeroBateComAdmin(from, numeroAdmin)` (tolera a variação do 9º
+  dígito dos 2 lados, mesma técnica de `candidatosNumeroBR()` já usada
+  pro casamento de lead por telefone — testado com 5 casos reais,
+  incluindo DDD diferente e número diferente corretamente REJEITADOS,
+  pra garantir que nenhum lead legítimo seja confundido com o admin).
+  `supabase/functions/whatsapp-webhook/index.ts` ganhou um branch novo,
+  inserido no MESMO molde exato do bloco de `reaction` já existente
+  (detecta, age, `continue` — nunca cai no casamento por telefone/lead
+  abaixo): se `msg.from` bate com o secret `WHATSAPP_NUMERO_ADMIN`, chama
+  `tratarComandoAdmin(msg)` (novo, `_shared/comandoAdmin.ts`) em vez do
+  fluxo normal.
+  - `tratarComandoAdmin()`: só trata `msg.type === 'text'`; normaliza o
+    texto e confere contra uma lista fixa de confirmações (`sim`, `s`,
+    `enviar`, `pode`, `manda`, `ok`, `confirmo`) — nunca interpretação
+    livre. Se confirmou: busca `sugestoes_resposta_wpp` com
+    `status='pendente'` (todas as filiais), e pra cada uma, EM SÉRIE com
+    pausa de 1,5s entre envios (mesma cautela de `whatsapp-reenviar-falhas`
+    — rajada de envios simultâneos já disparou aviso de violação de
+    política da Meta uma vez neste projeto), chama `whatsapp-send`
+    servidor-a-servidor com os EXATOS mesmos campos que
+    `enviarSugestaoIaWpp()` (`js/whatsapp.js`) já manda manualmente —
+    só em sucesso marca `status='enviada'` (falha mantém `'pendente'`,
+    continua no painel de revisão normal do CRM). Ao final, responde o
+    admin com um resumo ("✅ Enviei N sugestões..."). Comando não
+    reconhecido: responde com ajuda curta, sem fazer nada.
+  - **Por que isso dispensa revisão humana no meio** (mesmo raciocínio já
+    usado pra aprovar a autonomia do bot de reengajamento): o ENVIO em
+    si não é uma decisão nova da IA — o texto já foi escrito e revisado
+    pelo mecanismo normal (`sugerir-resposta-whatsapp`); o comando é só o
+    gatilho humano explícito que faltava pra liberar o que já estava
+    pronto, vindo sempre do dono do número fixo em `WHATSAPP_NUMERO_ADMIN`
+    (secret, nunca exposto).
+- **Testado ao vivo, ponta a ponta, contra produção**:
+  `resumo-diario-admin` com `modoPreview:true` devolveu o texto completo
+  com dados REAIS (Mercúrio/Ulisses confirmados rodando hoje, 89
+  mensagens novas, 0 janelas fechando no momento, 51 sugestões pendentes,
+  3 eventos de hoje — mesma campanha em 3 filiais — + 8 lembretes
+  vencidos/hoje); a lógica de `numeroBateComAdmin()` foi testada
+  isoladamente (5 casos, todos corretos); a mecânica completa de
+  `tratarComandoAdmin()` (inserir sugestão pendente → `whatsapp-send` com
+  os campos exatos → marcar `'enviada'`) foi testada ponta a ponta contra
+  produção com o lead de teste de sempre (904000019) — envio real
+  confirmado (`wa_message_id` retornado), dado de teste limpo depois.
+  **Não testado**: o branch do webhook em si (não dá pra forjar a
+  assinatura HMAC de um payload da Meta sem o `WHATSAPP_APP_SECRET`) —
+  validado por leitura de código (mesmo molde exato do bloco de
+  `reaction` já em produção) + os 2 testes isolados acima, que cobrem as
+  2 metades da lógica (reconhecer o admin, executar o comando).
+- **✅ RESOLVIDO (mesmo dia)**: `WHATSAPP_NUMERO_ADMIN` **NÃO estava
+  configurado** (confirmado via `supabase secrets list` — apesar do
+  texto antigo da seção "Lembrete de importação do Ulisses" dizer "Setup
+  pendente", isso nunca tinha sido feito de verdade; o 1º teste real
+  confirmou o erro `"WHATSAPP_NUMERO_ADMIN não configurado"`). O usuário
+  tentou rodar `supabase secrets set ...` direto no PowerShell e levou
+  `"supabase: termo não reconhecido"` — o CLI não está instalado
+  globalmente na máquina dele, só funciona via `npx supabase` (como esta
+  sessão já vinha fazendo o tempo todo). Rodado
+  `npx supabase secrets set WHATSAPP_NUMERO_ADMIN=5562991729783` — **e
+  reconfirmado com um envio real de verdade logo em seguida**:
+  `resultadoEnvio: {"ok":true,"wa_message_id":"wamid...."}`. O Resumo
+  Diário e o comando "SIM" estão 100% operacionais a partir de agora.
+  - **Achado no meio do caminho, NÃO relacionado a este recurso**: o
+    usuário recebeu, no mesmo WhatsApp, mensagens de um bot diferente
+    ("Eri Callmebot") reportando erro no "Portal NA" (outro projeto dele,
+    Next.js, erro `"A use server file can only export async functions"`)
+    — confirmado que é um sistema de terceiros (CallMeBot, API via link/
+    GET, nada a ver com a Meta Cloud API usada neste CRM) já configurado
+    num projeto separado, sem NENHUMA ligação de código com
+    `resumo-diario-admin`/`lembrete-scraper` (que, no momento daquele
+    print, ainda nem tinham conseguido enviar nada — faltava o secret).
+    Só uma coincidência de estarem chegando no mesmo número de WhatsApp
+    pessoal. Reparado de quebra: o número cadastrado no CallMeBot
+    (`556291729783`, 12 dígitos) está faltando um "9" comparado ao
+    número real (`5562991729783`, 13 dígitos) — problema do OUTRO
+    projeto, não deste.
+  - **Janela de 24h fechada pro NÚMERO DO PRÓPRIO ADMIN** — 1º envio real
+    do Resumo Diário voltou `{"ok":true,"wa_message_id":"..."}` (a Meta
+    ACEITOU o envio), mas a mensagem nunca chegou — confirmado
+    consultando `mensagens_whatsapp`: o número do admin nunca tinha
+    mandado NENHUMA mensagem de ENTRADA pro WhatsApp Business da Nova
+    Acrópole (só existiam linhas de SAÍDA, de testes antigos). Ou seja, a
+    aceitação síncrona da Graph API NÃO garante entrega — sem a janela de
+    24h aberta a partir do destinatário, a entrega falha depois,
+    silenciosamente (e como `lembrete-scraper` nunca grava a mensagem em
+    `mensagens_whatsapp`, nem sobra rastro do `wa_message_id` pra um
+    eventual status `'failed'` da Meta se conectar a algo). Resolvido:
+    usuário mandou um "teste" pro número comercial de verdade (confirmado
+    por print — `+55 62 3190-0742`), abrindo a janela; os envios
+    seguintes (inclusive as respostas de `tratarComandoAdmin()` a
+    "teste"/"5"/"SIM") chegaram normalmente.
+  - **BUG REAL GRAVÍSSIMO, achado em produção na hora (2026-10-08/09)**:
+    o "SIM" do usuário causou **27 leads reais recebendo a MESMA
+    sugestão de resposta duplicada — alguns até 5 vezes**. Causa raiz:
+    `tratarComandoAdmin()` buscava TODAS as sugestões pendentes (52 na
+    hora) e enviava em loop serial com pausa de 1,5s entre cada — pra 52,
+    isso levava ~78s só pra terminar, bem mais que o timeout de webhook
+    da Meta. A Meta reentrega o mesmo evento de webhook quando não recebe
+    resposta a tempo ("at least once delivery", documentado) — cada
+    reentrega disparava uma NOVA execução de `tratarComandoAdmin()`
+    (confirmado: até 5 execuções concorrentes/sequenciais do MESMO
+    comando "SIM"), cada uma buscando "quem ainda está pendente" e
+    mandando de novo pra quem a execução mais lenta ainda não tinha
+    marcado `'enviada'` — uma corrida de verdade, sem nenhuma trava.
+    Detectado consultando `mensagens_whatsapp` direto (agrupando por
+    `pessoaIdentificador` + `atendente_nome ilike '%Bot de IA%'`): 2
+    pessoas com 5 envios, 7 com 4, 7 com 3, 6 com 2, só 5 com 1 (o
+    correto). O CONTEÚDO enviado em si era sempre uma resposta
+    apropriada/calorosa já revisada pelo mecanismo normal (não era texto
+    de erro nem spam) — mas é claramente indesejado repetir a mesma
+    mensagem várias vezes pro mesmo lead.
+    - **Corrigido com 2 camadas**, ambas em `_shared/comandoAdmin.ts`:
+      1. **Claim atômico por linha** — antes de enviar, tenta marcar a
+         sugestão como `'enviada'` condicionado a `status='pendente'`
+         (`UPDATE ... WHERE id=X AND status='pendente'`, checando se a
+         atualização de fato afetou 1 linha). Só quem "ganha a corrida"
+         segue pro envio de verdade; qualquer execução concorrente
+         (reentrega da Meta) que chegue depois encontra a linha já
+         `'enviada'` e PULA — nunca mais reenvia, não importa quantas
+         vezes a Meta reentregue o mesmo webhook. Falha no envio reverte
+         pra `'pendente'` (mesmo padrão de "update otimista + rollback"
+         já usado no Kanban).
+      2. **Lote pequeno por execução** (`LIMITE_ENVIOS_POR_EXECUCAO = 12`,
+         antes processava TODAS de uma vez) — reduz o tempo de resposta
+         do webhook, diminuindo a CHANCE de a Meta considerar "sem
+         resposta" e reentregar por esse motivo específico; sobrando
+         mais pendentes, avisa o admin pra mandar "SIM" de novo.
+    - **Deployado imediatamente** (mesma sessão, assim que o bug foi
+      confirmado) — não dava pra testar de novo com segurança (exigiria
+      mandar "SIM" de verdade e arriscar reproduzir o mesmo problema pra
+      leads reais antes de confirmar o fix); a correção foi validada por
+      leitura cuidadosa da lógica (o claim atômico é uma garantia de
+      banco de dados, não uma heurística — uma 2ª execução SEMPRE vai
+      encontrar 0 linhas afetadas numa linha já reivindicada, é
+      garantido pela própria semântica do `UPDATE ... WHERE` do
+      Postgres). **26 sugestões ainda ficaram genuinamente pendentes**
+      (nunca chegaram a ser tentadas) — seguras pra mandar "SIM" de novo
+      agora que o fix está no ar, em lotes de 12 por vez.
+    - **Lição pro projeto**: qualquer ação disparada por um webhook da
+      Meta que possa demorar mais que alguns segundos (envio em massa,
+      processamento pesado) precisa ou (a) responder rápido e processar
+      em background, ou (b) ter proteção de idempotência de verdade
+      (claim atômico por linha, como aqui) — "a Meta reentrega o mesmo
+      evento" não é uma possibilidade teórica, aconteceu de verdade na
+      1ª vez que uma ação deste tipo foi construída.
+
+## API externa do Mercury (v2 do Mercúrio) — substitui boa parte do scraper Playwright (2026-10-15)
+
+Pedido do usuário: "saiu uma api de consulta do mercúrio (ou melhor, da
+segunda versão do Mercúrio, o Mercury). Veja como podemos aproveitar" —
+anexou o guia oficial da API (`mrc_...`, REST/JSON, Railway). Decisão do
+usuário depois de eu mapear as oportunidades: **"ir direto pro tudo"** —
+substituir de uma vez Ativos/Inativos, Turmas, dossiê e abrir caminho pro
+financeiro, não só a parte pontual que motivou a investigação.
+
+### Por que isso importa
+
+O Mercúrio antigo nunca teve API — toda a fragilidade documentada à
+exaustão na seção "Scraper Ulisses/Mercúrio" (frames, Cloudflare, index
+drift entre filiais, encoding ISO-8859-1, `data_matricula` errado) existe
+só por causa disso. O Mercury (REST, Bearer token, paginação por cursor)
+resolve isso na raiz — **e dá pra chamar direto de uma Edge Function,
+sem navegador nenhum envolvido, sem depender de `C:\Scrapper`**.
+
+- **`.env.local`** (raiz do projeto, git-ignorado) guarda
+  `MERCURY_API_KEY`/`MERCURY_API_BASE_URL` pra testes locais/exploração;
+  a MESMA chave também foi setada como secret `MERCURY_API_KEY` no
+  Supabase (`supabase secrets set`), pra uso pelas Edge Functions.
+- **Cobertura confirmada**: a chave enxerga a rede NACIONAL da Nova
+  Acrópole (70+ filiais, Brasil + algumas unidades nos EUA), não só as
+  nossas 5. `supabase/functions/_shared/mercury.ts` tem
+  `MAPEAMENTO_FILIAL_MERCURY` (mapa fixo, mesmo espírito de
+  `MAPEAMENTO_FILIAL_ID_CONHECIDO` já usado pra API do Ulisses — poucas
+  filiais, muda raramente):
+  | Filial (CRM) | branchId (Mercury) |
+  |---|---|
+  | Goiânia - Jardim América | `24` |
+  | Goiânia - Setor Oeste | `81` |
+  | Goiânia - Garavelo | `64` |
+  | Goiânia II | `66` |
+  | Barra do Garças/MT | `52` |
+  Descoberto varrendo `/classes` (muito mais barato que varrer `/people`
+  inteiro só pra achar os IDs de filial).
+- **Casamento com dado já existente CONFIRMADO, não assumido**: o
+  `registrationNo` do Mercury bate 100% com `matricula_mercurio` já
+  gravado em `leads_inscricoes` (testado contra 5 leads reais de Jardim
+  América, nome e `admissionDate` batendo com `data_matricula` já
+  correta) — é a chave de casamento principal, sem precisar de nome/
+  telefone como fallback primário.
+- **`admissionDate` é a fonte de verdade nova pra `data_matricula`** —
+  muito mais confiável que o texto "Ingresso" raspado da lista de turma.
+  Prova real que motivou a confiança: José Augusto Carneiro (matr. 46104,
+  Jardim América) tinha `data_matricula=2026-10-02` no nosso banco
+  (errado, ver "BUG GRAVÍSSIMO... data_matricula" acima) — o Mercury diz
+  `admissionDate=2025-04-30`, batendo com o histórico de contribuições
+  dele (8 meses de 2026 pagos, `contributions` endpoint).
+- **`level.code` bate exatamente com o vocabulário já usado**
+  (`classificarNivel()`, `js/importador.js`) — confirmado varrendo as 5
+  filiais (3301 pessoas): só aparecem `N1`-`N4`, `PP`, `TA`, `CO`, `JN`,
+  `CA`. `nivelPorCodigoMercury()` faz o mesmo mapeamento
+  (TA/CO→Merlin, CA→CA, JN→JN, PP→PP, N1→N1, N2-N7→Membro), só que direto
+  do código limpo, sem regex em texto livre.
+- **Lacuna real, documentada no próprio guia da API**: o campo `reentry`
+  vem sempre `"not_in_domain_model"` em qualquer resposta — não dá pra
+  usar como sinal de reingresso. "Recuperado" continua sendo derivado
+  por NÓS: se o lead já estava `"Inativo"` no nosso banco e o Mercury
+  agora diz `active=true`, aplicamos a tag — mesmo sinal de sempre, só
+  que sem precisar raspar a tela HISTÓRICO do Mercúrio antigo. Testado
+  ao vivo: 24 recuperações detectadas só em Jardim América numa rodada.
+- **Receita CONFIRMADA de verdade, não estimativa**: `/branches/{id}/movements?year=Y&month=M`
+  devolve totais reais por rubrica/mês (`INCOME`/`EXPENSE`), testado
+  contra setembro/2026 de Jardim América com valores reais (CONTRIBUIÇÃO
+  CORAL, APOSTILA, VENDAS DO BAZAR etc.) — muito melhor que a estimativa
+  `matrículas × valor_mensalidade` usada hoje em "Comissão do SDR". Ainda
+  **não construído** um endpoint/tela pra isso — só validado que o dado
+  existe e é confiável; fica como próximo passo natural.
+
+### `mercury-sincronizar` (Edge Function nova)
+
+`supabase/functions/_shared/mercury.ts` (cliente — `chamarMercury()`/
+`paginarMercury()`/mapeamento de filial/nível/telefone/data) +
+`supabase/functions/mercury-sincronizar/index.ts` (orquestrador, aceita
+`{filial?}` opcional). 2 fases por filial:
+1. **`/people`** (sempre) — casa por `matricula_mercurio` (ou por nome
+   normalizado, sem ambiguidade, como fallback — mesma cautela de
+   sempre), recalcula tags de nível/Ativo-Inativo (removendo também
+   `"Lead Forte N"`/`"Jornada: X"` quando vira Ativo/Inativo, mesma regra
+   já corrigida antes pra mesclagem), deriva Recuperado, grava
+   `data_matricula` = `admissionDate`.
+2. **Dossiê** (`/people/{matrícula}/dossier`) — telefone/e-mail/cidade/
+   UF/nascimento/motivo+data de saída (`deactivation.reason`/`.at`,
+   convertido pro mesmo formato texto `DD/MM/AAAA` já usado em
+   `data_saida`). **Nunca sobrescreve campo já preenchido** (mesmo
+   princípio de preservação de sempre). 1 chamada HTTP por pessoa —
+   caro demais pra fazer em todo mundo de uma vez, então só um LOTE
+   pequeno por rodada (`LOTE_DOSSIE_POR_RODADA = 30`, coluna nova
+   `leads_inscricoes.mercury_dossier_sincronizado_em` controla quem já
+   foi visto) — se espalha sozinho ao longo de vários dias, mesmo padrão
+   já usado em `data_matricula_verificada_mercurio_em`.
+
+Migrações: `migracao_mercury_api.sql` (coluna
+`mercury_dossier_sincronizado_em`) e `migracao_status_sync_mercury_api.sql`
+(alarga `status_sincronizacao_automatica.sistema` pra aceitar
+`'mercury_api'`). ID sintético pra gente nunca vista antes: faixa
+`996000000 + (filiais.id × 1.000.000) + registrationNo` — nova, distinta
+de todas as outras (900M/950M/970M/980M/985M/990M já em uso), e
+DETERMINÍSTICA (mesmo registrationNo sempre gera o mesmo id sintético,
+mesmo em runs diferentes — não depende de contador nenhum).
+
+### 3 bugs reais, achados e corrigidos AO VIVO testando contra produção
+
+1. **GRAVÍSSIMO — `.upsert()` em lote com chaves heterogêneas apaga dado
+   real.** Testando contra Garavelo pela 1ª vez, 40 leads ficaram com
+   `pessoaNome = null` depois da sincronização. Causa: meu código só
+   incluía a chave `pessoaNome` no objeto quando o lead era NOVO (pra
+   "não mexer" em quem já existia) — mas o `.upsert()` do `supabase-js`,
+   quando as linhas de um MESMO lote têm conjuntos de chaves DIFERENTES,
+   **normaliza o array preenchendo a chave ausente com `null` antes de
+   mandar pro PostgREST** — e isso sobrescreve o valor real via
+   `ON CONFLICT`, mesmo a intenção sendo só "não tocar nesse campo".
+   Confirmado com um teste isolado (2 linhas de teste descartáveis,
+   1 upsert misto, a que omitiu a chave ficou `null`) — direto via
+   `supabase-js`, não só a REST crua (que REJEITA o batch inteiro com
+   `PGRST102 "All object keys must match"` em vez de aceitar
+   silenciosamente; é o CLIENTE que normaliza antes de mandar).
+   **Corrigido**: toda linha do lote agora tem exatamente as MESMAS
+   chaves sempre — `pessoaNome`/`data_matricula` sempre presentes,
+   "preservar o valor antigo" expressado como
+   `leadExistente ? leadExistente.campo : valorNovo`, nunca omitindo a
+   chave condicionalmente. **Recuperado**: os 40 nomes foram restaurados
+   direto do próprio Mercury (fonte real, sem perda de informação de
+   verdade — só um blip temporário na nossa cópia). **Lição pro projeto,
+   vale pra qualquer `.upsert()` em lote futuro**: nunca montar um array
+   de objetos com chaves condicionalmente diferentes entre si — sempre
+   o mesmo shape pra toda linha do lote, mesmo que o valor seja "igual
+   ao que já tinha".
+2. **`ON CONFLICT DO UPDATE command cannot affect row a second time`** —
+   mesma classe do "Bug real #3" já documentado na importação de
+   planilhas: em Jardim América (maior filial, mais chance de homônimo),
+   2+ pessoas do Mercury com `registrationNo` diferentes resolveram pro
+   MESMO `pessoaIdentificador` existente (nome idêntico casando com o
+   único candidato via fallback). Corrigido com a MESMA rede de
+   segurança já usada lá: dedup por `pessoaIdentificador` antes do
+   upsert (fica só a última ocorrência), com aviso no log — nunca mais
+   1 colisão trava a filial inteira.
+3. **Rate limit (120 req/min) estourado rodando várias filiais em
+   sequência** — `429 "External API rate limit exceeded"` em Barra do
+   Garças/Jardim América depois de Setor Oeste/Goiânia II passarem.
+   Corrigido em 2 camadas, em `_shared/mercury.ts`: intervalo mínimo de
+   900ms entre QUALQUER chamada (módulo inteiro, não por filial — ~66
+   chamadas/min, folga generosa) + retry automático com backoff em
+   qualquer 429 (5s, depois 15s) antes de desistir — já que o limite é
+   uma janela deslizante do SERVIDOR, espaçamento sozinho não garante
+   nunca estourar se houver atividade recente de outra fonte na mesma
+   chave.
+4. **(menor) Log de auditoria nunca era gravado** — `status_sincronizacao_automatica.sistema`
+   só aceitava `'ulisses'`/`'mercurio'` (constraint antiga); todo
+   `registrarStatus()` com `sistema='mercury_api'` falhava
+   SILENCIOSAMENTE (código não checava o `error` do `.insert()`) — a
+   sincronização em si sempre funcionou, só a auditoria ficava invisível.
+   Corrigido com `migracao_status_sync_mercury_api.sql` (alarga a
+   constraint) + o código agora loga qualquer falha de insert.
+
+### Testado ao vivo, ponta a ponta, contra as 5 filiais de produção
+
+Depois dos 4 fixes acima, rodado contra as 5 filiais reais, sem erro,
+sem duplicata, sem `pessoaNome` nulo (conferido em TODAS, não só
+Garavelo): Jardim América (2761 processados, 160 novos, 2601 atualizados,
+**24 recuperações**), Setor Oeste (171/28/143, 21 recuperações), Goiânia
+II (157/20/137, 7 recuperações), Barra do Garças/MT (119/13/106, 2
+recuperações), Garavelo (93, 0 recuperações no run final — já tinha
+rodado antes). Total: 1575 leads com `matricula_mercurio` vinculado
+entre as 5 filiais, 0 `pessoaNome` nulo, 0 duplicata de
+`matricula_mercurio`.
+
+### Não construído ainda (próximos passos naturais)
+
+- **Cron/agendamento** — a function existe e funciona sob demanda
+  (chamada manual via `curl`/fetch), mas não tem `pg_cron` nenhum
+  apontando pra ela ainda. Candidato óbvio: diário, de manhã, igual o
+  Mercúrio antigo — mas como não depende de Playwright/GitHub Actions,
+  poderia rodar com uma cadência bem mais frequente sem custo
+  operacional extra.
+- **Endpoint/tela de financeiro real** (`/branches/{id}/movements`) —
+  validado que o dado existe e é confiável, mas nenhuma Edge Function
+  nem UI foi construída ainda pra expor isso em "Comissão do SDR".
+- **Backfill de dossiê ainda em andamento** — só 30 pessoas por filial
+  por rodada; vai levar vários dias/rodadas manuais até cobrir as 1575
+  pessoas vinculadas (prioriza quem nunca foi visto,
+  `mercury_dossier_sincronizado_em is null`).
+- **O scraper Playwright antigo (`scraper/mercurio.js`) NÃO foi
+  desligado** — continua rodando normalmente (cron de 5h, token do
+  GitHub já corrigido antes nesta sessão). Decisão consciente: rodar os
+  dois em paralelo por um tempo antes de considerar aposentar o antigo
+  de vez, dado que é dado financeiro/de matrícula crítico — mesmo tendo
+  recebido sinal verde pra "ir direto pro tudo", a prudência de validar
+  lado a lado por alguns dias vale mais que o risco de um desligamento
+  abrupto sem essa folga de segurança.

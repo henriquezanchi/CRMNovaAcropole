@@ -6,12 +6,14 @@
 // e `supabase functions deploy whatsapp-webhook --no-verify-jwt`) — a Meta não
 // manda Authorization: Bearer, só X-Hub-Signature-256, que é validado abaixo.
 import { supabaseAdmin, NOME_TABELA_LEADS, NOME_TABELA_MENSAGENS } from "../_shared/supabaseAdmin.ts";
-import { candidatosNumeroBR, separarFromMeta } from "../_shared/telefone.ts";
+import { candidatosNumeroBR, numeroBateComAdmin, separarFromMeta } from "../_shared/telefone.ts";
 import { aplicarReacao } from "../_shared/reacoes.ts";
 import { baixarEArmazenarMidiaRecebida } from "../_shared/midia.ts";
+import { tratarComandoAdmin } from "../_shared/comandoAdmin.ts";
 
 const APP_SECRET = Deno.env.get("WHATSAPP_APP_SECRET")!;
 const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN")!;
+const WHATSAPP_NUMERO_ADMIN = Deno.env.get("WHATSAPP_NUMERO_ADMIN") ?? "";
 
 async function validarAssinatura(rawBody: string, header: string | null): Promise<boolean> {
     if (!header?.startsWith("sha256=")) return false;
@@ -308,6 +310,18 @@ Deno.serve(async (req) => {
                         msg.reaction?.emoji,
                     );
                     if (!resultado.ok) console.warn("Reação recebida não pôde ser aplicada:", msg.reaction, resultado.erro);
+                    continue;
+                }
+
+                // Comando do admin via WhatsApp (pedido do usuário,
+                // 2026-10-08, plano "Resumo Diário") — se a mensagem vem do
+                // PRÓPRIO número do admin (secret WHATSAPP_NUMERO_ADMIN,
+                // nunca um lead), trata como comando ("SIM" aprova e envia
+                // as sugestões de IA pendentes) e NUNCA cai no casamento
+                // por telefone/lead abaixo — mesmo molde do bloco de
+                // `reaction` acima (detecta, age, `continue`).
+                if (numeroBateComAdmin(msg.from, WHATSAPP_NUMERO_ADMIN)) {
+                    await tratarComandoAdmin(msg);
                     continue;
                 }
 

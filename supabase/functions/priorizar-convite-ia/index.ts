@@ -39,7 +39,13 @@ function json(body: unknown, status = 200) {
     return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
-type Candidato = { pessoaIdentificador: string; nome?: string | null; eventoNome?: string | null };
+// `cidade`/`uf` (2026-10-08, plano "Qualificação do Lead") — dado já
+// scrapado do Mercúrio, nunca usado em lógica nenhuma até agora (ver
+// CLAUDE.md). Repassado aqui só como mais um SINAL de contexto pra IA
+// considerar junto com a conversa — nunca uma regra fixa de exclusão (é
+// dado que pode estar vazio/desatualizado, diferente de uma confirmação
+// real dita pelo próprio lead na conversa).
+type Candidato = { pessoaIdentificador: string; nome?: string | null; eventoNome?: string | null; filial?: string | null; cidade?: string | null; uf?: string | null };
 
 async function montarContextoConversa(pessoaIdentificador: string): Promise<string> {
     const { data } = await supabaseAdmin
@@ -194,13 +200,22 @@ Pra CADA lead, responda com um JSON (sem texto antes ou depois) no formato exato
 Regras de segurança (sempre válidas, nunca quebrar):
 - NUNCA invente um motivo que não esteja na conversa de verdade.
 - "resumo" é só um registro FACTUAL do que a conversa mostra (interesse, objeção, dúvida, etc.) — nunca uma opinião nem um conselho de abordagem.
+- Alguns leads vêm com "Cidade/UF cadastrada" (dado de cadastro, pode estar vazio/desatualizado) além da conversa — use isso só como INDÍCIO fraco, nunca como motivo sozinho pra excluir. Só use cidade/UF como parte do motivo de exclusão quando a PRÓPRIA CONVERSA também sugerir algo nessa linha (ex: cidade cadastrada muito distante da unidade E o lead nunca respondeu nada que indique proximidade) — nunca exclua só por "mora em outra cidade" sem nenhum apoio na conversa, o dado cadastral sozinho é confiança baixa demais.
 - Na dúvida sobre excluir ou não, prefira NÃO excluir (excluir_desta_campanha: false) — É PIOR excluir à toa um bom candidato do que deixar passar um caso ambíguo (que o time ainda vai revisar manualmente de qualquer forma antes do envio final).`;
 }
 
-function montarPromptDinamico(nome: string, contextoCRM: string, contextoConversa: string, eventoNome: string | null): string {
+function montarPromptDinamico(nome: string, contextoCRM: string, contextoConversa: string, eventoNome: string | null, filial: string | null, cidade: string | null, uf: string | null): string {
+    // cidade/uf (2026-10-08) — sinal ADICIONAL, nunca uma regra fixa: o
+    // dado pode estar vazio (não bloqueia nada) ou desatualizado, então a
+    // instrução no bloco cacheável já pede cautela — só pesa de verdade
+    // quando bate com algo que a CONVERSA também sugere.
+    const blocoLocalizacao = (cidade || uf)
+        ? `Cidade/UF cadastrada deste lead (dado do Mercúrio, pode estar desatualizado — use só como indício, nunca como certeza sozinha): ${[cidade, uf].filter(Boolean).join("/")}. A unidade que está convidando é: "${filial || "(não informado)"}".`
+        : "";
     return `Lead: ${nome || "(sem nome)"}
 Dados do CRM sobre este lead:
 ${contextoCRM}
+${blocoLocalizacao}
 
 Histórico de conversa de WhatsApp (mais antiga primeiro):
 ${contextoConversa}
@@ -218,7 +233,7 @@ async function avaliarUm(candidato: Candidato, exemplosEstilo: string, hojeISO: 
         apiKey: ANTHROPIC_API_KEY,
         modelo: MODELO,
         blocoCacheavel: montarPromptCacheavel(exemplosEstilo, hojeISO),
-        blocoDinamico: montarPromptDinamico(contextoCRM.nome || candidato.nome || "", contextoCRM.texto, contextoConversa, candidato.eventoNome || null),
+        blocoDinamico: montarPromptDinamico(contextoCRM.nome || candidato.nome || "", contextoCRM.texto, contextoConversa, candidato.eventoNome || null, candidato.filial || null, candidato.cidade || null, candidato.uf || null),
         maxTokens: 400,
         functionName: "priorizar-convite-ia",
     });

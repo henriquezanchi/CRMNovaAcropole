@@ -41,17 +41,27 @@ const LIMITE_HISTORICO = 6;
 // pendente): categorias FIXAS, a IA nunca inventa uma tag livre. Família
 // "Conversa: X" (ver FAMILIAS_TAG, js/app.js) — convive com "Convite: X"
 // sem conflito, são famílias diferentes.
-const CATEGORIAS_CONVERSA_VALIDAS = ["interessado", "objecao", "sem_interesse", "ja_aluno"];
+//
+// "pediu_remocao" e "mudou_de_cidade" (2026-10-08, plano "Qualificação
+// do Lead" — pedido do usuário: parar de incomodar quem já está ativo
+// em outro lugar, mudou de cidade, ou já pediu pra não ser contatado):
+// fecham um gap real — até então, uma resposta tipo "pare de me mandar
+// mensagem"/"me tira da lista" caía em "sem_interesse" ou sem categoria
+// nenhuma, NUNCA virava o bloqueio automático que a tag "Não Contatar"
+// já representa (essa tag só era aplicada manualmente até agora).
+const CATEGORIAS_CONVERSA_VALIDAS = ["interessado", "objecao", "sem_interesse", "ja_aluno", "pediu_remocao", "mudou_de_cidade"];
 const ROTULO_TAG_CONVERSA: Record<string, string> = {
     interessado: "Conversa: Interessado",
     objecao: "Conversa: Objeção",
     sem_interesse: "Conversa: Sem Interesse",
     ja_aluno: "Conversa: Já é Aluno",
+    mudou_de_cidade: "Conversa: Mudou de Cidade",
 };
 
 // Mesma lógica de aplicarTagConvite() (classificar-resposta-convite) —
 // SUBSTITUI qualquer tag "Conversa: X" anterior (nunca acumula tag velha
-// se a pessoa mudar de ideia numa conversa longa).
+// se a pessoa mudar de ideia numa conversa longa). NUNCA usada pra
+// "pediu_remocao" — ver aplicarTagNaoContatar() logo abaixo, motivo.
 async function aplicarTagConversa(pessoaIdentificador: string, tagNova: string) {
     const { data: lead } = await supabaseAdmin.from(NOME_TABELA_LEADS).select("tags").eq("pessoaIdentificador", pessoaIdentificador).maybeSingle();
     if (!lead) return;
@@ -62,6 +72,28 @@ async function aplicarTagConversa(pessoaIdentificador: string, tagNova: string) 
     } catch { /* tags malformada — trata como vazia, nunca trava */ }
     tags = tags.filter((t) => !String(t).startsWith("Conversa: "));
     tags.push(tagNova);
+    await supabaseAdmin.from(NOME_TABELA_LEADS).update({ tags: JSON.stringify(tags) }).eq("pessoaIdentificador", pessoaIdentificador);
+}
+
+// "Não Contatar" é a tag de bloqueio TOTAL já usada em todo o projeto
+// (TAGS_EXCLUSAO_CAMPANHA_WPP, js/whatsapp.js) — diferente de
+// "Conversa: X" (acima), ela NUNCA pode ser silenciosamente sobrescrita
+// por uma classificação futura (se a pessoa disser "interessado" numa
+// mensagem seguinte, isso não revoga o pedido explícito de opt-out) —
+// por isso só ADICIONA se ainda não existir, nunca troca/remove sozinha.
+// Aplicada sem revisão humana, mesmo nível de confiança já usado hoje
+// pra qualquer `tag_sugerida` — o custo de parar de mandar mensagem a
+// alguém à toa é muito menor que o de insistir com quem pediu pra parar.
+async function aplicarTagNaoContatar(pessoaIdentificador: string) {
+    const { data: lead } = await supabaseAdmin.from(NOME_TABELA_LEADS).select("tags").eq("pessoaIdentificador", pessoaIdentificador).maybeSingle();
+    if (!lead) return;
+    let tags: string[] = [];
+    try {
+        const parsed = JSON.parse(lead.tags || "[]");
+        if (Array.isArray(parsed)) tags = parsed;
+    } catch { /* tags malformada — trata como vazia, nunca trava */ }
+    if (tags.includes("Não Contatar")) return;
+    tags.push("Não Contatar");
     await supabaseAdmin.from(NOME_TABELA_LEADS).update({ tags: JSON.stringify(tags) }).eq("pessoaIdentificador", pessoaIdentificador);
 }
 
@@ -243,7 +275,13 @@ Lead: "Do que se trata mesmo o curso de vocês?"
 Bom padrão: explicar com simplicidade que é filosofia PRÁTICA (não acadêmica) — ética, autoconhecimento, convivência — sem jargão. Ex: "É filosofia aplicada ao dia a dia mesmo — como lidar melhor com as próprias emoções, decisões, relações. Não é uma coisa acadêmica/teórica, é bem prático."
 
 Lead: "Para de me mandar mensagem, não tenho interesse"
-Bom padrão: respeitar na hora, sem insistir ou perguntar o motivo. Ex: "Combinado, [nome], não vamos mais te incomodar. Se mudar de ideia um dia, estamos à disposição. Tudo de bom!"
+Bom padrão: respeitar na hora, sem insistir ou perguntar o motivo. Ex: "Combinado, [nome], não vamos mais te incomodar. Se mudar de ideia um dia, estamos à disposição. Tudo de bom!" — categoria: "pediu_remocao" (pediu explicitamente pra parar, não só recusou esta oferta).
+
+Lead: "Não tenho interesse em participar desse evento, obrigada"
+Bom padrão: respeitar sem insistir, mas aqui ela só recusou ESTA oferta, não pediu pra parar de ser contatada — categoria: "sem_interesse" (diferente de "pediu_remocao" acima). Ex: "Tudo bem, [nome]! Obrigado por responder. Qualquer coisa, estamos por aqui."
+
+Lead: "Eu me mudei pra outra cidade, não moro mais aí"
+Bom padrão: reconhecer com simpatia, sem insistir em convidar pra algo presencial na unidade local — categoria: "mudou_de_cidade". Ex: "Ah, entendi, [nome]! Obrigado por avisar. Te desejo tudo de bom por aí."
 
 Lead: "Sim, posso ir" (confirmando presença num evento já com data marcada)
 Bom padrão: acolher com entusiasmo genuíno, repetir dia/horário/endereço real, sem soar "oficial"/burocrático. Ex: "Que ótimo, [nome]! Te esperamos [dia] às [hora], no endereço [endereço]. Vai ser um prazer te receber!"
@@ -314,11 +352,13 @@ Além disso, verifique se o LEAD mencionou explicitamente um período/data FUTUR
 Por fim, classifique o ANDAMENTO desta conversa em UMA destas categorias, só se tiver confiança real (nunca force):
 - "interessado": demonstrou interesse real em participar/saber mais/se inscrever.
 - "objecao": deu uma objeção específica (sem tempo, está caro, mora longe, etc.) sem recusar de vez.
-- "sem_interesse": recusou claramente ou pediu pra não ser mais contatado(a).
-- "ja_aluno": disse que já é aluno(a) atual da escola (não um ex-aluno nem alguém que só já foi num evento).
+- "sem_interesse": recusou claramente, mas SEM pedir explicitamente pra parar de receber mensagens (ex: "não quero ir" / "não tenho interesse agora").
+- "ja_aluno": disse que já é aluno(a) atual da escola — AQUI OU EM OUTRA UNIDADE/FILIAL (não um ex-aluno nem alguém que só já foi num evento).
+- "pediu_remocao": pediu EXPLICITAMENTE pra parar de receber mensagens/ser removido(a) da lista (ex: "pare de me mandar mensagem", "me tira da lista", "não me contate mais", "descadastra meu número") — diferente de "sem_interesse": aqui o pedido é sobre PARAR DE SER CONTATADO, não só sobre recusar esta oferta específica. Na dúvida entre as duas, prefira "sem_interesse" (mais conservador) — só use "pediu_remocao" quando o pedido de parar de contatar for claro.
+- "mudou_de_cidade": disse que não mora mais na região/cidade da filial (ex: "me mudei pra Brasília", "não moro mais aí").
 - Se nada disso ficar claro, "tag_sugerida": null — não force.
 
-Responda SOMENTE com um JSON válido, sem texto antes ou depois, no formato exato: {"sugestao": "..." ou null, "lembrete_sugerido": {"data": "...", "motivo": "..."} ou null, "tag_sugerida": "interessado"|"objecao"|"sem_interesse"|"ja_aluno"|null}`;
+Responda SOMENTE com um JSON válido, sem texto antes ou depois, no formato exato: {"sugestao": "..." ou null, "lembrete_sugerido": {"data": "...", "motivo": "..."} ou null, "tag_sugerida": "interessado"|"objecao"|"sem_interesse"|"ja_aluno"|"pediu_remocao"|"mudou_de_cidade"|null}`;
 }
 
 function montarPromptDinamico(contexto: string, contextoCRM: string, ultimaMensagem: string): string {
@@ -461,7 +501,13 @@ Deno.serve(async (req) => {
         // que sempre esperam clique humano) — mesmo padrão já usado em
         // classificar-resposta-convite: marcar uma tag é baixo risco,
         // reversível a qualquer momento pela gaveta/WhatsApp Unificado.
-        if (resultado.tagSugerida) {
+        // "pediu_remocao" é especial — vai pra "Não Contatar" (bloqueio
+        // permanente, nunca sobrescrito por uma classificação futura),
+        // nunca pra "Conversa: X" (família que se SUBSTITUI a cada nova
+        // classificação — errado pra um opt-out, ver aplicarTagNaoContatar()).
+        if (resultado.tagSugerida === "pediu_remocao") {
+            await aplicarTagNaoContatar(item.pessoaIdentificador);
+        } else if (resultado.tagSugerida && ROTULO_TAG_CONVERSA[resultado.tagSugerida]) {
             await aplicarTagConversa(item.pessoaIdentificador, ROTULO_TAG_CONVERSA[resultado.tagSugerida]);
         }
     }

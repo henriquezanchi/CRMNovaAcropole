@@ -207,6 +207,21 @@ function janelaAberta(mensagens) {
     return (Date.now() - new Date(ultima.criado_em).getTime()) < 24 * 60 * 60 * 1000;
 }
 
+// "Bloquear envio manual pra quem pediu Não Contatar, a menos que a
+// própria pessoa tenha iniciado a conversa" (pedido do usuário,
+// 2026-10-08) — olha a mensagem MAIS ANTIGA já carregada (`mensagens`
+// vem cronológica, mais antiga primeiro — carregarHistoricoMensagens())
+// pra saber quem começou: se foi o LEAD quem escreveu primeiro (não nós
+// que abordamos ele), o SDR ainda pode responder mesmo com a tag
+// aplicada depois. Limitação aceita: conversas com mais de 200 mensagens
+// (TAMANHO_PAGINA_HISTORICO_WPP) só enxergam a mais antiga da PÁGINA já
+// carregada, não a 1ª mensagem de todos os tempos — na prática, quem já
+// pediu "Não Contatar" raramente tem uma conversa tão longa assim.
+function conversaIniciadaPeloLead(mensagens) {
+    if (!mensagens || mensagens.length === 0) return false;
+    return mensagens[0].direcao === 'entrada';
+}
+
 // Monta uma mensagem de erro mais útil que só "message" — inclui o código
 // da Meta (ex: 200 "OAuthException" costuma ser acesso à API bloqueado a
 // nível de APP, não um problema desta mensagem específica) e sempre
@@ -1114,6 +1129,13 @@ function criarChatController({ messagesId, inputAreaId }) {
     // "igual no whatsapp real") — { waId, preview, remetente: 'saida'|'entrada' }
     // do balão clicado; null = não está respondendo nada em particular.
     let respondendoA = null;
+    // Bloqueio de "Não Contatar" (pedido do usuário, 2026-10-08): true
+    // quando o lead tem a tag E a conversa NÃO foi iniciada por ele
+    // mesmo — ver atualizarAvisoNaoContatar()/conversaIniciadaPeloLead().
+    // Checado em enviarMensagem() ANTES de qualquer envio manual, nunca
+    // confiando só no atributo `disabled` do HTML (que é só reforço
+    // visual, pode dessincronizar).
+    let bloqueioNaoContatar = false;
     // Busca dentro da conversa aberta — pedido do usuário (2026-09-29:
     // "implemente tudo que for possível"; refinado 2026-09-30: "busca com
     // destaque + navegação entre resultados, igual no whatsapp real").
@@ -1255,6 +1277,40 @@ function criarChatController({ messagesId, inputAreaId }) {
             atualizarBarraRespondendo();
         });
         container.insertBefore(barra, container.firstChild);
+    }
+
+    // Aviso fixo acima da caixa de texto quando o lead já tem a tag
+    // "Não Contatar" — pedido do usuário (2026-10-08, plano "Qualificação
+    // do Lead"); endurecido no mesmo dia: "vamos bloquear o envio manual,
+    // a menos que a própria pessoa tenha iniciado a conversa". Ou seja:
+    // se foi NÓS quem procuramos ela primeiro (1ª mensagem da conversa é
+    // 'saida'), o pedido de "não contatar" é respeitado de verdade — a
+    // caixa de texto/botão de enviar ficam desabilitados, e
+    // `bloqueioNaoContatar` barra qualquer tentativa de envio mesmo que
+    // alguém force o HTML. Se foi ELA quem procurou a escola primeiro
+    // (1ª mensagem é 'entrada'), o SDR continua podendo responder — só
+    // avisa, não bloqueia (mesmo comportamento de antes).
+    function atualizarAvisoNaoContatar(tagsLead, iniciadaPeloLead) {
+        const container = el(inputAreaId);
+        if (!container) return;
+        const avisoAntigo = container.querySelector('.wpp-nao-contatar-bar');
+        if (avisoAntigo) avisoAntigo.remove();
+        const tags = (typeof parseTags === 'function' ? parseTags(tagsLead) : []).map(t => String(t).trim());
+        const temTag = tags.includes('Não Contatar');
+        bloqueioNaoContatar = temTag && !iniciadaPeloLead;
+
+        const input = container.querySelector('.chat-input');
+        const botaoEnviar = container.querySelector('.btn-send');
+        if (input) input.disabled = bloqueioNaoContatar;
+        if (botaoEnviar) botaoEnviar.disabled = bloqueioNaoContatar;
+
+        if (!temTag) return;
+        const aviso = document.createElement('div');
+        aviso.className = 'wpp-nao-contatar-bar';
+        aviso.innerHTML = bloqueioNaoContatar
+            ? '<i class="fa-solid fa-ban"></i> Este lead pediu para não ser contatado — envio bloqueado. Só é possível responder se ele mesmo procurar a escola primeiro.'
+            : '<i class="fa-solid fa-triangle-exclamation"></i> Este lead pediu para não ser contatado — envio liberado porque foi ele quem procurou a escola.';
+        container.insertBefore(aviso, container.firstChild);
     }
 
     // "Fidelidade ao WhatsApp real" (pedido do usuário, 2026-09-28) — o
@@ -1683,8 +1739,15 @@ function criarChatController({ messagesId, inputAreaId }) {
     }
 
     // Decide entre texto livre e anexo (foto/documento, legenda = o texto
-    // digitado) — ponto único chamado pelo botão de enviar/Enter.
+    // digitado) — ponto único chamado pelo botão de enviar/Enter. Checa
+    // `bloqueioNaoContatar` ANTES de qualquer envio — nunca confia só no
+    // `disabled` do HTML (reforço visual, pode dessincronizar se o
+    // elemento for recriado/manipulado por fora).
     async function enviarMensagem(input) {
+        if (bloqueioNaoContatar) {
+            alert('Este lead pediu para não ser contatado. O envio só é permitido se ele mesmo procurar a escola primeiro.');
+            return;
+        }
         if (anexoPendente) { await enviarComAnexo(input); return; }
         await enviarTexto(input);
     }
@@ -1825,6 +1888,14 @@ function criarChatController({ messagesId, inputAreaId }) {
         renderizarMensagens();
         renderizarAreaInput(true); // troca de conversa — sempre reconstrói, nunca herda rascunho/foco da conversa anterior
         if (templateNomeForcado) selecionarTemplatePorNome(templateNomeForcado);
+        // Aviso/bloqueio de "Não Contatar" — busca fresca (tags podem ter
+        // mudado desde a última vez que este lead foi carregado em
+        // leadsAtuais). `mensagens` já está carregado neste ponto, dá pra
+        // calcular quem iniciou a conversa sem query extra.
+        const iniciadaPeloLead = conversaIniciadaPeloLead(mensagens);
+        window.supabaseClient.from(NOME_TABELA).select('tags').eq('pessoaIdentificador', leadId).maybeSingle()
+            .then(({ data }) => { if (leadId === pessoaIdentificador) atualizarAvisoNaoContatar(data ? data.tags : null, iniciadaPeloLead); })
+            .catch(() => {});
         // Confirmação de leitura ativa (pedido do usuário, 2026-09-29):
         // marca a última mensagem RECEBIDA como lida na Meta (✓✓ azul do
         // lado do lead) ao abrir a conversa — cobre WhatsApp Unificado E
@@ -2770,39 +2841,86 @@ let conviteApiSegmentoLeads = [];
 // (classificar-resposta-convite, cron 15 min) já aplica "Convite: Não
 // Pode Ir"/"Convite: Sem Interesse"; "Contato Recente: 7 dias" (ver
 // migracao_tags_contato_recente.sql) evita recontato cedo demais;
-// "Não Contatar" é a tag manual pra opt-out leve ("me tira da lista").
-// Usado por QUALQUER disparo em massa (Link/API/Janela Aberta/Prioridade
-// Inteligente) — 1 ponto único, não duplicado em cada fluxo. Estas 4
-// SEMPRE excluem, nunca são opcionais.
-const TAGS_EXCLUSAO_CAMPANHA_WPP = ['Não Contatar', 'Convite: Não Pode Ir', 'Convite: Sem Interesse', 'Contato Recente: 7 dias'];
+// "Não Contatar" é a tag manual (e, desde a rodada de "Qualificação do
+// Lead" de 2026-10-08, também automática — ver aplicarTagNaoContatar()
+// em sugerir-resposta-whatsapp/index.ts) pra opt-out; "Conversa: Já é
+// Aluno" e "Conversa: Mudou de Cidade" (sugerir-resposta-whatsapp, lê
+// QUALQUER resposta de WhatsApp) já existiam sendo gravadas mas nunca
+// tinham sido conectadas a este filtro até agora — exatamente o gap que
+// o usuário apontou ("mandando mensagem pra quem já é ativo em outra
+// escola/mudou de cidade"). Usado por QUALQUER disparo em massa
+// (Link/API/Janela Aberta/Prioridade Inteligente) — 1 ponto único, não
+// duplicado em cada fluxo. Estas SEMPRE excluem, nunca são opcionais.
+const TAGS_EXCLUSAO_CAMPANHA_WPP = ['Não Contatar', 'Convite: Não Pode Ir', 'Convite: Sem Interesse', 'Contato Recente: 7 dias', 'Conversa: Já é Aluno', 'Conversa: Mudou de Cidade'];
 
 // "Contato Recente: 30 dias" (8-30 dias atrás) é OPCIONAL, diferente das
-// 4 acima — pedido do usuário (2026-10-08): "excluir, mas deixa um
+// acima — pedido do usuário (2026-10-08): "excluir, mas deixa um
 // 'check' marcado por padrão... garantindo ao SDR a liberdade de manter,
 // caso queira". Cada tela de disparo em massa tem seu próprio checkbox
 // "Evitar quem já falamos nos últimos 30 dias" (marcado por padrão),
 // repassado como `excluir30Dias` pra esta função.
 const TAG_EXCLUSAO_30_DIAS_OPCIONAL = 'Contato Recente: 30 dias';
 
+// Rede de Ativos/Inativos (outras unidades Nova Acrópole já scrapadas,
+// ver "Rede de Ativos/Inativos" no CLAUDE.md) — carregada globalmente em
+// js/app.js (`mapaRedeAtivosInativosTelefone`/`Email`,
+// `buscarStatusRedeAtivosInativos()`), reaproveitada aqui sem query nova
+// (os 2 arquivos dividem o mesmo escopo global de `<script>` clássico).
+// Pedido do usuário (2026-10-08): "não temos como conferir" quem já está
+// ativo em outra escola — na real, JÁ sabemos pra quem já está ativo
+// numa unidade NOSSA, só nunca tínhamos ligado esse dado ao filtro de
+// campanha. Limitação honesta: só cobre nossa própria rede, nunca uma
+// escola concorrente externa (não temos esse dado em lugar nenhum).
+// Tenta carregar 1x por sessão se o cache ainda estiver vazio.
+let redeAtivosInativosTentouCarregar = false;
+async function garantirRedeAtivosInativosCarregada() {
+    if (redeAtivosInativosTentouCarregar) return;
+    redeAtivosInativosTentouCarregar = true;
+    if (typeof mapaRedeAtivosInativosTelefone !== 'undefined' && mapaRedeAtivosInativosTelefone.size === 0 && typeof carregarRedeAtivosInativos === 'function') {
+        try { await carregarRedeAtivosInativos(); } catch (e) { console.warn('Falha ao carregar rede de ativos/inativos pro filtro de campanha:', e); }
+    }
+}
+
 // Busca tags FRESCAS direto do banco (nunca confia só no que já está em
 // `leadsAtuais`, que pode estar desatualizado — e o modo "segmento" do
 // Convidar API nem devolve `tags`, ver leads_por_tag_filial()). Devolve
 // `{validos, excluidos}` — `excluidos` já vem com o motivo (qual tag
-// bateu), pra mostrar na tela sem esconder a decisão.
+// bateu, ou "Ativo em outra unidade"), pra mostrar na tela sem esconder
+// a decisão.
 async function filtrarExclusaoInteligenteWpp(ids, { excluir30Dias = true } = {}) {
     const unicos = [...new Set((ids || []).map(String))];
     if (unicos.length === 0) return { validos: [], excluidos: [] };
     const tagsExclusao = excluir30Dias ? [...TAGS_EXCLUSAO_CAMPANHA_WPP, TAG_EXCLUSAO_30_DIAS_OPCIONAL] : TAGS_EXCLUSAO_CAMPANHA_WPP;
-    const { data } = await window.supabaseClient.from(NOME_TABELA).select('pessoaIdentificador, pessoaNome, tags').in('pessoaIdentificador', unicos);
+    await garantirRedeAtivosInativosCarregada();
+    const { data } = await window.supabaseClient.from(NOME_TABELA).select('pessoaIdentificador, pessoaNome, tags, filial, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, data_matricula').in('pessoaIdentificador', unicos);
     const mapa = new Map((data || []).map(r => [String(r.pessoaIdentificador), r]));
     const validos = [];
     const excluidos = [];
     for (const id of unicos) {
         const r = mapa.get(id);
         const tags = r ? parseTags(r.tags).map(t => String(t).trim()) : [];
-        const motivo = tagsExclusao.find(t => tags.includes(t));
-        if (motivo) excluidos.push({ id, nome: r ? r.pessoaNome : id, motivo });
-        else validos.push(id);
+        const motivoTag = tagsExclusao.find(t => tags.includes(t));
+        if (motivoTag) { excluidos.push({ id, nome: r ? r.pessoaNome : id, motivo: motivoTag }); continue; }
+        // "Já matriculado" (pedido do usuário, 2026-10-08, plano
+        // "Qualificação do Lead") — quem já tem data_matricula preenchida
+        // já é aluno, mesmo que ainda esteja fisicamente numa coluna fria
+        // do Kanban (achado real: 69+ leads em Jardim América sozinha).
+        // Risco aceito: data_matricula ainda está em correção pelo
+        // scraper (ver CLAUDE.md), então pode excluir à toa algum
+        // prospect com data errada — mais barato que convidar quem já
+        // é aluno pra "conhecer a escola".
+        if (r && r.data_matricula) {
+            excluidos.push({ id, nome: r.pessoaNome, motivo: 'Já matriculado' });
+            continue;
+        }
+        if (r && typeof buscarStatusRedeAtivosInativos === 'function') {
+            const statusRede = buscarStatusRedeAtivosInativos(r);
+            if (statusRede && statusRede.status === 'Ativo' && statusRede.filial && statusRede.filial !== r.filial) {
+                excluidos.push({ id, nome: r.pessoaNome, motivo: `Ativo em outra unidade (${statusRede.filial})` });
+                continue;
+            }
+        }
+        validos.push(id);
     }
     return { validos, excluidos };
 }
@@ -3683,7 +3801,7 @@ async function montarGrupoNaoInscritoPrioridade(filial, bucket, evento, limite, 
     while (true) {
         const { data } = await comTimeoutPrioridade(
             window.supabaseClient.from(NOME_TABELA)
-                .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, tags')
+                .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, tags, cidade, uf')
                 .eq('filial', filial).is('lixeira_em', null)
                 .not('pessoaTelefoneNumero', 'is', null)
                 .order('pessoaIdentificador', { ascending: true })
@@ -3701,7 +3819,13 @@ async function montarGrupoNaoInscritoPrioridade(filial, bucket, evento, limite, 
         .filter(l => l.pessoaTelefoneDDD && l.pessoaTelefoneNumero && !numeroPareceFixo(l.pessoaTelefoneDDD, l.pessoaTelefoneNumero))
         .map(l => {
             const tags = parseTags(l.tags).map(t => String(t).trim());
-            return { pessoaIdentificador: l.pessoaIdentificador, nome: l.pessoaNome, score: pontuarCandidatoPrioridade(tags, diasAte) };
+            // cidade/uf (scraper do Mercúrio) propagados até a Camada 3 da
+            // IA (priorizar-convite-ia) — pedido do usuário (2026-10-08,
+            // plano "Qualificação do Lead"): mais um sinal pra IA
+            // considerar, nunca uma exclusão automática aqui (dado
+            // incompleto/desatualizado demais pra confiar sem contexto de
+            // conversa real).
+            return { pessoaIdentificador: l.pessoaIdentificador, nome: l.pessoaNome, cidade: l.cidade || null, uf: l.uf || null, score: pontuarCandidatoPrioridade(tags, diasAte) };
         })
         .sort((a, b) => b.score - a.score);
 
@@ -3767,7 +3891,7 @@ async function montarGrupoLembretePrioridade(filial, eventosProximos, limite, ex
     if (idsCandidatos.length === 0) return { filial, bucket: 'lembrete', eventoId: null, eventoNome: null, eventoData: null, candidatos: [], reserva: [], excluidos: [] };
 
     const { data: leadsInfo } = await comTimeoutPrioridade(
-        window.supabaseClient.from(NOME_TABELA).select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero').in('pessoaIdentificador', idsCandidatos),
+        window.supabaseClient.from(NOME_TABELA).select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, cidade, uf').in('pessoaIdentificador', idsCandidatos),
         `Buscar dados dos confirmados de ${filial}`
     );
     const mapaLeads = new Map((leadsInfo || []).map(l => [String(l.pessoaIdentificador), l]));
@@ -3775,7 +3899,7 @@ async function montarGrupoLembretePrioridade(filial, eventosProximos, limite, ex
     const pool = idsCandidatos
         .map(id => mapaLeads.get(id))
         .filter(l => l && l.pessoaTelefoneDDD && l.pessoaTelefoneNumero && !numeroPareceFixo(l.pessoaTelefoneDDD, l.pessoaTelefoneNumero))
-        .map(l => ({ pessoaIdentificador: l.pessoaIdentificador, nome: l.pessoaNome, score: 0 }));
+        .map(l => ({ pessoaIdentificador: l.pessoaIdentificador, nome: l.pessoaNome, cidade: l.cidade || null, uf: l.uf || null, score: 0 }));
 
     const { validos, excluidos } = await comTimeoutPrioridade(
         filtrarExclusaoInteligenteWpp(pool.map(p => p.pessoaIdentificador), { excluir30Dias }),
@@ -4090,7 +4214,7 @@ async function analisarLoteComIaPrioridade(lote, acumuladorExcluidosIa) {
     if (precisamLeitura.length === 0) return [];
 
     const { data, error } = await window.supabaseClient.functions.invoke('priorizar-convite-ia', {
-        body: { candidatos: precisamLeitura.map(c => ({ pessoaIdentificador: c.pessoaIdentificador, nome: c.nome, eventoNome: c.eventoNome })) },
+        body: { candidatos: precisamLeitura.map(c => ({ pessoaIdentificador: c.pessoaIdentificador, nome: c.nome, eventoNome: c.eventoNome, filial: c.filial, cidade: c.cidade, uf: c.uf })) },
     });
     if (error || !data || data.ok === false) {
         throw new Error((data && data.erro) || (error && error.message) || 'desconhecido');
