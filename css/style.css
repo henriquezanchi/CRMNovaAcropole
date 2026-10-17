@@ -1169,3 +1169,6 @@ select:hover { border-color: #94a3b8; }
 .acompanhamento-sugestao textarea { min-height:110px; margin-bottom:8px; }
 .acompanhamento-painel .acompanhamento-checkbox { flex-direction:row; align-items:center; gap:8px; }
 .acompanhamento-painel .acompanhamento-checkbox input { width:auto; }
+
+/* Não exibir/selecionar resultados parciais enquanto o filtro consulta toda a base. */
+.col-body[hidden] { display:none; }

@@ -15,6 +15,9 @@ let podeCarregarMais = false;
 // corrigido logo abaixo. Resetado a cada troca de filial/reset de
 // carregarLeads().
 let colunasFiltroCompletasCarregadas = new Set();
+let versaoCargaLeads = 0;
+let baseFiltravelCompleta = false;
+let promessaBaseFiltravel = null;
 
 const NOME_TABELA = 'leads_inscricoes'; // ajuste aqui se o nome da tabela no Supabase for outro
 const NOME_TABELA_FILIAIS = 'filiais';
@@ -227,6 +230,8 @@ function trocarFilial(novaFilial) {
 async function carregarLeads(filial, resetar = true) {
     if (resetar && typeof acompanhamentoFila !== 'undefined') { acompanhamentoFila = []; acompanhamentoConsulta++; const lista = document.getElementById('acompanhamentoLista'); if (lista) lista.textContent = 'Atualize para consultar a escola selecionada.'; ['acompanhamentoResumo','acompanhamentoContagem'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = ''; }); }
     filialAtual = filial;
+    if (resetar) { versaoCargaLeads++; baseFiltravelCompleta = false; promessaBaseFiltravel = null; }
+    const versao = versaoCargaLeads;
 
     if (resetar) {
         inicioLote = 0;
@@ -253,7 +258,9 @@ async function carregarLeads(filial, resetar = true) {
         // coluna (o "balde" de leads nunca trabalhados) continua paginada
         // de verdade.
         await carregarColunasSecundariasSemPaginacao(filial);
+        if (versao !== versaoCargaLeads) return;
         await carregarAtivosInativosSemPaginacao(filial);
+        if (versao !== versaoCargaLeads) return;
         atualizarContagemLixeira();
     }
 
@@ -275,6 +282,7 @@ async function carregarLeads(filial, resetar = true) {
         .order('pessoaIdentificador', { ascending: true })
         .range(inicioLote, fimLote);
 
+    if (versao !== versaoCargaLeads) return;
     if (error) {
         console.error("Erro ao carregar dados:", error);
         alert("Erro de conexão com o Supabase. Veja o console (F12) para detalhes.");
@@ -290,7 +298,7 @@ async function carregarLeads(filial, resetar = true) {
     const novosSemDuplicar = (data || []).filter(l => !idsJaCarregados.has(l.pessoaIdentificador));
     leadsAtuais = [...leadsAtuais, ...novosSemDuplicar];
 
-    if (data.length === tamanhoLote) {
+    if (!baseFiltravelCompleta && data.length === tamanhoLote) {
         podeCarregarMais = true;
         inicioLote += tamanhoLote;
     } else {
@@ -308,6 +316,7 @@ async function carregarLeads(filial, resetar = true) {
 // substring) — generalizada pra qualquer coluna, 2026-09-18, depois do
 // usuário relatar o MESMO sintoma em "Em Abordagem".
 async function carregarColunasSecundariasSemPaginacao(filial) {
+    const versao = versaoCargaLeads;
     const validKeys = typeof getColumnKeys === 'function' ? getColumnKeys() : columnsConfig.map(c => c.key);
     if (validKeys.length < 2) return; // só existe a 1ª coluna — nada "secundário" pra pré-carregar
 
@@ -322,13 +331,14 @@ async function carregarColunasSecundariasSemPaginacao(filial) {
                 .is('lixeira_em', null)
                 .order('pessoaIdentificador', { ascending: true })
                 .range(de, de + TAMANHO_PAGINA - 1);
+            if (versao !== versaoCargaLeads || filial !== filialAtual) return;
             if (error) { console.error(`Erro ao pré-carregar a coluna "${key}":`, error); break; }
             const idsJaCarregados = new Set(leadsAtuais.map(l => l.pessoaIdentificador));
             const novos = (data || []).filter(l => !idsJaCarregados.has(l.pessoaIdentificador));
             leadsAtuais = [...leadsAtuais, ...novos];
             if (!data || data.length < TAMANHO_PAGINA) break;
         }
-        colunasFiltroCompletasCarregadas.add(key); // já tem 100% do conteúdo — ver garantirColunaFiltravelCompleta()
+        // A completude para filtros é validada pela consulta integral da escola, não por esta pré-carga.
     }
 }
 
@@ -350,28 +360,59 @@ async function carregarColunasSecundariasSemPaginacao(filial) {
 // renderizarCards() pra esses cards passarem a existir no DOM antes do
 // filtro poder escondê-los/mostrá-los); `false` quando a coluna já
 // estava completa (nada pra fazer, filtra na hora).
-async function garantirColunaFiltravelCompleta(key) {
-    if (colunasFiltroCompletasCarregadas.has(key)) return false;
+async function garantirColunaFiltravelCompleta(_key) {
+    // O quadro coloca funis nulos/desconhecidos na primeira coluna. Por isso,
+    // consultar apenas funil_agencia=key nunca representa a coluna visual inteira.
+    if (baseFiltravelCompleta) return false;
+    if (promessaBaseFiltravel) return promessaBaseFiltravel;
+    const filial = filialAtual;
+    const versao = versaoCargaLeads;
+    if (!filial) throw new Error('Selecione uma escola antes de filtrar.');
+    const consulta = (async () => {
+        const registros = [];
+        for (let inicio = 0; ; inicio += 1000) {
+            const { data, error } = await window.supabaseClient.from(NOME_TABELA).select('*')
+                .eq('filial', filial).is('lixeira_em', null)
+                .order('pessoaIdentificador', { ascending: true }).range(inicio, inicio + 999);
+            if (versao !== versaoCargaLeads || filial !== filialAtual) throw new Error('A escola mudou durante a consulta.');
+            if (error || !Array.isArray(data)) throw new Error('Não foi possível consultar toda a base. Tente aplicar o filtro novamente.');
+            registros.push(...data);
+            if (data.length < 1000) break;
+        }
+        // Publica somente depois da última página. Falhas não deixam cache
+        // parcial marcado como completo e não exigem “Carregar mais”.
+        const porId = new Map(registros.map(lead => [String(lead.pessoaIdentificador), lead]));
+        leadsAtuais.forEach(lead => porId.set(String(lead.pessoaIdentificador), lead));
+        leadsAtuais = [...porId.values()];
+        baseFiltravelCompleta = true;
+        colunasFiltroCompletasCarregadas = new Set(getColumnKeys());
+        podeCarregarMais = false;
+        return true;
+    })();
+    promessaBaseFiltravel = consulta;
+    try { return await consulta; }
+    finally { if (promessaBaseFiltravel === consulta) promessaBaseFiltravel = null; }
+}
 
-    const TAMANHO_PAGINA = 1000;
-    let trouxeNovo = false;
-    for (let de = 0; ; de += TAMANHO_PAGINA) {
-        const { data, error } = await window.supabaseClient
-            .from(NOME_TABELA)
-            .select('*')
-            .eq('filial', filialAtual)
-            .eq('funil_agencia', key)
-            .is('lixeira_em', null)
-            .order('pessoaIdentificador', { ascending: true })
-            .range(de, de + TAMANHO_PAGINA - 1);
-        if (error) { console.error(`Erro ao carregar a coluna "${key}" por completo pro filtro:`, error); break; }
-        const idsJaCarregados = new Set(leadsAtuais.map(l => l.pessoaIdentificador));
-        const novos = (data || []).filter(l => !idsJaCarregados.has(l.pessoaIdentificador));
-        if (novos.length > 0) { leadsAtuais = [...leadsAtuais, ...novos]; trouxeNovo = true; }
-        if (!data || data.length < TAMANHO_PAGINA) break;
+function mostrarEstadoFiltroCompleto(key, texto, ocultar) {
+    const estado = document.getElementById(`estadoFiltroCompleto-${key}`);
+    if (estado) { estado.textContent = texto; estado.hidden = !texto; }
+    const coluna = document.getElementById(`col-${key}`);
+    if (coluna) { coluna.hidden = ocultar; coluna.setAttribute('aria-busy', texto.startsWith('Consultando') ? 'true' : 'false'); }
+}
+async function aplicarFiltrosEmTodaBase(chaves) {
+    const versao = versaoCargaLeads;
+    const filial = filialAtual;
+    chaves.forEach(key => mostrarEstadoFiltroCompleto(key, baseFiltravelCompleta ? '' : 'Consultando todos os contatos da escola…', !baseFiltravelCompleta));
+    try {
+        const trouxe = await garantirColunaFiltravelCompleta(chaves[0]);
+        if (versao !== versaoCargaLeads || filial !== filialAtual) return;
+        if (trouxe) renderizarCards();
+        else chaves.forEach(key => aplicarFiltroVisualColuna(key));
+        chaves.forEach(key => mostrarEstadoFiltroCompleto(key, '', false));
+    } catch (erro) {
+        if (versao === versaoCargaLeads && filial === filialAtual) chaves.forEach(key => mostrarEstadoFiltroCompleto(key, erro.message, true));
     }
-    colunasFiltroCompletasCarregadas.add(key);
-    return trouxeNovo;
 }
 
 // Mesmo problema do bug acima (Matriculados), mas pra tags "Ativo"/
@@ -390,6 +431,7 @@ async function garantirColunaFiltravelCompleta(key) {
 // usa a função SQL leads_ativos_inativos_da_filial()
 // (migracao_rpc_leads_ativos_inativos.sql).
 async function carregarAtivosInativosSemPaginacao(filial) {
+    const versao = versaoCargaLeads;
     // Paginado 1000 em 1000 (mesma lição de sempre: o PostgREST limita a
     // 1000 linhas por resposta mesmo numa função — sem isso, filiais
     // grandes como Jardim América, com 2700+ Ativo/Inativo, perderiam
@@ -399,6 +441,7 @@ async function carregarAtivosInativosSemPaginacao(filial) {
         const { data, error } = await window.supabaseClient
             .rpc('leads_ativos_inativos_da_filial', { p_filial: filial })
             .range(de, de + TAMANHO_PAGINA - 1);
+        if (versao !== versaoCargaLeads || filial !== filialAtual) return;
         if (error) { console.warn('Não foi possível pré-carregar Ativos/Inativos (rode migracao_rpc_leads_ativos_inativos.sql se ainda não rodou):', error.message); return; }
         const idsJaCarregados = new Set(leadsAtuais.map(l => l.pessoaIdentificador));
         const novos = (data || []).filter(l => !idsJaCarregados.has(l.pessoaIdentificador));
@@ -514,6 +557,7 @@ function renderizarColunas() {
                 ` : ''}
                 <div class="col-filter-wrapper">
                     <input type="text" class="col-filter-input column-search" data-col="col-${col.key}" placeholder="Buscar em ${escapeHTML(col.label)}..." onkeyup="filtroColunaComDebounce('${col.key}')">
+                    <p id="estadoFiltroCompleto-${col.key}" role="status" aria-live="polite" hidden style="font-size:12px;line-height:1.5"></p>
                     <i class="fa-solid fa-circle-notch fa-spin" id="buscaBancoIndicador-${col.key}" style="display:none; position:absolute; right:8px; top:8px; color:var(--na-green); font-size:10px;"></i>
                     <i class="fa-solid fa-filter" id="buscaBancoIcone-${col.key}"></i>
                 </div>
@@ -1029,14 +1073,11 @@ function montarDropdownFiltroColuna(key, tagsDisponiveis) {
     // sugeridas (TAGS_SUGERIDAS) — assim o dropdown já vem "rico" com o
     // padrão de qualificação do SDR, mesmo antes de qualquer lead ter sido
     // marcado com elas.
-    const tagsComSugeridas = Array.from(new Set([...tagsDisponiveis, ...TAGS_SUGERIDAS])).sort();
-
-    opcoesFiltroColuna[key] = { tags: tagsComSugeridas };
     const filtro = getFiltroColuna(key);
-
-    // Remove da seleção qualquer valor que não exista mais nesta coluna
-    filtro.tags = filtro.tags.filter(t => tagsComSugeridas.includes(t));
-    filtro.tagsExcluidas = filtro.tagsExcluidas.filter(t => tagsComSugeridas.includes(t));
+    // Um filtro sem correspondência deve mostrar zero, não desmarcar a tag
+    // e revelar todos os contatos da coluna silenciosamente.
+    const tagsComSugeridas = Array.from(new Set([...tagsDisponiveis, ...TAGS_SUGERIDAS, ...filtro.tags, ...filtro.tagsExcluidas])).sort();
+    opcoesFiltroColuna[key] = { tags: tagsComSugeridas };
 
     montarChipsTagsAgrupados(`tagsChips-${key}`, tagsComSugeridas, filtro.tags, (v) => toggleFiltroColunaChip(key, 'tags', v));
     // Lista de exclusão fica FLAT (sem agrupar por família) — geralmente é
@@ -1064,8 +1105,7 @@ async function toggleFiltroColunaChip(key, campo, valor) {
     atualizarBadgeFiltroColuna(key);
     // Garante o conteúdo COMPLETO da coluna antes de filtrar (ver bug real
     // "filtro só considera os visíveis", garantirColunaFiltravelCompleta()).
-    if (await garantirColunaFiltravelCompleta(key)) renderizarCards();
-    else aplicarFiltroVisualColuna(key);
+    await aplicarFiltrosEmTodaBase([key]);
 }
 
 // "Filter out": mesma mecânica do toggle de inclusão, só que marca a tag
@@ -1082,8 +1122,7 @@ async function toggleFiltroColunaChipExcluir(key, valor) {
     montarChips(`tagsExcluidasChips-${key}`, opcoes.tags, filtro.tagsExcluidas, (v) => toggleFiltroColunaChipExcluir(key, v));
 
     atualizarBadgeFiltroColuna(key);
-    if (await garantirColunaFiltravelCompleta(key)) renderizarCards();
-    else aplicarFiltroVisualColuna(key);
+    await aplicarFiltrosEmTodaBase([key]);
 }
 
 // Lê os campos de texto/data/checkbox do dropdown (só aplicados ao clicar
@@ -1098,11 +1137,11 @@ async function aplicarFiltroColunaCampos(key) {
     filtro.temResumo = (document.getElementById(`filtroTemResumo-${key}`) || {}).checked || false;
     filtro.resumoTexto = (document.getElementById(`filtroResumoTexto-${key}`) || {}).value || '';
     atualizarBadgeFiltroColuna(key);
-    if (await garantirColunaFiltravelCompleta(key)) renderizarCards();
-    else aplicarFiltroVisualColuna(key);
+    await aplicarFiltrosEmTodaBase([key]);
 }
 
 function limparFiltroColuna(key) {
+    mostrarEstadoFiltroCompleto(key, '', false);
     filtrosColuna[key] = filtroColunaVazio();
     const ev = document.getElementById(`filtroEvento-${key}`); if (ev) ev.value = '';
     const dd = document.getElementById(`filtroDataDe-${key}`); if (dd) dd.value = '';
@@ -1147,7 +1186,7 @@ function atualizarBadgeFiltroColuna(key) {
 // no DOM) simplesmente não aparece em lugar nenhum, dando a falsa
 // impressão de que "não achou nada" (bug real relatado pelo usuário,
 // clicando nos KPIs "Resgates Efetivados"/"Lead Forte" do Dashboard).
-function quickFilterTag(tag) {
+async function quickFilterTag(tag) {
     if (colunasRecolhidas.size > 0) {
         colunasRecolhidas.clear();
         salvarColunasRecolhidasLocal();
@@ -1158,7 +1197,7 @@ function quickFilterTag(tag) {
         if (!filtro.tags.includes(tag)) filtro.tags.push(tag);
     });
     registrarUsoFiltroTag(tag);
-    renderizarCards();
+    await aplicarFiltrosEmTodaBase(getColumnKeys());
 }
 
 // ==========================================
@@ -1227,6 +1266,7 @@ function renderizarFiltrosRapidos() {
 
 // "Limpar Tudo" — zera o filtro de TODAS as colunas + as buscas de texto
 function limparFiltros() {
+    getColumnKeys().forEach(key => mostrarEstadoFiltroCompleto(key, '', false));
     filtrosColuna = {};
     document.querySelectorAll('.column-search').forEach(input => { input.value = ''; });
     columnsConfig.forEach(col => {
@@ -1281,52 +1321,9 @@ const LIMITE_BUSCA_BANCO = 300;
 // onde só uma fração pequena costuma estar carregada localmente a
 // qualquer momento.
 async function processarBuscaColuna(key) {
-    const inputTexto = document.querySelector(`.column-search[data-col="col-${key}"]`);
-    const termo = inputTexto ? inputTexto.value.trim() : '';
-
-    // Feedback instantâneo com o que já está carregado, enquanto a busca no banco roda
-    aplicarFiltroVisualColuna(key);
-
-    if (termo.length < 2) return; // não vale a pena consultar o banco com 1 caractere só
-
-    const spinner = document.getElementById(`buscaBancoIndicador-${key}`);
-    const iconeFiltro = document.getElementById(`buscaBancoIcone-${key}`);
-    if (spinner) spinner.style.display = 'inline-flex';
-    if (iconeFiltro) iconeFiltro.style.display = 'none';
-
-    // Escapa vírgulas (separador do .or() do PostgREST) pra não quebrar a query
-    const termoSeguro = termo.replace(/,/g, ' ');
-
-    const { data, error } = await window.supabaseClient
-        .from(NOME_TABELA)
-        .select('*')
-        .eq('filial', filialAtual)
-        .eq('funil_agencia', key)
-        .is('lixeira_em', null)
-        .or(`pessoaNome.ilike.%${termoSeguro}%,pessoaTelefoneNumero.ilike.%${termoSeguro}%,pessoaEmail.ilike.%${termoSeguro}%`)
-        .limit(LIMITE_BUSCA_BANCO);
-
-    if (spinner) spinner.style.display = 'none';
-    if (iconeFiltro) iconeFiltro.style.display = 'inline';
-
-    if (error) {
-        console.error('Erro na busca no banco:', error);
-        return;
-    }
-
-    // Se o termo já mudou enquanto a busca rodava, descarta (evita corrida entre buscas)
-    const termoAtual = inputTexto ? inputTexto.value.trim() : '';
-    if (termoAtual !== termo) return;
-
-    // Mescla os resultados encontrados no banco com o que já está carregado localmente
-    const idsExistentes = new Set(leadsAtuais.map(l => String(l.pessoaIdentificador)));
-    const novos = data.filter(l => !idsExistentes.has(String(l.pessoaIdentificador)));
-    if (novos.length > 0) {
-        leadsAtuais = [...leadsAtuais, ...novos];
-        renderizarCards(); // redesenha tudo, já incluindo os leads encontrados no banco
-    }
-
-    aplicarFiltroVisualColuna(key);
+    // A busca também participa dos filtros, sem limite silencioso de 300
+    // resultados nem exceção para nomes com um caractere.
+    await aplicarFiltrosEmTodaBase([key]);
 }
 
 // Aplica, na coluna indicada, a busca de texto rápida E o filtro avançado
@@ -1335,7 +1332,7 @@ async function processarBuscaColuna(key) {
 // os cards.
 function aplicarFiltroVisualColuna(key) {
     const inputTexto = document.querySelector(`.column-search[data-col="col-${key}"]`);
-    const termo = inputTexto ? inputTexto.value.toLowerCase() : '';
+    const termo = inputTexto ? inputTexto.value.trim().toLowerCase() : '';
     const filtro = getFiltroColuna(key);
 
     const cards = document.querySelectorAll(`#${CSS.escape('col-' + key)} .lead-card`);
