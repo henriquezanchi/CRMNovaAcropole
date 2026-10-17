@@ -246,6 +246,15 @@
              ABA 2 — CRM E PROSPECÇÃO (KANBAN) — lógica já 100% pronta
         =========================================================== -->
         <div id="tab-crm" class="tab-pane active">
+<section class="acompanhamento-painel"><details><summary><strong>Quem precisa de atenção?</strong></summary>
+<p>Priorize compromissos e pedidos de ajuda. Interesse e preferência de contato precisam ser conferidos.</p>
+<div class="acompanhamento-acoes"><button type="button" class="btn-toggle" onclick="carregarFilaAcompanhamento()">Atualizar acompanhamento da escola</button>
+<label>Mostrar <select id="acompanhamentoFiltro" onchange="renderizarFilaAcompanhamento()"><option value="retornos">Retornos e pedidos de ajuda</option><option value="todos">Todos</option><option value="restritos">Pausados / preferência a conferir</option><option value="inscricoes">Inscrições em acompanhamento</option><option value="sem_responsavel">Sem responsável</option><option value="ulisses">Origem Ulisses</option><option value="instagram">Origem Instagram</option><option value="ex_aluno">Antigos alunos</option></select></label></div>
+<div class="acompanhamento-grade"><label>Encontrar contato<input id="acompanhamentoBusca" type="search" placeholder="Nome, identificação ou responsável" oninput="renderizarFilaAcompanhamento()"></label>
+<label class="acompanhamento-checkbox"><input id="acompanhamentoMeus" type="checkbox" onchange="renderizarFilaAcompanhamento()"> Somente meus atendimentos</label></div>
+<p id="acompanhamentoResumo" role="status" aria-live="polite"></p>
+<p id="acompanhamentoContagem" role="status"></p><div id="acompanhamentoLista">Atualize para consultar a escola selecionada.</div></details></section>
+
             <!-- Barra de Ordenação / Ações -->
             <div class="filter-bar">
                 <!-- "Organizar Quadro" deixou de ser global (2026-09-11, pedido do
@@ -327,6 +336,11 @@
              ABA — AGENDA DE EVENTOS (atividades/capacidade por filial)
         =========================================================== -->
         <div id="tab-agenda" class="tab-pane">
+<section class="acompanhamento-painel"><details><summary><strong>Conteúdo e convites da escola</strong></summary>
+<p>Planeje o texto e o próximo passo do público. Sem publicação automática, anexos ou alterações comerciais.</p>
+<button type="button" class="btn-toggle" onclick="carregarConteudoConvites()">Escolher atividade e planejar conteúdo</button>
+<div id="conteudoConvitesLista" class="acompanhamento-acoes"></div><div id="conteudoConvitesEditor"></div></details></section>
+
             <div class="agenda-content">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px;">
                     <div>
@@ -649,6 +663,7 @@
             </div>
 
             <div class="drawer-body">
+<section id="acompanhamentoLead" class="acompanhamento-painel"></section>
                 <!-- EVENTOS (CONVITES) — em quais eventos esse lead está sendo trabalhado
                      (evento_leads), com opção de convidar pra um evento novo -->
                 <div class="drawer-gaveta">
@@ -1146,6 +1161,17 @@
                 <input type="checkbox" id="participantesSelecionarTodos" onchange="toggleSelecionarTodosParticipantes(this.checked)">
                 Selecionar todos
             </label>
+            <p style="font-size:12px;line-height:1.5">Marque “Confirmado” apenas após uma resposta clara. “Talvez” não é confirmação; presença em branco significa que ainda precisamos conferir. Matrícula informada aqui não comprova primeira contribuição recebida.</p>
+            <div class="aberturas-conferencia">
+                <p id="participantesResumoConferencia" role="status" aria-live="polite"></p>
+                <div class="acompanhamento-grade">
+                    <label>Conferir participantes<select id="participantesFiltroSituacao" onchange="alterarFiltroConferenciaParticipantes()">
+                        <option value="todos">Todos</option><option value="confirmados">Confirmaram presença</option><option value="talvez">Disseram talvez</option><option value="presenca_pendente">Presença ainda não conferida</option><option value="presentes">Compareceram</option><option value="faltaram">Não compareceram</option><option value="retorno">Compareceram — acompanhar próximo passo</option>
+                    </select></label>
+                    <label>Encontrar na lista<input id="participantesFiltroNome" type="search" placeholder="Nome, telefone ou identificação" oninput="alterarFiltroConferenciaParticipantes()"></label>
+                </div>
+                <small>O filtro muda somente esta lista. Selecionar todos considera apenas as pessoas visíveis.</small>
+            </div>
             <div id="participantesLista"></div>
         </div>
         <div class="participantes-bulk-bar" id="participantesBulkBar" style="display:none;">
@@ -1773,7 +1799,9 @@
          é chamada de dentro deles -->
     <script src="js/log-atividade.js"></script>
     <!-- 3. Chama o SEU arquivo de lógica que acabamos de criar -->
+    <script src="js/acompanhamento-modelo.js"></script>
     <script src="js/app.js"></script>
+    <script src="js/acompanhamento.js"></script>
     <!-- 3b. Módulo do importador de planilhas (Ativos/Inativos/Inscrições) -->
     <script src="js/importador.js"></script>
     <!-- 3b2. Módulo de "Leads a Tratar" (duplicados por telefone/nome + sem telefone) -->
@@ -1785,7 +1813,9 @@
          já carregado acima) e de chatDrawer (js/whatsapp.js, idem) -->
     <script src="js/importar-conversa-whatsapp.js"></script>
     <!-- 3d. Módulo da Agenda de Eventos (atividades/capacidade por filial) -->
+    <script src="js/aberturas-modelo.js"></script>
     <script src="js/eventos.js"></script>
+    <script src="js/conteudo-convites.js"></script>
     <!-- 3e. Módulo de importar matrícula via texto colado da tela do Mercúrio -->
     <script src="js/matricula-importar.js"></script>
     <!-- 3f. Central de Notificações (sino no topbar) -->

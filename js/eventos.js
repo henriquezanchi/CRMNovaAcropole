@@ -705,6 +705,10 @@ async function abrirParticipantesEvento(eventoId) {
     fecharResultadosBuscaParticipante();
 
     participantesSelecionados = new Set();
+    const filtroSituacao = document.getElementById('participantesFiltroSituacao');
+    const filtroNome = document.getElementById('participantesFiltroNome');
+    if (filtroSituacao) filtroSituacao.value = 'todos';
+    if (filtroNome) filtroNome.value = '';
     atualizarBarraAcoesParticipantes();
     const checkTodos = document.getElementById('participantesSelecionarTodos');
     if (checkTodos) checkTodos.checked = false;
@@ -733,40 +737,44 @@ async function fecharParticipantesEvento() {
 async function carregarParticipantesEvento() {
     const container = document.getElementById('participantesLista');
     if (!container || !eventoParticipantesId) return;
-    container.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Carregando...</p>';
+    const eventoId = eventoParticipantesId;
+    const idsGrupo = [...eventoIdsGrupoAtual];
+    participantesAtuais = [];
+    container.textContent = 'Carregando participantes…';
+    try {
+        const linhas = [];
+        for (let inicio = 0; ; inicio += 1000) {
+            const { data, error } = await window.supabaseClient.from(NOME_TABELA_EVENTO_LEADS).select('*')
+                .in('evento_id', idsGrupo).order('id').range(inicio, inicio + 999);
+            if (eventoId !== eventoParticipantesId) return;
+            if (error) throw new Error('Não foi possível conferir os participantes. Nenhuma lista parcial será apresentada.');
+            linhas.push(...(data || []));
+            if (!data || data.length < 1000) break;
+        }
+        const ids = [...new Set(linhas.map(linha => linha.pessoaIdentificador))];
+        const informacoes = [];
+        for (let inicio = 0; inicio < ids.length; inicio += 200) {
+            const { data, error } = await window.supabaseClient.from(NOME_TABELA)
+                .select('pessoaIdentificador,pessoaNome,pessoaTelefoneDDD,pessoaTelefoneNumero').in('pessoaIdentificador', ids.slice(inicio, inicio + 200)).order('pessoaIdentificador');
+            if (eventoId !== eventoParticipantesId) return;
+            if (error) throw new Error('Não foi possível conferir os dados dos participantes.');
+            informacoes.push(...(data || []));
+        }
+        const porId = new Map(informacoes.map(lead => [String(lead.pessoaIdentificador), lead]));
+        participantesAtuais = linhas.map(linha => ({ ...linha, _lead: porId.get(String(linha.pessoaIdentificador)) || null }));
+        if (!linhas.length) { container.textContent = 'Nenhum participante vinculado. Use a busca para adicionar.'; return; }
+        renderizarListaParticipantes();
+    } catch (erro) { if (eventoId === eventoParticipantesId) container.textContent = erro.message; }
+}
 
-    const { data, error } = await window.supabaseClient
-        .from(NOME_TABELA_EVENTO_LEADS)
-        .select('*')
-        .in('evento_id', eventoIdsGrupoAtual)
-        .order('criado_em', { ascending: true });
-
-    if (error) {
-        container.innerHTML = `<p style="font-size:12px; color:#dc2626;">Erro ao carregar participantes: ${escapeHTML(error.message)}. Rode migracao_evento_leads.sql se ainda não rodou.</p>`;
-        return;
-    }
-
-    const linhas = data || [];
-    if (linhas.length === 0) {
-        participantesAtuais = [];
-        container.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Nenhum lead vinculado ainda. Busque acima pra adicionar.</p>';
-        return;
-    }
-
-    const ids = linhas.map(l => l["pessoaIdentificador"]);
-    const { data: leadsInfo, error: erroLeads } = await window.supabaseClient
-        .from(NOME_TABELA)
-        .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero')
-        .in('pessoaIdentificador', ids);
-
-    if (erroLeads) {
-        container.innerHTML = `<p style="font-size:12px; color:#dc2626;">Erro ao carregar dados dos leads: ${escapeHTML(erroLeads.message)}</p>`;
-        return;
-    }
-
-    const infoPorId = new Map((leadsInfo || []).map(l => [String(l.pessoaIdentificador), l]));
-    participantesAtuais = linhas.map(l => ({ ...l, _lead: infoPorId.get(String(l["pessoaIdentificador"])) || null }));
-
+function participantesVisiveisConferencia() {
+    const filtro = document.getElementById('participantesFiltroSituacao')?.value || 'todos';
+    const busca = document.getElementById('participantesFiltroNome')?.value || '';
+    return AberturasModelo.filtrar(participantesAtuais, filtro, busca);
+}
+function alterarFiltroConferenciaParticipantes() {
+    // Evita que uma ação em massa alcance alguém escondido pelo novo filtro.
+    participantesSelecionados = new Set();
     renderizarListaParticipantes();
 }
 
@@ -774,7 +782,13 @@ function renderizarListaParticipantes() {
     const container = document.getElementById('participantesLista');
     if (!container) return;
 
-    container.innerHTML = participantesAtuais.map(p => {
+    const visiveis = participantesVisiveisConferencia();
+    const idsVisiveis = new Set(visiveis.map(p => p.id));
+    participantesSelecionados = new Set([...participantesSelecionados].filter(id => idsVisiveis.has(id)));
+    const resumo = AberturasModelo.resumir(participantesAtuais);
+    const indicador = document.getElementById('participantesResumoConferencia');
+    if (indicador) indicador.textContent = `${resumo.total} na lista · ${resumo.confirmados} confirmados · ${resumo.talvez} talvez · ${resumo.presentes} presentes · ${resumo.presencaPendente} presenças a conferir. Exibindo ${visiveis.length}.`;
+    container.innerHTML = visiveis.map(p => {
         const lead = p._lead;
         const nome = lead ? lead.pessoaNome : `Lead ${p["pessoaIdentificador"]} (não encontrado)`;
         const telefone = lead && lead.pessoaTelefoneNumero ? [lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero].filter(Boolean).join(' ') : '';
@@ -793,6 +807,7 @@ function renderizarListaParticipantes() {
                 </div>
                 <select class="participante-resposta" onchange="atualizarRespostaParticipante(${p.id}, this.value)">
                     <option value="pendente" ${p.resposta_convite === 'pendente' ? 'selected' : ''}>Pendente</option>
+                    <option value="talvez" ${p.resposta_convite === 'talvez' ? 'selected' : ''}>Talvez / sem confirmação</option>
                     <option value="confirmado" ${p.resposta_convite === 'confirmado' ? 'selected' : ''}>Confirmado</option>
                     <option value="recusado" ${p.resposta_convite === 'recusado' ? 'selected' : ''}>Recusado</option>
                 </select>
@@ -810,10 +825,10 @@ function renderizarListaParticipantes() {
                 <button class="icon-btn danger" title="Remover da lista" onclick="removerParticipante(${p.id})"><i class="fa-solid fa-trash"></i></button>
             </div>
         `;
-    }).join('');
+    }).join('') || '<p>Nenhum participante neste filtro.</p>';
 
     const checkTodos = document.getElementById('participantesSelecionarTodos');
-    if (checkTodos) checkTodos.checked = participantesAtuais.length > 0 && participantesSelecionados.size === participantesAtuais.length;
+    if (checkTodos) checkTodos.checked = visiveis.length > 0 && visiveis.every(p => participantesSelecionados.has(p.id));
     atualizarBarraAcoesParticipantes();
 }
 
@@ -822,9 +837,10 @@ async function atualizarRespostaParticipante(id, valor) {
         .from(NOME_TABELA_EVENTO_LEADS)
         .update({ resposta_convite: valor, atualizado_em: new Date().toISOString() })
         .eq('id', id);
-    if (error) { alert('Erro ao atualizar resposta: ' + error.message); return; }
+    if (error) { alert('Não foi possível salvar a resposta. O valor anterior foi mantido.'); renderizarListaParticipantes(); return; }
     const p = participantesAtuais.find(x => x.id === id);
     if (p) p.resposta_convite = valor;
+    renderizarListaParticipantes();
 }
 
 async function atualizarCompareceuParticipante(id, valor) {
@@ -833,10 +849,11 @@ async function atualizarCompareceuParticipante(id, valor) {
         .from(NOME_TABELA_EVENTO_LEADS)
         .update({ compareceu, atualizado_em: new Date().toISOString() })
         .eq('id', id);
-    if (error) { alert('Erro ao atualizar comparecimento: ' + error.message); return; }
+    if (error) { alert('Não foi possível salvar a presença. O valor anterior foi mantido.'); renderizarListaParticipantes(); return; }
 
     const p = participantesAtuais.find(x => x.id === id);
     if (p) p.compareceu = compareceu;
+    renderizarListaParticipantes();
 
     // Confirmou presença mas não veio: precisa reabrir contato — joga pra
     // uma coluna de recontato dedicada (ver encontrarColunaRecontato()).
@@ -1024,7 +1041,7 @@ function toggleParticipanteSelecionado(id, marcado) {
 }
 
 function toggleSelecionarTodosParticipantes(marcado) {
-    participantesSelecionados = marcado ? new Set(participantesAtuais.map(p => p.id)) : new Set();
+    participantesSelecionados = marcado ? new Set(participantesVisiveisConferencia().map(p => p.id)) : new Set();
     renderizarListaParticipantes();
 }
 
@@ -1032,6 +1049,10 @@ function atualizarBarraAcoesParticipantes() {
     const barra = document.getElementById('participantesBulkBar');
     const contador = document.getElementById('participantesBulkContador');
     if (!barra) return;
+    const visiveis = participantesVisiveisConferencia();
+    const visiveisSelecionados = visiveis.filter(p => participantesSelecionados.has(p.id)).length;
+    const todos = document.getElementById('participantesSelecionarTodos');
+    if (todos) { todos.checked = visiveis.length > 0 && visiveisSelecionados === visiveis.length; todos.indeterminate = visiveisSelecionados > 0 && visiveisSelecionados < visiveis.length; }
     const n = participantesSelecionados.size;
     barra.style.display = n > 0 ? 'flex' : 'none';
     if (contador) contador.innerText = `${n} selecionado${n === 1 ? '' : 's'}`;
@@ -1049,7 +1070,7 @@ async function aplicarRespostaEmMassaParticipantes() {
 
     if (error) { alert('Erro ao atualizar em massa: ' + error.message); return; }
 
-    participantesAtuais.forEach(p => { if (participantesSelecionados.has(p.id)) p.resposta_convite = valor; });
+    participantesAtuais.forEach(p => { if (ids.includes(p.id)) p.resposta_convite = valor; });
     document.getElementById('participantesBulkResposta').value = '';
     renderizarListaParticipantes();
 }
@@ -1069,7 +1090,7 @@ async function aplicarCompareceuEmMassaParticipantes() {
 
     const pessoaIdsParaRecontato = [];
     participantesAtuais.forEach(p => {
-        if (!participantesSelecionados.has(p.id)) return;
+        if (!ids.includes(p.id)) return;
         if (compareceu === false && p.resposta_convite === 'confirmado') pessoaIdsParaRecontato.push(p["pessoaIdentificador"]);
         p.compareceu = compareceu;
     });
@@ -1097,7 +1118,7 @@ async function aplicarMatriculadoEmMassaParticipantes() {
 
     const pessoaIdsMatriculados = [];
     participantesAtuais.forEach(p => {
-        if (participantesSelecionados.has(p.id)) {
+        if (ids.includes(p.id)) {
             p.matriculado = matriculado;
             if (matriculado) pessoaIdsMatriculados.push(p["pessoaIdentificador"]);
         }
@@ -1134,8 +1155,8 @@ let eventosDoLeadAtual = []; // futuros + recentes (últimos 3 meses) — mostra
 let eventosAntigosDoLeadAtual = []; // passados há mais de 3 meses — mostrados dentro da gaveta "Histórico"
 let pessoaIdGavetaEventos = null;
 
-const ROTULOS_RESPOSTA_CONVITE = { pendente: 'Pendente', confirmado: 'Confirmado', recusado: 'Recusado' };
-const CLASSES_RESPOSTA_CONVITE = { pendente: 'tag-warning', confirmado: 'tag-ativo', recusado: 'tag-error' };
+const ROTULOS_RESPOSTA_CONVITE = { pendente: 'Pendente', confirmado: 'Confirmado', recusado: 'Recusado', talvez: 'Talvez / sem confirmação' };
+const CLASSES_RESPOSTA_CONVITE = { pendente: 'tag-warning', confirmado: 'tag-ativo', recusado: 'tag-error', talvez: 'tag-warning' };
 
 // Corte de "recente" — pedido do usuário (2026-10-01): "nesse tela tem
 // muitos eventos, vamos mostrar só os futuros. Os anteriores então no
@@ -1223,6 +1244,7 @@ function htmlItemEventoDoLead(el, hojeISO) {
             <div class="drawer-evento-item-status">
                 <select class="participante-resposta" onchange="alterarRespostaConviteNaGaveta(${el.id}, this.value)">
                     <option value="pendente" ${el.resposta_convite === 'pendente' ? 'selected' : ''}>Não confirmado</option>
+                    <option value="talvez" ${el.resposta_convite === 'talvez' ? 'selected' : ''}>Talvez / sem confirmação</option>
                     <option value="confirmado" ${el.resposta_convite === 'confirmado' ? 'selected' : ''}>Confirmado</option>
                     <option value="recusado" ${el.resposta_convite === 'recusado' ? 'selected' : ''}>Recusado</option>
                 </select>

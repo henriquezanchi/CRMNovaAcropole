@@ -3287,8 +3287,8 @@ function pausarWpp(ms) { return new Promise((resolve) => setTimeout(resolve, ms)
 async function enviarTemplateApiLote(tpl, linhas, { idProgresso, titulo, eventoAtual, onProgresso, pausaMs } = {}) {
     const pausa = typeof pausaMs === 'number' ? pausaMs : calcularPausaEnvioMassa(linhas.length);
     const resultados = [];
-    for (let i = 0; i < linhas.length; i += TAMANHO_LOTE_CONVITE_API) {
-        const lote = linhas.slice(i, i + TAMANHO_LOTE_CONVITE_API);
+    for (let i = 0; i < linhas.length; i += 1) {
+        const lote = linhas.slice(i, i + 1);
         const respostas = await Promise.all(lote.map(async (l) => {
             try {
                 const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
@@ -3314,7 +3314,7 @@ async function enviarTemplateApiLote(tpl, linhas, { idProgresso, titulo, eventoA
         resultados.push(...respostas);
         if (idProgresso) atualizarProgressoEnvioMassa(idProgresso, { titulo, atual: resultados.length, total: linhas.length });
         if (typeof onProgresso === 'function') onProgresso(resultados.length, linhas.length);
-        if (i + TAMANHO_LOTE_CONVITE_API < linhas.length) await pausarWpp(pausa);
+        if (i + 1 < linhas.length) await pausarWpp(pausa);
     }
     if (idProgresso) atualizarProgressoEnvioMassa(idProgresso, { titulo, atual: resultados.length, total: linhas.length, concluido: true });
 

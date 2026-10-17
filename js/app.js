@@ -213,6 +213,7 @@ async function carregarFiliais() {
 function trocarFilial(novaFilial) {
     if (!novaFilial || novaFilial === filialAtual) return;
     filialAtual = novaFilial;
+    if (typeof conteudoConsulta !== 'undefined') { conteudoConsulta++; conteudoEventoAtual = null; ['conteudoConvitesLista','conteudoConvitesEditor'].forEach(id => { const el = document.getElementById(id); if (el) el.replaceChildren(); }); }
     localStorage.setItem(CHAVE_STORAGE_FILIAL, filialAtual);
     document.querySelectorAll('.column-search').forEach(input => { input.value = ''; });
     carregarLeads(filialAtual, true);
@@ -224,6 +225,7 @@ function trocarFilial(novaFilial) {
 // 1. CARREGAMENTO DO BANCO (Busca os dados)
 // ==========================================
 async function carregarLeads(filial, resetar = true) {
+    if (resetar && typeof acompanhamentoFila !== 'undefined') { acompanhamentoFila = []; acompanhamentoConsulta++; const lista = document.getElementById('acompanhamentoLista'); if (lista) lista.textContent = 'Atualize para consultar a escola selecionada.'; ['acompanhamentoResumo','acompanhamentoContagem'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = ''; }); }
     filialAtual = filial;
 
     if (resetar) {
@@ -4446,6 +4448,7 @@ function abrirGaveta(id, opcoes = {}) {
         }
     }
 
+    if (typeof renderizarAcompanhamento === 'function') renderizarAcompanhamento(lead);
     renderAISummary();
     renderAbordagemSugerida();
     renderUltimoContato();
