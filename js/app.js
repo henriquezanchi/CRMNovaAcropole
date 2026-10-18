@@ -2398,7 +2398,8 @@ async function renderizarListaFiliaisModal() {
             <input type="text" value="${escapeHTML(f.nome_com_preposicao || '')}" placeholder="Como falar dela naturalmente (ex: do Jardim América, de Barra do Garças)" onchange="atualizarPreposicaoFilial(${f.id}, this.value)">
             <input type="text" value="${escapeHTML(f.whatsapp_chefe_numero || '')}" placeholder="WhatsApp do chefe de filial (E.164, ex: 5562991234567) — aviso de aniversário e resumo de lead" onchange="atualizarWhatsappChefeFilial(${f.id}, this.value)">
             <input type="number" step="0.01" min="0" value="${f.valor_mensalidade != null ? f.valor_mensalidade : ''}" placeholder="Valor da mensalidade do ALUNO (R$) — base do cálculo de comissão de 30%" onchange="atualizarValorMensalidadeFilial(${f.id}, this.value)">
-            <input type="number" step="1" min="0" value="${f.membros != null ? f.membros : ''}" placeholder="Quantidade de MEMBROS (categoria própria do Mercúrio — atualize periodicamente) — define a faixa do Fixo do Módulo 2" onchange="atualizarMembrosFilial(${f.id}, this.value)">
+            <input type="number" step="1" min="0" value="${f.membros != null ? f.membros : ''}" placeholder="Quantidade de MEMBROS — em branco usa a contagem automática do Mercúrio${f.membros_mercurio != null ? ` (hoje: ${f.membros_mercurio})` : ''} — define a faixa do Fixo do Módulo 2" onchange="atualizarMembrosFilial(${f.id}, this.value)">
+            <input type="text" maxlength="3" value="${escapeHTML(f.mercurio_unidade || '')}" placeholder="Código da unidade no Mercúrio (ex: JAM, GAR) — liga a sincronização diária do banco do Mercúrio" onchange="atualizarMercurioUnidadeFilial(${f.id}, this.value)">
             <input type="number" step="0.01" min="0" value="${f.valor_fixo_mensal_agencia != null ? f.valor_fixo_mensal_agencia : ''}" placeholder="Ajuste manual do Valor Fixo (R$) — se preenchido, SUBSTITUI o cálculo automático pela faixa de membros" onchange="atualizarValorFixoFilial(${f.id}, this.value)">
             <input type="text" value="${escapeHTML(f.endereco || '')}" placeholder="Endereço completo — aparece na gaveta de qualquer lead desta filial" onchange="atualizarEnderecoFilial(${f.id}, this.value)">
         </div>
@@ -2486,6 +2487,14 @@ async function atualizarModulo2ContratadoFilial(id, contratado) {
 // usuário a partir do Mercúrio. Base da faixa de preço do Fixo do Módulo
 // 2: <=30 => R$250, <=80 => R$450, >80 => R$600. Ver
 // migracao_filial_pricing_proposta.sql.
+async function atualizarMercurioUnidadeFilial(id, novoValor) {
+    const codigo = String(novoValor || '').trim().toUpperCase() || null;
+    const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ mercurio_unidade: codigo }).eq('id', id);
+    if (error) { alert('Erro ao salvar o código do Mercúrio: ' + error.message); return; }
+    const f = (filiaisDisponiveis || []).find(x => x.id === id);
+    if (f) f.mercurio_unidade = codigo;
+}
+
 async function atualizarMembrosFilial(id, novoValor) {
     const numero = novoValor.trim() === '' ? null : parseInt(novoValor, 10);
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ membros: (numero === null || isNaN(numero)) ? null : numero }).eq('id', id);
@@ -3210,7 +3219,9 @@ function atualizarRelatorios() {
 
     renderizarRelatorioTemasEvento();
     renderizarRelatorioMatriculasPorMes();
+    if (typeof renderizarConciliacaoMercurio === 'function') renderizarConciliacaoMercurio();
     renderizarComissaoSdrTodasFiliais();
+    if (typeof renderizarCanalOrigemMercurio === 'function') renderizarCanalOrigemMercurio();
     renderizarRelatorioComparacaoFiliais();
     renderizarRelatorioJornadaBase();
     if (typeof carregarRelatoriosWhatsApp === 'function') carregarRelatoriosWhatsApp();
@@ -3571,8 +3582,11 @@ async function renderizarRelatorioMatriculasPorMes() {
 // => R$450 — bateu exato nos 4 casos.
 function calcularValorFixoModulo2(filial) {
     if (filial.valor_fixo_mensal_agencia != null) return Number(filial.valor_fixo_mensal_agencia); // override manual sempre vence
-    if (filial.membros == null) return null; // sem dado nenhum — não inventa valor
-    const membros = Number(filial.membros);
+    // Manual vence; em branco, usa a contagem automática do Mercúrio (N2-N7
+    // ativos, filiais.membros_mercurio, gravada por mercurio-db-sincronizar).
+    const membrosBase = filial.membros != null ? filial.membros : filial.membros_mercurio;
+    if (membrosBase == null) return null; // sem dado nenhum — não inventa valor
+    const membros = Number(membrosBase);
     if (membros <= 30) return 250;
     if (membros <= 80) return 450;
     return 600;
@@ -3615,32 +3629,38 @@ async function renderizarComissaoSdrTodasFiliais() {
 
     container.innerHTML = '<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin"></i> Carregando...</p>';
 
-    // Descobre o intervalo real de meses com matrícula (global, todas as
-    // filiais) com só 2 queries de 1 linha cada — evita baixar a base
-    // inteira só pra montar a lista do <select>.
-    const [{ data: maisAntiga }, { data: maisRecente }] = await Promise.all([
-        window.supabaseClient.from(NOME_TABELA).select('data_matricula').not('data_matricula', 'is', null).order('data_matricula', { ascending: true }).limit(1),
-        window.supabaseClient.from(NOME_TABELA).select('data_matricula').not('data_matricula', 'is', null).order('data_matricula', { ascending: false }).limit(1),
-    ]);
-    if (!maisAntiga || !maisAntiga[0] || !maisRecente || !maisRecente[0]) {
-        container.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Nenhuma matrícula registrada ainda em nenhuma filial (data_matricula vazio pra todo mundo).</p>';
-        return;
-    }
-
     const NOMES_MES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
     const rotuloMes = (m) => { const [anoRotulo, mesRotulo] = m.split('-'); return `${NOMES_MES[Number(mesRotulo) - 1]}/${anoRotulo}`; };
+    const usaMercurioDb = filiais.some(f => f.mercurio_unidade) && typeof carregarConciliacaoMes === 'function';
 
-    const mesesOrdenados = [];
-    let [ano, mes] = String(maisAntiga[0].data_matricula).slice(0, 7).split('-').map(Number);
-    const [anoFim, mesFim] = String(maisRecente[0].data_matricula).slice(0, 7).split('-').map(Number);
-    while (ano < anoFim || (ano === anoFim && mes <= mesFim)) {
-        mesesOrdenados.push(`${ano}-${String(mes).padStart(2, '0')}`);
-        mes++;
-        if (mes > 12) { mes = 1; ano++; }
+    // Meses disponíveis: competências do banco do Mercúrio (filiais
+    // sincronizadas) + intervalo de data_matricula (filiais sem código do
+    // Mercúrio, cálculo antigo).
+    const meses = new Set();
+    if (usaMercurioDb) (await listarMesesConciliacaoMercurio()).forEach(m => meses.add(m));
+    if (filiais.some(f => !f.mercurio_unidade)) {
+        const [{ data: maisAntiga }, { data: maisRecente }] = await Promise.all([
+            window.supabaseClient.from(NOME_TABELA).select('data_matricula').not('data_matricula', 'is', null).order('data_matricula', { ascending: true }).limit(1),
+            window.supabaseClient.from(NOME_TABELA).select('data_matricula').not('data_matricula', 'is', null).order('data_matricula', { ascending: false }).limit(1),
+        ]);
+        if (maisAntiga && maisAntiga[0] && maisRecente && maisRecente[0]) {
+            let [ano, mes] = String(maisAntiga[0].data_matricula).slice(0, 7).split('-').map(Number);
+            const [anoFim, mesFim] = String(maisRecente[0].data_matricula).slice(0, 7).split('-').map(Number);
+            while (ano < anoFim || (ano === anoFim && mes <= mesFim)) {
+                meses.add(`${ano}-${String(mes).padStart(2, '0')}`);
+                mes++;
+                if (mes > 12) { mes = 1; ano++; }
+            }
+        }
     }
-
+    const mesesOrdenados = [...meses].sort();
+    if (mesesOrdenados.length === 0) {
+        container.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Nenhuma matrícula registrada ainda em nenhuma filial.</p>';
+        return;
+    }
     if (!mesSelecionadoComissaoSdr || !mesesOrdenados.includes(mesSelecionadoComissaoSdr)) {
-        mesSelecionadoComissaoSdr = mesesOrdenados[mesesOrdenados.length - 1];
+        const mesAtual = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()).slice(0, 7);
+        mesSelecionadoComissaoSdr = mesesOrdenados.includes(mesAtual) ? mesAtual : mesesOrdenados[mesesOrdenados.length - 1];
     }
 
     const inicio = `${mesSelecionadoComissaoSdr}-01`;
@@ -3648,19 +3668,27 @@ async function renderizarComissaoSdrTodasFiliais() {
     const proximoMesData = new Date(anoSel, mesSel, 1); // mesSel já "é" o próximo mês em índice 0-based do Date
     const fim = `${proximoMesData.getFullYear()}-${String(proximoMesData.getMonth() + 1).padStart(2, '0')}-01`;
 
+    let conciliacao = new Map();
+    if (usaMercurioDb) {
+        try { conciliacao = await carregarConciliacaoMes(mesSelecionadoComissaoSdr); }
+        catch (e) { console.warn('[comissao] falha ao carregar conciliação do Mercúrio:', e.message); }
+    }
+
     const resultados = await Promise.all(filiais.map(async f => {
-        // Não dá mais pra usar count:'exact',head:true (não baixa linha
-        // nenhuma) — precisa ler `tags` de cada lead pra aplicar o
-        // critério de remuneração (contaComoMatriculaRemuneravel()), então
-        // vira uma busca paginada normal, só que filtrando no fim.
-        const qtd = await contarMatriculasRemuneraveisNoPeriodo(f.nome, inicio, fim);
+        const fonte = f.mercurio_unidade && usaMercurioDb ? 'mercurio' : 'data_matricula';
+        const c = conciliacao.get(f.nome) || { contam: [], investigar: [], informado: null };
+        const qtd = fonte === 'mercurio' ? c.contam.length : await contarMatriculasRemuneraveisNoPeriodo(f.nome, inicio, fim);
+        const investigar = fonte === 'mercurio' ? c.investigar.length : null;
+        const informado = c.informado ? c.informado.quantidade : null;
         const valorMensalidade = f.valor_mensalidade != null ? Number(f.valor_mensalidade) : null;
         const receita = valorMensalidade != null ? qtd * valorMensalidade : null;
         const comissao = receita != null ? receita * 0.30 : null;
         const valorFixo = calcularValorFixoModulo2(f);
         const cobraComissao = f.modulo2_contratado !== false; // Módulo 2 (SDR) contratado? — default true, ver migracao_filial_pricing_proposta.sql
         const totalCobrar = cobraComissao ? (comissao || 0) + (valorFixo || 0) : 0;
-        return { nome: f.nome, qtd, valorMensalidade, membros: f.membros ?? null, receita, comissao, valorFixo, cobraComissao, totalCobrar };
+        const membros = f.membros != null ? f.membros : (f.membros_mercurio != null ? f.membros_mercurio : null);
+        const membrosAutomatico = f.membros == null && f.membros_mercurio != null;
+        return { nome: f.nome, fonte, qtd, investigar, informado, valorMensalidade, membros, membrosAutomatico, receita, comissao, valorFixo, cobraComissao, totalCobrar };
     }));
 
     const formatarReal = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -3672,9 +3700,13 @@ async function renderizarComissaoSdrTodasFiliais() {
     const totalComissao = resultados.reduce((s, r) => s + (r.comissao || 0), 0);
     const totalValorFixo = resultados.reduce((s, r) => s + (r.cobraComissao ? (r.valorFixo || 0) : 0), 0);
     const totalACobrar = resultados.reduce((s, r) => s + r.totalCobrar, 0);
+    const totalInvestigar = resultados.reduce((s, r) => s + (r.investigar || 0), 0);
     const algumSemValor = resultados.some(r => r.valorMensalidade == null && r.qtd > 0);
+    const algumaAntiga = resultados.some(r => r.fonte === 'data_matricula');
 
-    ultimoResultadoComissaoSdr = { mes: mesSelecionadoComissaoSdr, rotulo: rotuloMes(mesSelecionadoComissaoSdr), resultados, totalQtd, totalReceita, totalComissao, totalValorFixo, totalACobrar };
+    ultimoResultadoComissaoSdr = { mes: mesSelecionadoComissaoSdr, rotulo: rotuloMes(mesSelecionadoComissaoSdr), resultados, totalQtd, totalReceita, totalComissao, totalValorFixo, totalACobrar, totalInvestigar, conciliacao };
+
+    const diferenca = (r) => (typeof htmlDiferencaConciliacao === 'function' && r.fonte === 'mercurio') ? htmlDiferencaConciliacao(r.qtd, r.informado) : '—';
 
     container.innerHTML = `
         <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px; flex-wrap:wrap;">
@@ -3686,14 +3718,17 @@ async function renderizarComissaoSdrTodasFiliais() {
             <button id="btnGerarExcelComissaoSdr" class="btn-secondary" style="font-size:11px; padding:6px 10px;" onclick="exportarComissaoSdrExcel()"><i class="fa-solid fa-file-excel"></i> Gerar Excel de Cobrança</button>
         </div>
         <table class="tabela-relatorio">
-            <thead><tr><th>Filial</th><th>Mensalidade</th><th>Membros</th><th>Matrículas</th><th>Receita (1º mês)</th><th>Comissão (30%)</th><th>Fixo (Módulo 2)</th><th>Total a Cobrar</th></tr></thead>
+            <thead><tr><th>Filial</th><th>Mensalidade</th><th>Membros</th><th>Matrículas</th><th>Investigar</th><th>Informado</th><th>Diferença</th><th>Receita (1º mês)</th><th>Comissão (30%)</th><th>Fixo (Módulo 2)</th><th>Total a Cobrar</th></tr></thead>
             <tbody>
                 ${resultados.map(r => `
                     <tr class="${r.nome === filialAtual ? 'linha-filial-atual' : ''}" style="${r.cobraComissao ? '' : 'opacity:0.55;'}">
                         <td>${escapeHTML(r.nome)} ${r.cobraComissao ? '' : '<span class="tag tag-warning" style="font-size:10px;" title="Módulo 2 desligado em Gerenciar Filiais — não entra no total a cobrar">Não cobrada</span>'}</td>
                         <td>${r.valorMensalidade != null ? formatarReal(r.valorMensalidade) : '—'}</td>
-                        <td>${r.membros != null ? r.membros : '<span title="Preencha em Gerenciar Filiais pra calcular o Fixo">—</span>'}</td>
-                        <td>${r.qtd}</td>
+                        <td>${r.membros != null ? `${r.membros}${r.membrosAutomatico ? ' <span title="Contagem automática do Mercúrio (N2 a N7 ativos)" style="font-size:10px; color:var(--text-muted);">(Mercúrio)</span>' : ''}` : '<span title="Preencha em Gerenciar Filiais pra calcular o Fixo">—</span>'}</td>
+                        <td>${r.qtd}${r.fonte === 'data_matricula' ? ' <span title="Filial sem código do Mercúrio — contagem pela data_matricula do CRM" style="font-size:10px; color:var(--text-muted);">(CRM)</span>' : ''}</td>
+                        <td>${r.investigar ? `<span class="tag tag-warning" style="font-size:10px;">${r.investigar}</span>` : (r.investigar === 0 ? '0' : '—')}</td>
+                        <td>${r.informado != null ? r.informado : '—'}</td>
+                        <td>${diferenca(r)}</td>
                         <td>${r.receita != null ? formatarReal(r.receita) : '—'}</td>
                         <td>${r.comissao != null ? formatarReal(r.comissao) : '—'}</td>
                         <td>${r.valorFixo != null ? formatarReal(r.valorFixo) : '—'}</td>
@@ -3707,6 +3742,9 @@ async function renderizarComissaoSdrTodasFiliais() {
                     <td></td>
                     <td></td>
                     <td>${totalQtd}</td>
+                    <td>${totalInvestigar || ''}</td>
+                    <td></td>
+                    <td></td>
                     <td>${formatarReal(totalReceita)}</td>
                     <td>${formatarReal(totalComissao)}</td>
                     <td>${formatarReal(totalValorFixo)}</td>
@@ -3715,10 +3753,9 @@ async function renderizarComissaoSdrTodasFiliais() {
             </tfoot>
         </table>
         ${algumSemValor ? '<p style="font-size:11px; color:var(--text-muted); margin-top:8px;"><i class="fa-solid fa-circle-info"></i> Filial com matrícula mas sem valor de mensalidade configurado fica de fora do total de receita/comissão — configure em "Gerenciar Filiais".</p>' : ''}
-        <p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> "Fixo (Módulo 2)" = faixa por quantidade de Membros (&lt;=30 R$250, &lt;=80 R$450, &gt;80 R$600) — "Membros" é manual (categoria própria do Mercúrio, atualize em Gerenciar Filiais). "Total a Cobrar" = Comissão + Fixo, só pra filiais com Módulo 2 ligado — "Não cobrada" continua mostrando matrículas/receita reais, só não entra nesse total.</p>
-        <p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> Matrículas baseadas em <code>data_matricula</code> (busca direta no banco) — não dependem de em qual coluna do Kanban o lead está hoje. Ver aviso na seção "Matrículas por Mês" sobre a diferença entre os dois.</p>
-        <p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> Só conta pra remuneração: níveis PP/N1/CA, ou "Membro" quando for reingresso confirmado (tag "Recuperado") — Janos e Merlin nunca entram, têm outro modelo comercial.</p>
-        <p style="font-size:11px; color:#b45309; margin-top:4px;"><i class="fa-solid fa-triangle-exclamation"></i> O scraper já está sendo ajustado pra corrigir <code>data_matricula</code> pela data real de Ingresso do Mercúrio (turma por turma, de forma automática) — antes de fechar a cobrança do mês, confirme que os números abaixo já refletem essa correção.</p>
+        <p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> Matrículas pela conciliação do Mercúrio (detalhes, "Investigar" e o campo "Informado" ficam na seção "Conciliação de Matrículas por Turma", acima). "Investigar" não entra na cobrança até ser resolvido no Mercúrio. "Diferença" compara o Mercúrio com o informado pela escola: devolver ou cobrar a diferença.</p>
+        <p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> "Fixo (Módulo 2)" = faixa por quantidade de Membros (&lt;=30 R$250, &lt;=80 R$450, &gt;80 R$600). Membros manual (Gerenciar Filiais) vence; em branco, usa a contagem do Mercúrio. "Total a Cobrar" = Comissão + Fixo, só pra filiais com Módulo 2 ligado.</p>
+        ${algumaAntiga ? '<p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> "(CRM)" = filial sem código do Mercúrio em Gerenciar Filiais: conta pela data_matricula do CRM (PP/N1/CA, ou Membro reingressado).</p>' : ''}
     `;
 }
 
@@ -3728,20 +3765,22 @@ function exportarComissaoSdrCSV() {
         return;
     }
     const { rotulo, resultados, totalQtd, totalReceita, totalComissao, totalValorFixo, totalACobrar } = ultimoResultadoComissaoSdr;
-    const cabecalho = ['Filial', 'Mês', 'Mensalidade', 'Membros', 'Matrículas', 'Receita (1º mês)', 'Comissão SDR (30%)', 'Fixo (Módulo 2)', 'Módulo 2 Contratado?', 'Total a Cobrar'];
+    const cabecalho = ['Filial', 'Mês', 'Mensalidade', 'Membros', 'Matrículas', 'Investigar', 'Informado pela Escola', 'Receita (1º mês)', 'Comissão SDR (30%)', 'Fixo (Módulo 2)', 'Módulo 2 Contratado?', 'Total a Cobrar'];
     const linhas = resultados.map(r => [
         r.nome,
         rotulo,
         r.valorMensalidade != null ? r.valorMensalidade.toFixed(2) : '',
         r.membros != null ? r.membros : '',
         r.qtd,
+        r.investigar != null ? r.investigar : '',
+        r.informado != null ? r.informado : '',
         r.receita != null ? r.receita.toFixed(2) : '',
         r.comissao != null ? r.comissao.toFixed(2) : '',
         r.valorFixo != null ? r.valorFixo.toFixed(2) : '',
         r.cobraComissao ? 'Sim' : 'Não',
         r.totalCobrar.toFixed(2)
     ]);
-    linhas.push(['Total', rotulo, '', '', totalQtd, totalReceita.toFixed(2), totalComissao.toFixed(2), totalValorFixo.toFixed(2), '', totalACobrar.toFixed(2)]);
+    linhas.push(['Total', rotulo, '', '', totalQtd, '', '', totalReceita.toFixed(2), totalComissao.toFixed(2), totalValorFixo.toFixed(2), '', totalACobrar.toFixed(2)]);
 
     const csv = [cabecalho, ...linhas].map(linha => linha.map(csvEscapeCampo).join(',')).join('\r\n');
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }); // BOM pro Excel abrir acentuação certa
@@ -3801,23 +3840,44 @@ async function exportarComissaoSdrExcel() {
         const MONEY_FMT = '"R$" #,##0.00';
 
         // ---- Aba "Resumo" — mesmos números já calculados na tela ----
-        const cabResumo = ['Filial', 'Membros', 'Matrículas', 'Mensalidade (R$)', 'Receita 1º Mês (R$)', 'Comissão SDR 30% (R$)', 'Fixo Módulo 2 (R$)', 'Módulo 2 Contratado?', 'Total a Cobrar (R$)'];
+        const cabResumo = ['Filial', 'Membros', 'Matrículas', 'Investigar', 'Informado pela Escola', 'Diferença (Mercúrio - Informado)', 'Mensalidade (R$)', 'Receita 1º Mês (R$)', 'Comissão SDR 30% (R$)', 'Fixo Módulo 2 (R$)', 'Módulo 2 Contratado?', 'Total a Cobrar (R$)'];
         const linhasResumo = [cabResumo];
         for (const r of resultados) {
             linhasResumo.push([
-                r.nome, r.membros ?? '', r.qtd,
+                r.nome, r.membros ?? '', r.qtd, r.investigar ?? '', r.informado ?? '',
+                r.informado != null ? r.qtd - r.informado : '',
                 r.valorMensalidade ?? '', r.receita ?? '', r.comissao ?? '', r.valorFixo ?? '',
                 r.cobraComissao ? 'Sim' : 'Não', r.totalCobrar,
             ]);
         }
-        linhasResumo.push(['TOTAL', '', totalQtd, '', totalReceita, totalComissao, totalValorFixo, '', totalACobrar]);
+        linhasResumo.push(['TOTAL', '', totalQtd, '', '', '', '', totalReceita, totalComissao, totalValorFixo, '', totalACobrar]);
         const wsResumo = XLSX.utils.aoa_to_sheet(linhasResumo);
-        wsResumo['!cols'] = [{ wch: 28 }, { wch: 10 }, { wch: 12 }, { wch: 16 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 18 }, { wch: 16 }];
-        aplicarFormatoMoedaColunasExcel(wsResumo, [4, 5, 6, 7, 9], linhasResumo.length, MONEY_FMT);
+        wsResumo['!cols'] = [{ wch: 28 }, { wch: 10 }, { wch: 12 }, { wch: 11 }, { wch: 20 }, { wch: 22 }, { wch: 16 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 18 }, { wch: 16 }];
+        aplicarFormatoMoedaColunasExcel(wsResumo, [7, 8, 9, 10, 12], linhasResumo.length, MONEY_FMT);
         XLSX.utils.book_append_sheet(wb, wsResumo, 'Resumo');
 
         // ---- 1 aba por filial — lista nominal dos matriculados do mês ----
         for (const r of resultados) {
+            if (r.fonte === 'mercurio') {
+                const c = (ultimoResultadoComissaoSdr.conciliacao && ultimoResultadoComissaoSdr.conciliacao.get(r.nome)) || { contam: [], investigar: [] };
+                const valor = r.valorMensalidade || 0;
+                const fmtData = (iso) => { const p = String(iso || '').split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : ''; };
+                const linhasMerc = [['Nome do Aluno', 'Matrícula', 'Nível', 'Turma', 'Data Considerada', 'Valor da Contribuição (1º Mês, R$)', 'Comissão (30%, R$)']];
+                for (const a of c.contam) linhasMerc.push([a.nome || '(sem nome)', a.matricula, a.nivel || '', a.turma_competencia || a.turma || '', fmtData(a.data_efetiva), valor, valor * 0.3]);
+                linhasMerc.push(c.contam.length
+                    ? [`TOTAL (${c.contam.length} matrícula(s))`, '', '', '', '', c.contam.length * valor, c.contam.length * valor * 0.3]
+                    : ['Nenhuma matrícula neste mês nesta filial.', '', '', '', '', '', '']);
+                if (c.investigar.length) {
+                    linhasMerc.push([]);
+                    linhasMerc.push(['INVESTIGAR (não entra na cobrança)', 'Matrícula', 'Nível', 'Turma', 'Data Considerada', 'Motivo', '']);
+                    for (const a of c.investigar) linhasMerc.push([a.nome || '(sem nome)', a.matricula, a.nivel || '', a.turma || '', fmtData(a.data_efetiva), a.motivo_investigar || '', '']);
+                }
+                const wsMerc = XLSX.utils.aoa_to_sheet(linhasMerc);
+                wsMerc['!cols'] = [{ wch: 34 }, { wch: 11 }, { wch: 8 }, { wch: 18 }, { wch: 16 }, { wch: 26 }, { wch: 18 }];
+                aplicarFormatoMoedaColunasExcel(wsMerc, [6, 7], c.contam.length + 2, MONEY_FMT);
+                XLSX.utils.book_append_sheet(wb, wsMerc, sanitizarNomeAbaExcel(r.nome));
+                continue;
+            }
             const membrosFilial = [];
             let de = 0;
             const TAMANHO_PAGINA = 1000;
@@ -4120,6 +4180,9 @@ const FAMILIAS_TAG = [
     // js/importador.js). Cor própria e destacada, prioridade alta (antes de
     // "Nível") — é um aviso acionável, não só uma classificação.
     { label: 'Inscrição em Turma', testar: t => t === 'Inscrito: Abertura de Turma', classe: () => 'tag-inscrito-turma' },
+    // Aplicada/removida todo dia por mercurio-db-sincronizar (fichas do Mercúrio,
+    // últimos 6 meses) — aluno ativo com contribuição em atraso, alvo de retenção.
+    { label: 'Financeiro', testar: t => t === 'Contribuição em Atraso', classe: () => 'tag-warning' },
     // TA (Merlin/Távola, infantil), JN (Janos, adolescentes), PP (1º mês),
     // N1 (nível de entrada, mantido separado) e "Membro" (N2-N7 unificados).
     // N[2-7] direto no regex é só pra CLASSIFICAR tags antigas (de antes do

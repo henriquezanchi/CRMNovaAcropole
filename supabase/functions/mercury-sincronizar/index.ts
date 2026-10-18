@@ -151,7 +151,12 @@ async function sincronizarPeopleDaFilial(filial: string, branchId: string) {
             // errada que a raspagem antiga já tenha gravado. Sem
             // admissionDate (raro — só vimos em contas de sistema/seed),
             // preserva o que já existia em vez de arriscar nular.
-            data_matricula: p.admissionDate || (leadExistente ? leadExistente.data_matricula : null),
+            // Exceção: em quem é "Recuperado", data_matricula é a data de
+            // REINGRESSO, gravada por mercurio-db-sincronizar a partir do banco
+            // do Mercúrio (admissionDate é sempre o 1º ingresso, anos atrás).
+            data_matricula: (leadExistente && leadExistente.data_matricula && tagsAntigas.includes("Recuperado"))
+                ? leadExistente.data_matricula
+                : (p.admissionDate || (leadExistente ? leadExistente.data_matricula : null)),
             pessoaNome: leadExistente ? leadExistente.pessoaNome : p.fullName,
         };
 

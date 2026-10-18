@@ -157,6 +157,10 @@
                             <div class="activity-list" id="agendaGeralEventosRecentes"></div>
                         </div>
                         <div class="activity-card" style="flex:none; max-height:340px; grid-column: 1 / -1;">
+                            <div class="activity-header"><i class="fa-solid fa-hand-holding-heart"></i> Contribuição em Atraso — alunos pra contatar antes que desistam</div>
+                            <div class="activity-list" id="agendaGeralAtraso"></div>
+                        </div>
+                        <div class="activity-card" style="flex:none; max-height:340px; grid-column: 1 / -1;">
                             <div class="activity-header"><i class="fa-solid fa-calendar-days"></i> Calendário de Eventos Futuros (todas as filiais ativas)</div>
                             <div class="calendario-eventos-lista" id="agendaGeralCalendario"></div>
                         </div>
@@ -474,9 +478,21 @@
                 </div>
 
                 <div style="margin-top:30px;">
+                    <h3 style="font-size:16px; color:var(--na-green-dark);">Conciliação de Matrículas por Turma — Mercúrio</h3>
+                    <p class="report-sub">Compara o que está no banco do Mercúrio (atualizado toda noite) com o que a escola informou à mão. É a base da cobrança do mês.</p>
+                    <div id="relatorioConciliacaoMercurio"></div>
+                </div>
+
+                <div style="margin-top:30px;">
                     <h3 style="font-size:16px; color:var(--na-green-dark);">Comissão do SDR — Todas as Filiais</h3>
-                    <p class="report-sub">Mesmo cálculo de "Matrículas por Mês" (data_matricula × mensalidade × 30%), consolidado pra todas as filiais de uma vez só — pra fechar a cobrança do mês sem trocar de filial uma a uma.</p>
+                    <p class="report-sub">Matrículas pela conciliação do Mercúrio (mesma regra da seção acima) × mensalidade × 30%, mais o fixo do Módulo 2, consolidado pra todas as filiais.</p>
                     <div id="relatorioComissaoSdrTodasFiliais"></div>
+                </div>
+
+                <div style="margin-top:30px;">
+                    <h3 style="font-size:16px; color:var(--na-green-dark);">Matrículas por Canal de Origem</h3>
+                    <p class="report-sub">De onde vieram os alunos matriculados nos últimos 6 meses, pelo campo "como conheceu a escola" do Mercúrio.</p>
+                    <div id="relatorioCanalOrigemMercurio"></div>
                 </div>
 
                 <div style="margin-top:30px;">
@@ -1822,6 +1838,7 @@
     <script src="js/notificacoes.js"></script>
     <!-- 3f2. Agenda do Dia — Todas as Filiais (topo da aba Visão Geral/Dashboard) -->
     <script src="js/visao-geral.js"></script>
+    <script src="js/conciliacao-mercurio.js"></script>
     <!-- 3f2b. Relatórios de WhatsApp (SLA, desempenho por atendente, volume) + Resumo do Trabalho na tela -->
     <script src="js/relatorios-whatsapp.js"></script>
     <!-- 3f3. Contas de usuário (login nominal + permissão por módulo) -->

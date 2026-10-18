@@ -1172,3 +1172,14 @@ select:hover { border-color: #94a3b8; }
 
 /* Não exibir/selecionar resultados parciais enquanto o filtro consulta toda a base. */
 .col-body[hidden] { display:none; }
+
+/* ---------- Conciliação de matrículas (banco do Mercúrio) ---------- */
+.conc-detalhes { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+.conc-filial { border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; padding: 0 12px; }
+.conc-filial > summary { cursor: pointer; padding: 10px 0; font-size: 13px; font-weight: 600; color: var(--na-green-dark); }
+.conc-bloco-titulo { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin: 6px 0 4px; }
+.conc-bloco-investigar { color: #b45309; }
+.conc-aluno { padding: 8px 0; border-top: 1px solid #f1f5f9; font-size: 12px; color: var(--text-dark); }
+.conc-aluno[onclick]:hover { background: #f8fafc; }
+.conc-aluno-meta { font-size: 11px; color: var(--text-muted); font-weight: 400; }
+.conc-aluno-motivo { margin-top: 3px; font-size: 11px; color: #b45309; }

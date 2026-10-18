@@ -10503,3 +10503,77 @@ entre as 5 filiais, 0 `pessoaNome` nulo, 0 duplicata de
   recebido sinal verde pra "ir direto pro tudo", a prudência de validar
   lado a lado por alguns dias vale mais que o risco de um desligamento
   abrupto sem essa folga de segurança.
+
+## Banco de consulta do Mercúrio (oinabview, via phpMyAdmin) — 2026-10-18
+
+O responsável pelo Mercúrio liberou uma cópia de consulta do banco,
+atualizada toda noite (~23h), em `https://mercurio.oinabn.com.br/phpmyadmin`
+(phpMyAdmin 5.2.1, banco `oinabview`, 25 tabelas). Duas camadas de login,
+igual ao Mercúrio antigo: autenticação HTTP do servidor + formulário do
+phpMyAdmin. Credenciais em `.env.local` (`MERCURIO_DB_*`) e nos secrets do
+Supabase com os mesmos nomes. Não há conexão MySQL direta (só a tela).
+
+- **Só alunos ATIVOS** (`cadastro.cad_situacao` = 'ATI' pra todos, 7.933 no
+  Brasil). Ex-alunos e leads continuam vindo do Mercury/Ulisses.
+- Tabelas úteis: `cadastro` (84 colunas — ingresso, **reingresso**,
+  **recuperado S/N**, nível, turma atual, celular, e-mail, nascimento,
+  cidade/UF, `cad_midia_ingresso` "como conheceu", contribuição), `turmas`
+  (**`tur_inicio`** = abertura; `tur_tipo` P=programa principal, R/M=
+  complementar), `fichas` (contribuição mês a mês: PAG/ATR/BRA/INA),
+  `reciboc`/`reciboi` (recibos com valor), `unidades` (códigos: JAM, STO,
+  GAR, GY2, BGA).
+- **Datas vazias vêm como `0000-00-00`** — tratar como null (`dataOuNull()`).
+- **A tela de resultado do phpMyAdmin corta em 25 linhas.** Ler sempre pela
+  exportação JSON (`index.php?route=/export`, `what=json`, `sql_query`),
+  que devolve tudo — é o que `supabase/functions/_shared/phpmyadmin.ts` faz.
+- Tem CPF/RG — **nunca trazer pro CRM**.
+
+### `mercurio-db-sincronizar` (Edge Function, cron 06:30 Brasília)
+
+`migracao_mercurio_db.sql` (JÁ RODADA): `filiais.mercurio_unidade` (código
+da unidade, editável em Gerenciar Filiais — filial sem código não
+sincroniza), `filiais.membros_mercurio`, tabelas `mercurio_turmas`,
+`mercurio_alunos`, `mercurio_midia_ingresso`, `conciliacao_matriculas_informado`
+(com os números de outubro coletados à mão: JA 9, GAR 7, SO 7, GYN2 12),
+constraint de status com `'mercurio_db'` e o cron.
+
+Por filial: grava turmas; grava 1 linha por aluno em `mercurio_alunos` com a
+**competência de cobrança já calculada** (`calcularCompetencia()`); quem
+some do Mercúrio vira `ativo=false` e mantém a competência antiga (histórico
+de cobrança não muda depois que o aluno sai); atualiza o lead vinculado por
+`matricula_mercurio` (data_matricula real, tag `Recuperado`, tag
+`Contribuição em Atraso` aplicada/removida, contato vazio preenchido — nunca
+sobrescreve); grava `membros_mercurio` (N2-N7 ativos).
+
+**Regra de competência (combinada com o usuário):**
+- Programa branco: conta no mês em que a turma ABRIU (turma tipo P, nível
+  PP/N1), aceitando matrícula até 30 dias antes. Mais de 30 dias antes da
+  abertura da própria turma = **investigar** (possível reingresso não
+  registrado), não conta até ser resolvido no Mercúrio.
+- Complementar (CA/TA/CO/JN, ou turma não-P): conta pela data individual.
+- Recuperado: vale a data de reingresso.
+- Remuneração: PP, N1, CA; N2-N7 só reingressado; Janos/Merlin nunca.
+- Validado contra outubro antes de publicar: GY2 12/12, GAR 7/7, STO 7/7
+  (+1 investigar), JAM 0/9 (turma de outubro ainda não cadastrada no Mercúrio).
+
+`mercury-sincronizar` foi ajustado pra NÃO sobrescrever `data_matricula` de
+quem tem a tag Recuperado (o `admissionDate` do Mercury é sempre o 1º
+ingresso, desfaria a data de reingresso).
+
+### Telas (`js/conciliacao-mercurio.js`)
+
+- **Relatórios → Conciliação de Matrículas por Turma — Mercúrio**: por mês,
+  turmas abertas, quem conta, quem investigar (com motivo), campo
+  "Informado pela escola" (editável) e diferença (devolver/cobrar).
+  Botão "Sincronizar agora".
+- **Comissão do SDR** passou a contar pela conciliação (filiais com
+  `mercurio_unidade`); filial sem código cai no cálculo antigo por
+  `data_matricula`, marcada "(CRM)". Colunas novas: Investigar, Informado,
+  Diferença. CSV/Excel acompanham (Excel tem bloco "Investigar" por filial).
+- **Fixo do Módulo 2**: `membros` manual vence; em branco usa `membros_mercurio`.
+- **Agenda do Dia → Contribuição em Atraso**: alunos com 1+ mês ATR nos
+  últimos 6 meses, por filial — lista de retenção.
+- **Relatórios → Matrículas por Canal de Origem**: últimos 6 meses por
+  `cad_midia_ingresso`. O banco só tem o número; o significado é
+  preenchido na própria tabela (`mercurio_midia_ingresso`). **Pendente:
+  perguntar ao responsável o que cada código significa.**
