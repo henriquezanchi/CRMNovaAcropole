@@ -29,9 +29,9 @@ create or replace function public.consultar_painel_escola(
    l.acompanhamento->>'responsavel' as responsavel,
    l.acompanhamento->>'atualizado_em' as atualizado_em,
    ev.nome as atividade,ev.data as data_atividade,ev.resposta_convite,ev.compareceu,ev.matriculado,
-   case when coalesce(l.acompanhamento->>'apoio_escola','nao') not in ('nao','') then 'apoio'
-    when l.acompanhamento->>'inscricao' in ('solicitada','dados_pendentes','aguardando_registro') then 'inscricao'
-    else 'visita' end as categoria
+   case when l.acompanhamento->>'apoio_escola' in ('inscricao','cadastro') then 'inscricao'
+    when l.acompanhamento->>'apoio_escola' in ('presenca','acolhimento') then 'visita'
+    else 'apoio' end as categoria
   from public.leads_inscricoes l join acesso a on a.filial=l.filial
   left join lateral (
    select e.nome,e.data,el.resposta_convite,el.compareceu,el.matriculado
@@ -40,13 +40,11 @@ create or replace function public.consultar_painel_escola(
     and e.data between current_date-90 and current_date+90
    order by e.data desc,el.id desc limit 1
   ) ev on true
-  where l.lixeira_em is null and (
-   coalesce(l.acompanhamento->>'apoio_escola','nao') not in ('nao','')
-   or l.acompanhamento->>'inscricao' in ('solicitada','dados_pendentes','aguardando_registro')
-   or (ev.data>=current_date and ev.resposta_convite='confirmado' and ev.compareceu is null)
-   or (ev.data<current_date and ev.resposta_convite='confirmado' and ev.compareceu is null)
-   or (ev.data<=current_date and ev.compareceu=true and ev.matriculado is distinct from true and coalesce(l.acompanhamento->>'inscricao','')<>'conferida')
-  )
+  where l.lixeira_em is null
+   and l.acompanhamento->>'apoio_escola' in ('presenca','acolhimento','inscricao','cadastro','outro')
+   and length(btrim(coalesce(l.acompanhamento->>'pedido_escola','')))>0
+   and length(btrim(coalesce(l.acompanhamento->>'responsavel','')))>0
+
  ), filtrados as (
   select * from base where (p_categoria='todos' or categoria=p_categoria)
    and (coalesce(p_busca,'')='' or strpos(lower(coalesce(nome,'')),lower(p_busca))>0)

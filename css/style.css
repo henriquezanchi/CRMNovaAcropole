@@ -1183,3 +1183,44 @@ select:hover { border-color: #94a3b8; }
 .conc-aluno[onclick]:hover { background: #f8fafc; }
 .conc-aluno-meta { font-size: 11px; color: var(--text-muted); font-weight: 400; }
 .conc-aluno-motivo { margin-top: 3px; font-size: 11px; color: #b45309; }
+/* Navegação por nomes e conteúdo progressivo, sem alterar dados e permissões. */
+.sidebar { width:164px; flex-shrink:0; align-items:stretch; padding:18px 10px; gap:6px; }
+.sidebar-icon { display:flex; align-items:center; gap:10px; width:100%; padding:12px 10px; margin:0; border:0; background:transparent; text-align:left; border-radius:8px; font-family:inherit; }
+.sidebar-icon i { font-size:18px; width:20px; text-align:center; }
+.sidebar-icon span { font-size:12px; font-weight:600; }
+.sidebar-icon.active { background:rgba(255,255,255,.12); color:white; }
+.sidebar-icon:hover { background:rgba(255,255,255,.08); }
+.sidebar-icon:focus-visible { outline:2px solid var(--na-gold); outline-offset:2px; }
+.main-content { min-width:0; }
+.topbar { padding:12px 18px; gap:14px; flex-wrap:wrap; }
+.topbar>div { min-width:0; flex-wrap:wrap; }
+.topbar h2 { font-size:16px!important; }
+.dashboard-content,.report-content { gap:16px; padding:20px; }
+.secao-organizada { border:1px solid var(--border-color); border-radius:10px; padding:14px; background:white; min-width:0; }
+.secao-organizada>summary { font-size:14px; font-weight:700; color:var(--na-green-dark); cursor:pointer; padding:4px; }
+.secao-organizada[open]>summary { margin-bottom:16px; }
+.secao-organizada>div { margin-top:16px; }
+.rotinas-extras { grid-column:1/-1; color:var(--text-dark); }
+.rotinas-extras>.activity-card { margin-top:12px; }
+.atalhos-relatorios { display:flex; flex-wrap:wrap; gap:8px; }
+.atalhos-relatorios button { font:inherit; font-size:12px; padding:9px 12px; border:1px solid var(--border-color); border-radius:20px; background:white; color:var(--na-green-dark); cursor:pointer; }
+.report-content>div:first-of-type { flex-wrap:wrap; }
+.report-content>div:first-of-type>div:last-child { flex-wrap:wrap; }
+.tags-contexto { width:100%; margin-top:3px; color:var(--text-muted); }
+.tags-contexto summary { font-size:10px; cursor:pointer; }
+.tags-contexto>div { display:flex; flex-wrap:wrap; gap:4px; padding-top:7px; }
+.tag-filter-grupo summary { cursor:pointer; display:list-item; }
+.tag-filter-grupo summary small { color:var(--text-muted); font-weight:400; margin-left:5px; }
+.tag-filter-grupo[hidden],.chip[hidden] { display:none; }
+.busca-tags-rotulo { display:block; font-size:11px; margin-bottom:10px; }
+.busca-tags { display:block; width:100%; padding:8px; margin-top:5px; border:1px solid var(--border-color); border-radius:6px; }
+.dialogo-paineis { max-width:620px; width:calc(100% - 32px); max-height:90vh; overflow:auto; border:1px solid var(--border-color); border-radius:12px; padding:22px; color:var(--text-dark); }
+.dialogo-paineis::backdrop { background:rgba(0,0,0,.4); }
+.dialogo-paineis header { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.dialogo-paineis h2 { font-size:18px; }
+.dialogo-paineis label { display:flex; flex-direction:column; gap:6px; margin:14px 0; }
+.dialogo-paineis input { width:100%; min-width:0; padding:10px; border:1px solid var(--border-color); border-radius:7px; font-size:16px; }
+.dialogo-paineis button { padding:9px 12px; font:inherit; font-size:12px; background:white; border:1px solid var(--border-color); border-radius:7px; cursor:pointer; }
+.dialogo-paineis small { display:block; color:var(--text-muted); line-height:1.5; }
+.acoes-paineis { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:18px; }
+@media(max-width:760px) { body { flex-direction:column; } .sidebar { width:100%; flex-direction:row; padding:7px; overflow-x:auto; gap:4px; } .sidebar-icon { min-width:90px; width:auto; flex-direction:column; gap:5px; padding:7px; flex-shrink:0; } .sidebar-icon span { font-size:10px; } .sidebar-icon i { font-size:16px; } .topbar { padding:10px; } .topbar-logo { height:30px; } .dashboard-content,.report-content { padding:12px; } .busca-tags { font-size:16px; } }

@@ -56,6 +56,7 @@
         if (dado.proximo !== 'nenhum' && (!dado.responsavel.trim() || !dado.proxima_em)) throw new Error('Defina responsável e data do próximo passo.');
         if (dado.proxima_em && dado.proximo === 'nenhum') throw new Error('Escolha o próximo passo para essa data.');
         if (dado.contato === 'nao_contatar' && ['convidar', 'confirmar', 'retornar'].includes(dado.proximo)) throw new Error('Respeite o pedido de não contato.');
+        if (dado.apoio_escola !== 'nao' && (!dado.pedido_escola.trim() || !dado.responsavel.trim())) throw new Error('Para encaminhar à escola, descreva o apoio necessário e indique o responsável pelo acompanhamento.');
         if (dado.pedido_escola.length > 300) throw new Error('Resuma o pedido visível para a escola em até 300 caracteres.');
         if (dado.referencia_registro.length > 160) throw new Error('Resuma a referência de conferência.');
         if (dado.conferido_em && !Number.isFinite(Date.parse(dado.conferido_em))) throw new Error('Data de conferência inválida.');

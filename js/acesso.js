@@ -81,6 +81,7 @@ async function tentarAcesso() {
 function sairDoCrm() {
     if (!confirm('Sair do CRM?')) return;
     localStorage.removeItem(CHAVE_USUARIO_LOGADO);
+    sessionStorage.removeItem('crm_paineis_filiais_sessao');
     location.reload();
 }
 

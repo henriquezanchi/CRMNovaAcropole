@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CRM Agência - Módulo 2</title>
+    <title>Conversão em Matrículas — Nova Acrópole</title>
     <link rel="icon" type="image/png" href="img/logo-nova-acropole.png">
     <!-- Importando fontes e ícones -->
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700;900&display=swap" rel="stylesheet">
@@ -28,22 +28,22 @@
 
     <!-- Sidebar: Navegação Multi-Abas -->
     <div class="sidebar">
-        <i class="fa-solid fa-chart-line sidebar-icon" data-tab="tab-dashboard" title="Visão Geral"
-           onclick="switchModule('tab-dashboard', 'Visão Geral', 'Dashboard de performance da unidade')"></i>
-        <i class="fa-solid fa-users-viewfinder sidebar-icon active" data-tab="tab-crm" title="CRM e Prospecção"
-           onclick="switchModule('tab-crm', 'Prospecção Ativa', 'CRM Modularizado VS Code')"></i>
-        <i class="fa-solid fa-list-check sidebar-icon" data-tab="tab-tarefas" title="Tarefas"
-           onclick="switchModule('tab-tarefas', 'Tarefas', 'Quem faz o quê, até quando')"></i>
-        <i class="fa-solid fa-calendar-days sidebar-icon" data-tab="tab-agenda" title="Agenda de Eventos"
-           onclick="switchModule('tab-agenda', 'Agenda de Eventos', 'Atividades e capacidade por filial')"></i>
-        <i class="fa-brands fa-whatsapp sidebar-icon" data-tab="tab-whatsapp" title="WhatsApp Unificado"
-           onclick="switchModule('tab-whatsapp', 'WhatsApp Unificado', 'Caixa de entrada centralizada')"></i>
-        <i class="fa-solid fa-chart-simple sidebar-icon" data-tab="tab-relatorios" title="Relatórios"
-           onclick="switchModule('tab-relatorios', 'Relatórios', 'Funil de conversão da unidade')"></i>
-        <i class="fa-solid fa-clone sidebar-icon" data-tab="tab-leads-tratar" title="Leads a Tratar"
-           onclick="switchModule('tab-leads-tratar', 'Leads a Tratar', 'Duplicados e leads sem telefone')"></i>
-        <i class="fa-solid fa-file-import sidebar-icon" data-tab="tab-importar" title="Importar Planilhas"
-           onclick="switchModule('tab-importar', 'Importar Planilhas', 'Ativos, Inativos e Inscrições → CRM')"></i>
+        <button type="button" class="sidebar-icon" data-tab="tab-dashboard" title="Visão Geral"
+           onclick="switchModule('tab-dashboard', 'Visão Geral', 'Indicadores e tarefas para acompanhar')"><i class="fa-solid fa-chart-line" aria-hidden="true"></i><span>Visão geral</span></button>
+        <button type="button" class="sidebar-icon active" data-tab="tab-crm" title="CRM e Prospecção"
+           onclick="switchModule('tab-crm', 'Atendimento', 'Conversas, retornos e inscrições')"><i class="fa-solid fa-users-viewfinder" aria-hidden="true"></i><span>Atendimento</span></button>
+        <button type="button" class="sidebar-icon" data-tab="tab-tarefas" title="Tarefas"
+           onclick="switchModule('tab-tarefas', 'Tarefas', 'Quem faz o quê, até quando')"><i class="fa-solid fa-list-check" aria-hidden="true"></i><span>Tarefas</span></button>
+        <button type="button" class="sidebar-icon" data-tab="tab-agenda" title="Agenda de Eventos"
+           onclick="switchModule('tab-agenda', 'Agenda de Eventos', 'Atividades e capacidade por filial')"><i class="fa-solid fa-calendar-days" aria-hidden="true"></i><span>Agenda</span></button>
+        <button type="button" class="sidebar-icon" data-tab="tab-whatsapp" title="WhatsApp Unificado"
+           onclick="switchModule('tab-whatsapp', 'WhatsApp Unificado', 'Caixa de entrada centralizada')"><i class="fa-brands fa-whatsapp" aria-hidden="true"></i><span>Mensagens</span></button>
+        <button type="button" class="sidebar-icon" data-tab="tab-relatorios" title="Relatórios"
+           onclick="switchModule('tab-relatorios', 'Resultados', 'Matrículas, origem e atendimento')"><i class="fa-solid fa-chart-simple" aria-hidden="true"></i><span>Resultados</span></button>
+        <button type="button" class="sidebar-icon" data-tab="tab-leads-tratar" title="Leads a Tratar"
+           onclick="switchModule('tab-leads-tratar', 'Leads a Tratar', 'Duplicados e leads sem telefone')"><i class="fa-solid fa-clone" aria-hidden="true"></i><span>Cadastros</span></button>
+        <button type="button" class="sidebar-icon" data-tab="tab-importar" title="Importar Planilhas"
+           onclick="switchModule('tab-importar', 'Importar Planilhas', 'Ativos, Inativos e Inscrições → CRM')"><i class="fa-solid fa-file-import" aria-hidden="true"></i><span>Importações</span></button>
     </div>
 
     <div class="main-content">
@@ -54,12 +54,13 @@
                 <div>
                     <h2 style="font-size: 18px; color: var(--na-green-dark); margin: 0;">
                         <i id="topbar-icon" class="fa-solid fa-users-viewfinder"></i>
-                        <span id="topbar-title-text">Prospecção Ativa</span>
+                        <span id="topbar-title-text">Atendimento</span>
                     </h2>
-                    <p id="topbar-subtitle" style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">CRM Modularizado VS Code</p>
+                    <p id="topbar-subtitle" style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Acolhimento e acompanhamento dos interessados</p>
                 </div>
             </div>
             <div style="display:flex; align-items:center; gap:8px;">
+                <button type="button" class="btn-toggle atalho-paineis" onclick="abrirPaineisFiliais()">Painéis das filiais</button>
                 <select id="filialSelect" onchange="trocarFilial(this.value)" style="font-size: 13px; font-weight: 600; padding: 6px; border-radius: 6px; border: 1px solid #ccc;">
                     <option value="">Carregando filiais...</option>
                 </select>
@@ -1850,6 +1851,8 @@
          por convenção de organização; a checagem roda em DOMContentLoaded,
          então a ordem dos scripts não afeta quando o overlay aparece -->
     <script src="js/acesso.js"></script>
+    <script src="js/organizacao-interface.js"></script>
+    <script src="js/painel-filial-atalho.js"></script>
 
     <!-- 4. Dá o "Start" assim que o HTML carregar -->
     <script>
@@ -1873,5 +1876,11 @@
             if (typeof carregarRedeAtivosInativos === 'function') carregarRedeAtivosInativos();
         });
     </script>
+<dialog id="dialogoPaineisFiliais" class="dialogo-paineis"><header><h2>Painel da filial</h2><button type="button" onclick="document.getElementById('dialogoPaineisFiliais').close()" aria-label="Fechar">Fechar</button></header>
+<p><strong id="painelFilialNome"></strong></p><p>Acesso somente aos contatos encaminhados pela equipe. O link funciona como uma chave: compartilhe apenas com os responsáveis locais.</p>
+<label>Link privado da filial<input id="painelFilialEndereco" type="url" autocomplete="off" placeholder="Cole o link fornecido pela administração"></label>
+<div class="acoes-paineis"><button type="button" onclick="guardarEnderecoPainel()">Conferir e guardar</button><button type="button" onclick="acessarPainelFilial()">Abrir painel</button><button type="button" onclick="copiarPainelFilial()">Copiar link</button></div>
+<details><summary>Importar os links das filiais</summary><p>Use o arquivo privado de links da administração. Ele não será enviado ao banco nem publicado no site.</p><label>Arquivo de links<input id="painelFilialImportar" type="file" accept=".json,application/json" onchange="importarEnderecosPaineis()"></label></details>
+<p id="painelFilialRetorno" role="status" aria-live="polite"></p><small>Os atalhos ficam disponíveis nesta sessão do navegador e são removidos ao sair do CRM.</small></dialog>
 </body>
 </html>

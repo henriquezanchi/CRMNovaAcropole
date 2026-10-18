@@ -69,3 +69,13 @@ Correção: filtros rápidos, inclusão/exclusão de tags, campos avançados e b
 Validação: 23 testes de regras/carga aprovados. Teste de navegador com app.js e renderização reais, rede externa bloqueada e 2.507 registros sintéticos: resultados além dos primeiros 500 e 1.000 em todas as colunas, registros nulos/legados, filtros rápidos, inclusão/exclusão, busca textual, tag sem correspondência, erro intermediário e recuperação. O mesmo teste contra c787b36 falhou como esperado por não haver consulta da base no filtro rápido; passou com a correção. Não houve envio de mensagens nem alteração dos cadastros na validação.
 
 Execução: `node tests/browser-kanban-filtros.mjs`. Para reproduzir a regressão histórica, `KANBAN_APP_REV=c787b36 node tests/browser-kanban-filtros.mjs` deve falhar. Não requer migração ou mudança na função de mensagens.
+
+## Organização visual e painéis das filiais — 18/10/2026
+
+- Navegação por botões com nomes: Visão geral, Atendimento, Tarefas, Agenda, Mensagens, Resultados, Cadastros e Importações. Mantidos os identificadores e permissões de módulos existentes; nenhuma mudança de autorização.
+- Visão geral prioriza indicadores e tarefas; saúde dos dados, classificações históricas e rotinas complementares ficam em grupos recolhíveis.
+- Resultados organiza relatórios em Matrículas e conferência, Origem e relacionamento e Atendimento e equipe, com atalhos por assunto. IDs e funções dos relatórios preservados.
+- Cartões mostram até três tags em destaque. Histórico/contexto é recolhível e só monta suas tags ao abrir, evitando custo adicional em milhares de cartões. Duplicatas/aliases são compactados na apresentação; nenhuma tag foi apagada dos contatos. Bloqueio de contato permanece destacado. Filtros conservam os valores originais, com busca de tag e grupos recolhíveis.
+- Painéis das filiais acessíveis no topo, com configuração por link ou importação do arquivo privado nesta sessão. Sem chaves embutidas no site ou salvas em tabela pública.
+- Corrigida a seleção do painel da escola: presença ou inscrição Ulisses não encaminha ninguém automaticamente. Exige pedido explícito, motivo e responsável; validação equivalente na ficha impede encaminhamento vazio.
+- Testes: 27 verificações de regras/carga; SQL isolado incluindo não inclusão de contato Ulisses sem encaminhamento; interface HTML real em 414/1365 px com navegação, relatórios, busca de tags, histórico de cartão e configuração de link privado. Teste do quadro real com 2.507 contatos mantém filtros completos. Não houve remoção de cadastros ou alteração comercial.

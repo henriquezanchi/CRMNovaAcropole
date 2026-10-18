@@ -569,7 +569,7 @@ function renderizarColunas() {
                             <i class="fa-solid fa-chevron-down" style="font-size:8px;"></i>
                         </span>
                     </button>
-                    <div class="col-filter-dropdown" id="filterDropdown-${col.key}">
+                    <div class="col-filter-dropdown" id="filterDropdown-${col.key}"><label class="busca-tags-rotulo">Encontrar tag<input type="search" class="busca-tags" data-busca-tags="${escapeHTML(col.key)}" placeholder="Digite parte do nome"></label>
                         <div class="col-filter-section">
                             <div class="col-filter-section-title">Tags (precisa ter todas)</div>
                             <div class="col-filter-chip-list" id="tagsChips-${col.key}"></div>
@@ -709,6 +709,32 @@ function rankNivelAluno(lead) {
     return indices.length > 0 ? Math.min(...indices) : 99;
 }
 
+function organizarTagsDoCartao(tags) {
+    const aliases = { 'Aluno Ativo':'Ativo', 'Ex-Aluno (Inativo)':'Inativo' };
+    const unicas = [...new Set(tags.map(tag => String(tag).trim()).filter(Boolean).map(tag => Object.hasOwn(aliases, tag) ? aliases[tag] : tag))];
+    const prioridades = ['Não Contatar','Perdido','Ativo','Inativo','Recuperado'];
+    const destaque = unicas.filter(tag => prioridades.includes(tag)).sort((a,b) => prioridades.indexOf(a)-prioridades.indexOf(b));
+    const operacionais = unicas.filter(tag => !destaque.includes(tag) && !/^(CRM$|Trilha:|Jornada:|Retorno:|Contato Recente:)/i.test(tag));
+    const principais = [...destaque, ...operacionais].slice(0,3);
+    return { principais, outras: unicas.filter(tag => !principais.includes(tag)) };
+}
+function montarTagsDoCartao(tags) {
+    const grupos = organizarTagsDoCartao(tags);
+    const badge = tag => `<span class="tag ${classeVisualTag(tag)}">${escapeHTML(tag)}</span>`;
+    let html = grupos.principais.map(badge).join('');
+    if (grupos.outras.length) html += `<details class="tags-contexto" data-tags-contexto="${escapeHTML(JSON.stringify(grupos.outras))}" onclick="event.stopPropagation()" ontoggle="carregarContextoTags(this)"><summary>Histórico e contexto · ${grupos.outras.length}</summary><div></div></details>`;
+    return html;
+}
+
+function carregarContextoTags(elemento) {
+    if (!elemento.open || elemento.dataset.carregado === 'sim') return;
+    let tags;
+    try { tags = JSON.parse(elemento.dataset.tagsContexto || '[]'); } catch { return; }
+    const lista = elemento.querySelector('div');
+    tags.forEach(tag => { const span = document.createElement('span'); span.className = 'tag ' + classeVisualTag(tag); span.textContent = tag; lista.append(span); });
+    elemento.dataset.carregado = 'sim';
+}
+
 function renderizarCards() {
     if (columnsConfig.length === 0) return;
 
@@ -760,77 +786,12 @@ function renderizarCards() {
 
         const tagsArray = parseTags(lead.tags);
 
-        let badgesHTML = '';
-        // "Ativo"/"Inativo" (nomes atuais) ou "Aluno Ativo"/"Ex-Aluno (Inativo)"
-        // (nomes antigos, de leads que ainda não passaram por uma
-        // reimportação) — checagem por elemento exato do array, não
-        // substring da string crua (essencial agora que os nomes são
-        // curtos, pra não confundir com outra tag que contenha essas
-        // palavras por acaso).
         const tagsLimpo = tagsArray.map(t => t.trim());
-        if (tagsLimpo.includes('Ativo') || tagsLimpo.includes('Aluno Ativo')) {
-            badgesHTML += `<span class="tag tag-ativo"><i class="fa-solid fa-graduation-cap"></i> Ativo</span>`;
-        }
-        if (tagsLimpo.includes('Inativo') || tagsLimpo.includes('Ex-Aluno (Inativo)')) {
-            badgesHTML += `<span class="tag tag-exaluno">Inativo</span>`;
-        }
-        // Ativo/Inativo em OUTRA filial da rede (ver "REDE DE ATIVOS/
-        // INATIVOS" acima) — só quando esta filial NÃO já tem a tag local
-        // (senão duplicaria o badge de graça pra quem já é Ativo/Inativo
-        // aqui mesmo).
-        if (!tagsLimpo.includes('Ativo') && !tagsLimpo.includes('Aluno Ativo') && !tagsLimpo.includes('Inativo') && !tagsLimpo.includes('Ex-Aluno (Inativo)')) {
+        tagsLimpo.filter(Boolean).forEach(tag => tagsPorColuna[colunaAlvo]?.add(tag));
+        let badgesHTML = montarTagsDoCartao(tagsArray);
+        if (!tagsLimpo.some(tag => ['Ativo','Aluno Ativo','Inativo','Ex-Aluno (Inativo)'].includes(tag))) {
             const statusRede = typeof buscarStatusRedeAtivosInativos === 'function' ? buscarStatusRedeAtivosInativos(lead) : null;
-            if (statusRede && statusRede.filial !== lead.filial) {
-                const classeRede = statusRede.status === 'Ativo' ? 'tag-ativo' : 'tag-exaluno';
-                badgesHTML += `<span class="tag ${classeRede}" title="${escapeHTML(statusRede.status)} de verdade, só que em outra unidade da rede"><i class="fa-solid fa-building-circle-check"></i> ${escapeHTML(statusRede.status)} (${escapeHTML(statusRede.filial)})</span>`;
-            }
-        }
-        // "Recuperado": estava Inativo e voltou a ser Ativo (aplicada pelo
-        // importador) — badge sempre visível, igual Ativo/Inativo, pra
-        // destacar como uma conquista, não só mais uma tag customizada.
-        if (tagsLimpo.includes('Recuperado')) {
-            badgesHTML += `<span class="tag tag-recuperado"><i class="fa-solid fa-medal"></i> Recuperado</span>`;
-        }
-        // "Perdido": movido pra uma coluna de motivos de perda
-        // (registrarMotivoPerda(), ver ehColunaPerdido()) — badge sempre
-        // visível, igual Ativo/Inativo/Recuperado.
-        if (tagsLimpo.includes('Perdido')) {
-            badgesHTML += `<span class="tag tag-perdido"><i class="fa-solid fa-trash"></i> Perdido</span>`;
-        }
-        // "Lead Forte" pode vir com nível (1-3, formato novo) ou sem (dado
-        // antigo, de antes dessa classificação existir) — mostra o texto
-        // exato que a tag tiver.
-        const tagLeadForte = tagsArray.find(t => /^Lead Forte( [1-3])?$/.test(t.trim()));
-        if (tagLeadForte) {
-            const textoLeadForte = tagLeadForte.trim();
-            // Ícone também varia por grau, além da cor (classeVisualTag):
-            // nível 1 = fogo (mais urgente), 2 = estrela cheia, 3 = estrela vazada.
-            const nivelMatch = textoLeadForte.match(/([1-3])$/);
-            const iconeLeadForte = !nivelMatch ? 'fa-solid fa-star'
-                : nivelMatch[1] === '1' ? 'fa-solid fa-fire'
-                : nivelMatch[1] === '2' ? 'fa-solid fa-star'
-                : 'fa-regular fa-star';
-            badgesHTML += `<span class="tag ${classeVisualTag(textoLeadForte)}"><i class="${iconeLeadForte}"></i> ${escapeHTML(textoLeadForte)}</span>`;
-        }
-
-        const MAX_TAGS_CUSTOM_NO_CARD = 3;
-        let countTags = 0;
-        let tagsCustomRestantes = 0;
-        tagsArray.forEach(t => {
-            const tagLimpa = t.trim();
-            if (tagLimpa === '') return;
-            if (tagsPorColuna[colunaAlvo]) tagsPorColuna[colunaAlvo].add(tagLimpa);
-            const ehSistemaAtivoInativo = tagLimpa === 'Ativo' || tagLimpa === 'Aluno Ativo' || tagLimpa === 'Inativo' || tagLimpa === 'Ex-Aluno (Inativo)' || tagLimpa === 'Recuperado' || tagLimpa === 'Perdido';
-            if (ehSistemaAtivoInativo || /^Lead Forte( [1-3])?$/.test(tagLimpa)) return;
-            if (countTags < MAX_TAGS_CUSTOM_NO_CARD) {
-                badgesHTML += `<span class="tag ${classeVisualTag(tagLimpa)}">${escapeHTML(tagLimpa)}</span>`;
-                countTags++;
-            } else {
-                tagsCustomRestantes++;
-            }
-        });
-        if (tagsCustomRestantes > 0) {
-            badgesHTML += `<span class="tag tag-overflow" title="Mais ${tagsCustomRestantes} tag(s)">+${tagsCustomRestantes}</span>`;
+            if (statusRede && statusRede.filial !== lead.filial) badgesHTML += `<span class="tag tag-info" title="Situação em outra unidade">${escapeHTML(statusRede.status)} · ${escapeHTML(statusRede.filial)}</span>`;
         }
 
         const identificador = lead.pessoaIdentificador;
@@ -1054,10 +1015,10 @@ function montarChipsTagsAgrupados(containerId, valores, ativos, onClickHandlerNa
             return `<button type="button" class="chip ${ativo ? 'active' : ''}" data-valor="${escapeHTML(v)}">${escapeHTML(v)}</button>`;
         }).join('');
         return `
-            <div class="tag-filter-grupo">
-                <div class="tag-filter-grupo-titulo">${escapeHTML(label)}</div>
+            <details class="tag-filter-grupo" ${grupos.get(label).some(v => ativos.includes(v)) ? 'open' : ''}>
+                <summary class="tag-filter-grupo-titulo">${escapeHTML(label)} <small>${grupos.get(label).length}</small></summary>
                 <div class="col-filter-chip-list">${chipsHTML}</div>
-            </div>
+            </details>
         `;
     }).join('');
 
@@ -1086,6 +1047,8 @@ function montarDropdownFiltroColuna(key, tagsDisponiveis) {
     montarChips(`tagsExcluidasChips-${key}`, tagsComSugeridas, filtro.tagsExcluidas, (v) => toggleFiltroColunaChipExcluir(key, v));
 
     atualizarBadgeFiltroColuna(key);
+    const buscaTags = document.getElementById(`filterDropdown-${key}`)?.querySelector('.busca-tags');
+    if (buscaTags?.value) buscarTagsDoFiltro(buscaTags);
 }
 
 async function toggleFiltroColunaChip(key, campo, valor) {
@@ -5304,3 +5267,15 @@ async function removerTag(index) {
 
     registrarLogAtividade('tag_remover', { pessoaIds: [String(currentLeadId)], detalhes: { tag: tagRemovida } });
 }
+
+function buscarTagsDoFiltro(input) {
+    const dropdown = input.closest('.col-filter-dropdown');
+    if (!dropdown) return;
+    const termo = input.value.trim().toLocaleLowerCase('pt-BR');
+    dropdown.querySelectorAll('.chip').forEach(chip => { chip.hidden = !!termo && !chip.textContent.toLocaleLowerCase('pt-BR').includes(termo); });
+    dropdown.querySelectorAll('.tag-filter-grupo').forEach(grupo => {
+        if (termo) { grupo.open = true; grupo.hidden = ![...grupo.querySelectorAll('.chip')].some(chip => !chip.hidden); }
+        else { grupo.hidden = false; grupo.open = !!grupo.querySelector('.chip.active'); }
+    });
+}
+document.addEventListener('input', evento => { if (evento.target.matches('.busca-tags')) buscarTagsDoFiltro(evento.target); });

@@ -30,3 +30,13 @@ Para revogar, atualizar `revogado_em` do identificador correspondente em `acompa
 ## Validação
 
 Testes SQL em banco isolado: escola A não recebe escola B, notas internas ausentes, chamada anônima/tabela privada negadas, expiração/revogação, migração repetível e busca em registros além da primeira página. Testes de página real no Chromium em 320, 414 e 1365 px: paginação, busca em 105 registros, HTML tratado como texto e ausência de consulta sem chave. Testes de corpo/hash em Node. Verificações em produção consultam apenas contagens/escola, sem registrar dados pessoais ou chaves nos logs.
+
+## Critério corrigido de encaminhamento
+
+O painel não é uma lista de inscrições do Ulisses, de confirmados ou de visitantes. Somente aparecem pessoas encaminhadas explicitamente pela equipe, por meio de um tipo de apoio reconhecido, descrição do pedido e responsável preenchidos. Uma inscrição pendente ou presença em evento, sozinha, não inclui ninguém. A atividade pode contextualizar o encaminhamento, mas não o cria. Ao selecionar Sem pedido de apoio, a pessoa deixa o painel. A seleção humana não deve ser tratada como garantia de matrícula.
+
+## Onde ficam os atalhos no CRM
+
+Botão **Painéis das filiais**, no topo. O usuário pode colar o link privado da filial selecionada e usar Conferir e guardar, Abrir painel ou Copiar link. O endereço e a escola são conferidos no serviço antes de guardar o atalho. Também é possível importar o arquivo privado `links.json` entregue à administração; a importação confere todos os pares antes de gravar.
+
+Esses atalhos ficam somente na sessão do navegador e são removidos ao sair do CRM. Não há uma lista pública de chaves no banco ou no JavaScript. O arquivo privado permanece fora do checkout publicado, em `/workspace/shared/painel-escolas/links.json`. Essa configuração é um recurso de conveniência para quem já recebeu acesso, não um novo mecanismo de autorização ou forma de recuperar chaves pelo login nominal legado.
