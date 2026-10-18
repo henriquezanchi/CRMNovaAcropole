@@ -10528,7 +10528,7 @@ Supabase com os mesmos nomes. Não há conexão MySQL direta (só a tela).
   que devolve tudo — é o que `supabase/functions/_shared/phpmyadmin.ts` faz.
 - Tem CPF/RG — **nunca trazer pro CRM**.
 
-### `mercurio-db-sincronizar` (Edge Function, cron 06:30 Brasília)
+### `mercurio-db-sincronizar` (Edge Function, cron 03:00 Brasília, ~7s pras 5 filiais)
 
 `migracao_mercurio_db.sql` (JÁ RODADA): `filiais.mercurio_unidade` (código
 da unidade, editável em Gerenciar Filiais — filial sem código não
@@ -10577,3 +10577,35 @@ ingresso, desfaria a data de reingresso).
   `cad_midia_ingresso`. O banco só tem o número; o significado é
   preenchido na própria tabela (`mercurio_midia_ingresso`). **Pendente:
   perguntar ao responsável o que cada código significa.**
+
+### Scraper antigo do Mercúrio DESLIGADO (2026-10-18)
+
+Pedido do usuário. O scraper Playwright (`scraper/mercurio.js`, GitHub
+Actions) levava ~2h50 por rodada logado no Mercúrio que as escolas usam.
+Removido do pg_cron (`migracao_desligar_scraper_mercurio.sql`, JÁ RODADA);
+o código e o workflow continuam no repositório, dá pra disparar à mão no
+GitHub se um dia precisar. Cada coisa que ele fazia foi pra:
+
+| Antes no scraper | Agora |
+|---|---|
+| Ativos, nível, turmas, ingresso/reingresso, contatos, aniversariantes, complementar | `mercurio-db-sincronizar` (03:00, ~7s) |
+| Mover matrícula nova pra coluna "Matriculados" | `mercurio-db-sincronizar` (competência = mês corrente e conta pra remuneração) |
+| Inativos (status, motivo/data de saída) | `mercury-sincronizar` (API do Mercury), 1 cron por filial: 03:10, 03:15, 03:20, 03:25, 03:30 |
+| Rede de Ativos/Inativos (`pessoas_ativas_rede`) | fim de `mercury-sincronizar` (só grava quem mudou — gravar tudo estourava 150s em Jardim América) |
+| Diagnóstico de Saúde (IA) | cron próprio, 06:30 |
+| Aviso de aniversário de aluno ativo pro chefe | `avisar-aniversario-ativos` (nova), 08:00 — aluno ativo = `mercurio_alunos.ativo` |
+| Lembrete de importar o Ulisses | descontinuado: o Ulisses roda sozinho pelas Tarefas Agendadas do Windows e o Resumo Diário já mostra se rodou |
+
+Tempos medidos: Jardim América ~105s na API do Mercury (2.761 pessoas), as
+outras ~30s. Limite da Edge Function é 150s — se Jardim América crescer
+muito, dividir em 2 chamadas.
+
+Consumidores de status trocados de `'mercurio'` pra `'mercurio_db'`/
+`'mercury_api'`: Resumo Diário, Diagnóstico de Saúde, sino (gatilho 5 —
+sem isso o último registro do scraper envelheceria e viraria um falso
+"travada"), tela "Sincronização Automática". O botão "Rodar Mercúrio Agora"
+chama as 2 sincronizações direto (sem GitHub, sem poll).
+
+Ao testar pelo terminal, mande o corpo JSON por arquivo em UTF-8
+(`--data-binary @arquivo`): o Git Bash corrompe o "â" de "Goiânia" e a
+function responde "filial não mapeada".

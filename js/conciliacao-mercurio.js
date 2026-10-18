@@ -107,7 +107,7 @@ async function renderizarConciliacaoMercurio() {
     let meses;
     try { meses = await listarMesesConciliacaoMercurio(); } catch (e) { meses = []; }
     if (meses.length === 0) {
-        container.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Ainda não há dados do banco do Mercúrio. A sincronização roda todo dia às 06:30.</p>';
+        container.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Ainda não há dados do banco do Mercúrio. A sincronização roda todo dia às 03:00 (horário de Brasília).</p>';
         return;
     }
     const mesAtual = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()).slice(0, 7);

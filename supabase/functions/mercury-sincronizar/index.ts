@@ -232,6 +232,60 @@ async function sincronizarDossieDaFilial(filial: string) {
     return { processados: (candidatos || []).length, atualizados, erros };
 }
 
+// Rede de Ativos/Inativos (pessoas_ativas_rede): status do aluno visível em
+// QUALQUER filial, casado só por telefone/e-mail (nunca por nome). Antes rodava
+// no scraper antigo (scraper/mercurio.js, sincronizarRedeAtivosInativos);
+// veio pra cá quando o scraper foi desligado, já que roda logo depois de
+// Ativo/Inativo estarem atualizados nesta filial.
+function telefoneChaveRede(ddd: unknown, numero: unknown): string | null {
+    const d = String(ddd ?? "").replace(/\D/g, "");
+    let n = String(numero ?? "").replace(/\D/g, "");
+    if (!d || !n) return null;
+    if (n.length === 9 && n.startsWith("9")) n = n.slice(1);
+    return n.length === 8 ? d + n : null;
+}
+
+async function sincronizarRedeAtivosInativos(filial: string) {
+    const leads: any[] = [];
+    for (let de = 0; ; de += 1000) {
+        const { data, error } = await supabaseAdmin.rpc("leads_ativos_inativos_da_filial", { p_filial: filial }).range(de, de + 999);
+        if (error) throw new Error(`rede: ${error.message}`);
+        leads.push(...(data || []));
+        if (!data || data.length < 1000) break;
+    }
+    const { data: existentes } = await supabaseAdmin.from("pessoas_ativas_rede")
+        .select("id, telefone_normalizado, email_normalizado, nome, status, filial").range(0, 49999);
+    const porTel = new Map<string, any>(), porEmail = new Map<string, any>();
+    for (const r of existentes || []) {
+        if (r.telefone_normalizado) porTel.set(r.telefone_normalizado, r);
+        if (r.email_normalizado) porEmail.set(r.email_normalizado, r);
+    }
+    // Só grava quem mudou (Jardim América tem ~2.700 pessoas: gravar todas,
+    // uma a uma, estourava o limite de 150s da Edge Function).
+    const escritas: (() => Promise<unknown>)[] = [];
+    for (const lead of leads) {
+        const tags = parseTags(lead.tags).map((t) => String(t).trim());
+        const status = tags.includes("Ativo") ? "Ativo" : (tags.includes("Inativo") ? "Inativo" : null);
+        if (!status) continue;
+        const tel = telefoneChaveRede(lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero);
+        const email = String(lead.pessoaEmail || "").trim().toLowerCase() || null;
+        if (!tel && !email) continue;
+        const atual = (tel && porTel.get(tel)) || (email && porEmail.get(email)) || null;
+        if (atual && atual.status === status && atual.filial === filial && atual.nome === lead.pessoaNome
+            && atual.telefone_normalizado === tel && atual.email_normalizado === email) continue;
+        const payload = { telefone_normalizado: tel, email_normalizado: email, nome: lead.pessoaNome, status, filial, atualizado_em: new Date().toISOString() };
+        escritas.push(() => atual
+            ? supabaseAdmin.from("pessoas_ativas_rede").update(payload).eq("id", atual.id)
+            : supabaseAdmin.from("pessoas_ativas_rede").insert(payload));
+    }
+    let gravados = 0;
+    for (let i = 0; i < escritas.length; i += 20) {
+        const res = await Promise.all(escritas.slice(i, i + 20).map((f) => f()));
+        gravados += res.filter((r: any) => !r.error).length;
+    }
+    return gravados;
+}
+
 Deno.serve(async (req) => {
     const corsResp = handleCors(req);
     if (corsResp) return corsResp;
@@ -251,7 +305,10 @@ Deno.serve(async (req) => {
         try {
             const people = await sincronizarPeopleDaFilial(filial, branchId);
             const dossie = await sincronizarDossieDaFilial(filial);
-            const msg = `/people: ${people.processados} processado(s), ${people.criados} novo(s), ${people.atualizados} atualizado(s), ${people.recuperados} recuperação(ões). Dossiê: ${dossie.atualizados}/${dossie.processados} (${dossie.erros} erro(s)).`;
+            let rede = "";
+            try { rede = ` Rede: ${await sincronizarRedeAtivosInativos(filial)} pessoa(s).`; }
+            catch (e) { rede = ` Rede: falhou (${(e as Error).message}).`; }
+            const msg = `/people: ${people.processados} processado(s), ${people.criados} novo(s), ${people.atualizados} atualizado(s), ${people.recuperados} recuperação(ões). Dossiê: ${dossie.atualizados}/${dossie.processados} (${dossie.erros} erro(s)).${rede}`;
             await registrarStatus(filial, true, msg);
             resultados.push({ filial, ok: true, people, dossie });
         } catch (e) {

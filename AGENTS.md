@@ -82,15 +82,15 @@ tools/lint/verificar-globais.mjs   verificador de variáveis indefinidas, sem de
 - **Banco de consulta do Mercúrio (phpMyAdmin, atualizado toda noite):** fonte
   da conciliação de matrículas por turma, reingresso/recuperado, atraso de
   contribuição, membros e canal de origem. Edge Function `mercurio-db-sincronizar`
-  (cron 06:30), cliente em `_shared/phpmyadmin.ts`. Só tem alunos ativos.
+  (cron 03:00 Brasília, 1x/dia — a base só atualiza ~23h), cliente em `_shared/phpmyadmin.ts`. Só tem alunos ativos.
   Ver seção própria no CLAUDE.md.
 - **Mercury (API nova do Mercúrio, sistema acadêmico):** REST com Bearer `mrc_...`.
   Fonte de alunos ativos/inativos, nível, data de ingresso e dossiê. Sincronizada
-  pela Edge Function `mercury-sincronizar`. Chave em `.env.local` (git-ignorado)
-  e no secret `MERCURY_API_KEY` do Supabase. **Ainda sem cron** — roda sob demanda.
-- **Mercúrio legado:** scraper Playwright (`scraper/mercurio.js`), disparado
-  todo dia às 05:00 (Brasília) por pg_cron -> Edge Function `scraper-disparar`
-  -> GitHub Actions. Roda em paralelo ao Mercury de propósito, até validar.
+  pela Edge Function `mercury-sincronizar` (1 cron por filial, 03:10 a 03:30).
+  Chave em `.env.local` (git-ignorado) e no secret `MERCURY_API_KEY` do Supabase.
+- **Mercúrio legado:** scraper Playwright (`scraper/mercurio.js`) **desligado em
+  2026-10-18** — tudo que ele fazia passou pro banco de consulta e pra API do
+  Mercury (ver tabela no CLAUDE.md, "Scraper antigo do Mercúrio DESLIGADO").
 - **Ulisses (inscrições em eventos):** API oficial OAuth2. O Cloudflare deles
   **bloqueia IP de datacenter, inclusive GitHub Actions**, então tudo do Ulisses
   roda na máquina do usuário (`C:\Scrapper`, Tarefas Agendadas do Windows).

@@ -13,6 +13,7 @@
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin, NOME_TABELA_LEADS } from "../_shared/supabaseAdmin.ts";
 import { abrirSessaoPhpMyAdmin, dataOuNull } from "../_shared/phpmyadmin.ts";
+import { nivelPorCodigoMercury, normalizarNomeMercury } from "../_shared/mercury.ts";
 
 const NIVEIS_MEMBRO = ["N2", "N3", "N4", "N5", "N6", "N7"];
 const NIVEIS_COMPLEMENTAR = ["CA", "TA", "CO", "JN"];
@@ -20,6 +21,10 @@ const NIVEIS_TURMA_ABERTURA = ["PP", "N1"]; // turma nova de verdade; N2+ é pro
 const JANELA_DIAS = 30;
 const MESES_JANELA_ATRASO = 6;
 const TAG_ATRASO = "Contribuição em Atraso";
+const BASE_ID_SINTETICO_MERCURY = 996000000; // mesma faixa de mercury-sincronizar
+const TAGS_NIVEL = ["Merlin", "CA", "JN", "PP", "N1", "Membro", "TA"];
+const TAGS_STATUS_ATIVO = ["Ativo", "Aluno Ativo"];
+const TAGS_STATUS_INATIVO = ["Inativo", "Ex-Aluno (Inativo)"];
 
 function json(body: unknown, status = 200) {
     return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -101,7 +106,7 @@ async function emLotes<T>(itens: T[], tamanho: number, fn: (item: T) => Promise<
     for (let i = 0; i < itens.length; i += tamanho) await Promise.all(itens.slice(i, i + tamanho).map(fn));
 }
 
-async function sincronizarFilial(pma: any, filial: { nome: string; unidade: string }, inicioRodada: string) {
+async function sincronizarFilial(pma: any, filial: { id: number; nome: string; unidade: string }, inicioRodada: string) {
     const U = filial.unidade.replace(/[^A-Z0-9]/gi, "");
     const hoje = hojeBrasilia();
     const [anoHoje, mesHoje] = hoje.split("-").map(Number);
@@ -133,15 +138,28 @@ async function sincronizarFilial(pma: any, filial: { nome: string; unidade: stri
         if (error) throw new Error(`mercurio_turmas: ${error.message}`);
     }
 
-    // ---------- leads já existentes desta filial (vínculo por matrícula) ----------
+    // ---------- leads desta filial ----------
+    // Vínculo por matrícula; sem matrícula, por nome normalizado ÚNICO na
+    // filial (homônimo nunca é escolhido sozinho). Sem lead nenhum, cria —
+    // com o MESMO id sintético que mercury-sincronizar usaria, pra as duas
+    // sincronizações convergirem na mesma linha.
     const leadPorMatr = new Map<string, any>();
+    const leadPorId = new Map<string, any>();
+    const leadsSemMatrPorNome = new Map<string, any[]>();
     for (let de = 0; ; de += 1000) {
         const { data, error } = await supabaseAdmin.from(NOME_TABELA_LEADS)
-            .select("pessoaIdentificador, matricula_mercurio, tags, data_matricula, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, data_nascimento, cidade, uf")
-            .eq("filial", filial.nome).not("matricula_mercurio", "is", null)
+            .select("pessoaIdentificador, pessoaNome, matricula_mercurio, funil_agencia, tags, data_matricula, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, data_nascimento, cidade, uf")
+            .eq("filial", filial.nome).is("lixeira_em", null)
             .order("pessoaIdentificador", { ascending: true }).range(de, de + 999);
         if (error) throw new Error(`leads: ${error.message}`);
-        for (const l of data || []) leadPorMatr.set(String(l.matricula_mercurio), l);
+        for (const l of data || []) {
+            leadPorId.set(String(l.pessoaIdentificador), l);
+            if (l.matricula_mercurio != null) { leadPorMatr.set(String(l.matricula_mercurio), l); continue; }
+            const chave = normalizarNomeMercury(l.pessoaNome);
+            if (!chave) continue;
+            if (!leadsSemMatrPorNome.has(chave)) leadsSemMatrPorNome.set(chave, []);
+            leadsSemMatrPorNome.get(chave)!.push(l);
+        }
         if (!data || data.length < 1000) break;
     }
 
@@ -150,7 +168,8 @@ async function sincronizarFilial(pma: any, filial: { nome: string; unidade: stri
     // ---------- alunos ----------
     const linhasAlunos: any[] = [];
     const atualizacoesLeads: { id: string; payload: Record<string, unknown> }[] = [];
-    let membros = 0, emAtraso = 0, vinculados = 0;
+    const leadsNovos: any[] = [];
+    let membros = 0, emAtraso = 0, vinculados = 0, vinculadosPorNome = 0, movidosMatriculados = 0;
 
     for (const b of alunosBrutos) {
         const matr = String(b.cad_matr);
@@ -166,14 +185,77 @@ async function sincronizarFilial(pma: any, filial: { nome: string; unidade: stri
         };
         const turmaAtual = (b.cad_tur_unidade || U) === U ? turmaPorNome.get(b.cad_turma) : undefined;
         const comp = calcularCompetencia(base, turmaAtual, aberturas);
-        const lead = leadPorMatr.get(matr);
-        if (lead) vinculados++;
+
+        // Ordem de vínculo: matrícula > id sintético já existente (lead criado
+        // antes pelo Mercury que perdeu a matrícula) > nome completo idêntico na
+        // filial. Com 2+ leads de mesmo nome (duplicatas antigas), liga ao
+        // melhor e deixa os outros pra "Leads a Tratar" mesclar — criar mais um
+        // só pioraria a duplicidade.
+        let lead = leadPorMatr.get(matr) || null;
+        let ligarMatricula = false;
+        if (!lead) {
+            const idSintetico = String(BASE_ID_SINTETICO_MERCURY + Number(filial.id) * 1000000 + Number(matr));
+            const porId = leadPorId.get(idSintetico);
+            if (porId && porId.matricula_mercurio == null) { lead = porId; ligarMatricula = true; }
+        }
+        if (!lead) {
+            const chaveNome = normalizarNomeMercury(b.cad_nome);
+            const candidatos = (leadsSemMatrPorNome.get(chaveNome) || []).filter((l) => l.matricula_mercurio == null);
+            if (candidatos.length) {
+                const realUlisses = (l: any) => Number(l.pessoaIdentificador) < 900000000 ? 1 : 0;
+                const temFone = (l: any) => soDigitos(l.pessoaTelefoneNumero).length >= 8 ? 1 : 0;
+                lead = [...candidatos].sort((x, y) =>
+                    realUlisses(y) - realUlisses(x) || temFone(y) - temFone(x) || Number(x.pessoaIdentificador) - Number(y.pessoaIdentificador))[0];
+                ligarMatricula = true;
+                vinculadosPorNome++;
+            }
+        }
+        if (lead && ligarMatricula) {
+            lead.matricula_mercurio = Number(matr); // não liga o mesmo lead a 2 alunos na mesma rodada
+            leadPorMatr.set(matr, lead);
+        }
+
+        const celular = soDigitos(b.cad_cel_fone).length >= 8 ? { ddd: b.cad_cel_ddd, fone: b.cad_cel_fone } : (soDigitos(b.cad_res_fone).length >= 8 ? { ddd: b.cad_res_ddd, fone: b.cad_res_fone } : null);
+        const telefoneValido = celular && Number(celular.ddd) > 0 ? { ddd: String(celular.ddd), numero: soDigitos(celular.fone) } : null;
+        const email = String(b.cad_email || "").trim();
+        const emailValido = email.includes("@") ? email.toLowerCase() : null;
+        const nasc = dataOuNull(b.cad_nascimento);
+        const nivelTag = nivelPorCodigoMercury(nivel);
+        // Matrícula que conta no mês corrente vai pra coluna Matriculados do
+        // Kanban (antes feito pelo scraper antigo, processarTurmas()).
+        const matriculaDoMes = comp.conta_remuneracao && comp.competencia === hoje.slice(0, 7);
+
+        let pessoaIdentificador: string;
+        if (lead) {
+            vinculados++;
+            pessoaIdentificador = lead.pessoaIdentificador;
+        } else {
+            pessoaIdentificador = String(BASE_ID_SINTETICO_MERCURY + Number(filial.id) * 1000000 + Number(matr));
+            const tagsNovas = ["Ativo"];
+            if (nivelTag) tagsNovas.push(nivelTag);
+            if (base.recuperado) tagsNovas.push("Recuperado");
+            if (mesesAtraso > 0) tagsNovas.push(TAG_ATRASO);
+            if (!telefoneValido) tagsNovas.push("Sem Telefone");
+            if (!emailValido) tagsNovas.push("Sem E-mail");
+            // Todas as linhas com as mesmas chaves (ver nota do upsert em lote).
+            leadsNovos.push({
+                pessoaIdentificador, filial: filial.nome, pessoaNome: b.cad_nome,
+                tags: JSON.stringify(tagsNovas), matricula_mercurio: Number(matr),
+                data_matricula: comp.data_efetiva,
+                funil_agencia: matriculaDoMes ? "Matriculados" : "Frios",
+                pessoaTelefoneDDD: telefoneValido ? telefoneValido.ddd : null,
+                pessoaTelefoneNumero: telefoneValido ? telefoneValido.numero : null,
+                pessoaEmail: emailValido, data_nascimento: nasc,
+                cidade: b.cad_res_cidade ? String(b.cad_res_cidade).trim() : null,
+                uf: b.cad_res_uf ? String(b.cad_res_uf).trim() : null,
+            });
+        }
 
         // TODAS as linhas com as mesmas chaves — o upsert em lote do supabase-js
         // preenche chave ausente com null e sobrescreveria o valor real.
         linhasAlunos.push({
             matricula: Number(matr), unidade: U, filial: filial.nome,
-            pessoa_identificador: lead ? lead.pessoaIdentificador : null,
+            pessoa_identificador: pessoaIdentificador,
             nome: b.cad_nome, nivel, turma_unidade: b.cad_tur_unidade || null, turma: b.cad_turma || null,
             ingresso: base.ingresso, reingresso: base.reingresso, recuperado: base.recuperado,
             ...comp,
@@ -187,30 +269,45 @@ async function sincronizarFilial(pma: any, filial: { nome: string; unidade: stri
 
         // ----- atualização do lead (só o que mudou; nunca sobrescreve contato) -----
         const payload: Record<string, unknown> = {};
+        if (ligarMatricula) payload.matricula_mercurio = Number(matr);
         const tagsAntigas = parseTags(lead.tags).map((t) => String(t).trim());
-        let tags = [...tagsAntigas];
-        if (base.recuperado && !tags.includes("Recuperado")) tags.push("Recuperado");
+        // O banco só tem alunos ativos: quem está aqui é Ativo, com o nível
+        // atual. Mesma regra de sempre — Ativo não convive com Lead Forte/Jornada.
+        const estavaInativo = tagsAntigas.some((t) => TAGS_STATUS_INATIVO.includes(t));
+        let tags = tagsAntigas.filter((t) =>
+            !TAGS_STATUS_ATIVO.includes(t) && !TAGS_STATUS_INATIVO.includes(t) && !TAGS_NIVEL.includes(t)
+            && !t.startsWith("Lead Forte") && !t.startsWith("Jornada:"));
+        tags.push("Ativo");
+        if (nivelTag) tags.push(nivelTag);
+        if ((base.recuperado || estavaInativo) && !tags.includes("Recuperado")) tags.push("Recuperado");
         if (mesesAtraso > 0 && !tags.includes(TAG_ATRASO)) tags.push(TAG_ATRASO);
         if (mesesAtraso === 0) tags = tags.filter((t) => t !== TAG_ATRASO);
 
         if (comp.data_efetiva && comp.data_efetiva !== lead.data_matricula) payload.data_matricula = comp.data_efetiva;
+        if (matriculaDoMes && !String(lead.funil_agencia || "").toLowerCase().includes("matricul")) {
+            payload.funil_agencia = "Matriculados";
+            payload.funil_agencia_atualizado_em = new Date().toISOString();
+            movidosMatriculados++;
+        }
 
-        const temTelefone = soDigitos(lead.pessoaTelefoneNumero).length >= 8;
-        const celular = soDigitos(b.cad_cel_fone).length >= 8 ? { ddd: b.cad_cel_ddd, fone: b.cad_cel_fone } : (soDigitos(b.cad_res_fone).length >= 8 ? { ddd: b.cad_res_ddd, fone: b.cad_res_fone } : null);
-        if (!temTelefone && celular && Number(celular.ddd) > 0) {
-            payload.pessoaTelefoneDDD = String(celular.ddd);
-            payload.pessoaTelefoneNumero = soDigitos(celular.fone);
+        if (soDigitos(lead.pessoaTelefoneNumero).length < 8 && telefoneValido) {
+            payload.pessoaTelefoneDDD = telefoneValido.ddd;
+            payload.pessoaTelefoneNumero = telefoneValido.numero;
             tags = tags.filter((t) => t !== "Sem Telefone");
         }
-        const email = String(b.cad_email || "").trim();
-        if (!lead.pessoaEmail && email.includes("@")) { payload.pessoaEmail = email.toLowerCase(); tags = tags.filter((t) => t !== "Sem E-mail"); }
-        const nasc = dataOuNull(b.cad_nascimento);
+        if (!lead.pessoaEmail && emailValido) { payload.pessoaEmail = emailValido; tags = tags.filter((t) => t !== "Sem E-mail"); }
         if (!lead.data_nascimento && nasc) payload.data_nascimento = nasc;
         if (!lead.cidade && b.cad_res_cidade) payload.cidade = String(b.cad_res_cidade).trim();
         if (!lead.uf && b.cad_res_uf) payload.uf = String(b.cad_res_uf).trim();
 
-        if (JSON.stringify(tags) !== JSON.stringify(tagsAntigas)) payload.tags = JSON.stringify(tags);
+        const mudouTags = JSON.stringify([...tags].sort()) !== JSON.stringify([...tagsAntigas].sort());
+        if (mudouTags) payload.tags = JSON.stringify(tags);
         if (Object.keys(payload).length) atualizacoesLeads.push({ id: lead.pessoaIdentificador, payload });
+    }
+
+    for (let i = 0; i < leadsNovos.length; i += 500) {
+        const { error } = await supabaseAdmin.from(NOME_TABELA_LEADS).upsert(leadsNovos.slice(i, i + 500), { onConflict: "pessoaIdentificador", ignoreDuplicates: true });
+        if (error) throw new Error(`criar leads: ${error.message}`);
     }
 
     for (let i = 0; i < linhasAlunos.length; i += 500) {
@@ -242,7 +339,7 @@ async function sincronizarFilial(pma: any, filial: { nome: string; unidade: stri
     const mesAtual = hoje.slice(0, 7);
     return {
         filial: filial.nome, unidade: U, turmas: turmas.length, alunos: alunosBrutos.length,
-        vinculados_a_lead: vinculados, sem_lead_no_crm: alunosBrutos.length - vinculados,
+        vinculados_a_lead: vinculados, ligados_por_nome: vinculadosPorNome, leads_criados: leadsNovos.length, movidos_para_matriculados: movidosMatriculados,
         leads_atualizados: atualizacoesLeads.length - falhasLeads, falhas_leads: falhasLeads,
         saidos_do_mercurio: saidos ?? 0, membros, em_atraso: emAtraso,
         matriculas_mes_atual: linhasAlunos.filter((l) => l.competencia === mesAtual && l.conta_remuneracao).length,
@@ -258,7 +355,7 @@ Deno.serve(async (req) => {
     try { corpo = await req.json(); } catch { /* corpo vazio = todas as filiais */ }
 
     try {
-        let q = supabaseAdmin.from("filiais").select("nome, mercurio_unidade").eq("ativo", true).not("mercurio_unidade", "is", null);
+        let q = supabaseAdmin.from("filiais").select("id, nome, mercurio_unidade").eq("ativo", true).not("mercurio_unidade", "is", null);
         if (corpo.filial) q = q.eq("nome", corpo.filial);
         const { data: filiais, error } = await q;
         if (error) throw new Error(error.message);
@@ -270,7 +367,7 @@ Deno.serve(async (req) => {
         const resultados: any[] = [];
         for (const f of filiais) {
             try {
-                resultados.push(await sincronizarFilial(pma, { nome: f.nome, unidade: f.mercurio_unidade }, inicioRodada));
+                resultados.push(await sincronizarFilial(pma, { id: f.id, nome: f.nome, unidade: f.mercurio_unidade }, inicioRodada));
             } catch (e) {
                 resultados.push({ filial: f.nome, erro: (e as Error).message });
             }

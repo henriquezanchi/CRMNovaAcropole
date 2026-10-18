@@ -115,12 +115,12 @@ alter table status_sincronizacao_automatica drop constraint if exists status_sin
 alter table status_sincronizacao_automatica add constraint status_sincronizacao_automatica_sistema_check
     check (sistema in ('ulisses', 'mercurio', 'mercury_api', 'mercurio_db'));
 
--- Todo dia 06:30 Brasília (09:30 UTC) — o banco é atualizado por volta das 23h.
+-- Todo dia 03:00 Brasília (06:00 UTC; ver migracao_horario_mercurio_madrugada.sql) — o banco é atualizado por volta das 23h.
 select cron.unschedule('mercurio-db-sincronizar-diario')
 where exists (select 1 from cron.job where jobname = 'mercurio-db-sincronizar-diario');
 select cron.schedule(
     'mercurio-db-sincronizar-diario',
-    '30 9 * * *',
+    '0 6 * * *',
     $$
     select net.http_post(
         url := 'https://eovgljcowblwoxmobeno.supabase.co/functions/v1/mercurio-db-sincronizar',

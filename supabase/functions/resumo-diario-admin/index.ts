@@ -67,7 +67,13 @@ async function buscarStatusSincronizacao(): Promise<{ linhaMercurio: string; lin
         return `✅ ${nome}: rodou às ${horaBrasilia(row.executado_em)} (sucesso).`;
     }
 
-    return { linhaMercurio: montarLinha("Mercúrio", "mercurio"), linhaUlisses: montarLinha("Ulisses", "ulisses") };
+    // O scraper antigo ("mercurio") foi desligado: o Mercúrio agora chega pelo
+    // banco de consulta (ativos, turmas) e pela API do Mercury (inativos).
+    return {
+        linhaMercurio: `${montarLinha("Mercúrio (banco)", "mercurio_db")}
+${montarLinha("Mercury (inativos)", "mercury_api")}`,
+        linhaUlisses: montarLinha("Ulisses", "ulisses"),
+    };
 }
 
 async function contarMensagensNovas(): Promise<number> {
