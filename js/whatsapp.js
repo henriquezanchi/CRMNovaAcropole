@@ -1121,6 +1121,12 @@ function marcarUltimaMensagemComoLidaWpp(leadId, mensagensCarregadas) {
 }
 
 function criarChatController({ messagesId, inputAreaId }) {
+    const rascunhos = new Map(); // Só em memória: não persiste conversas no navegador.
+    let versaoAbertura = 0;
+    function guardarRascunho() {
+        const input = document.getElementById(inputAreaId)?.querySelector('.chat-input');
+        if (leadId && input) rascunhos.set(String(leadId), input.value);
+    }
     let leadId = null;
     let mensagens = [];
     let canal = null;
@@ -1699,7 +1705,11 @@ function criarChatController({ messagesId, inputAreaId }) {
                 </div>
             `;
             const input = container.querySelector('.chat-input');
+            input.value = rascunhos.get(String(leadId)) || '';
+            input.setAttribute('aria-label', 'Digite uma mensagem');
+            ajustarAlturaTextareaWpp(input);
             const botao = container.querySelector('.btn-send');
+            botao.setAttribute('aria-label', 'Enviar mensagem');
             const anexoBtn = container.querySelector('.btn-anexo-toggle');
             const anexoInput = container.querySelector('.wpp-anexo-input');
             const emojiBtn = container.querySelector('.btn-emoji-toggle');
@@ -1714,7 +1724,7 @@ function criarChatController({ messagesId, inputAreaId }) {
             // browser/SO) pra funcionar de forma confiável e já redimensionar
             // a caixa na hora.
             input.addEventListener('keydown', (e) => {
-                if (e.key !== 'Enter') return;
+                if (e.key !== 'Enter' || e.isComposing) return;
                 if (!e.shiftKey) { e.preventDefault(); disparar(); return; }
                 e.preventDefault();
                 const ini = input.selectionStart, fim = input.selectionEnd;
@@ -1755,6 +1765,7 @@ function criarChatController({ messagesId, inputAreaId }) {
     async function enviarTexto(input) {
         const texto = input.value.trim();
         if (!texto || !leadId) return;
+        const destinoEnvio = leadId;
         const contexto = respondendoA;
         respondendoA = null;
         atualizarBarraRespondendo();
@@ -1762,23 +1773,28 @@ function criarChatController({ messagesId, inputAreaId }) {
         ajustarAlturaTextareaWpp(input);
         input.disabled = true;
 
-        const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
+        let data, error;
+        try { ({ data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
             body: {
                 pessoaIdentificador: leadId, tipo: 'texto', texto, atendenteNome: obterNomeAtendente(),
                 ...(contexto ? { contextoMessageId: contexto.waId, contextoPreview: contexto.preview, contextoRemetente: contexto.remetente } : {}),
             }
-        });
-        input.disabled = false;
+        })); } catch (falha) { error = falha; }
+        if (error || !data?.ok) rascunhos.set(String(destinoEnvio), texto);
+        else rascunhos.delete(String(destinoEnvio));
+        if (leadId !== destinoEnvio || !input.isConnected) return;
+        input.disabled = bloqueioNaoContatar;
         input.focus();
+        if (error || !data?.ok) { input.value = texto; ajustarAlturaTextareaWpp(input); }
 
         if (error) { alert('Erro ao enviar mensagem: ' + error.message); input.value = texto; return; }
-        if (!data.ok) {
-            if (data.erro === 'janela_fechada') {
+        if (!data?.ok) {
+            if (data?.erro === 'janela_fechada') {
                 alert('Essa conversa está fora da janela de 24h — escolha um modelo aprovado pra reabrir o contato.');
                 renderizarAreaInputTemplate();
             } else {
-                console.error('Erro ao enviar mensagem (WhatsApp):', data.detalhe || data.erro);
-                alert('Não foi possível enviar: ' + mensagemErroWpp(data));
+                console.error('Erro ao enviar mensagem (WhatsApp):', data?.detalhe || data?.erro);
+                alert('Não foi possível enviar: ' + mensagemErroWpp(data || {}));
             }
             return;
         }
@@ -1847,7 +1863,10 @@ function criarChatController({ messagesId, inputAreaId }) {
 
     async function recarregarHistorico() {
         if (!leadId) return;
-        mensagens = await carregarHistoricoMensagens(leadId);
+        const versao = versaoAbertura;
+        const historico = await carregarHistoricoMensagens(leadId);
+        if (versao !== versaoAbertura) return;
+        mensagens = historico;
         temMaisAntigas = mensagens.length === TAMANHO_PAGINA_HISTORICO_WPP;
         renderizarMensagens();
         renderizarAreaInput();
@@ -1870,6 +1889,8 @@ function criarChatController({ messagesId, inputAreaId }) {
     }
 
     async function abrir(pessoaIdentificador, templateNomeForcado) {
+        guardarRascunho();
+        const versao = ++versaoAbertura;
         if (canal) { window.supabaseClient.removeChannel(canal); canal = null; }
         pararGravacaoSeAtiva(true); // trocar de conversa no meio de uma gravação descarta ela
         leadId = pessoaIdentificador;
@@ -1883,7 +1904,11 @@ function criarChatController({ messagesId, inputAreaId }) {
         const containerMsgs = el(messagesId);
         if (containerMsgs) containerMsgs.innerHTML = '<div style="text-align:center; font-size:11px; color:#64748b; margin-top:20px;">Carregando conversa...</div>';
 
-        mensagens = await carregarHistoricoMensagens(leadId);
+        const inputContainer = el(inputAreaId);
+        if (inputContainer) inputContainer.innerHTML = '';
+        const historico = await carregarHistoricoMensagens(pessoaIdentificador);
+        if (versao !== versaoAbertura) return;
+        mensagens = historico;
         temMaisAntigas = mensagens.length === TAMANHO_PAGINA_HISTORICO_WPP;
         renderizarMensagens();
         renderizarAreaInput(true); // troca de conversa — sempre reconstrói, nunca herda rascunho/foco da conversa anterior
@@ -1905,20 +1930,24 @@ function criarChatController({ messagesId, inputAreaId }) {
         canal = window.supabaseClient
             .channel(`wpp-chat-${messagesId}-${leadId}`)
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mensagens_whatsapp', filter: `pessoaIdentificador=eq.${leadId}` }, (payload) => {
+                const caixa = el(messagesId);
+                const lendoHistorico = caixa && caixa.scrollHeight - caixa.scrollTop - caixa.clientHeight > 100;
                 if (!mensagens.some(m => m.id === payload.new.id)) mensagens.push(payload.new);
                 mensagens.sort((a, b) => new Date(a.criado_em) - new Date(b.criado_em));
-                renderizarMensagens();
+                renderizarMensagens(lendoHistorico);
                 renderizarAreaInput();
             })
             .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'mensagens_whatsapp', filter: `pessoaIdentificador=eq.${leadId}` }, (payload) => {
                 const idx = mensagens.findIndex(m => m.id === payload.new.id);
                 if (idx >= 0) mensagens[idx] = payload.new;
-                renderizarMensagens();
+                renderizarMensagens(true);
             })
             .subscribe();
     }
 
     function fechar() {
+        guardarRascunho();
+        ++versaoAbertura;
         if (canal) { window.supabaseClient.removeChannel(canal); canal = null; }
         pararGravacaoSeAtiva(true);
         leadId = null;
@@ -4574,6 +4603,7 @@ function htmlContatoWpp(lead, conversa, temSugestaoIa) {
                 </div>
                 ${htmlTimerJanelaWpp(conversa)}
             </div>
+            <time class="wpp-contact-hora">${conversa?.ultima_mensagem_em ? escapeHTML(rotuloDataSeparadorWpp(conversa.ultima_mensagem_em) === 'Hoje' ? formatarHoraWpp(conversa.ultima_mensagem_em) : new Date(conversa.ultima_mensagem_em).toLocaleDateString('pt-BR', {day:'2-digit',month:'2-digit'})) : ''}</time>
             <div class="wpp-contact-acoes">
                 <button type="button" class="wpp-pin-btn ${fixado ? 'ativo' : ''}" title="${fixado ? 'Desafixar' : 'Fixar'} conversa" onclick="event.stopPropagation(); alternarFixarConversaWpp('${id}', ${fixado})"><i class="fa-solid fa-thumbtack"></i></button>
                 <button type="button" class="wpp-pin-btn ${silenciado ? 'ativo' : ''}" title="Silenciar/reativar notificações" onclick="event.stopPropagation(); abrirMenuSilenciarWpp(this, '${id}', ${silenciado})"><i class="fa-solid ${silenciado ? 'fa-bell-slash' : 'fa-bell'}"></i></button>
@@ -4702,6 +4732,7 @@ let wppCanalNaoIdent = null;
 let wppCanalSugestaoIa = null;
 
 async function abrirChatNaoIdentificado(telefone) {
+    document.querySelector("#tab-whatsapp .wpp-layout")?.classList.add("conversa-aberta");
     wppContatoAtivoId = null;
     wppTelefoneNaoIdentAtivo = telefone;
     if (chatWpp && chatWpp.fechar) chatWpp.fechar();
@@ -5447,7 +5478,9 @@ async function removerTagWpp(leadId, index) {
     }
 }
 
+let versaoListaWpp = 0;
 async function renderizarContatosWpp(filtro = '') {
+    const versao = ++versaoListaWpp;
     const lista = document.getElementById('wppContactList');
     if (!lista) return;
     iniciarEscutaGlobalWpp();
@@ -5458,23 +5491,27 @@ async function renderizarContatosWpp(filtro = '') {
 
     const termo = (filtro || '').trim().toLowerCase();
 
-    let queryConversas = window.supabaseClient
-        .from('vw_wpp_conversas')
-        .select('*')
-        .order('ultima_mensagem_em', { ascending: false })
-        .limit(200);
-    if (wppFiltroFilial) queryConversas = queryConversas.eq('filial', wppFiltroFilial);
-    const { data: conversas } = await queryConversas;
-    const conversasValidas = conversas || [];
+    const conversasValidas = [];
+    for (let inicio = 0; ; inicio += 500) {
+        let query = window.supabaseClient.from('vw_wpp_conversas').select('*')
+            .order('ultima_mensagem_em', { ascending: false }).order('pessoaIdentificador')
+            .range(inicio, inicio + 499);
+        if (wppFiltroFilial) query = query.eq('filial', wppFiltroFilial);
+        const { data, error } = await query;
+        if (versao !== versaoListaWpp) return;
+        if (error) { lista.innerHTML = '<p class="wpp-lista-erro" role="alert">Não foi possível carregar as conversas. <button onclick="filtrarContatosWpp()">Tentar novamente</button></p>'; return; }
+        conversasValidas.push(...(data || []));
+        if (!data || data.length < 500) break;
+    }
     const idsComConversa = new Set(conversasValidas.map(c => String(c.pessoaIdentificador)));
 
     const mapaLeads = new Map(leadsAtuais.map(l => [String(l.pessoaIdentificador), l]));
     const idsFaltando = conversasValidas.map(c => c.pessoaIdentificador).filter(id => !mapaLeads.has(String(id)));
-    if (idsFaltando.length > 0) {
+    for (let inicio = 0; inicio < idsFaltando.length; inicio += 200) {
         const { data: extras } = await window.supabaseClient
             .from('leads_inscricoes')
             .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, filial, wpp_fixado, wpp_arquivado, wpp_silenciado_ate, wpp_atendente_responsavel')
-            .in('pessoaIdentificador', idsFaltando);
+            .in('pessoaIdentificador', idsFaltando.slice(inicio, inicio + 200));
         (extras || []).forEach(l => mapaLeads.set(String(l.pessoaIdentificador), l));
     }
 
@@ -5516,14 +5553,14 @@ async function renderizarContatosWpp(filtro = '') {
     // Badge de "sugestão de IA pronta" + insumo do modo "Prioridade" —
     // buscado ANTES de ordenar (o modo prioridade usa isso pra pontuar),
     // reaproveitado depois pro badge de cada card (não busca 2x).
-    let idsComSugestaoPendente = new Set();
-    if (contatosExistentes.length > 0) {
+    const idsComSugestaoPendente = new Set();
+    for (let inicio = 0; inicio < contatosExistentes.length; inicio += 200) {
         const { data: pendentes } = await window.supabaseClient
-            .from('sugestoes_resposta_wpp')
-            .select('"pessoaIdentificador"')
+            .from('sugestoes_resposta_wpp').select('"pessoaIdentificador"')
             .eq('status', 'pendente')
-            .in('pessoaIdentificador', contatosExistentes.map(c => c.lead.pessoaIdentificador));
-        idsComSugestaoPendente = new Set((pendentes || []).map(p => String(p.pessoaIdentificador)));
+            .in('pessoaIdentificador', contatosExistentes.slice(inicio, inicio + 200).map(c => c.lead.pessoaIdentificador));
+        if (versao !== versaoListaWpp) return;
+        (pendentes || []).forEach(p => idsComSugestaoPendente.add(String(p.pessoaIdentificador)));
     }
 
     const selectOrdenar = document.getElementById('wppOrdenarSelect');
@@ -5618,6 +5655,7 @@ async function renderizarContatosWpp(filtro = '') {
         });
     }
 
+    if (versao !== versaoListaWpp) return;
     if (contatosExistentes.length === 0 && novosContatos.length === 0 && naoIdentUnicos.length === 0) {
         lista.innerHTML = '<div style="padding:16px; font-size:12px; color:var(--text-muted);">Nenhuma conversa encontrada. Busque pelo nome de um lead pra iniciar uma nova.</div>';
         return;
@@ -5639,7 +5677,7 @@ async function renderizarContatosWpp(filtro = '') {
 }
 
 function filtrarContatosWpp(valor) {
-    renderizarContatosWpp(valor);
+    renderizarContatosWpp(valor ?? document.getElementById('wppSearch')?.value ?? '');
 }
 
 // "x" pra limpar a busca do WhatsApp Unificado (pedido do usuário,
@@ -5669,6 +5707,7 @@ function limparBuscaWpp() {
 // todo o resto do app (gaveta, templates, etc.) já enxerga esse lead
 // normalmente, de qualquer filial.
 async function abrirChatWpp(leadId) {
+    document.querySelector("#tab-whatsapp .wpp-layout")?.classList.add("conversa-aberta");
     wppContatoAtivoId = leadId;
     wppTelefoneNaoIdentAtivo = null;
     if (wppCanalNaoIdent) { window.supabaseClient.removeChannel(wppCanalNaoIdent); wppCanalNaoIdent = null; }
@@ -5686,6 +5725,7 @@ async function abrirChatWpp(leadId) {
             lead = data;
         }
     }
+    if (String(wppContatoAtivoId) !== String(leadId)) return;
     renderizarTagsWpp(leadId);
     carregarSugestaoIaWpp(leadId);
 

@@ -395,20 +395,21 @@
         <div id="tab-whatsapp" class="tab-pane">
             <div class="wpp-layout">
                 <div class="wpp-sidebar">
+                    <div class="wpp-titulo"><strong>Conversas</strong><button type="button" class="btn-toggle" onclick="document.getElementById('wppOpcoes').open = !document.getElementById('wppOpcoes').open" aria-label="Opções das conversas">Filtros e opções</button></div>
                     <div class="wpp-sidebar-header" style="display:flex; gap:6px;">
                         <div style="position:relative; flex:1;">
-                            <input type="text" id="wppSearch" placeholder="Buscar conversa ou nome de lead p/ iniciar..." oninput="filtrarContatosWpp(this.value); atualizarBotaoLimparBuscaWpp();" style="width:100%; box-sizing:border-box; padding-right:26px;">
+                            <input type="text" id="wppSearch" placeholder="Buscar uma conversa" oninput="filtrarContatosWpp(this.value); atualizarBotaoLimparBuscaWpp();" style="width:100%; box-sizing:border-box; padding-right:26px;">
                             <button type="button" id="wppSearchLimparBtn" class="wpp-search-limpar-btn" style="display:none;" onclick="limparBuscaWpp()" title="Limpar busca"><i class="fa-solid fa-xmark"></i></button>
                         </div>
                         <button class="btn-toggle" onclick="abrirImportarConversasLote()" title="Importar várias conversas de uma vez (.zip exportados do WhatsApp)"><i class="fa-solid fa-file-zipper"></i></button>
                     </div>
-                    <div style="padding:0 10px 8px;">
+                    <details id="wppOpcoes" style="padding:0 10px 8px;"><summary>Filial, organização e atendimento</summary>
                         <select id="wppFiltroFilialSelect" onchange="filtrarContatosWpp(document.getElementById('wppSearch').value)" style="width:100%; padding:6px 8px; font-size:12px; margin-bottom:6px;" title="Caixa de entrada unificada por padrão — filtre por uma filial se quiser ver só as conversas dela">
                             <option value="">Todas as filiais</option>
                         </select>
                         <select id="wppOrdenarSelect" onchange="filtrarContatosWpp(document.getElementById('wppSearch').value)" style="width:100%; padding:6px 8px; font-size:12px; margin-bottom:6px;" title="Como ordenar a lista de conversas">
-                            <option value="prioridade" selected>🧠 Prioridade (recomendado)</option>
-                            <option value="recentes">Mais recentes primeiro</option>
+                            <option value="prioridade">🧠 Prioridade (recomendado)</option>
+                            <option value="recentes" selected>Mais recentes primeiro</option>
                             <option value="nao_lidas">Não lidas primeiro</option>
                             <option value="janela">Janela fechando primeiro</option>
                         </select>
@@ -422,10 +423,11 @@
                             <input type="checkbox" id="wppMinhasConversas" onchange="filtrarContatosWpp(document.getElementById('wppSearch').value)"> Só minhas conversas
                         </label>
                         <button class="btn-toggle" style="width:100%; font-size:11px; padding:6px;" onclick="iniciarConviteJanelaAberta()" title="Manda um convite pra próxima Abertura de Turma da própria filial de cada lead com conversa aberta agora"><i class="fa-solid fa-bolt"></i> Convidar (Janela Aberta)</button>
-                    </div>
+                    </details>
                     <div class="wpp-contact-list" id="wppContactList"></div>
                 </div>
                 <div class="drawer-chat" style="flex:1;">
+                    <button type="button" class="wpp-voltar" onclick="document.querySelector('#tab-whatsapp .wpp-layout').classList.remove('conversa-aberta'); document.getElementById('wppSearch').focus()">← Conversas</button>
                     <div class="chat-header" id="wppChatHeader">
                         <div style="width: 36px; height: 36px; background: #cbd5e1; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; color: white;"><i class="fa-solid fa-user"></i></div>
                         <div style="font-size:13px; color:var(--text-muted);">Selecione um contato à esquerda</div>
