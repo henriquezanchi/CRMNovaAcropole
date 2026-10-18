@@ -124,7 +124,7 @@
                     <div class="agenda-geral-header">
                         <div><i class="fa-solid fa-calendar-day"></i> Agenda do Dia — Todas as Filiais</div>
                         <div class="agenda-geral-actions">
-                            <button class="btn-toggle btn-disparar-mercurio" onclick="dispararMercurioAgora()" title="Roda o scraper do Mercúrio agora, sem esperar até às 5h"><i class="fa-solid fa-robot"></i> Rodar Mercúrio Agora</button>
+                            <button class="btn-toggle btn-disparar-mercurio" onclick="dispararMercurioAgora()" title="Sincroniza o Mercúrio agora (banco de consulta + inativos), sem esperar até às 3h"><i class="fa-solid fa-robot"></i> Rodar Mercúrio Agora</button>
                             <a class="btn-toggle" href="abrirulisses://rodar" style="text-decoration:none;" title="Abre o Chromium na sua máquina pra fazer login manual no Ulisses — só funciona neste computador"><i class="fa-solid fa-desktop"></i> Importar Ulisses</a>
                             <button class="btn-toggle" onclick="atualizarAgendaGeral()" title="Atualizar esta agenda"><i class="fa-solid fa-rotate"></i></button>
                         </div>
@@ -155,6 +155,10 @@
                         <div class="activity-card" style="flex:none; max-height:280px; grid-column: 1 / -1;">
                             <div class="activity-header"><i class="fa-solid fa-user-check"></i> Inscritos em Eventos Recentes — confirmar presença</div>
                             <div class="activity-list" id="agendaGeralEventosRecentes"></div>
+                        </div>
+                        <div class="activity-card" style="flex:none; max-height:340px; grid-column: 1 / -1;">
+                            <div class="activity-header"><i class="fa-solid fa-hand-holding-heart"></i> Contribuição em Atraso — alunos pra contatar antes que desistam</div>
+                            <div class="activity-list" id="agendaGeralAtraso"></div>
                         </div>
                         <div class="activity-card" style="flex:none; max-height:340px; grid-column: 1 / -1;">
                             <div class="activity-header"><i class="fa-solid fa-calendar-days"></i> Calendário de Eventos Futuros (todas as filiais ativas)</div>
@@ -474,9 +478,21 @@
                 </div>
 
                 <div style="margin-top:30px;">
+                    <h3 style="font-size:16px; color:var(--na-green-dark);">Conciliação de Matrículas por Turma — Mercúrio</h3>
+                    <p class="report-sub">Compara o que está no banco do Mercúrio (atualizado toda noite) com o que a escola informou à mão. É a base da cobrança do mês.</p>
+                    <div id="relatorioConciliacaoMercurio"></div>
+                </div>
+
+                <div style="margin-top:30px;">
                     <h3 style="font-size:16px; color:var(--na-green-dark);">Comissão do SDR — Todas as Filiais</h3>
-                    <p class="report-sub">Mesmo cálculo de "Matrículas por Mês" (data_matricula × mensalidade × 30%), consolidado pra todas as filiais de uma vez só — pra fechar a cobrança do mês sem trocar de filial uma a uma.</p>
+                    <p class="report-sub">Matrículas pela conciliação do Mercúrio (mesma regra da seção acima) × mensalidade × 30%, mais o fixo do Módulo 2, consolidado pra todas as filiais.</p>
                     <div id="relatorioComissaoSdrTodasFiliais"></div>
+                </div>
+
+                <div style="margin-top:30px;">
+                    <h3 style="font-size:16px; color:var(--na-green-dark);">Matrículas por Canal de Origem</h3>
+                    <p class="report-sub">De onde vieram os alunos matriculados nos últimos 6 meses, pelo campo "como conheceu a escola" do Mercúrio.</p>
+                    <div id="relatorioCanalOrigemMercurio"></div>
                 </div>
 
                 <div style="margin-top:30px;">
@@ -1539,8 +1555,8 @@
         </div>
         <div class="modal-body">
             <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">
-                O Mercúrio (Ativos/Inativos/Aniversariantes/Turmas/Matrículas recentes) já roda sozinho todo dia às 05:00
-                (Brasília). Use o botão abaixo pra rodar na hora, sem esperar.
+                O Mercúrio já roda sozinho todo dia às 03:00 (Brasília): o banco de consulta traz ativos, turmas e
+                matrículas, e a API do Mercury traz os inativos. Use o botão abaixo pra rodar na hora, sem esperar.
             </p>
             <select id="mercurioFilialFiltro" style="width:100%; margin-bottom:8px; padding:8px; border:1px solid #cbd5e1; border-radius:6px; box-sizing:border-box; font-size:12px;">
                 <option value="">Todas as filiais</option>
@@ -1822,6 +1838,7 @@
     <script src="js/notificacoes.js"></script>
     <!-- 3f2. Agenda do Dia — Todas as Filiais (topo da aba Visão Geral/Dashboard) -->
     <script src="js/visao-geral.js"></script>
+    <script src="js/conciliacao-mercurio.js"></script>
     <!-- 3f2b. Relatórios de WhatsApp (SLA, desempenho por atendente, volume) + Resumo do Trabalho na tela -->
     <script src="js/relatorios-whatsapp.js"></script>
     <!-- 3f3. Contas de usuário (login nominal + permissão por módulo) -->

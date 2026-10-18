@@ -42,7 +42,7 @@ function diasDesde(dataISO: string | null | undefined): number | null {
 
 async function coletarSinaisSincronizacao() {
     const sinais: Record<string, unknown> = {};
-    for (const sistema of ["mercurio", "ulisses"] as const) {
+    for (const sistema of ["mercurio_db", "mercury_api", "ulisses"] as const) {
         const { data: ultima } = await supabaseAdmin
             .from("status_sincronizacao_automatica")
             .select("sucesso, mensagem, executado_em")
@@ -126,7 +126,7 @@ async function coletarSinaisPorFilial(filiaisAtivas: string[]) {
 
 function avaliarSincronizacao(sinaisSync: Record<string, any>) {
     const problemas: any[] = [];
-    for (const sistema of ["mercurio", "ulisses"]) {
+    for (const sistema of ["mercurio_db", "mercury_api", "ulisses"]) {
         const s = sinaisSync[sistema];
         if (s.dias_desde_ultima_tentativa === null) continue; // nunca rodou ainda — sem base pra comparar
         if (s.ultima_tentativa_sucesso === false && s.dias_desde_ultimo_sucesso !== null && s.dias_desde_ultimo_sucesso >= 2) {

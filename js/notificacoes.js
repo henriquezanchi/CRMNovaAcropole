@@ -469,6 +469,9 @@ async function verificarNotificacoesSincronizacao() {
         .from('status_sincronizacao_automatica')
         .select('sistema, filial, sucesso, mensagem, executado_em')
         .in('filial', [filialAtual, 'GLOBAL'])
+        // 'mercurio' (scraper antigo) foi desligado — o último registro dele
+        // ia envelhecer e virar um falso "travada".
+        .in('sistema', ['ulisses', 'mercurio_db', 'mercury_api'])
         .order('executado_em', { ascending: false })
         .limit(20);
 
@@ -489,7 +492,7 @@ async function verificarNotificacoesSincronizacao() {
 
         sincronizacoesJaNotificadas.add(chave);
         salvarSincronizacoesJaNotificadas(sincronizacoesJaNotificadas);
-        const nomeSistema = sistema === 'ulisses' ? 'Ulisses' : 'Mercúrio';
+        const nomeSistema = sistema === 'ulisses' ? 'Ulisses' : (sistema === 'mercury_api' ? 'Mercury (inativos)' : 'Mercúrio');
         adicionarNotificacao({
             icone: 'fa-solid fa-triangle-exclamation',
             titulo: `Sincronização do ${nomeSistema} travada`,

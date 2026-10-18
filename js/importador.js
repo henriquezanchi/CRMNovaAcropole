@@ -536,7 +536,7 @@ async function renderizarStatusSincronizacaoScraper(mensagemExtraMercurio, mostr
         .from('status_sincronizacao_automatica')
         .select('*')
         .order('executado_em', { ascending: false })
-        .limit(10);
+        .limit(40);
 
     if (error) {
         const erroHtml = `<p style="font-size:12px; color:#dc2626;">Erro ao ler status: ${escapeHTML(error.message)}. Rode migracao_credenciais_scraper.sql se ainda não rodou.</p>`;
@@ -546,7 +546,8 @@ async function renderizarStatusSincronizacaoScraper(mensagemExtraMercurio, mostr
     }
 
     const linhas = data || [];
-    const ultimoMercurio = linhas.find(l => l.sistema === 'mercurio');
+    const ultimoMercurioDb = linhas.find(l => l.sistema === 'mercurio_db');
+    const ultimoMercuryApi = linhas.find(l => l.sistema === 'mercury_api');
     const ultimoUlisses = linhas.find(l => l.sistema === 'ulisses');
 
     const formatarLinha = (label, row) => {
@@ -569,7 +570,8 @@ async function renderizarStatusSincronizacaoScraper(mensagemExtraMercurio, mostr
         ${mensagemExtraMercurio ? `<p style="font-size:12px; color:var(--na-green-dark); margin-bottom:10px;"><i class="fa-solid fa-circle-notch fa-spin"></i> ${escapeHTML(mensagemExtraMercurio)}
             ${mostrarCancelar ? ` — <a href="#" onclick="event.preventDefault(); cancelarAcompanhamentoMercurio();" style="color:inherit; text-decoration:underline;">Cancelei no GitHub, parar de acompanhar</a>` : ''}
         </p>` : ''}
-        ${formatarLinha('Mercúrio (última rodada)', ultimoMercurio)}
+        ${formatarLinha('Banco do Mercúrio — ativos, turmas, matrículas (última rodada)', ultimoMercurioDb)}
+        ${formatarLinha('API do Mercury — inativos (última filial sincronizada)', ultimoMercuryApi)}
     `;
     containerUlisses.innerHTML = formatarLinha('Ulisses (última rodada — manual OU via API)', ultimoUlisses);
 }
@@ -618,45 +620,42 @@ function limparAcompanhamentoMercurioLocal() {
     try { localStorage.removeItem(CHAVE_LS_MERCURIO_EM_ANDAMENTO); } catch { /* ignora */ }
 }
 
+// O scraper antigo (GitHub Actions, ~3h por rodada) foi desligado em
+// 2026-10-18. "Rodar Mercúrio Agora" agora chama direto as 2 sincronizações
+// que o substituem: o banco de consulta do Mercúrio (ativos, turmas,
+// conciliação — segundos) e a API do Mercury (inativos — ~1 min por filial).
+// Sem poll: as duas respondem na própria chamada.
 async function dispararMercurioAgora(filial = null) {
     if (disparoMercurioEmAndamento) {
-        alert('Já tem uma rodada do Mercúrio em andamento — acompanhe na tela "Sincronização Automática" (aba Importar) em vez de disparar de novo.');
-        if (typeof abrirSincronizacaoScraper === 'function') abrirSincronizacaoScraper();
+        alert('Já tem uma sincronização do Mercúrio em andamento — aguarde terminar.');
         return;
     }
     disparoMercurioEmAndamento = true;
-    atualizarBotoesDispararMercurio(true, '<i class="fa-solid fa-circle-notch fa-spin"></i> Disparando...');
+    atualizarBotoesDispararMercurio(true, '<i class="fa-solid fa-circle-notch fa-spin"></i> Sincronizando...');
+    if (typeof abrirSincronizacaoScraper === 'function') await abrirSincronizacaoScraper();
 
-    // Guarda o timestamp do último "mercurio" ANTES de disparar, pra saber
-    // reconhecer quando uma rodada NOVA (não essa que já estava aí)
-    // terminar — status_sincronizacao_automatica não tem um jeito melhor
-    // de "seguir" uma execução específica, então comparar timestamp é o
-    // sinal mais simples e confiável disponível.
-    const { data: antes } = await window.supabaseClient
-        .from('status_sincronizacao_automatica')
-        .select('executado_em')
-        .eq('sistema', 'mercurio')
-        .order('executado_em', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-    const timestampAntes = antes ? antes.executado_em : null;
+    const problemas = [];
+    try {
+        await renderizarStatusSincronizacaoScraper('Lendo o banco do Mercúrio (ativos, turmas, matrículas)...');
+        const { data: dDb, error: eDb } = await window.supabaseClient.functions.invoke('mercurio-db-sincronizar', { body: filial ? { filial } : {} });
+        if (eDb || !dDb || !dDb.ok) problemas.push('Banco do Mercúrio: ' + ((dDb && (dDb.erro || (dDb.resultados || []).filter(r => r.erro).map(r => `${r.filial}: ${r.erro}`).join('; '))) || (eDb && eDb.message) || 'falhou'));
 
-    const { data, error } = await window.supabaseClient.functions.invoke('scraper-disparar', { body: { filial: filial || '' } });
-
-    if (error || (data && data.ok === false)) {
-        const motivo = (data && data.detalhe) || (error && error.message) || 'erro desconhecido';
-        alert('Não consegui disparar: ' + motivo);
+        const alvos = (filiaisDisponiveis || []).filter(f => f.mercurio_unidade && (!filial || f.nome === filial)).map(f => f.nome);
+        for (let i = 0; i < alvos.length; i++) {
+            await renderizarStatusSincronizacaoScraper(`Atualizando inativos pela API do Mercury — ${alvos[i]} (${i + 1}/${alvos.length})...`);
+            const { data: dApi, error: eApi } = await window.supabaseClient.functions.invoke('mercury-sincronizar', { body: { filial: alvos[i] } });
+            const falhaApi = (dApi && (dApi.resultados || []).find(r => r.ok === false)) || null;
+            if (eApi || !dApi || falhaApi) problemas.push(`Mercury (${alvos[i]}): ` + ((falhaApi && falhaApi.erro) || (eApi && eApi.message) || 'falhou'));
+        }
+    } catch (e) {
+        problemas.push(e.message || String(e));
+    } finally {
         disparoMercurioEmAndamento = false;
         atualizarBotoesDispararMercurio(false, '<i class="fa-solid fa-play"></i> Rodar Mercúrio Agora');
-        return;
+        await renderizarStatusSincronizacaoScraper();
+        if (problemas.length) alert('A sincronização terminou com problema:\n' + problemas.join('\n'));
+        if (typeof renderizarConciliacaoMercurio === 'function') renderizarConciliacaoMercurio();
     }
-
-    // Abre (ou já deixa aberta) a tela de status — sempre que disparado,
-    // de qualquer botão, pra nunca mais parecer que "não fez nada".
-    if (typeof abrirSincronizacaoScraper === 'function') await abrirSincronizacaoScraper();
-    const inicioPoll = Date.now();
-    salvarAcompanhamentoMercurioLocal(timestampAntes, inicioPoll, filial || null);
-    await iniciarAcompanhamentoMercurio(timestampAntes, inicioPoll, filial || null);
 }
 
 // Extraído de dispararMercurioAgora() pra poder ser chamado tanto por um
@@ -724,9 +723,8 @@ async function iniciarAcompanhamentoMercurio(timestampAntes, inicioPoll, filial)
 function restaurarAcompanhamentoMercurioSeHouver() {
     let salvo = null;
     try { salvo = JSON.parse(localStorage.getItem(CHAVE_LS_MERCURIO_EM_ANDAMENTO) || 'null'); } catch { /* ignora */ }
-    if (!salvo || typeof salvo.inicioPoll !== 'number') return;
-    if (Date.now() - salvo.inicioPoll > 20 * 60 * 1000) { limparAcompanhamentoMercurioLocal(); return; }
-    iniciarAcompanhamentoMercurio(salvo.timestampAntes, salvo.inicioPoll, salvo.filial || null);
+    // Acompanhamento do scraper antigo (desligado) — só limpa o que sobrou.
+    if (salvo) limparAcompanhamentoMercurioLocal();
 }
 document.addEventListener('DOMContentLoaded', restaurarAcompanhamentoMercurioSeHouver);
 

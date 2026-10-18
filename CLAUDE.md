@@ -10503,3 +10503,116 @@ entre as 5 filiais, 0 `pessoaNome` nulo, 0 duplicata de
   recebido sinal verde pra "ir direto pro tudo", a prudência de validar
   lado a lado por alguns dias vale mais que o risco de um desligamento
   abrupto sem essa folga de segurança.
+
+## Banco de consulta do Mercúrio (oinabview, via phpMyAdmin) — 2026-10-18
+
+O responsável pelo Mercúrio liberou uma cópia de consulta do banco,
+atualizada toda noite (~23h), em `https://mercurio.oinabn.com.br/phpmyadmin`
+(phpMyAdmin 5.2.1, banco `oinabview`, 25 tabelas). Duas camadas de login,
+igual ao Mercúrio antigo: autenticação HTTP do servidor + formulário do
+phpMyAdmin. Credenciais em `.env.local` (`MERCURIO_DB_*`) e nos secrets do
+Supabase com os mesmos nomes. Não há conexão MySQL direta (só a tela).
+
+- **Só alunos ATIVOS** (`cadastro.cad_situacao` = 'ATI' pra todos, 7.933 no
+  Brasil). Ex-alunos e leads continuam vindo do Mercury/Ulisses.
+- Tabelas úteis: `cadastro` (84 colunas — ingresso, **reingresso**,
+  **recuperado S/N**, nível, turma atual, celular, e-mail, nascimento,
+  cidade/UF, `cad_midia_ingresso` "como conheceu", contribuição), `turmas`
+  (**`tur_inicio`** = abertura; `tur_tipo` P=programa principal, R/M=
+  complementar), `fichas` (contribuição mês a mês: PAG/ATR/BRA/INA),
+  `reciboc`/`reciboi` (recibos com valor), `unidades` (códigos: JAM, STO,
+  GAR, GY2, BGA).
+- **Datas vazias vêm como `0000-00-00`** — tratar como null (`dataOuNull()`).
+- **A tela de resultado do phpMyAdmin corta em 25 linhas.** Ler sempre pela
+  exportação JSON (`index.php?route=/export`, `what=json`, `sql_query`),
+  que devolve tudo — é o que `supabase/functions/_shared/phpmyadmin.ts` faz.
+- Tem CPF/RG — **nunca trazer pro CRM**.
+
+### `mercurio-db-sincronizar` (Edge Function, cron 03:00 Brasília, ~7s pras 5 filiais)
+
+`migracao_mercurio_db.sql` (JÁ RODADA): `filiais.mercurio_unidade` (código
+da unidade, editável em Gerenciar Filiais — filial sem código não
+sincroniza), `filiais.membros_mercurio`, tabelas `mercurio_turmas`,
+`mercurio_alunos`, `mercurio_midia_ingresso`, `conciliacao_matriculas_informado`
+(com os números de outubro coletados à mão: JA 9, GAR 7, SO 7, GYN2 12),
+constraint de status com `'mercurio_db'` e o cron.
+
+Por filial: grava turmas; grava 1 linha por aluno em `mercurio_alunos` com a
+**competência de cobrança já calculada** (`calcularCompetencia()`); quem
+some do Mercúrio vira `ativo=false` e mantém a competência antiga (histórico
+de cobrança não muda depois que o aluno sai); atualiza o lead vinculado por
+`matricula_mercurio` (data_matricula real, tag `Recuperado`, tag
+`Contribuição em Atraso` aplicada/removida, contato vazio preenchido — nunca
+sobrescreve); grava `membros_mercurio` (N2-N7 ativos).
+
+**Regra de competência (combinada com o usuário):**
+- Programa branco: conta no mês em que a turma ABRIU (turma tipo P, nível
+  PP/N1), aceitando matrícula até 30 dias antes. Mais de 30 dias antes da
+  abertura da própria turma = **investigar** (possível reingresso não
+  registrado), não conta até ser resolvido no Mercúrio.
+- Complementar (CA/TA/CO/JN, ou turma não-P): conta pela data individual.
+- Recuperado: vale a data de reingresso.
+- Remuneração: PP, N1, CA; N2-N7 só reingressado; Janos/Merlin nunca.
+- Validado contra outubro antes de publicar: GY2 12/12, GAR 7/7, STO 7/7
+  (+1 investigar), JAM 0/9 (turma de outubro ainda não cadastrada no Mercúrio).
+
+`mercury-sincronizar` foi ajustado pra NÃO sobrescrever `data_matricula` de
+quem tem a tag Recuperado (o `admissionDate` do Mercury é sempre o 1º
+ingresso, desfaria a data de reingresso).
+
+### Telas (`js/conciliacao-mercurio.js`)
+
+- **Relatórios → Conciliação de Matrículas por Turma — Mercúrio**: por mês,
+  turmas abertas, quem conta, quem investigar (com motivo), campo
+  "Informado pela escola" (editável) e diferença (devolver/cobrar).
+  Botão "Sincronizar agora".
+- **Comissão do SDR** passou a contar pela conciliação (filiais com
+  `mercurio_unidade`); filial sem código cai no cálculo antigo por
+  `data_matricula`, marcada "(CRM)". Colunas novas: Investigar, Informado,
+  Diferença. CSV/Excel acompanham (Excel tem bloco "Investigar" por filial).
+- **Fixo do Módulo 2**: `membros` manual vence; em branco usa `membros_mercurio`.
+  **Decisão do usuário (2026-10-18): vale a contagem do Mercúrio.** Os
+  valores manuais (252/45/25/31) foram apagados (`membros = null` nas 5
+  filiais, registrado em `log_atividade`, `acao='membros_manual_limpo'`) —
+  o Fixo agora se atualiza sozinho toda noite com `membros_mercurio`.
+  Efeito no Fixo: Jardim América 247 (R$600), Setor Oeste 33 (R$450),
+  Garavelo 22 (R$250), Goiânia II 28 (R$250, antes R$450). Não voltar a
+  preencher `membros` à mão sem o usuário pedir.
+- **Agenda do Dia → Contribuição em Atraso**: alunos com 1+ mês ATR nos
+  últimos 6 meses, por filial — lista de retenção.
+- **Relatórios → Matrículas por Canal de Origem**: últimos 6 meses por
+  `cad_midia_ingresso`. O banco só tem o número; o significado é
+  preenchido na própria tabela (`mercurio_midia_ingresso`). **Pendente:
+  perguntar ao responsável o que cada código significa.**
+
+### Scraper antigo do Mercúrio DESLIGADO (2026-10-18)
+
+Pedido do usuário. O scraper Playwright (`scraper/mercurio.js`, GitHub
+Actions) levava ~2h50 por rodada logado no Mercúrio que as escolas usam.
+Removido do pg_cron (`migracao_desligar_scraper_mercurio.sql`, JÁ RODADA);
+o código e o workflow continuam no repositório, dá pra disparar à mão no
+GitHub se um dia precisar. Cada coisa que ele fazia foi pra:
+
+| Antes no scraper | Agora |
+|---|---|
+| Ativos, nível, turmas, ingresso/reingresso, contatos, aniversariantes, complementar | `mercurio-db-sincronizar` (03:00, ~7s) |
+| Mover matrícula nova pra coluna "Matriculados" | `mercurio-db-sincronizar` (competência = mês corrente e conta pra remuneração) |
+| Inativos (status, motivo/data de saída) | `mercury-sincronizar` (API do Mercury), 1 cron por filial: 03:10, 03:15, 03:20, 03:25, 03:30 |
+| Rede de Ativos/Inativos (`pessoas_ativas_rede`) | fim de `mercury-sincronizar` (só grava quem mudou — gravar tudo estourava 150s em Jardim América) |
+| Diagnóstico de Saúde (IA) | cron próprio, 06:30 |
+| Aviso de aniversário de aluno ativo pro chefe | `avisar-aniversario-ativos` (nova), 08:00 — aluno ativo = `mercurio_alunos.ativo` |
+| Lembrete de importar o Ulisses | descontinuado: o Ulisses roda sozinho pelas Tarefas Agendadas do Windows e o Resumo Diário já mostra se rodou |
+
+Tempos medidos: Jardim América ~105s na API do Mercury (2.761 pessoas), as
+outras ~30s. Limite da Edge Function é 150s — se Jardim América crescer
+muito, dividir em 2 chamadas.
+
+Consumidores de status trocados de `'mercurio'` pra `'mercurio_db'`/
+`'mercury_api'`: Resumo Diário, Diagnóstico de Saúde, sino (gatilho 5 —
+sem isso o último registro do scraper envelheceria e viraria um falso
+"travada"), tela "Sincronização Automática". O botão "Rodar Mercúrio Agora"
+chama as 2 sincronizações direto (sem GitHub, sem poll).
+
+Ao testar pelo terminal, mande o corpo JSON por arquivo em UTF-8
+(`--data-binary @arquivo`): o Git Bash corrompe o "â" de "Goiânia" e a
+function responde "filial não mapeada".
