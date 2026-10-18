@@ -28,7 +28,8 @@ function organizarInterfaceCrm() {
     const relatorios = document.querySelector('#tab-relatorios .report-content');
     if (relatorios) {
         const grupos = [
-            ['Matrículas e conferência', ['relatorioMatriculasPorMes','relatorioConciliacaoMercurio','relatorioComissaoSdrTodasFiliais'], true],
+            ['Matrículas e conferência', ['relatorioMatriculasPorMes','relatorioConciliacaoMercurio'], true],
+            ['Cobranças e ciclos', ['relatorioCobrancaMensal','relatorioCiclosTurma','relatorioComissaoSdrTodasFiliais'], false],
             ['Origem e relacionamento', ['relatorioJornadaBase','relatorioTemasEvento','relatorioCanalOrigemMercurio','relatorioMotivosPerda','relatorioComparacaoFiliais'], false],
             ['Atendimento e equipe', ['relatorioSlaWhatsApp','resumoTrabalhoContainer'], false],
         ];
