@@ -188,3 +188,9 @@ O dono do projeto (Henrique) não é programador. Ele descreve o problema de
 negócio, às vezes com print. Explique em linguagem simples, pergunte antes de
 ações destrutivas ou que mexam em produção, e diga com clareza o que foi e o
 que não foi testado.
+
+- **Cobrança mensal (2026-10-18):** Edge Function `cobranca-mensal` (cron
+  09:00, só age no dia 10 ou próximo dia útil) gera rascunho por filial a
+  partir dos ciclos de abertura de turma (`ciclos_turma`, cadastrados por
+  filial em Relatórios) e manda o resumo pro WhatsApp do admin; o usuário
+  revisa e fecha no CRM (`js/cobranca-ciclos.js`). Detalhes no CLAUDE.md.
