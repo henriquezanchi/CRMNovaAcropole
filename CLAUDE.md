@@ -10571,6 +10571,13 @@ ingresso, desfaria a data de reingresso).
   `data_matricula`, marcada "(CRM)". Colunas novas: Investigar, Informado,
   Diferença. CSV/Excel acompanham (Excel tem bloco "Investigar" por filial).
 - **Fixo do Módulo 2**: `membros` manual vence; em branco usa `membros_mercurio`.
+  **Decisão do usuário (2026-10-18): vale a contagem do Mercúrio.** Os
+  valores manuais (252/45/25/31) foram apagados (`membros = null` nas 5
+  filiais, registrado em `log_atividade`, `acao='membros_manual_limpo'`) —
+  o Fixo agora se atualiza sozinho toda noite com `membros_mercurio`.
+  Efeito no Fixo: Jardim América 247 (R$600), Setor Oeste 33 (R$450),
+  Garavelo 22 (R$250), Goiânia II 28 (R$250, antes R$450). Não voltar a
+  preencher `membros` à mão sem o usuário pedir.
 - **Agenda do Dia → Contribuição em Atraso**: alunos com 1+ mês ATR nos
   últimos 6 meses, por filial — lista de retenção.
 - **Relatórios → Matrículas por Canal de Origem**: últimos 6 meses por
