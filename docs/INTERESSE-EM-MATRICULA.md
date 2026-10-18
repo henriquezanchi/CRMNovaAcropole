@@ -21,3 +21,9 @@ Os rótulos antigos “Lead Forte”, número de tags, origem Ulisses, posição
 - `node --test tests/*.test.mjs`
 - `node tests/browser-interesse-matricula.mjs`: interface real, 390 e 1365 px, 1201 contatos fictícios, paginação, intenção, pausa, contagens e busca além dos 100 visíveis.
 - `node tests/browser-acompanhamento.mjs`: formulário, persistência, conflitos e erros, em 320, 414 e 1365 px.
+
+## Rotina diária e qualificação rápida
+
+O botão **Organizar atendimentos de hoje** usa a escola inteira e separa retornos atrasados, combinados para hoje, pedidos sem data e conferências internas. O dia é calculado no fuso do navegador do atendente. Retornos futuros ficam em filtro separado; um compromisso para mais tarde hoje informa que é necessário aguardar o horário. A classificação usa os registros da equipe; não afirma que uma mensagem do WhatsApp está sem resposta.
+
+Na ficha, os cinco campos essenciais ficam à vista: intenção, preferência de contato, próximo passo, responsável e data. “Visita, origem, cadastro e apoio à escola” abre os demais dados, que continuam sendo preservados no mesmo salvamento com controle de versão. As sugestões de abertura para antigos alunos e contatos do Ulisses começam pelo acolhimento, sem pedir uma decisão de retorno ou matrícula na primeira mensagem.

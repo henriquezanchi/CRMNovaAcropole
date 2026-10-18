@@ -74,6 +74,25 @@
             return resultado('conhecer', 4, 'Quer conhecer', 'Interesse em conhecer a escola registrado.', 'Conversar sobre uma oportunidade adequada, sem pressa.');
         return resultado('qualificar', 5, 'Interesse a confirmar', dado.relacao === 'visitante' ? 'Já visitou; falta registrar a intenção atual.' : 'Ainda não há intenção atual registrada.', 'Conferir a conversa e registrar o que a pessoa realmente declarou.');
     }
+    function atendimentoDiario(lead, agora = Date.now()) {
+        const dado = normalizar(lead.acompanhamento);
+        // Conferência interna continua necessária, mesmo sem permissão para abordar.
+        if (dado.inscricao === 'aguardando_registro' || dado.proximo === 'conferir')
+            return { grupo: 'interno', rotulo: 'Conferir com a escola ou no sistema', ordem: 0 };
+        if (impedimento(dado, agora) || ['momento','fora','conferidos'].includes(proximidade(lead, agora).grupo))
+            return { grupo: 'revisar', rotulo: 'Rever contexto antes de qualquer contato', ordem: 5 };
+        if (dado.proxima_em && Number.isFinite(Date.parse(dado.proxima_em))) {
+            const data = Date.parse(dado.proxima_em);
+            const inicio = new Date(agora); inicio.setHours(0, 0, 0, 0);
+            const fim = new Date(inicio); fim.setDate(fim.getDate() + 1);
+            if (data < inicio.getTime()) return { grupo: 'atrasados', rotulo: 'Retorno combinado em dia anterior', ordem: 1 };
+            if (data < fim.getTime()) return { grupo: 'hoje', rotulo: data > agora ? 'Retorno hoje: aguardar o horário' : 'Retorno combinado para hoje', ordem: 2 };
+            return { grupo: 'futuro', rotulo: 'Aguardar a data combinada', ordem: 6 };
+        }
+        if (dado.proximo === 'responder' || dado.intencao === 'inscrever')
+            return { grupo: 'pedidos', rotulo: 'Pedido registrado sem retorno agendado', ordem: 3 };
+        return { grupo: 'organizar', rotulo: 'Definir o próximo passo', ordem: 4 };
+    }
     function validar(valor) {
         if (!valor || typeof valor !== 'object' || Array.isArray(valor)) throw new Error('Registro inválido.');
         Object.keys(campos).forEach(chave => { if (!Object.hasOwn(campos[chave], valor[chave])) throw new Error('Escolha uma opção válida para ' + chave + '.'); });
@@ -100,6 +119,8 @@
             if (busca && !textoBusca([item.lead.pessoaNome, item.lead.pessoaIdentificador, dado.responsavel].join(' ')).includes(busca)) return false;
             if (opcoes.somenteMeus && (!responsavel || textoBusca(dado.responsavel) !== responsavel)) return false;
             if (filtro === 'todos') return true;
+            if (filtro === 'dia:pendentes') return ['interno', 'atrasados', 'hoje', 'pedidos'].includes(atendimentoDiario(item.lead, agora).grupo);
+            if (filtro.startsWith('dia:')) return atendimentoDiario(item.lead, agora).grupo === filtro.slice(4);
             const sinal = proximidade(item.lead, agora);
             if (filtro === 'proximos') return ['inscricao', 'decididos', 'visita'].includes(sinal.grupo);
             if (filtro.startsWith('sinal:')) return sinal.grupo === filtro.slice(6);
@@ -108,7 +129,7 @@
             if (filtro === 'inscricoes') return ['solicitada', 'dados_pendentes', 'aguardando_registro'].includes(dado.inscricao);
             if (filtro === 'sem_responsavel') return !dado.responsavel.trim();
             return dado.origem === filtro;
-        }).sort((a, b) => (filtro === 'proximos' || filtro.startsWith('sinal:') ? proximidade(a.lead, agora).ordem - proximidade(b.lead, agora).ordem : 0) || a.prioridade.nivel - b.prioridade.nivel || (a.lead.acompanhamento?.proxima_em || '9999').localeCompare(b.lead.acompanhamento?.proxima_em || '9999') || String(a.lead.pessoaIdentificador).localeCompare(String(b.lead.pessoaIdentificador)));
+        }).sort((a, b) => (filtro.startsWith('dia:') ? atendimentoDiario(a.lead, agora).ordem - atendimentoDiario(b.lead, agora).ordem : 0) || (filtro === 'proximos' || filtro.startsWith('sinal:') ? proximidade(a.lead, agora).ordem - proximidade(b.lead, agora).ordem : 0) || a.prioridade.nivel - b.prioridade.nivel || (a.lead.acompanhamento?.proxima_em || '9999').localeCompare(b.lead.acompanhamento?.proxima_em || '9999') || String(a.lead.pessoaIdentificador).localeCompare(String(b.lead.pessoaIdentificador)));
     }
     function resumir(leads, agora = Date.now()) {
         const resultado = { total: leads.length, atencao: 0, inscricoes: 0, semResponsavel: 0, preferenciaPendente: 0, cadastrosConferidos: 0 };
@@ -133,9 +154,9 @@
         if (dado.proximo === 'confirmar' || dado.proximo === 'convidar') return { orientacao: 'Abra a atividade na Agenda. Confira proposta, data, horário, local e condições antes de preparar o convite; peça uma resposta clara.', texto: '' };
         if (dado.proximo === 'ouvir') return { orientacao: 'Ouça a experiência sem presumir satisfação ou interesse em matrícula.', texto: 'Olá! Como foi a atividade para você? O que fez sentido e ficou alguma dúvida? Gostaria de participar de outra oportunidade ou prefere outro momento?' };
         if (dado.inscricao === 'solicitada' || dado.inscricao === 'dados_pendentes' || dado.intencao === 'inscrever') return { orientacao: 'Ajude na inscrição sem solicitar documentos por um canal inadequado. Confirme o que realmente falta com a escola.', texto: 'Olá! Posso ajudar a dar continuidade à sua inscrição? Ficou alguma dúvida sobre os próximos passos?' };
-        if (dado.relacao === 'antigo' || dado.origem === 'ex_aluno') return { orientacao: 'Acolha o momento atual sem pedir detalhes íntimos ou presumir vontade de retornar.', texto: 'Olá! Aqui é da escola. Como você está? Faz sentido conversarmos sobre uma oportunidade de voltar a participar das atividades?' };
-        if (dado.origem === 'ulisses') return { orientacao: 'Identifique-se e confira o evento real antes de contextualizar. Inscrição antiga não comprova interesse atual.', texto: 'Olá! Aqui é da escola. Você já se inscreveu em uma de nossas atividades. Ainda faz sentido conversarmos sobre conhecer a proposta da escola?' };
+        if (dado.relacao === 'antigo' || dado.origem === 'ex_aluno') return { orientacao: 'Acolha o momento atual sem pedir detalhes íntimos ou presumir vontade de retornar.', texto: 'Olá, [nome]! Aqui é [atendente], da Nova Acrópole [escola]. Faz um tempo que não conversamos e quis saber como você está. Como têm sido as coisas por aí?' };
+        if (dado.origem === 'ulisses') return { orientacao: 'Identifique-se e confira o evento real antes de contextualizar. Inscrição antiga não comprova interesse atual.', texto: 'Olá, [nome]! Tudo bem por aí? Sou [atendente], da Nova Acrópole [escola]. Encontrei seu contato entre as pessoas que se inscreveram em uma atividade nossa e quis passar para saber como você está.' };
         return { orientacao: 'Identifique quem fala e a escola; pergunte se a pessoa deseja conversar, sem afirmar que já houve interesse.', texto: 'Olá! Aqui é da escola. Podemos conversar sobre nossas atividades abertas? Se preferir não receber contato, pode nos avisar.' };
     }
-    raiz.AcompanhamentoModelo = Object.freeze({ campos, normalizar, validar, prioridade, proximidade, impedimento, selecionarFila, resumir, sugerirConversa });
+    raiz.AcompanhamentoModelo = Object.freeze({ campos, normalizar, validar, prioridade, proximidade, atendimentoDiario, impedimento, selecionarFila, resumir, sugerirConversa });
 })(globalThis);

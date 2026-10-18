@@ -1277,3 +1277,6 @@ select:hover { border-color: #94a3b8; }
 .sinal-inscricao,.sinal-decididos { background:#dcfce7; color:#166534; }
 .sinal-visita { background:#e0f2fe; color:#075985; }
 #painelInteresseMatricula { margin-top:8px; }
+.qualificacao-detalhes { margin:10px 0 16px; border-block:1px solid var(--border-color); padding:8px 0; }
+#acompanhamentoDia { margin:12px 0; }
+#acompanhamentoDia [aria-pressed="true"] { background:#086357; color:white; }

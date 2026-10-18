@@ -39,6 +39,7 @@ try {
         assert.equal(await paginaBrowser.locator('#acompanhamentoLista article').count(),1);
         assert.equal(await paginaBrowser.locator('#acompanhamentoLista script').count(),0);
         await paginaBrowser.getByRole('button',{name:'Abrir atendimento'}).click();
+        await paginaBrowser.locator('.qualificacao-detalhes summary').click();
         await paginaBrowser.locator('[name=origem]').selectOption('instagram');
         await paginaBrowser.locator('[name=entrada]').selectOption('ativa');
         await paginaBrowser.locator('[name=contato]').selectOption('permitido');

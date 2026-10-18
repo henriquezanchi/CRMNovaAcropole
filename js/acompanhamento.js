@@ -21,7 +21,7 @@ function renderizarAcompanhamento(lead) {
         <p id="acompanhamentoSinalAtual"><strong>${escapeHTML(sinal.rotulo)}</strong> · ${escapeHTML(sinal.motivo)}</p><p>Registre o que a pessoa declarou. Silêncio não é recusa; simpatia não é confirmação. Conte no contexto breve qual fala sustenta a intenção, sem copiar dados íntimos.</p>
         ${!schemaPronto ? '<p role="status">Atualização do banco pendente. Os registros antigos continuam disponíveis.</p>' : ''}
         <form id="acompanhamentoForm"><fieldset ${!schemaPronto ? 'disabled' : ''}>
-        <div class="acompanhamento-grade">${['relacao', 'origem', 'entrada', 'intencao', 'contato', 'experiencia', 'inscricao', 'fonte_registro', 'apoio_escola', 'proximo'].map(chave => `<label>${escapeHTML(({ relacao: 'Relação atual com a escola', origem: 'Canal de origem', entrada: 'Forma de entrada', intencao: 'Intenção declarada', contato: 'Preferência de contato', experiencia: 'Experiência relatada', inscricao: 'Andamento da inscrição', fonte_registro: 'Onde o cadastro foi conferido', apoio_escola: 'O que precisa de atenção da escola', proximo: 'Próximo passo' })[chave])}<select name="${chave}">${acompanhamentoOpcoes(chave, dado[chave])}</select></label>`).join('')}
+        <div class="acompanhamento-grade">${['intencao', 'contato', 'proximo', 'inscricao', 'relacao', 'experiencia', 'origem', 'entrada', 'fonte_registro', 'apoio_escola'].map(chave => `<label>${escapeHTML(({ relacao: 'Relação atual com a escola', origem: 'Canal de origem', entrada: 'Forma de entrada', intencao: 'Intenção declarada', contato: 'Preferência de contato', experiencia: 'Experiência relatada', inscricao: 'Andamento da inscrição', fonte_registro: 'Onde o cadastro foi conferido', apoio_escola: 'O que precisa de atenção da escola', proximo: 'Próximo passo' })[chave])}<select name="${chave}">${acompanhamentoOpcoes(chave, dado[chave])}</select></label>`).join('')}
         <label>Referência da conferência<input name="referencia_registro" maxlength="160" value="${escapeHTML(dado.referencia_registro)}" placeholder="Identificação do registro ou responsável — sem documentos pessoais"></label>
         <label>Quando foi conferido<input name="conferido_em" type="datetime-local" value="${acompanhamentoDataLocal(dado.conferido_em)}"></label>
         <label>Responsável<input name="responsavel" maxlength="120" value="${escapeHTML(dado.responsavel)}" autocomplete="off"></label>
@@ -35,6 +35,14 @@ function renderizarAcompanhamento(lead) {
         <small>${dado.atualizado_em ? 'Último registro: ' + escapeHTML(new Date(dado.atualizado_em).toLocaleString('pt-BR')) + ' · ' + escapeHTML(dado.atualizado_por) : 'Sem acompanhamento registrado.'}</small>
         <aside id="acompanhamentoSugestao" class="acompanhamento-sugestao"></aside></details>`;
     renderizarSugestaoConversa(dado);
+    const form = document.getElementById('acompanhamentoForm');
+    const essenciais = ['intencao', 'contato', 'proximo', 'responsavel', 'proxima_em'];
+    const grade = form.querySelector('.acompanhamento-grade');
+    const detalhes = document.createElement('details'); detalhes.className = 'qualificacao-detalhes';
+    const titulo = document.createElement('summary'); titulo.textContent = 'Visita, origem, cadastro e apoio à escola'; detalhes.append(titulo);
+    const complemento = document.createElement('div'); complemento.className = 'acompanhamento-grade'; detalhes.append(complemento);
+    [...grade.children].forEach(label => { if (!essenciais.includes(label.querySelector('[name]')?.name)) complemento.append(label); });
+    grade.after(detalhes);
     document.getElementById('acompanhamentoForm').addEventListener('submit', evento => { evento.preventDefault(); salvarAcompanhamento(lead); });
 }
 function renderizarSugestaoConversa(dado) {
@@ -99,7 +107,7 @@ async function carregarFilaAcompanhamento() {
     acompanhamentoFila = [];
     if (!filial) { el.textContent = 'Selecione uma escola.'; return; }
     el.textContent = 'Conferindo próximos passos…';
-    ['acompanhamentoResumo', 'acompanhamentoContagem', 'sinaisMatricula'].forEach(id => { const elemento = document.getElementById(id); if (elemento) elemento.textContent = ''; });
+    ['acompanhamentoResumo', 'acompanhamentoContagem', 'sinaisMatricula', 'acompanhamentoDia'].forEach(id => { const elemento = document.getElementById(id); if (elemento) elemento.textContent = ''; });
     try {
         const linhas = [];
         for (let inicio = 0; ; inicio += 1000) {
@@ -127,13 +135,15 @@ function renderizarFilaAcompanhamento() {
     const indicador = document.getElementById('acompanhamentoResumo');
     if (indicador) indicador.textContent = `${resumo.atencao} retorno(s)/pedido(s) de atenção · ${resumo.inscricoes} inscrição(ões) em acompanhamento · ${resumo.semResponsavel} sem responsável · ${resumo.preferenciaPendente} preferências a conferir. Categorias podem se sobrepor.`;
     renderizarSinaisMatricula();
+    renderizarResumoDoDia();
     const contagem = document.getElementById('acompanhamentoContagem');
     contagem.textContent = `${linhas.length} contato(s). Exibidos até 100; refine pela busca, origem ou responsável. Não há envio automático.`;
     el.innerHTML = linhas.slice(0, 100).map(({ lead, prioridade }) => {
         const dado = AcompanhamentoModelo.normalizar(lead.acompanhamento);
         const sinal = AcompanhamentoModelo.proximidade(lead);
         const preferencia = AcompanhamentoModelo.impedimento(dado);
-        return `<article><strong>${escapeHTML(lead.pessoaNome || 'Sem nome')}</strong><span class="sinal-matricula sinal-${sinal.grupo}">${escapeHTML(sinal.rotulo)}</span><span>${escapeHTML(sinal.motivo)}</span><small>Próximo cuidado: ${escapeHTML(sinal.acao)}</small><small>Atendimento: ${escapeHTML(prioridade.motivo)}${preferencia ? ' · ' + escapeHTML(preferencia) : ''}</small><small>${dado.atualizado_em ? 'Registro de ' + escapeHTML(new Date(dado.atualizado_em).toLocaleDateString('pt-BR')) : 'Sem data de atualização da intenção'}</small><small>${escapeHTML(AcompanhamentoModelo.campos.origem[dado.origem])} · ${escapeHTML(dado.responsavel || 'Sem responsável')} · ${dado.proxima_em ? escapeHTML(new Date(dado.proxima_em).toLocaleString('pt-BR')) : 'Sem data'}</small><button type="button" class="btn-mini btn-secondary-mini" data-acompanhamento-id="${escapeHTML(String(lead.pessoaIdentificador))}">Abrir atendimento</button></article>`;
+        const dia = AcompanhamentoModelo.atendimentoDiario(lead);
+        return `<article><strong>${escapeHTML(lead.pessoaNome || 'Sem nome')}</strong><span class="sinal-matricula sinal-${sinal.grupo}">${escapeHTML(sinal.rotulo)}</span><span>${escapeHTML(sinal.motivo)}</span><small>Próximo cuidado: ${escapeHTML(sinal.acao)}</small><small>Fila diária: ${escapeHTML(dia.rotulo)}</small><small>Atendimento: ${escapeHTML(prioridade.motivo)}${preferencia ? ' · ' + escapeHTML(preferencia) : ''}</small><small>${dado.atualizado_em ? 'Registro de ' + escapeHTML(new Date(dado.atualizado_em).toLocaleDateString('pt-BR')) : 'Sem data de atualização da intenção'}</small><small>${escapeHTML(AcompanhamentoModelo.campos.origem[dado.origem])} · ${escapeHTML(dado.responsavel || 'Sem responsável')} · ${dado.proxima_em ? escapeHTML(new Date(dado.proxima_em).toLocaleString('pt-BR')) : 'Sem data'}</small><button type="button" class="btn-mini btn-secondary-mini" data-acompanhamento-id="${escapeHTML(String(lead.pessoaIdentificador))}">Abrir atendimento</button></article>`;
     }).join('') || '<p>Nenhum contato neste filtro.</p>';
     el.querySelectorAll('[data-acompanhamento-id]').forEach(botao => botao.addEventListener('click', () => abrirAcompanhamentoDaFila(botao.dataset.acompanhamentoId)));
 }
@@ -163,4 +173,17 @@ function renderizarSinaisMatricula() {
         return `<button type="button" class="sinal-resumo" data-sinal-filtro="${filtro}" aria-pressed="${document.getElementById('acompanhamentoFiltro').value === filtro}"><strong>${total}</strong><span>${titulo}</span></button>`;
     }).join('');
     el.querySelectorAll('[data-sinal-filtro]').forEach(botao => botao.addEventListener('click', () => { document.getElementById('acompanhamentoFiltro').value = botao.dataset.sinalFiltro; renderizarFilaAcompanhamento(); }));
+}
+
+function renderizarResumoDoDia() {
+    const el = document.getElementById('acompanhamentoDia');
+    if (!el) return;
+    const grupos = [['pendentes', 'Atendimentos do dia'], ['atrasados', 'Retornos atrasados'], ['hoje', 'Combinados para hoje'], ['pedidos', 'Pedidos sem data'], ['interno', 'Conferir internamente']];
+    const contagens = {};
+    acompanhamentoFila.forEach(lead => { const grupo = AcompanhamentoModelo.atendimentoDiario(lead).grupo; contagens[grupo] = (contagens[grupo] || 0) + 1; });
+    el.innerHTML = grupos.map(([grupo, titulo]) => {
+        const total = grupo === 'pendentes' ? ['atrasados','hoje','pedidos','interno'].reduce((soma, chave) => soma + (contagens[chave] || 0), 0) : contagens[grupo] || 0;
+        return `<button type="button" class="btn-toggle" data-dia="${grupo}" aria-pressed="${document.getElementById('acompanhamentoFiltro').value === 'dia:' + grupo}">${escapeHTML(titulo)} · ${total}</button>`;
+    }).join('');
+    el.querySelectorAll('[data-dia]').forEach(botao => botao.addEventListener('click', () => { document.getElementById('acompanhamentoFiltro').value = 'dia:' + botao.dataset.dia; renderizarFilaAcompanhamento(); }));
 }
