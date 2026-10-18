@@ -1,0 +1,30 @@
+import { PGlite } from '/workspace/BPO/node_modules/@electric-sql/pglite/dist/index.js';
+import { readFile } from 'node:fs/promises';
+import assert from 'node:assert/strict';
+const db=new PGlite();
+try{
+ await db.exec(`create role anon;create role authenticated;create role service_role bypassrls;
+ create table filiais(nome text unique);create table leads_inscricoes("pessoaIdentificador" text primary key,"pessoaNome" text,filial text,funil_agencia text,acompanhamento jsonb,lixeira_em timestamptz);
+ create table eventos(id bigint primary key,filial text,nome text,data date);create table evento_leads(id bigint primary key,evento_id bigint,"pessoaIdentificador" text,resposta_convite text,compareceu boolean,matriculado boolean);
+ grant select on leads_inscricoes,eventos,evento_leads to service_role;
+ insert into filiais values('Escola A'),('Escola B');
+ insert into leads_inscricoes values('A','Pessoa A','Escola A','Abordagem','{"apoio_escola":"cadastro","pedido_escola":"Conferir inscrição","nota":"SEGREDO INTERNO"}',null),('B','Pessoa B','Escola B','RSVP','{"apoio_escola":"presenca"}',null);
+ `);
+ const sql=await readFile(new URL('../migracao_painel_escola.sql',import.meta.url),'utf8');await db.exec(sql);await db.exec(sql);
+ await db.exec(`insert into acompanhamento_links_escola(filial,chave_hash,expira_em) values('Escola A','${'a'.repeat(64)}',now()+interval '1 day'),('Escola B','${'b'.repeat(64)}',now()+interval '1 day'),('Escola A','${'c'.repeat(64)}',now()-interval '1 day');`);
+ await db.exec('set role service_role');
+ const a=(await db.query(`select consultar_painel_escola('${'a'.repeat(64)}') as painel`)).rows[0].painel;
+ assert.equal(a.escola,'Escola A');assert.equal(a.total,1);assert.equal(a.itens[0].nome,'Pessoa A');assert.ok(!JSON.stringify(a).includes('SEGREDO INTERNO'));assert.ok(!JSON.stringify(a).includes('Pessoa B'));
+ await db.exec('reset role');
+ await db.exec(`insert into leads_inscricoes select 'extra-'||g,'Pessoa extra '||g,'Escola A','RSVP','{"apoio_escola":"presenca"}'::jsonb,null from generate_series(1,105) as g`);
+ await db.exec('set role service_role');
+ const pagina=(await db.query(`select consultar_painel_escola('${'a'.repeat(64)}') as painel`)).rows[0].painel;assert.equal(pagina.total,106);assert.equal(pagina.itens.length,50);
+ const busca=(await db.query(`select consultar_painel_escola('${'a'.repeat(64)}','Pessoa extra 105') as painel`)).rows[0].painel;assert.equal(busca.total,1);assert.equal(busca.itens[0].id,'extra-105');
+ for(const chave of ['c'.repeat(64),'d'.repeat(64)])assert.equal((await db.query(`select consultar_painel_escola('${chave}') as painel`)).rows[0].painel,null);
+ await db.exec('reset role');await db.exec('set role anon');
+ await assert.rejects(()=>db.query('select * from acompanhamento_links_escola'));
+ await assert.rejects(()=>db.query(`select consultar_painel_escola('${'a'.repeat(64)}')`));
+ await db.exec('reset role');await db.exec(`update acompanhamento_links_escola set revogado_em=now() where chave_hash='${'a'.repeat(64)}'`);
+ assert.equal((await db.query(`select consultar_painel_escola('${'a'.repeat(64)}') as painel`)).rows[0].painel,null);
+ console.log('PASS SQL: isolamento entre escolas, sem notas internas, acesso anônimo negado, link expirado/revogado recusado e migração repetível.');
+}finally{await db.close();}

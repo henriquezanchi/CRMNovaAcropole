@@ -1,0 +1,17 @@
+import {chromium} from '/workspace/BPO/node_modules/playwright/index.mjs';
+import {createServer} from 'node:http';
+import {readFile} from 'node:fs/promises';
+import assert from 'node:assert/strict';
+const server=createServer(async(req,res)=>{const p=new URL(req.url,'http://localhost').pathname;const arquivos={'/escola.html':'escola.html','/js/painel-escola.js':'js/painel-escola.js','/css/painel-escola.css':'css/painel-escola.css'};if(!arquivos[p]){res.writeHead(404).end();return;}res.setHeader('Content-Type',p.endsWith('.js')?'text/javascript':p.endsWith('.css')?'text/css':'text/html; charset=utf-8');res.end(await readFile(new URL('../'+arquivos[p],import.meta.url)));});
+await new Promise(r=>server.listen(0,'127.0.0.1',r));let browser;
+try{browser=await chromium.launch({executablePath:'/usr/bin/chromium',args:['--no-sandbox']});
+for(const width of [320,414,1365]){const page=await browser.newPage({viewport:{width,height:900}});const errors=[];page.on('pageerror',e=>errors.push(e.message));const origin='http://127.0.0.1:'+server.address().port;let chamadas=0;
+ await page.route('**/*',async route=>{const req=route.request();if(req.url().startsWith(origin+'/'))return route.continue();if(req.url().endsWith('/functions/v1/painel-escola')){
+ if(req.method()==='OPTIONS')return route.fulfill({status:204,headers:{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'content-type'}});
+ chamadas++;const q=req.postDataJSON();const todas=Array.from({length:105},(_,i)=>({nome:i===104?'Pessoa final':'Pessoa '+i,etapa:'RSVP',pedido:i===0?'<script>erro</script>':'Conferir presença',atividade:'Encontro',data_atividade:'2026-10-18',compareceu:null}));const filtradas=todas.filter(p=>!q.busca||p.nome.toLowerCase().includes(q.busca.toLowerCase()));return route.fulfill({status:200,headers:{'Content-Type':'application/json','Access-Control-Allow-Origin':origin},body:JSON.stringify({escola:'Escola teste',total:filtradas.length,itens:filtradas.slice(q.inicio,q.inicio+50),consultado_em:'2026-10-18T12:00:00Z'})});}return route.abort();});
+ await page.goto(origin+'/escola.html#chave='+'a'.repeat(64));await page.getByText('105 pessoa(s) neste acompanhamento.',{exact:true}).waitFor();assert.equal(await page.locator('#pessoas article').count(),50);assert.equal(await page.locator('#pessoas script').count(),0);
+ await page.getByRole('button',{name:'Próxima',exact:true}).click();await page.getByText('51–100 de 105',{exact:true}).waitFor();
+ await page.getByRole('searchbox').fill('Pessoa final');await page.getByRole('searchbox').press('Enter');await page.getByText('1 pessoa(s) neste acompanhamento.',{exact:true}).waitFor();assert.equal(await page.locator('#pessoas h2').textContent(),'Pessoa final');assert.equal(await page.getByRole('button',{name:'Próxima',exact:true}).isDisabled(),true);
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+ const antes=chamadas;await page.goto(origin+'/escola.html');await page.getByText('Abra o link completo fornecido pela equipe da sua escola.',{exact:true}).waitFor();assert.equal(chamadas,antes);assert.deepEqual(errors,[]);await page.close();console.log('PASS painel escola '+width+'px: página real, busca além da primeira página, paginação, chave ausente e HTML escapado.');}
+}finally{await browser?.close();await new Promise(r=>server.close(r));}

@@ -2,6 +2,7 @@
 (function (raiz) {
     'use strict';
     const campos = {
+        apoio_escola: { nao: 'Sem pedido de apoio', presenca: 'Conferir presença', acolhimento: 'Acolher após visita', inscricao: 'Auxiliar inscrição', cadastro: 'Conferir cadastro', outro: 'Outro apoio combinado' },
         relacao: { desconhecida: 'A confirmar', interessado: 'Ainda não é aluno', visitante: 'Já visitou a escola', ativo: 'Aluno ativo', antigo: 'Antigo aluno' },
         inscricao: { nao_iniciada: 'Inscrição não iniciada', solicitada: 'Pessoa pediu inscrição', dados_pendentes: 'Faltam dados para conferir', aguardando_registro: 'Aguardando registro no sistema', conferida: 'Cadastro conferido na fonte informada' },
         fonte_registro: { desconhecida: 'Ainda não conferido', mercurio: 'Mercúrio', mercury: 'Mercury', escola: 'Responsável da escola' },
@@ -16,7 +17,7 @@
         const dado = valor && typeof valor === 'object' && !Array.isArray(valor) ? valor : {};
         const resultado = {};
         Object.keys(campos).forEach(chave => { resultado[chave] = Object.hasOwn(campos[chave], dado[chave]) ? dado[chave] : Object.keys(campos[chave])[0]; });
-        ['responsavel', 'proxima_em', 'pausa_ate', 'nota', 'atualizado_em', 'atualizado_por', 'referencia_registro', 'conferido_em'].forEach(chave => { resultado[chave] = typeof dado[chave] === 'string' ? dado[chave] : ''; });
+        ['responsavel', 'proxima_em', 'pausa_ate', 'nota', 'atualizado_em', 'atualizado_por', 'referencia_registro', 'conferido_em', 'pedido_escola'].forEach(chave => { resultado[chave] = typeof dado[chave] === 'string' ? dado[chave] : ''; });
         resultado.revisao = Number.isSafeInteger(dado.revisao) && dado.revisao >= 0 ? dado.revisao : 0;
         return resultado;
     }
@@ -55,6 +56,7 @@
         if (dado.proximo !== 'nenhum' && (!dado.responsavel.trim() || !dado.proxima_em)) throw new Error('Defina responsável e data do próximo passo.');
         if (dado.proxima_em && dado.proximo === 'nenhum') throw new Error('Escolha o próximo passo para essa data.');
         if (dado.contato === 'nao_contatar' && ['convidar', 'confirmar', 'retornar'].includes(dado.proximo)) throw new Error('Respeite o pedido de não contato.');
+        if (dado.pedido_escola.length > 300) throw new Error('Resuma o pedido visível para a escola em até 300 caracteres.');
         if (dado.referencia_registro.length > 160) throw new Error('Resuma a referência de conferência.');
         if (dado.conferido_em && !Number.isFinite(Date.parse(dado.conferido_em))) throw new Error('Data de conferência inválida.');
         if (dado.inscricao === 'conferida' && (dado.fonte_registro === 'desconhecida' || !dado.referencia_registro.trim() || !dado.conferido_em)) throw new Error('Informe fonte, referência e data da conferência.');

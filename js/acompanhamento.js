@@ -20,14 +20,15 @@ function renderizarAcompanhamento(lead) {
         <p>Registre o que a pessoa declarou. Silêncio não é recusa; simpatia não é confirmação.</p>
         ${!schemaPronto ? '<p role="status">Atualização do banco pendente. Os registros antigos continuam disponíveis.</p>' : ''}
         <form id="acompanhamentoForm"><fieldset ${!schemaPronto ? 'disabled' : ''}>
-        <div class="acompanhamento-grade">${['relacao', 'origem', 'entrada', 'intencao', 'contato', 'experiencia', 'inscricao', 'fonte_registro', 'proximo'].map(chave => `<label>${escapeHTML(({ relacao: 'Relação atual com a escola', origem: 'Canal de origem', entrada: 'Forma de entrada', intencao: 'Intenção declarada', contato: 'Preferência de contato', experiencia: 'Experiência relatada', inscricao: 'Andamento da inscrição', fonte_registro: 'Onde o cadastro foi conferido', proximo: 'Próximo passo' })[chave])}<select name="${chave}">${acompanhamentoOpcoes(chave, dado[chave])}</select></label>`).join('')}
+        <div class="acompanhamento-grade">${['relacao', 'origem', 'entrada', 'intencao', 'contato', 'experiencia', 'inscricao', 'fonte_registro', 'apoio_escola', 'proximo'].map(chave => `<label>${escapeHTML(({ relacao: 'Relação atual com a escola', origem: 'Canal de origem', entrada: 'Forma de entrada', intencao: 'Intenção declarada', contato: 'Preferência de contato', experiencia: 'Experiência relatada', inscricao: 'Andamento da inscrição', fonte_registro: 'Onde o cadastro foi conferido', apoio_escola: 'O que precisa de atenção da escola', proximo: 'Próximo passo' })[chave])}<select name="${chave}">${acompanhamentoOpcoes(chave, dado[chave])}</select></label>`).join('')}
         <label>Referência da conferência<input name="referencia_registro" maxlength="160" value="${escapeHTML(dado.referencia_registro)}" placeholder="Identificação do registro ou responsável — sem documentos pessoais"></label>
         <label>Quando foi conferido<input name="conferido_em" type="datetime-local" value="${acompanhamentoDataLocal(dado.conferido_em)}"></label>
         <label>Responsável<input name="responsavel" maxlength="120" value="${escapeHTML(dado.responsavel)}" autocomplete="off"></label>
         <label>Quando retornar<input name="proxima_em" type="datetime-local" value="${acompanhamentoDataLocal(dado.proxima_em)}"></label>
         <label>Pausa até (opcional)<input name="pausa_ate" type="datetime-local" value="${acompanhamentoDataLocal(dado.pausa_ate)}"></label></div>
         <p>Cadastro conferido não comprova primeira contribuição recebida. Esta ficha organiza o acompanhamento; não faz lançamentos no Mercúrio ou Mercury.</p>
-        <label>Contexto breve — sem informações íntimas<textarea name="nota" maxlength="600">${escapeHTML(dado.nota)}</textarea></label>
+        <label>Pedido visível no painel da escola<textarea name="pedido_escola" maxlength="300" placeholder="Somente o necessário para o responsável local ajudar">${escapeHTML(dado.pedido_escola)}</textarea></label>
+        <label>Contexto interno breve — sem informações íntimas<textarea name="nota" maxlength="600">${escapeHTML(dado.nota)}</textarea></label>
         <button type="submit" class="btn-mini btn-primary-mini">Salvar acompanhamento</button>
         <span id="acompanhamentoResultado" role="status" aria-live="polite"></span></fieldset></form>
         <small>${dado.atualizado_em ? 'Último registro: ' + escapeHTML(new Date(dado.atualizado_em).toLocaleString('pt-BR')) + ' · ' + escapeHTML(dado.atualizado_por) : 'Sem acompanhamento registrado.'}</small>
