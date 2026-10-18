@@ -3219,6 +3219,8 @@ function atualizarRelatorios() {
 
     renderizarRelatorioTemasEvento();
     renderizarRelatorioMatriculasPorMes();
+    if (typeof renderizarCobrancaMensal === 'function') renderizarCobrancaMensal();
+    if (typeof renderizarCiclosTurma === 'function') renderizarCiclosTurma();
     if (typeof renderizarConciliacaoMercurio === 'function') renderizarConciliacaoMercurio();
     renderizarComissaoSdrTodasFiliais();
     if (typeof renderizarCanalOrigemMercurio === 'function') renderizarCanalOrigemMercurio();

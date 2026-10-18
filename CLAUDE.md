@@ -57,6 +57,9 @@ js/visao-geral.js    → módulo separado: "Agenda do Dia — Todas as Filiais",
 js/relatorios-whatsapp.js → módulo separado: 3 relatórios de WhatsApp (SLA de 1ª resposta,
                         desempenho por atendente, volume por período) + "Resumo do Trabalho"
                         na tela, todos na aba Relatórios — ver "Segunda rodada de incrementos"
+js/cobranca-ciclos.js → módulo separado: Ciclos de Abertura de Turma (por filial) + Cobrança
+                        Mensal do Módulo 2 (revisar rascunho, tirar aluno, fechar, Excel) —
+                        ver seção "Cobrança mensal por ciclo de abertura de turma"
 js/tarefas.js        → módulo separado: aba "Tarefas" (quem faz o quê, até quando) +
                         "Gerenciar Equipes" — responsável de uma tarefa é um usuário OU uma
                         equipe, e o status sincroniza nos 2 sentidos com a coluna do Kanban
@@ -10616,3 +10619,48 @@ chama as 2 sincronizações direto (sem GitHub, sem poll).
 Ao testar pelo terminal, mande o corpo JSON por arquivo em UTF-8
 (`--data-binary @arquivo`): o Git Bash corrompe o "â" de "Goiânia" e a
 function responde "filial não mapeada".
+
+## Cobrança mensal por ciclo de abertura de turma (2026-10-18)
+
+Pedido do usuário: a cobrança é mensal, então o Fixo não precisa mudar toda
+noite; quer a cobrança disparada pelo CRM com dado real no dia 10 (ou
+próximo dia útil), contando as matrículas das turmas do ciclo atendido, e um
+lugar pra definir os ciclos de abertura (só a data de ingresso do Mercúrio
+deixava o número final confuso). Decisões dele: rascunho vai pro WhatsApp
+dele pra revisar (nada vai direto pra escola); ciclo é período POR FILIAL;
+quem entra numa turma já aberta conta no ciclo da turma, e se entrar depois
+da cobrança vai pra seguinte; Membros congelados no dia da cobrança.
+
+- `migracao_cobranca_ciclos.sql` (JÁ RODADA): `ciclos_turma` (filial, nome,
+  início, fim), `cobrancas_mensais` (1 por filial por mês; rascunho/fechada;
+  membros congelados, fixo, comissão, total, ciclos cobertos, investigar),
+  `cobranca_itens` (UNIQUE matrícula+unidade — ninguém é cobrado 2x; aluno
+  desmarcado na revisão fica registrado como fora e não volta). Cron
+  `cobranca-mensal-diario` 09:00 Brasília.
+- **Edge Function `cobranca-mensal`**: calcula o dia (10, ou próximo dia útil
+  sem fim de semana/feriado nacional, incluindo Carnaval/Sexta Santa/Corpus
+  Christi pela Páscoa); fora do dia responde `naoEhDia`. No dia: por filial
+  com `mercurio_unidade`, usa `mercurio_alunos` que contam pra remuneração —
+  branco pela turma de abertura (`turma_competencia`), só se o ciclo da turma
+  já terminou antes do corte; complementar/sem turma de abertura pela data
+  individual entre a cobrança anterior FECHADA e esta (na 1ª, desde o início
+  do 1º ciclo da filial). Investigar entra como lista, não cobra. Fixo pela
+  faixa de `membros_mercurio` no momento (override `valor_fixo_mensal_agencia`),
+  comissão = matrículas × `valor_mensalidade` × 30%, total zerado se
+  `modulo2_contratado=false`. Rascunho do mesmo mês é recalculado (exclusões
+  mantidas); rascunho de outro mês é descartado; fechada nunca muda. Manda o
+  resumo pelo `lembrete-scraper`. Corpo: `{forcar, data, filial, semAviso}`.
+- **Telas** (aba Relatórios): "Cobrança Mensal — Módulo 2" (próxima data,
+  Gerar prévia agora = forcar+semAviso, tabela por filial, alunos com
+  checkbox pra tirar com motivo, Fechar, Excel) e "Ciclos de Abertura de
+  Turma" (por filial; mostra as turmas PP/N1 que caem em cada ciclo e avisa
+  turma recente fora de qualquer ciclo — essas não entram na cobrança).
+  "Comissão do SDR" virou "(prévia ao vivo)".
+- **Testado** com ciclos de teste simulando 10/11/2026: Goiânia II 12
+  matrículas (bate com a conciliação de outubro), Garavelo 12 (5 da
+  XESOSTRIS-I + 7 da AMON-I) e 2 pra investigar; Fixo congelado certo.
+  Dados de teste apagados — **nenhum ciclo real cadastrado ainda**, sem
+  ciclo a filial só recebe o Fixo. Tela não clicada (sem Playwright).
+- "Como conheceu a escola": no Mercúrio é o campo **"Meio pelo qual inscreveu
+  no Nível 1"** da tela HISTÓRICO da ficha (`<select name="cmbmid">`). O campo
+  "Origem" logo abaixo é outra coisa (`cad_origem`: N1/JN/PA/"??").

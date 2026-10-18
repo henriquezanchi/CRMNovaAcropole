@@ -478,14 +478,26 @@
                 </div>
 
                 <div style="margin-top:30px;">
+                    <h3 style="font-size:16px; color:var(--na-green-dark);">Cobrança Mensal — Módulo 2</h3>
+                    <p class="report-sub">No dia 10 (ou no próximo dia útil) o CRM monta o rascunho com dados reais do Mercúrio e manda o resumo no seu WhatsApp. Revise aqui, tire quem não deve entrar e feche.</p>
+                    <div id="relatorioCobrancaMensal"></div>
+                </div>
+
+                <div style="margin-top:30px;">
+                    <h3 style="font-size:16px; color:var(--na-green-dark);">Ciclos de Abertura de Turma</h3>
+                    <p class="report-sub">Período de abertura de turmas de cada filial. É o que define quais matrículas entram em cada cobrança.</p>
+                    <div id="relatorioCiclosTurma"></div>
+                </div>
+
+                <div style="margin-top:30px;">
                     <h3 style="font-size:16px; color:var(--na-green-dark);">Conciliação de Matrículas por Turma — Mercúrio</h3>
                     <p class="report-sub">Compara o que está no banco do Mercúrio (atualizado toda noite) com o que a escola informou à mão. É a base da cobrança do mês.</p>
                     <div id="relatorioConciliacaoMercurio"></div>
                 </div>
 
                 <div style="margin-top:30px;">
-                    <h3 style="font-size:16px; color:var(--na-green-dark);">Comissão do SDR — Todas as Filiais</h3>
-                    <p class="report-sub">Matrículas pela conciliação do Mercúrio (mesma regra da seção acima) × mensalidade × 30%, mais o fixo do Módulo 2, consolidado pra todas as filiais.</p>
+                    <h3 style="font-size:16px; color:var(--na-green-dark);">Comissão do SDR — Todas as Filiais (prévia ao vivo)</h3>
+                    <p class="report-sub">Acompanhamento por mês de matrícula, com os membros de hoje. O valor oficial a cobrar é o da Cobrança Mensal, acima.</p>
                     <div id="relatorioComissaoSdrTodasFiliais"></div>
                 </div>
 
@@ -1839,6 +1851,7 @@
     <!-- 3f2. Agenda do Dia — Todas as Filiais (topo da aba Visão Geral/Dashboard) -->
     <script src="js/visao-geral.js"></script>
     <script src="js/conciliacao-mercurio.js"></script>
+    <script src="js/cobranca-ciclos.js"></script>
     <!-- 3f2b. Relatórios de WhatsApp (SLA, desempenho por atendente, volume) + Resumo do Trabalho na tela -->
     <script src="js/relatorios-whatsapp.js"></script>
     <!-- 3f3. Contas de usuário (login nominal + permissão por módulo) -->
