@@ -10585,8 +10585,13 @@ ingresso, desfaria a data de reingresso).
   últimos 6 meses, por filial — lista de retenção.
 - **Relatórios → Matrículas por Canal de Origem**: últimos 6 meses por
   `cad_midia_ingresso`. O banco só tem o número; o significado é
-  preenchido na própria tabela (`mercurio_midia_ingresso`). **Pendente:
-  perguntar ao responsável o que cada código significa.**
+  preenchido na própria tabela (`mercurio_midia_ingresso`). **Preenchido em
+  2026-10-18** com as 16 opções do `<select name="cmbmid">` do Mercúrio
+  (0 Não informado, 5 Aula de apresentação do provacionismo, 10 Boletim
+  Eletrônico, 15 Contato pessoal, 20 Relações públicas, 25 Internet - página
+  web, 30 Internet - propaganda paga, 35 Redes sociais, 40 Pôsteres, 45
+  Folhetos, 50 Painéis/cartazes de porta, 55 Outdoor, 60 Jornal, 65 Rádio,
+  70 TV, 75 Outros).
 
 ### Scraper antigo do Mercúrio DESLIGADO (2026-10-18)
 
