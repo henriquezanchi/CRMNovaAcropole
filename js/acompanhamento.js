@@ -16,8 +16,9 @@ function renderizarAcompanhamento(lead) {
     if (!el) return;
     const dado = AcompanhamentoModelo.normalizar(lead.acompanhamento);
     const schemaPronto = Object.hasOwn(lead, 'acompanhamento');
+    const sinal = AcompanhamentoModelo.proximidade(lead);
     el.innerHTML = `<details open><summary><strong>Acolhimento e próximo passo</strong></summary>
-        <p>Registre o que a pessoa declarou. Silêncio não é recusa; simpatia não é confirmação.</p>
+        <p id="acompanhamentoSinalAtual"><strong>${escapeHTML(sinal.rotulo)}</strong> · ${escapeHTML(sinal.motivo)}</p><p>Registre o que a pessoa declarou. Silêncio não é recusa; simpatia não é confirmação. Conte no contexto breve qual fala sustenta a intenção, sem copiar dados íntimos.</p>
         ${!schemaPronto ? '<p role="status">Atualização do banco pendente. Os registros antigos continuam disponíveis.</p>' : ''}
         <form id="acompanhamentoForm"><fieldset ${!schemaPronto ? 'disabled' : ''}>
         <div class="acompanhamento-grade">${['relacao', 'origem', 'entrada', 'intencao', 'contato', 'experiencia', 'inscricao', 'fonte_registro', 'apoio_escola', 'proximo'].map(chave => `<label>${escapeHTML(({ relacao: 'Relação atual com a escola', origem: 'Canal de origem', entrada: 'Forma de entrada', intencao: 'Intenção declarada', contato: 'Preferência de contato', experiencia: 'Experiência relatada', inscricao: 'Andamento da inscrição', fonte_registro: 'Onde o cadastro foi conferido', apoio_escola: 'O que precisa de atenção da escola', proximo: 'Próximo passo' })[chave])}<select name="${chave}">${acompanhamentoOpcoes(chave, dado[chave])}</select></label>`).join('')}
@@ -80,6 +81,11 @@ async function salvarAcompanhamento(lead) {
         acompanhamentoFila = acompanhamentoFila.map(item => String(item.pessoaIdentificador) === String(lead.pessoaIdentificador) ? { ...item, acompanhamento: lead.acompanhamento } : item);
         if (typeof registrarLogAtividade === 'function') registrarLogAtividade('acompanhamento_atualizado', { pessoaIds: [lead.pessoaIdentificador], detalhes: { revisao: dado.revisao } });
         retorno.textContent = 'Acompanhamento salvo.';
+        if (formulario.isConnected) {
+            const sinal = AcompanhamentoModelo.proximidade(lead);
+            document.getElementById('acompanhamentoSinalAtual').innerHTML = `<strong>${escapeHTML(sinal.rotulo)}</strong> · ${escapeHTML(sinal.motivo)}`;
+        }
+        if (typeof renderizarCards === 'function') renderizarCards();
         if (formulario.isConnected) renderizarSugestaoConversa(dado);
         if (document.getElementById('acompanhamentoLista')) renderizarFilaAcompanhamento();
     } catch (erro) { retorno.textContent = erro.message; }
@@ -93,12 +99,12 @@ async function carregarFilaAcompanhamento() {
     acompanhamentoFila = [];
     if (!filial) { el.textContent = 'Selecione uma escola.'; return; }
     el.textContent = 'Conferindo próximos passos…';
-    ['acompanhamentoResumo', 'acompanhamentoContagem'].forEach(id => { const elemento = document.getElementById(id); if (elemento) elemento.textContent = ''; });
+    ['acompanhamentoResumo', 'acompanhamentoContagem', 'sinaisMatricula'].forEach(id => { const elemento = document.getElementById(id); if (elemento) elemento.textContent = ''; });
     try {
         const linhas = [];
         for (let inicio = 0; ; inicio += 1000) {
             const { data, error } = await window.supabaseClient.from(NOME_TABELA)
-                .select('pessoaIdentificador,pessoaNome,filial,acompanhamento').eq('filial', filial).is('lixeira_em', null)
+                .select('pessoaIdentificador,pessoaNome,filial,acompanhamento,tags,funil_agencia').eq('filial', filial).is('lixeira_em', null)
                 .order('pessoaIdentificador').range(inicio, inicio + 999);
             if (consulta !== acompanhamentoConsulta || filial !== filialAtual) return;
             if (error) throw new Error('Acompanhamento indisponível. Verifique a atualização do banco. Nenhuma lista parcial será apresentada.');
@@ -120,11 +126,14 @@ function renderizarFilaAcompanhamento() {
     const resumo = AcompanhamentoModelo.resumir(acompanhamentoFila);
     const indicador = document.getElementById('acompanhamentoResumo');
     if (indicador) indicador.textContent = `${resumo.atencao} retorno(s)/pedido(s) de atenção · ${resumo.inscricoes} inscrição(ões) em acompanhamento · ${resumo.semResponsavel} sem responsável · ${resumo.preferenciaPendente} preferências a conferir. Categorias podem se sobrepor.`;
+    renderizarSinaisMatricula();
     const contagem = document.getElementById('acompanhamentoContagem');
     contagem.textContent = `${linhas.length} contato(s). Exibidos até 100; refine pela busca, origem ou responsável. Não há envio automático.`;
     el.innerHTML = linhas.slice(0, 100).map(({ lead, prioridade }) => {
         const dado = AcompanhamentoModelo.normalizar(lead.acompanhamento);
-        return `<article><strong>${escapeHTML(lead.pessoaNome || 'Sem nome')}</strong><span>${escapeHTML(prioridade.motivo)}</span><small>${escapeHTML(AcompanhamentoModelo.campos.origem[dado.origem])} · ${escapeHTML(dado.responsavel || 'Sem responsável')} · ${dado.proxima_em ? escapeHTML(new Date(dado.proxima_em).toLocaleString('pt-BR')) : 'Sem data'}</small><button type="button" class="btn-mini btn-secondary-mini" data-acompanhamento-id="${escapeHTML(String(lead.pessoaIdentificador))}">Abrir atendimento</button></article>`;
+        const sinal = AcompanhamentoModelo.proximidade(lead);
+        const preferencia = AcompanhamentoModelo.impedimento(dado);
+        return `<article><strong>${escapeHTML(lead.pessoaNome || 'Sem nome')}</strong><span class="sinal-matricula sinal-${sinal.grupo}">${escapeHTML(sinal.rotulo)}</span><span>${escapeHTML(sinal.motivo)}</span><small>Próximo cuidado: ${escapeHTML(sinal.acao)}</small><small>Atendimento: ${escapeHTML(prioridade.motivo)}${preferencia ? ' · ' + escapeHTML(preferencia) : ''}</small><small>${dado.atualizado_em ? 'Registro de ' + escapeHTML(new Date(dado.atualizado_em).toLocaleDateString('pt-BR')) : 'Sem data de atualização da intenção'}</small><small>${escapeHTML(AcompanhamentoModelo.campos.origem[dado.origem])} · ${escapeHTML(dado.responsavel || 'Sem responsável')} · ${dado.proxima_em ? escapeHTML(new Date(dado.proxima_em).toLocaleString('pt-BR')) : 'Sem data'}</small><button type="button" class="btn-mini btn-secondary-mini" data-acompanhamento-id="${escapeHTML(String(lead.pessoaIdentificador))}">Abrir atendimento</button></article>`;
     }).join('') || '<p>Nenhum contato neste filtro.</p>';
     el.querySelectorAll('[data-acompanhamento-id]').forEach(botao => botao.addEventListener('click', () => abrirAcompanhamentoDaFila(botao.dataset.acompanhamentoId)));
 }
@@ -136,4 +145,22 @@ async function abrirAcompanhamentoDaFila(id) {
     const indice = leadsAtuais.findIndex(lead => String(lead.pessoaIdentificador) === String(id));
     if (indice < 0) leadsAtuais.push(data); else leadsAtuais[indice] = data;
     abrirGaveta(id);
+}
+
+function mostrarProximosDaMatricula(filtro = 'proximos') {
+    document.getElementById('acompanhamentoFiltro').value = filtro;
+    document.getElementById('painelInteresseMatricula').open = true;
+    carregarFilaAcompanhamento();
+}
+function renderizarSinaisMatricula() {
+    const el = document.getElementById('sinaisMatricula');
+    if (!el) return;
+    const grupos = [['proximos', 'Mais próximos da matrícula'], ['sinal:participar', 'Querem participar'], ['sinal:conhecer', 'Querem conhecer'], ['sinal:qualificar', 'Interesse a confirmar'], ['sinal:momento', 'Pausa / não contatar'], ['sinal:conferidos', 'Cadastros conferidos']];
+    const contagens = {};
+    acompanhamentoFila.forEach(lead => { const grupo = AcompanhamentoModelo.proximidade(lead).grupo; contagens[grupo] = (contagens[grupo] || 0) + 1; });
+    el.innerHTML = grupos.map(([filtro, titulo]) => {
+        const total = filtro === 'proximos' ? ['inscricao','decididos','visita'].reduce((soma, grupo) => soma + (contagens[grupo] || 0), 0) : contagens[filtro.slice(6)] || 0;
+        return `<button type="button" class="sinal-resumo" data-sinal-filtro="${filtro}" aria-pressed="${document.getElementById('acompanhamentoFiltro').value === filtro}"><strong>${total}</strong><span>${titulo}</span></button>`;
+    }).join('');
+    el.querySelectorAll('[data-sinal-filtro]').forEach(botao => botao.addEventListener('click', () => { document.getElementById('acompanhamentoFiltro').value = botao.dataset.sinalFiltro; renderizarFilaAcompanhamento(); }));
 }

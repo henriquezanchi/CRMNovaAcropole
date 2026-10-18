@@ -228,7 +228,7 @@ function trocarFilial(novaFilial) {
 // 1. CARREGAMENTO DO BANCO (Busca os dados)
 // ==========================================
 async function carregarLeads(filial, resetar = true) {
-    if (resetar && typeof acompanhamentoFila !== 'undefined') { acompanhamentoFila = []; acompanhamentoConsulta++; const lista = document.getElementById('acompanhamentoLista'); if (lista) lista.textContent = 'Atualize para consultar a escola selecionada.'; ['acompanhamentoResumo','acompanhamentoContagem'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = ''; }); }
+    if (resetar && typeof acompanhamentoFila !== 'undefined') { acompanhamentoFila = []; acompanhamentoConsulta++; const lista = document.getElementById('acompanhamentoLista'); if (lista) lista.textContent = 'Atualize para consultar a escola selecionada.'; ['acompanhamentoResumo','acompanhamentoContagem','sinaisMatricula'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = ''; }); }
     filialAtual = filial;
     if (resetar) { versaoCargaLeads++; baseFiltravelCompleta = false; promessaBaseFiltravel = null; }
     const versao = versaoCargaLeads;
@@ -789,6 +789,10 @@ function renderizarCards() {
         const tagsLimpo = tagsArray.map(t => t.trim());
         tagsLimpo.filter(Boolean).forEach(tag => tagsPorColuna[colunaAlvo]?.add(tag));
         let badgesHTML = montarTagsDoCartao(tagsArray);
+        if (typeof AcompanhamentoModelo !== 'undefined') {
+            const sinal = AcompanhamentoModelo.proximidade(lead);
+            if (['inscricao', 'decididos', 'visita'].includes(sinal.grupo)) badgesHTML += `<span class="tag sinal-matricula sinal-${sinal.grupo}" title="${escapeHTML(sinal.motivo)}">${escapeHTML(sinal.rotulo)}</span>`;
+        }
         if (!tagsLimpo.some(tag => ['Ativo','Aluno Ativo','Inativo','Ex-Aluno (Inativo)'].includes(tag))) {
             const statusRede = typeof buscarStatusRedeAtivosInativos === 'function' ? buscarStatusRedeAtivosInativos(lead) : null;
             if (statusRede && statusRede.filial !== lead.filial) badgesHTML += `<span class="tag tag-info" title="Situação em outra unidade">${escapeHTML(statusRede.status)} · ${escapeHTML(statusRede.filial)}</span>`;

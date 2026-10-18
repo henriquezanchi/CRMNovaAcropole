@@ -47,6 +47,33 @@
         if (dado.intencao === 'conhecer') return { nivel: 3, motivo: 'Quer conhecer a escola', campanha: true };
         return { nivel: 4, motivo: 'Conferir contexto e interesse', campanha: false };
     }
+    // Proximidade é evidência registrada, nunca uma probabilidade prevista.
+    function proximidade(lead, agora = Date.now()) {
+        const dado = normalizar(lead.acompanhamento);
+        let tags = [];
+        try { tags = Array.isArray(lead.tags) ? lead.tags : JSON.parse(lead.tags || '[]'); } catch (_) {}
+        if (!Array.isArray(tags)) tags = [];
+        const resultado = (grupo, ordem, rotulo, motivo, acao) => ({ grupo, ordem, rotulo, motivo, acao });
+        if (dado.inscricao === 'conferida' && dado.fonte_registro !== 'desconhecida' && dado.referencia_registro.trim() && Number.isFinite(Date.parse(dado.conferido_em)))
+            return resultado('conferidos', 9, 'Cadastro conferido', 'Há fonte, referência e data de conferência.', 'Acompanhar o acolhimento como aluno; cadastro não comprova pagamento.');
+        if (dado.relacao === 'ativo' || tags.some(t => ['Ativo', 'Aluno Ativo'].includes(t)) || lead.funil_agencia === 'Matriculados')
+            return resultado('fora', 9, 'Já indicado como aluno', 'Relação, tag ou coluna informa que já é aluno.', 'Conferir o cadastro na fonte oficial, sem nova abordagem de captação.');
+        if (dado.contato === 'nao_contatar' || tags.includes('Não Contatar'))
+            return resultado('momento', 8, 'Não contatar', 'Há um pedido de não contato registrado.', 'Respeitar a preferência; verificar pendências apenas internamente.');
+        if (dado.contato === 'pausado' || ['nao', 'depois'].includes(dado.intencao))
+            return resultado('momento', 8, 'Respeitar o momento', dado.contato === 'pausado' ? 'Contato pausado.' : campos.intencao[dado.intencao], 'Retomar somente conforme a combinação registrada.');
+        if (['solicitada', 'dados_pendentes', 'aguardando_registro'].includes(dado.inscricao))
+            return resultado('inscricao', 0, 'Inscrição em andamento', campos.inscricao[dado.inscricao], dado.inscricao === 'aguardando_registro' ? 'Conferir o registro com a escola ou no sistema.' : 'Conferir o que falta para concluir, sem repetir pedidos de dados.');
+        if (dado.intencao === 'inscrever')
+            return resultado('decididos', 1, 'Quer se inscrever', 'A intenção de matrícula foi registrada pela equipe.', 'Ajudar com dúvidas e próximos passos da inscrição.');
+        if (dado.relacao === 'visitante' && dado.experiencia === 'positiva')
+            return resultado('visita', 2, 'Visitou e relatou boa experiência', 'Visita e relato positivo registrados; ainda sem decisão de matrícula.', 'Ouvir se deseja continuar e quais dúvidas ficaram.');
+        if (dado.intencao === 'participar')
+            return resultado('participar', 3, 'Quer participar', 'Interesse em uma atividade com data definida registrado.', 'Conferir a confirmação, a presença e depois ouvir a experiência.');
+        if (dado.intencao === 'conhecer')
+            return resultado('conhecer', 4, 'Quer conhecer', 'Interesse em conhecer a escola registrado.', 'Conversar sobre uma oportunidade adequada, sem pressa.');
+        return resultado('qualificar', 5, 'Interesse a confirmar', dado.relacao === 'visitante' ? 'Já visitou; falta registrar a intenção atual.' : 'Ainda não há intenção atual registrada.', 'Conferir a conversa e registrar o que a pessoa realmente declarou.');
+    }
     function validar(valor) {
         if (!valor || typeof valor !== 'object' || Array.isArray(valor)) throw new Error('Registro inválido.');
         Object.keys(campos).forEach(chave => { if (!Object.hasOwn(campos[chave], valor[chave])) throw new Error('Escolha uma opção válida para ' + chave + '.'); });
@@ -73,12 +100,15 @@
             if (busca && !textoBusca([item.lead.pessoaNome, item.lead.pessoaIdentificador, dado.responsavel].join(' ')).includes(busca)) return false;
             if (opcoes.somenteMeus && (!responsavel || textoBusca(dado.responsavel) !== responsavel)) return false;
             if (filtro === 'todos') return true;
+            const sinal = proximidade(item.lead, agora);
+            if (filtro === 'proximos') return ['inscricao', 'decididos', 'visita'].includes(sinal.grupo);
+            if (filtro.startsWith('sinal:')) return sinal.grupo === filtro.slice(6);
             if (filtro === 'retornos') return item.prioridade.nivel <= 1;
             if (filtro === 'restritos') return item.prioridade.nivel >= 8;
             if (filtro === 'inscricoes') return ['solicitada', 'dados_pendentes', 'aguardando_registro'].includes(dado.inscricao);
             if (filtro === 'sem_responsavel') return !dado.responsavel.trim();
             return dado.origem === filtro;
-        }).sort((a, b) => a.prioridade.nivel - b.prioridade.nivel || (a.lead.acompanhamento?.proxima_em || '9999').localeCompare(b.lead.acompanhamento?.proxima_em || '9999') || String(a.lead.pessoaIdentificador).localeCompare(String(b.lead.pessoaIdentificador)));
+        }).sort((a, b) => (filtro === 'proximos' || filtro.startsWith('sinal:') ? proximidade(a.lead, agora).ordem - proximidade(b.lead, agora).ordem : 0) || a.prioridade.nivel - b.prioridade.nivel || (a.lead.acompanhamento?.proxima_em || '9999').localeCompare(b.lead.acompanhamento?.proxima_em || '9999') || String(a.lead.pessoaIdentificador).localeCompare(String(b.lead.pessoaIdentificador)));
     }
     function resumir(leads, agora = Date.now()) {
         const resultado = { total: leads.length, atencao: 0, inscricoes: 0, semResponsavel: 0, preferenciaPendente: 0, cadastrosConferidos: 0 };
@@ -107,5 +137,5 @@
         if (dado.origem === 'ulisses') return { orientacao: 'Identifique-se e confira o evento real antes de contextualizar. Inscrição antiga não comprova interesse atual.', texto: 'Olá! Aqui é da escola. Você já se inscreveu em uma de nossas atividades. Ainda faz sentido conversarmos sobre conhecer a proposta da escola?' };
         return { orientacao: 'Identifique quem fala e a escola; pergunte se a pessoa deseja conversar, sem afirmar que já houve interesse.', texto: 'Olá! Aqui é da escola. Podemos conversar sobre nossas atividades abertas? Se preferir não receber contato, pode nos avisar.' };
     }
-    raiz.AcompanhamentoModelo = Object.freeze({ campos, normalizar, validar, prioridade, impedimento, selecionarFila, resumir, sugerirConversa });
+    raiz.AcompanhamentoModelo = Object.freeze({ campos, normalizar, validar, prioridade, proximidade, impedimento, selecionarFila, resumir, sugerirConversa });
 })(globalThis);
