@@ -26,7 +26,7 @@ Verificação: 50 testes automatizados passaram, incluindo mesclagem com preserv
 
 ## Mesclagem por identidade oficial (implantada em 19/10/2026)
 
-Implementação em `migracao_mesclagem_inteligente.sql`, aplicada em produção após o responsável autorizar “implante”. Simulação: 70 grupos candidatos, com sobreposição. Execução: **62 grupos mesclados, 62 backups, nenhuma falha**, com reconsulta dos sobreviventes na fila existente. O agendamento permanente em `migracao_agendamento_mesclagem_inteligente.sql` **não foi aplicado**: a revisão automática exigiu autorização específica para executar lotes continuamente a cada dois minutos. Não há execução contínua da nova rotina enquanto essa autorização estiver pendente.
+Implementação em `migracao_mesclagem_inteligente.sql`, aplicada em produção após o responsável autorizar “implante”. Simulação: 70 grupos candidatos, com sobreposição. Execução: **62 grupos mesclados, 62 backups, nenhuma falha**, com reconsulta dos sobreviventes na fila existente. Após autorização explícita do responsável, o agendamento permanente em `migracao_agendamento_mesclagem_inteligente.sql` foi ativado (job 29): até 100 grupos pendentes por rodada, a cada dois minutos, mesmo com o CRM fechado. As proteções de identidade e os backups permanecem obrigatórios.
 
 Há dois caminhos novos, sempre na mesma filial e com nomes compatíveis em todos os pares:
 
@@ -45,4 +45,4 @@ Na conferência completa da Tatiane, o e-mail do cadastro sintético também apa
 
 Validação desta entrega: cinco arquivos de testes automatizados passaram (mesclagem nova/existente, importação, recuperação e identidade na rede), além do navegador em 390 e 1365 pixels. O teste isolado do planejador encontrou restrição de subprocessos no sandbox; o planejador não foi alterado. O linter global manteve três avisos preexistentes de escopo de callbacks em app.js/whatsapp.js.
 
-A publicação do painel também foi bloqueada pela revisão automática ao tentar enviar o commit à `main`; exige autorização explícita para push nessa branch. O banco já contém as funções e as 62 mesclagens autorizadas; a nova explicação visual permanece no commit local até a publicação ser autorizada.
+O responsável autorizou explicitamente a publicação na `main` e o agendamento permanente. O commit com o painel foi enviado à `main`; os motivos da recusa automática aparecem nos casos pendentes da auditoria.
