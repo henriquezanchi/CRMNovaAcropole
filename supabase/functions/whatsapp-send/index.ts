@@ -8,6 +8,7 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin, NOME_TABELA_LEADS, NOME_TABELA_MENSAGENS } from "../_shared/supabaseAdmin.ts";
 import { montarNumeroE164 } from "../_shared/telefone.ts";
 import { motivoBloqueioContato, motivoIntegridadeContato } from "../_shared/preferencia-contato.ts";
+import { motivoRascunhoAgente } from "../_shared/rascunho-agente.mjs";
 import { aplicarReacao } from "../_shared/reacoes.ts";
 
 const GRAPH_VERSION = Deno.env.get("WHATSAPP_GRAPH_API_VERSION") ?? "v21.0";
@@ -73,6 +74,7 @@ Deno.serve(async (req) => {
         // inclusive sugestão de IA revisada e enviada) — grava o nome
         // real de quem está logado.
         origemEnvio?: "manual" | "campanha";
+        rascunhoAgente?: {tipo:"geral"|"convite";id:number};
     };
     try {
         corpoReq = await req.json();
@@ -109,6 +111,10 @@ Deno.serve(async (req) => {
         if (integridade) return json({ok:false,erro:'cadastro_em_conferencia',detalhe:{message:integridade}},409);
         const bloqueioContato = motivoBloqueioContato(lead.acompanhamento, origemEnvio === 'campanha' || tipo === 'template');
         if (bloqueioContato && tipo !== 'reacao') return json({ ok: false, erro: 'preferencia_contato', detalhe: { message: bloqueioContato } }, 409);
+        if(corpoReq.rascunhoAgente){
+            const motivo=await motivoRascunhoAgente(supabaseAdmin,corpoReq.rascunhoAgente,pessoaIdentificador,lead.filial,lead);
+            if(motivo)return json({ok:false,erro:'rascunho_desatualizado',detalhe:{message:motivo}},409);
+        }
         numeroE164 = montarNumeroE164(lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero);
         if (!numeroE164) return json({ ok: false, erro: "lead_sem_telefone" }, 422);
         filial = lead.filial;

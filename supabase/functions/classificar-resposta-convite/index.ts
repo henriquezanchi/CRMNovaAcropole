@@ -27,6 +27,7 @@ import { buscarExemplosEstilo } from "../_shared/exemplosEstilo.ts";
 import { buscarListaFiliais, linkMapsDaFilial } from "../_shared/filiaisInfo.ts";
 import { montarTabelaDiasSemana, adicionarMeses } from "../_shared/calendario.ts";
 import { buscarPersonaAtendente } from "../_shared/persona.ts";
+import { prepararAgente } from "../_shared/agentes-crm.ts";
 import { chamarClaude } from "../_shared/anthropic.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
@@ -297,14 +298,19 @@ function aplicarLembretePadraoNaoPodeIrSemPrazo(resultado: { categoria: string; 
     }
 }
 
-async function classificarUma(item: Candidata, historico: string, dados: DadosEvento, exemplos: string, hojeISO: string, persona: string): Promise<{ categoria: string; sugestao_resposta: string | null; lembreteData: string | null; lembreteMotivo: string | null; debugBruto?: string; debugErro?: string }> {
+async function classificarUma(item: Candidata, historico: string, dados: DadosEvento, exemplos: string, hojeISO: string, persona: string): Promise<{ agente?: any; categoria: string; sugestao_resposta: string | null; lembreteData: string | null; lembreteMotivo: string | null; debugBruto?: string; debugErro?: string }> {
+    let preparo;
+    try { preparo = await prepararAgente(item.pessoaIdentificador,null,item.mensagem_id); }
+    catch { return {categoria:'ambiguo',sugestao_resposta:null,lembreteData:null,lembreteMotivo:null,debugErro:'qualificacao_indisponivel'}; }
+    if(preparo.plano.bloqueado)return {agente:preparo.plano,categoria:'ambiguo',sugestao_resposta:null,lembreteData:null,lembreteMotivo:null};
+    historico = preparo.historico;
     const resultado = await chamarClaude({
         apiKey: ANTHROPIC_API_KEY,
         modelo: MODELO,
-        blocoCacheavel: montarPromptCacheavel(exemplos, hojeISO),
+        blocoCacheavel: montarPromptCacheavel(exemplos, hojeISO) + "\n" + preparo.instrucoes + "\nSe o pedido atual pertence a outra etapa, categoria=ambiguo; o rascunho deve atender a missão do especialista, sem forçar resposta sobre o convite antigo.",
         blocoDinamico: montarPromptDinamico(item, historico, dados, persona),
         maxTokens: 500,
-        functionName: "classificar-resposta-convite",
+        functionName: "agente-crm-" + preparo.plano.agente,
     });
     if (resultado.erro || !resultado.texto) {
         // JSON malformado, rede fora, etc — nunca trava a rotina, cai no
@@ -315,12 +321,12 @@ async function classificarUma(item: Candidata, historico: string, dados: DadosEv
         const bruto = resultado.texto;
         const texto = bruto.trim().replace(/^```(json)?/i, "").replace(/```$/, "").trim();
         const parsed = JSON.parse(texto);
-        const categoria = CATEGORIAS_VALIDAS.includes(parsed?.categoria) ? parsed.categoria : "ambiguo";
+        const categoria = preparo.plano.agente === "eventos" && CATEGORIAS_VALIDAS.includes(parsed?.categoria) ? parsed.categoria : "ambiguo";
         const sugestao = typeof parsed?.sugestao_resposta === "string" && parsed.sugestao_resposta.trim() ? parsed.sugestao_resposta.trim() : null;
         const lembrete = parsed?.lembrete_sugerido;
         const lembreteData = lembrete && typeof lembrete.data === "string" && /^\d{4}-\d{2}-\d{2}$/.test(lembrete.data) ? lembrete.data : null;
         const lembreteMotivo = lembreteData && typeof lembrete.motivo === "string" && lembrete.motivo.trim() ? lembrete.motivo.trim() : null;
-        return { categoria, sugestao_resposta: categoria === "ambiguo" ? null : sugestao, lembreteData, lembreteMotivo: lembreteData ? lembreteMotivo : null, debugBruto: bruto };
+        return { agente:preparo.plano, categoria, sugestao_resposta: preparo.plano.agente === "eventos" && categoria === "ambiguo" ? null : sugestao, lembreteData, lembreteMotivo: lembreteData ? lembreteMotivo : null, debugBruto: bruto };
     } catch (e) {
         return { categoria: "ambiguo", sugestao_resposta: null, lembreteData: null, lembreteMotivo: null, debugErro: String(e) };
     }
@@ -360,7 +366,7 @@ Deno.serve(async (req) => {
     const url = new URL(req.url);
     const modoDebug = url.searchParams.get("debug") === "1";
 
-    const { data: candidatas, error } = await supabaseAdmin.rpc("mensagens_candidatas_classificacao_convite", { p_limite: modoDebug ? 3 : 30 });
+    const { data: candidatas, error } = await supabaseAdmin.rpc("mensagens_candidatas_classificacao_convite", { p_limite: modoDebug ? 3 : 8 });
     if (error) return json({ ok: false, erro: "falha_buscar_candidatas", detalhe: error.message }, 500);
     if (!candidatas || candidatas.length === 0) return json({ ok: true, processadas: 0 });
 
@@ -403,19 +409,22 @@ Deno.serve(async (req) => {
         }
         aplicarLembretePadraoNaoPodeIrSemPrazo(resultado, hojeISO);
 
-        const { error: erroInsert } = await supabaseAdmin.from("classificacoes_resposta_convite").insert({
-            pessoaIdentificador: item.pessoaIdentificador,
+        const {data:registrado,error:erroInsert} = await supabaseAdmin.rpc("registrar_rascunho_agente", {
+            p_tipo:"convite",p_pessoa:item.pessoaIdentificador,p_mensagem:item.mensagem_id,
+            p_dados:{
             evento_id: item.evento_id,
-            mensagem_origem_id: item.mensagem_id,
             categoria: resultado.categoria,
             sugestao_resposta: resultado.sugestao_resposta,
+            agente_ia: resultado.agente,
             lembrete_sugerido_data: resultado.lembreteData,
             lembrete_sugerido_motivo: resultado.lembreteMotivo,
+        },
         });
         // unique(mensagem_origem_id) — se 2 execuções do cron se
         // sobrepuserem, a 2ª simplesmente falha o insert (23505) e
         // segue pra próxima, sem duplicar nem travar a rotina.
         if (erroInsert) { console.warn("Não gravou classificação (provável corrida com outra execução):", erroInsert.message); continue; }
+        if(!registrado)continue;
         processadas++;
 
         // Bug real corrigido (2026-10-06, mesma classe do fix em
@@ -430,7 +439,7 @@ Deno.serve(async (req) => {
             .eq("status", "pendente")
             .neq("mensagem_origem_id", item.mensagem_id);
 
-        await aplicarTagConvite(item.pessoaIdentificador, ROTULO_TAG[resultado.categoria]);
+        if(resultado.agente?.agente === "eventos")await aplicarTagConvite(item.pessoaIdentificador, ROTULO_TAG[resultado.categoria]);
 
         const novaResposta = MAPA_RESPOSTA_CONVITE[resultado.categoria];
         if (novaResposta) {

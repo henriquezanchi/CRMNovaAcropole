@@ -100,6 +100,36 @@
             return { grupo: 'pedidos', rotulo: 'Pedido registrado sem retorno agendado', ordem: 3 };
         return { grupo: 'organizar', rotulo: 'Definir o próximo passo', ordem: 4 };
     }
+    // Encaminhamento explicável; não atribui responsável nem autoriza mensagens.
+    function trabalhoEspecializado(lead, agora = Date.now()) {
+        const dado = normalizar(lead.acompanhamento);
+        let tags = [];
+        try { tags = Array.isArray(lead.tags) ? lead.tags : JSON.parse(lead.tags || '[]'); } catch (_) {}
+        if (!Array.isArray(tags)) tags = [];
+        const resultado = (frente, objetivo, proximo) => ({ frente, objetivo, proximo });
+        if (tags.includes('Contato em conferência') || tags.includes('Histórico em conferência'))
+            return resultado('Conferência de identidade', 'Resolver a divergência antes de usar o histórico para qualificar.', 'Conferir as fontes e os vínculos; preservar os bloqueios existentes.');
+        if (dado.contato === 'nao_contatar' || tags.includes('Não Contatar'))
+            return resultado('Respeitar pedido de não contato', 'Manter a preferência registrada.', 'Resolver eventuais pendências apenas internamente.');
+        if (dado.contato === 'pausado' || ['nao', 'depois'].includes(dado.intencao))
+            return resultado('Acompanhamento em pausa', 'Respeitar o momento declarado.', dado.pausa_ate ? 'Consultar o prazo da pausa e o combinado antes de retomar.' : 'Aguardar uma combinação válida para retomar.');
+        if (dado.inscricao === 'aguardando_registro' || dado.proximo === 'conferir')
+            return resultado('Conferência com a escola', 'Resolver a pendência de registro na fonte autorizada.', 'Conferir internamente antes de pedir novamente informações ao interessado.');
+        const sinal = proximidade(lead, agora);
+        if (['fora', 'conferidos'].includes(sinal.grupo))
+            return resultado('Acolhimento de aluno', 'Encaminhar a necessidade atual à escola.', 'Conferir o vínculo e o responsável local; cadastro não comprova pagamento.');
+        if (['inscricao', 'decididos'].includes(sinal.grupo))
+            return resultado('Apoio à matrícula', 'Ajudar a concluir o pedido explícito de matrícula.', 'Identificar a dúvida ou pendência real e orientar o próximo passo com a escola.');
+        if (dado.proximo === 'ouvir' || sinal.grupo === 'visita')
+            return resultado('Acolhimento após visita', 'Entender a experiência relatada e as dúvidas.', 'Ouvir sem presumir satisfação, retorno ou matrícula.');
+        if (['evento', 'participar'].includes(sinal.grupo))
+            return resultado('Acompanhamento de evento', 'Ajudar com a atividade identificada na conversa.', 'Conferir evento, data e inscrição oficial; intenção e RSVP não comprovam inscrição nem presença.');
+        if (dado.relacao === 'antigo' || dado.origem === 'ex_aluno')
+            return resultado('Acolhimento de antigo aluno', 'Entender o momento atual sem presumir desejo de retorno.', 'Ler o contexto e acolher antes de propor uma oportunidade.');
+        if (['conversa', 'conhecer'].includes(sinal.grupo))
+            return resultado('Informações iniciais', 'Responder ao que a pessoa pediu sobre a escola ou atividade.', 'Entregar a informação específica com dados reais, sem antecipar confirmação de presença.');
+        return resultado('Qualificação inicial', 'Identificar o pedido e o interesse atual.', 'Consultar o histórico disponível; ausência de informação não significa desinteresse.');
+    }
     function validar(valor) {
         if (!valor || typeof valor !== 'object' || Array.isArray(valor)) throw new Error('Registro inválido.');
         Object.keys(campos).forEach(chave => { if (!Object.hasOwn(campos[chave], valor[chave])) throw new Error('Escolha uma opção válida para ' + chave + '.'); });
@@ -165,5 +195,5 @@
         if (dado.origem === 'ulisses') return { orientacao: 'Identifique-se e confira o evento real antes de contextualizar. Inscrição antiga não comprova interesse atual.', texto: 'Olá, [nome]! Tudo bem por aí? Sou [atendente], da Nova Acrópole [escola]. Encontrei seu contato entre as pessoas que se inscreveram em uma atividade nossa e quis passar para saber como você está.' };
         return { orientacao: 'Identifique quem fala e a escola; pergunte se a pessoa deseja conversar, sem afirmar que já houve interesse.', texto: 'Olá! Aqui é da escola. Podemos conversar sobre nossas atividades abertas? Se preferir não receber contato, pode nos avisar.' };
     }
-    raiz.AcompanhamentoModelo = Object.freeze({ campos, normalizar, validar, prioridade, proximidade, atendimentoDiario, impedimento, selecionarFila, resumir, sugerirConversa });
+    raiz.AcompanhamentoModelo = Object.freeze({ campos, normalizar, validar, prioridade, proximidade, atendimentoDiario, impedimento, selecionarFila, resumir, sugerirConversa, trabalhoEspecializado });
 })(globalThis);

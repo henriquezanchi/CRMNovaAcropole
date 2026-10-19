@@ -1343,3 +1343,8 @@ select:hover { border-color: #94a3b8; }
 #tab-leads-tratar { overflow-y:auto; }
 #tab-leads-tratar>.agenda-content { flex:none; overflow:visible; }
 #tab-leads-tratar>.auditoria-painel { flex:none; }
+
+/* Contexto compartilhado dos especialistas, sem alterar a aprovação de envio. */
+.agente-crm-contexto { margin: 8px 0; padding: 10px; border-left: 3px solid var(--primary-color, #0f766e); background: var(--bg-secondary, #f8fafc); border-radius: 6px; overflow-wrap: anywhere; }
+.agente-crm-contexto p { margin: 5px 0; }
+.agente-crm-contexto blockquote { margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--border-color, #cbd5e1); white-space: pre-wrap; }

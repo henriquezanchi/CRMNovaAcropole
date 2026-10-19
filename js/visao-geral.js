@@ -269,7 +269,7 @@ async function carregarAgendaGeralRespostasConvite() {
 
     const { data, error } = await window.supabaseClient
         .from('classificacoes_resposta_convite')
-        .select('id, "pessoaIdentificador", evento_id, categoria, sugestao_resposta, lembrete_sugerido_data, lembrete_sugerido_motivo, criado_em')
+        .select('id, "pessoaIdentificador", evento_id, categoria, sugestao_resposta, agente_ia, lembrete_sugerido_data, lembrete_sugerido_motivo, criado_em')
         .eq('status', 'pendente')
         .order('criado_em', { ascending: false })
         .limit(50);
@@ -306,6 +306,7 @@ async function carregarAgendaGeralRespostasConvite() {
                 <div style="flex:1; min-width:0;">
                     <div><strong>${escapeHTML((lead && lead.pessoaNome) || 'Lead')}</strong> <span class="tag ${classe}" style="font-size:10px;">${escapeHTML(rotulo)}</span></div>
                     <div class="activity-time">${escapeHTML((lead && lead.filial) || '')}${nomeEvento ? ' · ' + escapeHTML(nomeEvento) : ''}</div>
+                    ${renderizarAgenteIaCRM(c.agente_ia)}
                     ${temSugestao ? `
                         <textarea id="convitesRespostaTexto-${c.id}" onclick="event.stopPropagation()" style="width:100%; margin-top:6px; font-size:12px; padding:6px; box-sizing:border-box; min-height:50px; border:1px solid var(--border-color); border-radius:6px;">${escapeHTML(c.sugestao_resposta)}</textarea>
                         <div style="display:flex; gap:6px; margin-top:4px;">
@@ -364,7 +365,7 @@ async function enviarSugestaoRespostaConvite(classificacaoId, pessoaIdentificado
     if (botaoEl) { botaoEl.disabled = true; botaoEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
 
     const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
-        body: { pessoaIdentificador, tipo: 'texto', texto, atendenteNome: typeof obterNomeAtendente === 'function' ? obterNomeAtendente() : '' }
+        body: { pessoaIdentificador, tipo: 'texto', texto, atendenteNome: typeof obterNomeAtendente === 'function' ? obterNomeAtendente() : '', rascunhoAgente: {tipo: 'convite', id: classificacaoId} }
     });
     if (error || !data || data.ok === false) {
         alert('Não foi possível enviar: ' + (typeof mensagemErroWpp === 'function' ? mensagemErroWpp(data || { erro: error?.message }) : (error?.message || data?.erro)));

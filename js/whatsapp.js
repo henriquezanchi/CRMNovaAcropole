@@ -5320,6 +5320,11 @@ async function alternarSugestaoIaLead(leadId, valor) {
 // escreve o rascunho; aqui é só ler/mostrar o que já foi gravado e
 // autorizar/editar o envio.
 // ==========================================================
+function renderizarAgenteIaCRM(agente) {
+    if (!agente || typeof agente.nome !== 'string') return '';
+    const prova = agente.qualificacao?.evidencia;
+    return `<div class="agente-crm-contexto"><strong>Agente: ${escapeHTML(agente.nome)}</strong><p>${escapeHTML(agente.objetivo || '')}</p><small>${escapeHTML(agente.motivo || '')}</small>${prova?.trecho ? `<blockquote>${escapeHTML(prova.trecho)}</blockquote><small>Evidência da mensagem ${escapeHTML(String(prova.mensagem_id))}</small>` : ''}${agente.bloqueado ? '<p>Sem rascunho de contato. A pendência deve ser tratada internamente.</p>' : ''}</div>`;
+}
 async function carregarSugestaoIaWpp(leadId) {
     const container = document.getElementById('wppSugestaoIaBox');
     if (!container) return;
@@ -5339,9 +5344,10 @@ async function carregarSugestaoIaWpp(leadId) {
     container.innerHTML = `
         <div style="margin:0 12px 8px; padding:8px 10px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px;">
             <div style="font-size:11px; font-weight:600; color:#1d4ed8; margin-bottom:4px;"><i class="fa-solid fa-wand-magic-sparkles"></i> Sugestão de resposta (IA) — revise antes de enviar</div>
+            ${renderizarAgenteIaCRM(data.agente_ia)}
             ${data.sugestao_resposta
                 ? `<textarea id="wppSugestaoTexto" style="width:100%; font-size:12px; padding:6px; border-radius:6px; border:1px solid #bfdbfe; resize:vertical; min-height:50px; box-sizing:border-box;">${escapeHTML(data.sugestao_resposta)}</textarea>`
-                : `<div style="font-size:11px; color:var(--text-muted); margin-bottom:6px;">A IA não conseguiu gerar um texto pra esta mensagem — escreva a resposta na caixa abaixo, ou descarte esta sugestão.</div>`
+                : `<div style="font-size:11px; color:var(--text-muted); margin-bottom:6px;">${data.agente_ia?.bloqueado ? 'Contato suspenso conforme a restrição acima.' : 'Sem resposta sugerida para esta mensagem. Confira o contexto antes de redigir.'}</div>`
             }
             <div style="display:flex; gap:6px; margin-top:6px;">
                 ${data.sugestao_resposta ? `<button class="btn-primary" style="font-size:11px; padding:4px 10px;" onclick="enviarSugestaoIaWpp(${data.id}, '${leadId}')"><i class="fa-solid fa-paper-plane"></i> Enviar</button>` : ''}
@@ -5395,7 +5401,7 @@ async function enviarSugestaoIaWpp(id, leadId) {
     if (!texto) return;
 
     const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
-        body: { pessoaIdentificador: leadId, tipo: 'texto', texto, atendenteNome: obterNomeAtendente() }
+        body: { pessoaIdentificador: leadId, tipo: 'texto', texto, atendenteNome: obterNomeAtendente(), rascunhoAgente: {tipo: 'geral', id} }
     });
     if (error || !data || data.ok === false) {
         alert('Não foi possível enviar: ' + (error ? error.message : mensagemErroWpp(data)));

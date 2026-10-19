@@ -29,6 +29,7 @@ import { buscarExemplosEstilo } from "../_shared/exemplosEstilo.ts";
 import { buscarListaFiliais, linkMapsDaFilial } from "../_shared/filiaisInfo.ts";
 import { montarTabelaDiasSemana, adicionarMeses } from "../_shared/calendario.ts";
 import { buscarPersonaAtendente } from "../_shared/persona.ts";
+import { prepararAgente } from "../_shared/agentes-crm.ts";
 import { chamarClaude } from "../_shared/anthropic.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
@@ -151,7 +152,7 @@ async function montarContextoCRM(pessoaIdentificador: string, filial: string | n
 
         if (Array.isArray(lead.historico_eventos) && lead.historico_eventos.length > 0) {
             const eventos = lead.historico_eventos.slice(-5).map((ev: any) => `${ev.evento || "evento"} (${ev.data || "data desconhecida"})`).join("; ");
-            partes.push(`Eventos que este lead já frequentou: ${eventos}`);
+            partes.push(`Histórico de inscrições em eventos (não comprova presença): ${eventos}`);
         }
         if (lead.resumo_ia) partes.push(`Resumo já anotado pelo time sobre esta pessoa: ${lead.resumo_ia}`);
         if (lead.abordagem_sugerida) partes.push(`Abordagem já sugerida pra este lead: ${lead.abordagem_sugerida}`);
@@ -365,7 +366,7 @@ function montarPromptDinamico(contexto: string, contextoCRM: string, ultimaMensa
     return `Dados já cadastrados no CRM sobre este lead e sua filial (use pra responder com precisão quando fizer sentido, ex: perguntas sobre endereço/valor/eventos que já foi):
 ${contextoCRM}
 
-Histórico recente da conversa (mais antiga primeiro):
+Histórico integral disponível da conversa (mais antiga primeiro):
 ${contexto}
 
 A última mensagem do lead (a que precisa de resposta agora) foi: "${ultimaMensagem}"`;
@@ -383,14 +384,19 @@ function aplicarLembretePadraoObjecaoSemPrazo(resultado: { lembreteData: string 
     }
 }
 
-async function sugerirUma(contexto: string, contextoCRM: string, ultimaMensagem: string, exemplos: string, hojeISO: string): Promise<{ sugestao: string | null; lembreteData: string | null; lembreteMotivo: string | null; tagSugerida: string | null; erro?: string; debugBruto?: string }> {
+async function sugerirUma(contexto: string, contextoCRM: string, ultimaMensagem: string, exemplos: string, hojeISO: string, item: Candidata): Promise<{ agente?: any; sugestao: string | null; lembreteData: string | null; lembreteMotivo: string | null; tagSugerida: string | null; erro?: string; debugBruto?: string }> {
+    let preparo;
+    try { preparo = await prepararAgente(item.pessoaIdentificador,item.filial,item.mensagem_id); }
+    catch { return {sugestao:null,lembreteData:null,lembreteMotivo:null,tagSugerida:null,erro:'qualificacao_indisponivel'}; }
+    if(preparo.plano.bloqueado)return {agente:preparo.plano,sugestao:null,lembreteData:null,lembreteMotivo:null,tagSugerida:null};
+    contexto = preparo.historico;
     const resultado = await chamarClaude({
         apiKey: ANTHROPIC_API_KEY,
         modelo: MODELO,
-        blocoCacheavel: montarPromptCacheavel(exemplos, hojeISO),
+        blocoCacheavel: montarPromptCacheavel(exemplos, hojeISO) + "\n" + preparo.instrucoes,
         blocoDinamico: montarPromptDinamico(contexto, contextoCRM, ultimaMensagem),
         maxTokens: 500,
-        functionName: "sugerir-resposta-whatsapp",
+        functionName: "agente-crm-" + preparo.plano.agente,
     });
     if (resultado.erro || !resultado.texto) return { sugestao: null, lembreteData: null, lembreteMotivo: null, tagSugerida: null, erro: resultado.erro || "resposta_vazia" };
 
@@ -403,7 +409,7 @@ async function sugerirUma(contexto: string, contextoCRM: string, ultimaMensagem:
         const lembreteData = lembrete && typeof lembrete.data === "string" && /^\d{4}-\d{2}-\d{2}$/.test(lembrete.data) ? lembrete.data : null;
         const lembreteMotivo = lembreteData && typeof lembrete.motivo === "string" && lembrete.motivo.trim() ? lembrete.motivo.trim() : null;
         const tagSugerida = CATEGORIAS_CONVERSA_VALIDAS.includes(parsed?.tag_sugerida) ? parsed.tag_sugerida : null;
-        return { sugestao, lembreteData, lembreteMotivo: lembreteData ? lembreteMotivo : null, tagSugerida, debugBruto: bruto };
+        return { agente:preparo.plano, sugestao, lembreteData, lembreteMotivo: lembreteData ? lembreteMotivo : null, tagSugerida, debugBruto: bruto };
     } catch (e) {
         return { sugestao: null, lembreteData: null, lembreteMotivo: null, tagSugerida: null, erro: String(e), debugBruto: bruto };
     }
@@ -417,7 +423,7 @@ Deno.serve(async (req) => {
     const url = new URL(req.url);
     const modoDebug = url.searchParams.get("debug") === "1";
 
-    const { data: candidatas, error } = await supabaseAdmin.rpc("mensagens_candidatas_sugestao_resposta", { p_limite: modoDebug ? 3 : 30 });
+    const { data: candidatas, error } = await supabaseAdmin.rpc("mensagens_candidatas_sugestao_resposta", { p_limite: modoDebug ? 3 : 8 });
     if (error) return json({ ok: false, erro: "falha_buscar_candidatas", detalhe: error.message }, 500);
     if (!candidatas || candidatas.length === 0) return json({ ok: true, processadas: 0 });
 
@@ -439,7 +445,7 @@ Deno.serve(async (req) => {
             if (setJaClassificadas.has(item.mensagem_id)) continue;
             const contexto = await montarContexto(item.pessoaIdentificador);
             const contextoCRM = await montarContextoCRM(item.pessoaIdentificador, item.filial, `${contexto}\n${item.corpo_texto}`, hojeISO);
-            const resultadoDebug = await sugerirUma(contexto, contextoCRM, item.corpo_texto, exemplos, hojeISO);
+            const resultadoDebug = await sugerirUma(contexto, contextoCRM, item.corpo_texto, exemplos, hojeISO, item);
             aplicarLembretePadraoObjecaoSemPrazo(resultadoDebug, hojeISO);
             resultadosDebug.push({ corpo_texto: item.corpo_texto, contextoCRM, ...resultadoDebug });
         }
@@ -452,7 +458,7 @@ Deno.serve(async (req) => {
 
         const contexto = await montarContexto(item.pessoaIdentificador);
         const contextoCRM = await montarContextoCRM(item.pessoaIdentificador, item.filial, `${contexto}\n${item.corpo_texto}`, hojeISO);
-        const resultado = await sugerirUma(contexto, contextoCRM, item.corpo_texto, exemplos, hojeISO);
+        const resultado = await sugerirUma(contexto, contextoCRM, item.corpo_texto, exemplos, hojeISO, item);
         // Bug real corrigido (2026-10-01, "não está gerando respostas,
         // pq?"): uma falha TÉCNICA (rede, rate limit momentâneo da
         // Anthropic, JSON malformado) sempre caía no mesmo "sugestao:
@@ -470,16 +476,19 @@ Deno.serve(async (req) => {
         }
         aplicarLembretePadraoObjecaoSemPrazo(resultado, hojeISO);
 
-        const { error: erroInsert } = await supabaseAdmin.from("sugestoes_resposta_wpp").insert({
-            pessoaIdentificador: item.pessoaIdentificador,
-            mensagem_origem_id: item.mensagem_id,
+        const {data:registrado,error:erroInsert} = await supabaseAdmin.rpc("registrar_rascunho_agente", {
+            p_tipo:"geral",p_pessoa:item.pessoaIdentificador,p_mensagem:item.mensagem_id,
+            p_dados:{
             sugestao_resposta: resultado.sugestao,
+            agente_ia: resultado.agente,
             lembrete_sugerido_data: resultado.lembreteData,
             lembrete_sugerido_motivo: resultado.lembreteMotivo,
+        },
         });
         // unique(mensagem_origem_id) — corrida com outra execução do
         // cron falha o insert (23505) e segue pra próxima, sem duplicar.
         if (erroInsert) { console.warn("Não gravou sugestão (provável corrida):", erroInsert.message); continue; }
+        if(!registrado)continue;
         processadas++;
 
         // Bug real corrigido (2026-10-06, "vi várias sugestões, uma por

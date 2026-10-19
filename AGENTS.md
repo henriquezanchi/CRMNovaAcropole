@@ -119,8 +119,9 @@ tools/lint/verificar-globais.mjs   verificador de variáveis indefinidas, sem de
 6. **Filtrar `tags` (jsonb guardado como string) não funciona com `.ilike()`.**
    Use uma função SQL chamada por `.rpc()`, com `(tags #>> '{}')::jsonb`.
 7. **IA não decide quem é contatado nem inventa fato.** Seleção e ranking são
-   regra fixa (SQL/JS); a IA só redige. A única exceção autônoma deliberada é
-   `reengajar-janela-fechando`.
+   regra fixa (SQL/JS). A IA qualifica pedidos em categorias fixas com evidência
+   e redige por especialidade; não envia. Ver `docs/AGENTES-ESPECIALIZADOS-CRM.md`.
+   A exceção de envio autônomo deliberada é `reengajar-janela-fechando`.
 8. **Envio em massa no WhatsApp: 1 por vez, com pausa** (`calcularPausaEnvioMassa`).
    Rajada simultânea já gerou aviso de violação de política da Meta.
 9. **Ação disparada por webhook da Meta precisa ser idempotente.** A Meta

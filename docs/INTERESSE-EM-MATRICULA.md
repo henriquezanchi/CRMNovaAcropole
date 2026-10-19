@@ -27,3 +27,11 @@ Os rótulos antigos “Lead Forte”, número de tags, origem Ulisses, posição
 O botão **Organizar atendimentos de hoje** usa a escola inteira e separa retornos atrasados, combinados para hoje, pedidos sem data e conferências internas. O dia é calculado no fuso do navegador do atendente. Retornos futuros ficam em filtro separado; um compromisso para mais tarde hoje informa que é necessário aguardar o horário. A classificação usa os registros da equipe; não afirma que uma mensagem do WhatsApp está sem resposta.
 
 Na ficha, os cinco campos essenciais ficam à vista: intenção, preferência de contato, próximo passo, responsável e data. “Visita, origem, cadastro e apoio à escola” abre os demais dados, que continuam sendo preservados no mesmo salvamento com controle de versão. As sugestões de abertura para antigos alunos e contatos do Ulisses começam pelo acolhimento, sem pedir uma decisão de retorno ou matrícula na primeira mensagem.
+
+## Frente de trabalho sugerida (19/10/2026)
+
+Os cartões e a ficha exibem uma frente, um objetivo e um próximo passo sugerido, definidos por regras a partir do acompanhamento e das evidências automáticas já disponíveis: qualificação inicial, informações iniciais, evento, apoio à matrícula, pós-visita, antigo aluno, acolhimento de aluno ou conferência com a escola. Contato/histórico em conferência, não contato e pausa prevalecem sobre os sinais de interesse. A indicação não atribui equipe, cria agenda, altera dados nem libera envio. Não substitui a qualificação automática completa do histórico; esta versão aproveita os sinais que o analisador atual já produz.
+
+Validação específica: `node --test tests/trabalho-especializado.test.mjs tests/proximidade-matricula.test.mjs tests/rotina-atendimento.test.mjs tests/atendimento-diario.test.mjs` e `node tests/browser-interesse-matricula.mjs` (390 e 1365 px, dados fictícios).
+
+A qualificação com especialistas dos novos rascunhos do WhatsApp está descrita em [AGENTES-ESPECIALIZADOS-CRM.md](AGENTES-ESPECIALIZADOS-CRM.md). A frente sugerida por regras desta tela e a escolha do redator são recursos distintos.
