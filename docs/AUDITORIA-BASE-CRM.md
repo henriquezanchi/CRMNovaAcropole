@@ -23,3 +23,26 @@ A sincronização financeira diária também filtra ATI explicitamente: a fonte 
 `tools/auditoria/planejar.mjs` recebe snapshots locais como argumentos, sem credenciais. O coletor protegido `auditar-base-crm` usa as credenciais já configuradas no servidor; a coleta completa precede qualquer aplicação de tags. Não guardar exports com dados pessoais no Git. As migrações separam leitura do painel e rotinas privilegiadas de coleta/aplicação/reconsulta.
 
 Verificação: 50 testes automatizados passaram, incluindo mesclagem com preservação de vínculos, rollback, aliases, identidade e consulta restrita aos sobreviventes; painel testado em 390px e 1365px.
+
+## Mesclagem por identidade oficial (implantada em 19/10/2026)
+
+Implementação em `migracao_mesclagem_inteligente.sql`, aplicada em produção após o responsável autorizar “implante”. Simulação: 70 grupos candidatos, com sobreposição. Execução: **62 grupos mesclados, 62 backups, nenhuma falha**, com reconsulta dos sobreviventes na fila existente. O agendamento permanente em `migracao_agendamento_mesclagem_inteligente.sql` **não foi aplicado**: a revisão automática exigiu autorização específica para executar lotes continuamente a cada dois minutos. Não há execução contínua da nova rotina enquanto essa autorização estiver pendente.
+
+Há dois caminhos novos, sempre na mesma filial e com nomes compatíveis em todos os pares:
+
+- Telefone completo com DDD e e-mail iguais em todos os cadastros.
+- Cada cadastro corresponde de forma única à mesma matrícula **e unidade** na fonte oficial recente, por matrícula explícita ou contato atual confirmado. Permite contatos diferentes entre os cadastros, como Tatiane Lagoa / Tatiane Barbosa Lagoa: o e-mail do primeiro confirma a ficha oficial e a matrícula do segundo aponta para essa mesma ficha. Não usa o título do caso ou a conclusão antiga da auditoria como prova.
+
+O nome curto precisa ter primeiro nome e último sobrenome por extenso, e todos os seus termos devem aparecer em ordem no nome longo. Nome sozinho, apelido, erro aproximado ou somente primeiro nome não autorizam mesclagem. Matrículas divergentes, nascimento divergente, contato compartilhado com outra identidade (CRM ou fonte oficial), fonte ambígua, escolas diferentes, lixeira, decisão anterior de não mesclar e contato/histórico em conferência impedem a automação. Fonte oficial com mais de sete dias não autoriza o segundo caminho. A automação anterior por telefone continua existente; esta rotina trata os grupos pendentes da auditoria.
+
+A nova rotina mantém o identificador real do Ulisses, o nome mais completo, contatos alternativos em notas, os históricos em união e a preferência mais restritiva. Usa a mesclagem transacional existente, com backup, aliases e transferência de vínculos; não transforma histórico em conferência em participação comprovada. Atualizações concorrentes são reavaliadas sob lock. Falha de um grupo desfaz suas alterações. A justificativa fica no log e nos casos que permanecem pendentes.
+
+Simulação: `select processar_mesclagens_inteligentes(false,5000);` não mescla nem altera a fila. Execução: `select processar_mesclagens_inteligentes(true,100);`. A migração separada agenda lotes a cada dois minutos com rotação dos grupos pendentes, para não repetir apenas os primeiros recusados. Só o serviço pode executar as duas funções privilegiadas. A consulta de ativos existente continua restrita aos sobreviventes.
+
+No exemplo Carlos Teles / Carlos Alberto Oliveira Teles, o cadastro sintético atualmente tem `Histórico em conferência`; a identidade provável não elimina essa pendência. A rotina mantém o bloqueio e informa o motivo no painel.
+
+Na conferência completa da Tatiane, o e-mail do cadastro sintético também apareceu em Matheus Machado Liberato, matrícula 41245. A ligação de Tatiane à matrícula 42633 foi confirmada, mas o contato conflitante bloqueou a mesclagem automática nesta rodada. Não foi removida a proteção para forçar o exemplo.
+
+Validação desta entrega: cinco arquivos de testes automatizados passaram (mesclagem nova/existente, importação, recuperação e identidade na rede), além do navegador em 390 e 1365 pixels. O teste isolado do planejador encontrou restrição de subprocessos no sandbox; o planejador não foi alterado. O linter global manteve três avisos preexistentes de escopo de callbacks em app.js/whatsapp.js.
+
+A publicação do painel também foi bloqueada pela revisão automática ao tentar enviar o commit à `main`; exige autorização explícita para push nessa branch. O banco já contém as funções e as 62 mesclagens autorizadas; a nova explicação visual permanece no commit local até a publicação ser autorizada.
