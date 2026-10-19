@@ -1,5 +1,10 @@
 const escapar=v=>String(v||'').replace(/'/g,"''");
 const dig=v=>String(v||'').replace(/\D/g,'');
+export async function lerRetornoRpc(resposta) {
+ if(!resposta.ok)throw new Error('Falha na fila de reconsulta: '+resposta.status);
+ const corpo=await resposta.text();
+ return corpo.trim()?JSON.parse(corpo):null;
+}
 export function montarConsultaAtivos(caso) {
  const l=caso.lead||{},condicoes=[];
  const mats=[...new Set([...(caso.matriculas||[]),l.matricula_mercurio].map(Number).filter(n=>Number.isSafeInteger(n)&&n>0))];

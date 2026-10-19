@@ -2,7 +2,7 @@ create or replace function painel_auditoria_crm(p_filial text default null,p_tip
 with ultima as (select * from auditoria_crm_execucoes order by criado_em desc limit 1),
  casos as (
  select p.* from auditoria_crm_pendencias p join ultima u on p.execucao=u.id
- where p.estado='pendente' and (p_tipo='todos' or (p_tipo='duplicidade' and jsonb_array_length(p.pessoas_ids)>1) or (p_tipo='identidade' and jsonb_array_length(p.pessoas_ids)=1))
+ where p.estado='pendente' and (p_tipo='todos' or (p_tipo='contatos_pendentes' and p.motivo like 'Contato suspeito:%') or (p_tipo='duplicidade' and jsonb_array_length(p.pessoas_ids)>1) or (p_tipo='identidade' and jsonb_array_length(p.pessoas_ids)=1))
  and (p_filial is null or p.filial=p_filial or exists(select 1 from jsonb_array_elements_text(p.pessoas_ids) x left join crm_leads_mesclados a on a.original=x join leads_inscricoes l on l."pessoaIdentificador"=coalesce(a.destino,x) where l.filial=p_filial))
  and (nullif(trim(p_busca),'') is null or exists(select 1 from jsonb_array_elements_text(p.pessoas_ids) x left join crm_leads_mesclados a on a.original=x join leads_inscricoes l on l."pessoaIdentificador"=coalesce(a.destino,x) where l."pessoaNome" ilike '%'||left(p_busca,100)||'%' or x ilike '%'||left(p_busca,100)||'%'))
 ), pagina as (

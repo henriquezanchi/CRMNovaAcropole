@@ -52,3 +52,11 @@ test('aluno ativo não entra em captação e pausa encerrada pede revisão indiv
     assert.equal(prioridade.campanha, false);
     assert.ok(motivoBloqueioContato(pausado, true, agora));
 });
+
+test('contato com identidade em conferência bloqueia abordagem, mesmo que o acompanhamento permita',async()=>{
+ const {motivoIntegridadeContato}=await import('../supabase/functions/_shared/preferencia-contato.ts');
+ assert.ok(motivoIntegridadeContato('["Contato em conferência"]'));
+ assert.ok(motivoIntegridadeContato(['Contato em conferência']));
+ assert.equal(motivoIntegridadeContato('[]'),'');
+ assert.equal(modelo.prioridade({acompanhamento:base(),tags:'["Contato em conferência"]'},agora).campanha,false);
+});

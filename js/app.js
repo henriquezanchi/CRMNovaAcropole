@@ -474,7 +474,7 @@ async function carregarRedeAtivosInativos() {
     for (let de = 0; ; de += TAMANHO_PAGINA) {
         const { data, error } = await window.supabaseClient
             .from('pessoas_ativas_rede')
-            .select('telefone_normalizado, email_normalizado, status, filial')
+            .select('telefone_normalizado, email_normalizado, nome, status, filial').order('id')
             .range(de, de + TAMANHO_PAGINA - 1);
         if (error) {
             console.warn('Não foi possível carregar a rede de Ativos/Inativos (rode migracao_rede_ativos_inativos.sql se ainda não rodou):', error.message);
@@ -487,8 +487,9 @@ async function carregarRedeAtivosInativos() {
     mapaRedeAtivosInativosTelefone = new Map();
     mapaRedeAtivosInativosEmail = new Map();
     acumulado.forEach(r => {
-        if (r.telefone_normalizado) mapaRedeAtivosInativosTelefone.set(r.telefone_normalizado, r);
-        if (r.email_normalizado) mapaRedeAtivosInativosEmail.set(r.email_normalizado, r);
+        for (const [mapa,chave] of [[mapaRedeAtivosInativosTelefone,r.telefone_normalizado],[mapaRedeAtivosInativosEmail,r.email_normalizado]]) {
+            if(!chave)continue;if(!mapa.has(chave))mapa.set(chave,[]);mapa.get(chave).push(r);
+        }
     });
     renderizarCards();
 }
@@ -499,17 +500,16 @@ async function carregarRedeAtivosInativos() {
 // filial bate DIFERENTE da própria filial do lead (senão duplicaria o
 // badge normal de quem já é Ativo/Inativo aqui mesmo).
 function buscarStatusRedeAtivosInativos(lead) {
+    let tags;try{tags=Array.isArray(lead.tags)?lead.tags:JSON.parse(lead.tags||'[]');}catch{return null;}
+    if(tags.includes('Contato em conferência'))return null;
     const telefoneNormalizado = typeof normalizarTelefoneParaChave === 'function'
-        ? normalizarTelefoneParaChave(lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero)
-        : null;
-    if (telefoneNormalizado && mapaRedeAtivosInativosTelefone.has(telefoneNormalizado)) {
-        return mapaRedeAtivosInativosTelefone.get(telefoneNormalizado);
-    }
-    const emailNormalizado = (lead.pessoaEmail || '').trim().toLowerCase();
-    if (emailNormalizado && mapaRedeAtivosInativosEmail.has(emailNormalizado)) {
-        return mapaRedeAtivosInativosEmail.get(emailNormalizado);
-    }
-    return null;
+        ? normalizarTelefoneParaChave(lead.pessoaTelefoneDDD,lead.pessoaTelefoneNumero):null;
+    const emailNormalizado=(lead.pessoaEmail||'').trim().toLowerCase();
+    const candidatos=[...(mapaRedeAtivosInativosTelefone.get(telefoneNormalizado)||[]),...(mapaRedeAtivosInativosEmail.get(emailNormalizado)||[])];
+    const compativeis=candidatos.filter(r=>typeof nomesCompativeisParaAutoMesclagem==='function'&&nomesCompativeisParaAutoMesclagem(lead.pessoaNome,r.nome));
+    // Status conflitante não pode ser decidido pela ordem de carregamento da rede.
+    if(new Set(compativeis.map(r=>r.status)).size>1)return null;
+    return compativeis[0]||null;
 }
 
 // ==========================================

@@ -47,6 +47,15 @@ function offsetSinteticoFilial(filialDestino) {
     return (f && f.id != null) ? Number(f.id) * 1000000 : 0;
 }
 
+// Identificador determinístico, sem depender da ordem das linhas e fora das faixas antigas.
+// O teste global antes do upsert continua obrigatório, inclusive para detectar eventual colisão.
+function idSinteticoEstavel(tipo, nome, filial, matricula = '') {
+    const chave = [tipo, normalizarNomeImport(filial), matricula || normalizarNomeImport(nome)].join('|');
+    let hash = 14695981039346656037n;
+    for (const letra of chave) hash = BigInt.asUintN(64, (hash ^ BigInt(letra.codePointAt(0))) * 1099511628211n);
+    return String(1000000000000n + (hash & ((1n << 52n) - 1n)));
+}
+
 // ==========================================
 // UTILITÁRIOS
 // ==========================================
@@ -268,42 +277,34 @@ async function salvarConfigPontuacao() {
     fecharConfigPontuacao();
 }
 
-// Mapeamento de exceções conhecidas — toda filial NÃO listada aqui usa o
-// DDD padrão de Goiânia ('62'), que cobre a maioria das unidades hoje.
-// Só adiciona uma entrada aqui quando confirmado que o DDD real da
-// filial é outro (mesmo espírito de MAPEAMENTO_FILIAL_ID_CONHECIDO em
-// scraper/importar-ulisses-api.js — exceção explícita, nunca inferida).
-//
-// Bug real corrigido (2026-10-05, achado investigando "leads a mesclar
-// com o mesmo telefone, mas com DDD diferente" relatado pelo usuário):
-// antes, parseTelefoneInativo() SEMPRE chutava ddd:'62' pra qualquer
-// filial quando a planilha de Inativos não trazia DDD — errado pra
-// Barra do Garças/MT (DDD real 66), que silenciosamente ganhava
-// telefones com o DDD de Goiânia. Além do risco óbvio (mensagem de
-// WhatsApp pro número errado), isso também inflava falsos-positivos no
-// agrupamento por telefone de "Leads a Tratar" (2 pessoas sem DDD
-// informado, de filiais diferentes, caindo no MESMO DDD fabricado).
-function dddPadraoDaFilial(filialDestino) {
-    const EXCECOES = { 'Barra do Garças/MT': '66' };
-    return EXCECOES[filialDestino] || '62';
+// DDD pertence ao telefone da pessoa, nunca à cidade da escola.
+// Mantido para compatibilidade com os chamadores antigos; não fornece suposição.
+function dddPadraoDaFilial() { return ''; }
+
+function parseTelefoneInativo(campo) {
+    const ddds = new Set('11 12 13 14 15 16 17 18 19 21 22 24 27 28 31 32 33 34 35 37 38 41 42 43 44 45 46 47 48 49 51 53 54 55 61 62 63 64 65 66 67 68 69 71 73 74 75 77 79 81 82 83 84 85 86 87 88 89 91 92 93 94 95 96 97 98 99'.split(' '));
+    let semDdd = null;
+    for (const parte of String(campo || '').split(/[\/;]/)) {
+        let d = parte.replace(/\D/g, '');
+        if ((d.length === 12 || d.length === 13) && d.startsWith('55')) d = d.slice(2);
+        if ((d.length === 11 || d.length === 12) && d.startsWith('0')) d = d.slice(1);
+        if ((d.length === 10 || d.length === 11) && ddds.has(d.slice(0,2))) return { ddd:d.slice(0,2), numero:d.slice(2) };
+        if (d.length === 8 || d.length === 9) semDdd ||= { ddd:'', numero:d };
+    }
+    return semDdd;
 }
 
-// Telefones da planilha de Inativos vêm bagunçados: múltiplos números
-// juntos separados por "/", alguns com traço, alguns sem DDD. Pegamos só
-// o primeiro número informado e tentamos separar DDD + número; se não
-// der pra confiar no resultado, retornamos null (fica sem telefone).
-function parseTelefoneInativo(campo, dddPadrao) {
-    if (!campo) return null;
-    const primeiro = String(campo).split('/').map(s => s.trim()).find(s => s !== '');
-    if (!primeiro) return null;
-    const digitos = primeiro.replace(/\D/g, '');
-    if (digitos.length === 8 || digitos.length === 9) {
-        return { ddd: dddPadrao || '62', numero: digitos }; // assume o DDD padrão da FILIAL quando não vem no número
-    }
-    if (digitos.length === 10 || digitos.length === 11) {
-        return { ddd: digitos.slice(0, 2), numero: digitos.slice(2) };
-    }
-    return null;
+// Um mesmo ID nunca pode trocar silenciosamente de pessoa ou escola.
+function conflitosIdentidadeImportacao(registros, existentes) {
+    const porId = new Map(existentes.map(l => [String(l.pessoaIdentificador), l]));
+    return registros.filter(l => {
+        const antes = porId.get(String(l.pessoaIdentificador));
+        if (!antes) return false;
+        if (antes.filial !== l.filial) return true;
+        if (antes.matricula_mercurio && l.matricula_mercurio && String(antes.matricula_mercurio)!==String(l.matricula_mercurio)) return true;
+        if (normalizarNomeImport(antes.pessoaNome) === normalizarNomeImport(l.pessoaNome)) return false;
+        return typeof nomesCompativeisParaAutoMesclagem !== 'function' || !nomesCompativeisParaAutoMesclagem(antes.pessoaNome, l.pessoaNome);
+    });
 }
 
 // ==========================================
@@ -858,6 +859,7 @@ function montarRegistroLead(pessoa, tags, filial, extras = {}) {
     // de destaque visual).
     const tagsFinais = [...tags, ...calcularTagsTrilhaEJornada(eventosOrdenados, tags, mapaTipoTrilha), ...calcularTagInscricaoAberturaTurma(eventosOrdenados)];
     if (!pessoa.pessoaTelefoneNumero || String(pessoa.pessoaTelefoneNumero).trim() === '') tagsFinais.push('Sem Telefone');
+    else if (!pessoa.pessoaTelefoneDDD) tagsFinais.push('Telefone sem DDD confirmado');
     if (!pessoa.pessoaEmail || String(pessoa.pessoaEmail).trim() === '') tagsFinais.push('Sem E-mail');
 
     return {
@@ -1079,14 +1081,15 @@ async function processarPlanilhas() {
     });
 
     // Índice por telefone dos Inativos — Ativos não tem coluna de telefone
-    // na planilha, então esse fallback só é possível pra Inativos. Se dois
-    // Inativos diferentes caírem na mesma chave (telefone compartilhado,
-    // ex: família), fica só o último — casamento por telefone é heurística,
-    // não garantia, igual o resto do importador.
+    // na planilha, então esse fallback só é possível pra Inativos.
+    // Contatos compartilhados ficam ambíguos; exige nome compatível e DDD explícito.
     const mapaInativosPorTelefone = new Map();
     mapaInativos.forEach(info => {
         const chaveTel = normalizarTelefoneParaChave(info.telefoneDDD, info.telefoneNumero);
-        if (chaveTel) mapaInativosPorTelefone.set(chaveTel, info);
+        if (chaveTel) {
+            if (mapaInativosPorTelefone.has(chaveTel)) mapaInativosPorTelefone.get(chaveTel).ambiguo = true;
+            else mapaInativosPorTelefone.set(chaveTel, { ...info, origem:info });
+        }
     });
 
     logImport(`Ativos únicos: ${mapaAtivos.size} | Inativos únicos: ${mapaInativos.size}`);
@@ -1208,7 +1211,8 @@ async function processarPlanilhas() {
         // Inativos, já que a planilha de Ativos não tem coluna de telefone.
         const chaveTelPessoa = normalizarTelefoneParaChave(pessoa.pessoaTelefoneDDD, pessoa.pessoaTelefoneNumero);
         const matchInativoPorNome = mapaInativos.has(chave);
-        const matchInativoPorTelefone = !matchInativoPorNome && chaveTelPessoa && mapaInativosPorTelefone.has(chaveTelPessoa);
+        const candidatoPorTelefone = chaveTelPessoa && mapaInativosPorTelefone.get(chaveTelPessoa);
+        const matchInativoPorTelefone = !matchInativoPorNome && candidatoPorTelefone && !candidatoPorTelefone.ambiguo && typeof nomesCompativeisParaAutoMesclagem === 'function' && nomesCompativeisParaAutoMesclagem(pessoa.pessoaNome, candidatoPorTelefone.nomeOriginal);
 
         if (mapaAtivos.has(chave)) {
             const info = mapaAtivos.get(chave);
@@ -1221,6 +1225,7 @@ async function processarPlanilhas() {
         } else if (matchInativoPorNome || matchInativoPorTelefone) {
             const info = matchInativoPorNome ? mapaInativos.get(chave) : mapaInativosPorTelefone.get(chaveTelPessoa);
             info.usado = true;
+            if (info.origem) info.origem.usado = true;
             tags.push('Inativo');
             const nivelTag = classificarNivel(info.nivel);
             if (nivelTag) tags.push(nivelTag);
@@ -1244,18 +1249,16 @@ async function processarPlanilhas() {
 
     // ---- 4) Ativos sem correspondência nas Inscrições (sem telefone/e-mail, mesmo assim cadastrados) ----
     let contAtivosSemInscricao = 0;
-    let idxAtivo = 0;
-    const offsetFilial = offsetSinteticoFilial(filialDestino);
+
     mapaAtivos.forEach(info => {
         if (info.usado) return;
         contAtivosSemInscricao++;
-        idxAtivo++;
         const tagsAtivo = ['Ativo'];
         const nivelTag = classificarNivel(info.nivel);
         if (nivelTag) tagsAtivo.push(nivelTag);
         const matriculaAtivoSem = (info.matricula && /^\d+$/.test(info.matricula)) ? Number(info.matricula) : null;
         leadsFinais.push(montarRegistroLead({
-            pessoaIdentificador: BASE_ID_ATIVOS_SEM_INSCRICAO + offsetFilial + idxAtivo,
+            pessoaIdentificador: idSinteticoEstavel('ativo', info.nomeOriginal, filialDestino, info.matricula || ''),
             pessoaNome: info.nomeOriginal,
             pessoaTelefoneDDD: '', pessoaTelefoneNumero: '', pessoaEmail: '',
             pessoaStatus: '', telemarketingStatus: '', eventos: []
@@ -1264,16 +1267,14 @@ async function processarPlanilhas() {
 
     // ---- 5) Inativos sem correspondência nas Inscrições (COM telefone — viram leads de resgate) ----
     let contInativosSemInscricao = 0;
-    let idxInativo = 0;
     mapaInativos.forEach(info => {
         if (info.usado) return;
         contInativosSemInscricao++;
-        idxInativo++;
         const tagsInativo = ['Inativo'];
         const nivelTag = classificarNivel(info.nivel);
         if (nivelTag) tagsInativo.push(nivelTag);
         leadsFinais.push(montarRegistroLead({
-            pessoaIdentificador: BASE_ID_INATIVOS_SEM_INSCRICAO + offsetFilial + idxInativo,
+            pessoaIdentificador: idSinteticoEstavel('inativo', info.nomeOriginal, filialDestino),
             pessoaNome: info.nomeOriginal,
             pessoaTelefoneDDD: info.telefoneDDD, pessoaTelefoneNumero: info.telefoneNumero, pessoaEmail: '',
             pessoaStatus: '', telemarketingStatus: '', eventos: []
@@ -1791,7 +1792,7 @@ async function confirmarEnviarImportacao() {
     // Forte" cobre tanto o formato antigo (sem nível) quanto o novo ("Lead
     // Forte 1/2/3"), e o regex de nível cobre tanto o esquema antigo
     // (N1-N7 direto) quanto o atual (TA/JN/PP/N1/Membro).
-    const TAGS_SISTEMA_EXATAS = ['Aluno Ativo', 'Ativo', 'Ex-Aluno (Inativo)', 'Inativo'];
+    const TAGS_SISTEMA_EXATAS = ['Aluno Ativo', 'Ativo', 'Ex-Aluno (Inativo)', 'Inativo', 'Telefone sem DDD confirmado'];
     function ehTagDeSistema(tag) {
         return TAGS_SISTEMA_EXATAS.includes(tag)
             || /^Lead Forte( [1-3])?$/.test(tag)
@@ -1901,8 +1902,9 @@ async function confirmarEnviarImportacao() {
             // o caso) — nunca em cima do dado transiente da planilha
             // parcial, senão o badge fica errado quando o campo de verdade
             // veio preservado do banco em vez desta importação.
-            tagsNovas = tagsNovas.filter(t => t !== 'Sem Telefone' && t !== 'Sem E-mail');
+            tagsNovas = tagsNovas.filter(t => t !== 'Sem Telefone' && t !== 'Sem E-mail' && t !== 'Telefone sem DDD confirmado');
             if (!leadFinal.pessoaTelefoneNumero) tagsNovas.push('Sem Telefone');
+            else if (!leadFinal.pessoaTelefoneDDD) tagsNovas.push('Telefone sem DDD confirmado');
             if (!leadFinal.pessoaEmail) tagsNovas.push('Sem E-mail');
 
             const tagsCustomizadasMantidas = tagsAntigas.filter(t => !ehTagDeSistema(t));
@@ -1975,12 +1977,29 @@ async function confirmarEnviarImportacao() {
     // `pessoaIdentificador` aqui — fica com o ÚLTIMO valor de cada id
     // repetido (mais recente no processamento) e avisa no log, pra nunca
     // travar a importação inteira por isso.
+    if (conflitosIdentidadeImportacao(registrosFinais, registrosFinais).length) {
+        logImport('Importação interrompida: um ID foi atribuído a pessoas diferentes no mesmo lote.', 'err'); return;
+    }
     const porId = new Map();
     registrosFinais.forEach(r => porId.set(r.pessoaIdentificador, r));
     if (porId.size < registrosFinais.length) {
         logImport(`Aviso: ${registrosFinais.length - porId.size} registro(s) com pessoaIdentificador repetido no mesmo lote — mantido só 1 por id, pra não travar a importação inteira (revise possíveis duplicados nesta filial depois).`, 'warn');
     }
     let registrosDedupe = [...porId.values()];
+
+    // Verificação global e antes de qualquer escrita: a chave pessoaIdentificador é global.
+    const existentesGlobais = [];
+    for (let i=0; i<registrosDedupe.length; i+=200) {
+        const {data,error} = await window.supabaseClient.from(NOME_TABELA)
+            .select('pessoaIdentificador,pessoaNome,filial,matricula_mercurio').in('pessoaIdentificador', registrosDedupe.slice(i,i+200).map(l=>String(l.pessoaIdentificador)));
+        if (error) { logImport('Importação interrompida: não foi possível conferir a identidade dos IDs. '+error.message,'err'); return; }
+        existentesGlobais.push(...data);
+    }
+    const conflitosIds = conflitosIdentidadeImportacao(registrosDedupe, existentesGlobais);
+    if (conflitosIds.length) {
+        logImport(`Importação interrompida antes de gravar: ${conflitosIds.length} ID(s) apontam para outra pessoa ou escola. Reprocesse os cadastros com identificação correta; não reutilize IDs sequenciais.`, 'err');
+        return;
+    }
 
     // ---- Bloqueia reimportação de quem já pediu remoção do cadastro
     // (LGPD) — pedido do usuário (2026-09-17): "tirar do cadastro a

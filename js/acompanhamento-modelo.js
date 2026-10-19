@@ -33,6 +33,8 @@
         return '';
     }
     function prioridade(lead, agora = Date.now()) {
+        let tags=lead.tags;try { if(typeof tags==='string')tags=JSON.parse(tags); }catch{ tags=[]; }
+        if(Array.isArray(tags)&&tags.includes('Contato em conferência'))return {nivel:9,motivo:'Contato em conferência: conferir a identidade antes de abordar',campanha:false};
         const dado = normalizar(lead.acompanhamento);
         if (dado.relacao === 'ativo') return { nivel: 9, motivo: 'Aluno ativo: não incluir em captação', campanha: false };
         if (dado.contato === 'pausado' && dado.pausa_ate && Number.isFinite(Date.parse(dado.pausa_ate)) && Date.parse(dado.pausa_ate) <= agora) return { nivel: 0, motivo: 'Pausa terminou: rever preferência individualmente', campanha: false };

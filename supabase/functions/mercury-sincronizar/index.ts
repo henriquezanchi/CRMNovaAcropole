@@ -253,24 +253,30 @@ async function sincronizarRedeAtivosInativos(filial: string) {
         leads.push(...(data || []));
         if (!data || data.length < 1000) break;
     }
-    const { data: existentes } = await supabaseAdmin.from("pessoas_ativas_rede")
-        .select("id, telefone_normalizado, email_normalizado, nome, status, filial").range(0, 49999);
-    const porTel = new Map<string, any>(), porEmail = new Map<string, any>();
-    for (const r of existentes || []) {
-        if (r.telefone_normalizado) porTel.set(r.telefone_normalizado, r);
-        if (r.email_normalizado) porEmail.set(r.email_normalizado, r);
+    const existentes: any[]=[];
+    for(let de=0;;de+=1000) {
+        const {data,error}=await supabaseAdmin.from("pessoas_ativas_rede").select("id, telefone_normalizado, email_normalizado, nome, status, filial").order("id").range(de,de+999);
+        if(error)throw new Error("rede: "+error.message);existentes.push(...(data||[]));if(!data||data.length<1000)break;
+    }
+    const porTel = new Map<string, any[]>(), porEmail = new Map<string, any[]>();
+    for (const r of existentes) {
+        for(const [mapa,chave] of [[porTel,r.telefone_normalizado],[porEmail,r.email_normalizado]] as const) {
+            if(!chave)continue;if(!mapa.has(chave))mapa.set(chave,[]);mapa.get(chave)!.push(r);
+        }
     }
     // Só grava quem mudou (Jardim América tem ~2.700 pessoas: gravar todas,
     // uma a uma, estourava o limite de 150s da Edge Function).
     const escritas: (() => Promise<unknown>)[] = [];
     for (const lead of leads) {
         const tags = parseTags(lead.tags).map((t) => String(t).trim());
+        if(tags.includes("Contato em conferência"))continue;
         const status = tags.includes("Ativo") ? "Ativo" : (tags.includes("Inativo") ? "Inativo" : null);
         if (!status) continue;
         const tel = telefoneChaveRede(lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero);
         const email = String(lead.pessoaEmail || "").trim().toLowerCase() || null;
         if (!tel && !email) continue;
-        const atual = (tel && porTel.get(tel)) || (email && porEmail.get(email)) || null;
+        const candidatos=[...(tel?porTel.get(tel)||[]:[]),...(email?porEmail.get(email)||[]:[])];
+        const atual=candidatos.find(r=>normalizarNomeMercury(r.nome)===normalizarNomeMercury(lead.pessoaNome)&&r.filial===filial)||null;
         if (atual && atual.status === status && atual.filial === filial && atual.nome === lead.pessoaNome
             && atual.telefone_normalizado === tel && atual.email_normalizado === email) continue;
         const payload = { telefone_normalizado: tel, email_normalizado: email, nome: lead.pessoaNome, status, filial, atualizado_em: new Date().toISOString() };

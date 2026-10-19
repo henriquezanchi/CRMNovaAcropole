@@ -12,3 +12,9 @@ export function motivoBloqueioContato(valor: unknown, campanha: boolean, agora =
     if (!['conhecer', 'participar'].includes(String(dado.intencao)) || dado.proximo === 'responder') return 'Confira o próximo passo individual antes de incluir em campanha.';
     return '';
 }
+
+export function motivoIntegridadeContato(valor: unknown): string {
+ let tags: unknown = valor;
+ try { if(typeof tags==='string') tags=JSON.parse(tags); } catch { return 'Não foi possível conferir a integridade do cadastro.'; }
+ return Array.isArray(tags)&&tags.includes('Contato em conferência') ? 'Contato em conferência: o telefone pode pertencer a outra pessoa. Confira a fonte antes de enviar.' : '';
+}

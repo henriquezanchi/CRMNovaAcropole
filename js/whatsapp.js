@@ -2633,6 +2633,7 @@ function numeroPareceFixo(ddd, numero) {
 // ganha, e é rejeitado ANTES de gerar um link que a pessoa ia clicar e
 // só descobrir depois, no WhatsApp Web, que o número não existe.
 function telefoneParaWaMe(lead) {
+    try { const tags=Array.isArray(lead.tags)?lead.tags:JSON.parse(lead.tags||'[]'); if(tags.includes('Contato em conferência'))return null; } catch { return null; }
     const ddd = String(lead.pessoaTelefoneDDD || '').replace(/\D/g, '');
     let numero = String(lead.pessoaTelefoneNumero || '').replace(/\D/g, '');
     if (!ddd || !numero) return null;

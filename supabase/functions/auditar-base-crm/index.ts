@@ -1,4 +1,4 @@
-import {montarConsultaAtivos,confirmaIdentidadeAtiva} from './consulta-ativos.mjs';
+import {montarConsultaAtivos,confirmaIdentidadeAtiva,lerRetornoRpc} from './consulta-ativos.mjs';
 import {chamarMercury} from '../_shared/mercury.ts';
 import {abrirSessaoPhpMyAdmin} from '../_shared/phpmyadmin.ts';
 Deno.serve(async(req)=>{
@@ -7,9 +7,27 @@ Deno.serve(async(req)=>{
   const body=await req.json().catch(()=>({}));
   if(body.fonte==='mercurio') {
    const pma=await abrirSessaoPhpMyAdmin();
+   if(body.etapa==='investigar_contatos') {
+    // Somente alvos explícitos. Nenhum dado de contato é devolvido na resposta HTTP.
+    const ids=Array.isArray(body.ids)?[...new Set(body.ids.map(String))]:[];
+    if(!ids.length||ids.length>100||ids.some(x=>!/^\d+$/.test(x)))return Response.json({ok:false,erro:'Informe até 100 identificadores numéricos'},{status:400});
+    const url=Deno.env.get('SUPABASE_URL')!,key=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const headers={apikey:key,Authorization:`Bearer ${key}`,'Content-Type':'application/json'};
+    const r=await fetch(url+'/rest/v1/leads_inscricoes?select=pessoaIdentificador,pessoaNome,filial,pessoaTelefoneDDD,pessoaTelefoneNumero,pessoaEmail,matricula_mercurio&'+new URLSearchParams({pessoaIdentificador:'in.('+ids.join(',')+')'}),{headers});
+    if(!r.ok)throw new Error('Falha ao buscar alvos da investigação');
+    const leads=await r.json();const esc=(s:any)=>String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"''");
+    const condicoes=leads.flatMap((l:any)=>["cad_nome='"+esc(l.pessoaNome)+"'",...(Number.isSafeInteger(Number(l.matricula_mercurio))&&Number(l.matricula_mercurio)>0?['cad_matr='+Number(l.matricula_mercurio)]:[])]);
+    if(!condicoes.length)return Response.json({ok:true,conferidos:0});
+    const fonte=await pma.consultar('SELECT cad_matr,cad_nome,cad_unidade,cad_situacao,cad_nivel,cad_cel_ddd,cad_cel_fone,cad_res_ddd,cad_res_fone,cad_email FROM cadastro WHERE '+condicoes.join(' OR '),'cadastro');
+    const norm=(s:any)=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\s+/g,' ').trim();
+    const linhas=leads.map((l:any)=>({pessoa:l.pessoaIdentificador,consultado_em:new Date().toISOString(),cadastro_antes:l,fontes:fonte.filter(f=>norm(f.cad_nome)===norm(l.pessoaNome)||Number(f.cad_matr)===Number(l.matricula_mercurio))}));
+    const gravar=await fetch(url+'/rest/v1/auditoria_contatos_fontes?on_conflict=pessoa',{method:'POST',headers:{...headers,Prefer:'resolution=merge-duplicates'},body:JSON.stringify(linhas)});
+    if(!gravar.ok)throw new Error('Falha ao preservar evidências privadas da investigação');
+    return Response.json({ok:true,conferidos:linhas.length,registros_fonte:fonte.length});
+   }
    if(body.etapa==='reconsultar') {
     const url=Deno.env.get('SUPABASE_URL')!,key=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const rpc=async(nome:string,args:any={})=>{const r=await fetch(url+'/rest/v1/rpc/'+nome,{method:'POST',headers:{apikey:key,Authorization:`Bearer ${key}`,'Content-Type':'application/json'},body:JSON.stringify(args)});if(!r.ok)throw new Error('Falha na fila de reconsulta: '+r.status);return r.json();};
+    const rpc=async(nome:string,args:any={})=>lerRetornoRpc(await fetch(url+'/rest/v1/rpc/'+nome,{method:'POST',headers:{apikey:key,Authorization:`Bearer ${key}`,'Content-Type':'application/json'},body:JSON.stringify(args)}));
     let total=0;for(let i=0;i<5;i++) {
      const q=await rpc('assumir_reconsulta_auditoria');if(!q)break;
      try {

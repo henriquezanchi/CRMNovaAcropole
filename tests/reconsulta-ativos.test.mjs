@@ -11,3 +11,11 @@ test('ativo requer identidade e ausência não vira inativação',()=>{
  assert.equal(confirmaIdentidadeAtiva(c,{cad_matr:27,cad_nome:'Pessoa Diferente',cad_situacao:'ATI'}),false);
  assert.equal(confirmaIdentidadeAtiva(c,{cad_matr:27,cad_nome:'Maria Silva',cad_situacao:'INA'}),false);
 });
+
+test('conclusão da reconsulta aceita RPC sem corpo, sem transformar sucesso em erro',async()=>{
+ const {lerRetornoRpc}=await import('../supabase/functions/auditar-base-crm/consulta-ativos.mjs');
+ assert.equal(await lerRetornoRpc(new Response(null,{status:204})),null);
+ assert.equal(await lerRetornoRpc(new Response('null',{status:200})),null);
+ assert.deepEqual(await lerRetornoRpc(new Response('{"pessoa":"1"}',{status:200})),{pessoa:'1'});
+ await assert.rejects(lerRetornoRpc(new Response('privado',{status:400})),/400/);
+});

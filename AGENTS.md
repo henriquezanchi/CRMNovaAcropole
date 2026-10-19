@@ -82,7 +82,7 @@ tools/lint/verificar-globais.mjs   verificador de variáveis indefinidas, sem de
 - **Banco de consulta do Mercúrio (phpMyAdmin, atualizado toda noite):** fonte
   da conciliação de matrículas por turma, reingresso/recuperado, atraso de
   contribuição, membros e canal de origem. Edge Function `mercurio-db-sincronizar`
-  (cron 03:00 Brasília, 1x/dia — a base só atualiza ~23h), cliente em `_shared/phpmyadmin.ts`. Só tem alunos ativos.
+  (cron 03:00 Brasília, 1x/dia — a base só atualiza ~23h), cliente em `_shared/phpmyadmin.ts`. Contém ativos e inativos; a rotina financeira filtra `cad_situacao='ATI'` explicitamente.
   Ver seção própria no CLAUDE.md.
 - **Mercury (API nova do Mercúrio, sistema acadêmico):** REST com Bearer `mrc_...`.
   Fonte de alunos ativos/inativos, nível, data de ingresso e dossiê. Sincronizada
@@ -198,3 +198,7 @@ que não foi testado.
 ## Auditoria nacional de cadastros (19/10/2026)
 
 A view nacional do Mercúrio agora contém ATI e INA. A sincronização financeira deve filtrar `cad_situacao='ATI'`. A auditoria compara ambos; ausência não significa inativo. Painel em Cadastros e detalhes em `docs/AUDITORIA-BASE-CRM.md`. Mesclagens usam `mesclar_leads_preservando_vinculos`, com backup privado, aliases e reconsulta de ativos apenas dos sobreviventes. Não voltar ao antigo update/delete sem transferência de vínculos.
+
+## Integridade dos contatos e IDs sintéticos (19/10/2026)
+
+Ver `docs/RECUPERACAO-CONTATOS.md`. Não fabricar DDD por escola, nem usar posição da lista como identidade. O importador usa IDs estáveis e confere colisões globalmente antes de gravar. `Contato em conferência` bloqueia envios; `Histórico em conferência` bloqueia auto mesclagem. Não remover essas sinalizações para conseguir executar uma campanha. Fonte recente mínima e backups ficam preservados nas tabelas de auditoria; eventos separados não comprovam participação. Status da rede exige contato e nome compatíveis, não basta telefone/e-mail de uma família.

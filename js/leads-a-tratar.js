@@ -140,6 +140,7 @@ function nomesCompativeisParaAutoMesclagem(nomeA, nomeB) {
 // mesmo telefone, nomes bem diferentes) pra cair de volta na revisão
 // manual normal, nunca mescla parcialmente um subconjunto sozinho.
 function grupoElegivelParaAutoMesclagem(membros) {
+    if (membros.some(m => { let t=m.tags; try { if(typeof t==='string') t=JSON.parse(t); } catch { return true; } return Array.isArray(t)&&(t.includes('Histórico em conferência')||t.includes('Contato em conferência')); })) return false;
     if (new Set(membros.map(m => m.matricula_mercurio).filter(Boolean).map(String)).size > 1) return false;
     for (let i = 0; i < membros.length; i++) {
         for (let j = i + 1; j < membros.length; j++) {
