@@ -1,4 +1,4 @@
-import { REGRAS, validarAnalise, extrairJsonAnalise, convitesDeterministicos, FERRAMENTA_ANALISE } from './criterios.mjs';
+import { REGRAS, validarAnalise, extrairJsonAnalise, convitesDeterministicos, FERRAMENTA_ANALISE, identificarSomenteRespostasAutomaticas } from './criterios.mjs';
 const url=Deno.env.get('SUPABASE_URL')!;
 const service=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const modelo='claude-haiku-4-5-20251001';
@@ -9,8 +9,9 @@ async function rpc(nome:string,body:unknown={}) {
 }
 async function processar(c:any) {
  try {
-  let bruto:any={respostas:[],continuidade:{aceitou:null},intencao:{pretende:null},convites:[]};
-  if(c.mensagens.some((m:any)=>m.direcao==='entrada')) {
+  const automatica=identificarSomenteRespostasAutomaticas(c);
+  let bruto:any=automatica||{respostas:[],continuidade:{aceitou:null},intencao:{pretende:null},convites:[]};
+  if(!automatica && c.mensagens.some((m:any)=>m.direcao==='entrada')) {
    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'x-api-key':Deno.env.get('ANTHROPIC_API_KEY')!,'anthropic-version':'2023-06-01','Content-Type':'application/json'},body:JSON.stringify({model:modelo,max_tokens:12000,system:REGRAS,tools:[FERRAMENTA_ANALISE],tool_choice:{type:'tool',name:'registrar_analise'},messages:[{role:'user',content:JSON.stringify({filial:c.filial,mensagens:c.mensagens,eventos:c.eventos})}]}),signal:AbortSignal.timeout(90000)});
    if(!r.ok)throw new Error(`provedor_ia_http_${r.status}`);
    const d=await r.json();if(d.stop_reason==='max_tokens')throw new Error('resposta_truncada');
@@ -21,7 +22,7 @@ async function processar(c:any) {
   }
   bruto.convites=[...(bruto.convites||[]),...convitesDeterministicos(c)];
   const resultado=validarAnalise(c,bruto);
-  return await rpc('concluir_conversa_funil',{p_filial:c.filial,p_pessoa:c.pessoa,p_versao:c.versao,p_resultado:resultado,p_modelo:c.mensagens.some((m:any)=>m.direcao==='entrada')?modelo:'regra-sem-resposta-v1'});
+  return await rpc('concluir_conversa_funil',{p_filial:c.filial,p_pessoa:c.pessoa,p_versao:c.versao,p_resultado:resultado,p_modelo:automatica?'regra-resposta-automatica-v1':c.mensagens.some((m:any)=>m.direcao==='entrada')?modelo:'regra-sem-resposta-v1'});
  } catch(e) {
   await rpc('concluir_conversa_funil',{p_filial:c.filial,p_pessoa:c.pessoa,p_versao:c.versao,p_resultado:null,p_modelo:modelo,p_erro:String(e?.message||e)});
   return false;

@@ -16,7 +16,7 @@ Não infira inscrição oficial, presença ou matrícula de texto, tags ou elogi
 
 export function validarAnalise(conversa, bruto) {
  const mensagens = conversa.mensagens || [];
- if(!Array.isArray(bruto?.respostas) || !Array.isArray(bruto?.convites))throw new Error('Formato da análise inválido; tentar novamente.');
+ if(!Array.isArray(bruto?.respostas) || !Array.isArray(bruto?.convites))throw new Error('Formato da análise inválido: respostas='+typeof bruto?.respostas+', campos='+Object.keys(bruto||{}).join(',')+'; tentar novamente.');
  const idsRespondidos=new Set(bruto.respostas.map(r=>Number(r.mensagem_id)));
  if(mensagens.some(m=>m.direcao==='entrada' && !idsRespondidos.has(Number(m.id))))throw new Error('Análise incompleta do histórico; tentar novamente.');
  const porId = new Map(mensagens.map(m => [Number(m.id), m]));
@@ -84,3 +84,10 @@ export const FERRAMENTA_ANALISE = {
   convites:{type:'array',items:{type:'object',required:['mensagem_id','evento_id','trecho'],properties:{mensagem_id:{type:'integer'},evento_id:{type:'integer'},trecho:{type:'string'}}}}
  }}
 };
+
+export function identificarSomenteRespostasAutomaticas(conversa) {
+ const entradas=(conversa.mensagens||[]).filter(m=>m.direcao==='entrada');
+ // Marcador explícito de espera por atendimento; saudação, recusa e agradecimento humanos não bastam.
+ if(!entradas.length || !entradas.every(m=>/em breve\s+voc[eê]\s+ser[aá]\s+atendid[oa]/i.test(String(m.texto||''))))return null;
+ return {respostas:entradas.map(m=>({mensagem_id:Number(m.id),classe:'automatica',trecho:String(m.texto),justificativa:'Resposta automática informa que o atendimento humano ainda ocorrerá; não é resposta humana à proposta.',evento_id:null})),continuidade:{aceitou:null,mensagem_id:null,trecho:null},intencao:{pretende:null,mensagem_id:null,trecho:null,evento_id:null},convites:[]};
+}

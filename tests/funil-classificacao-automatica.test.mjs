@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {validarAnalise, extrairJsonAnalise, convitesDeterministicos} from '../supabase/functions/analisar-funil-conversas/criterios.mjs';
+import {validarAnalise, extrairJsonAnalise, convitesDeterministicos, identificarSomenteRespostasAutomaticas} from '../supabase/functions/analisar-funil-conversas/criterios.mjs';
 const c={mensagens:[{id:1,direcao:'saida',texto:'Quer receber informações da Aula?',status:'lido',importada:false},{id:2,direcao:'entrada',texto:'Pode mandar'},{id:3,direcao:'entrada',texto:'Não quero mais, obrigado'},{id:4,direcao:'entrada',tipo:'audio',texto:'(áudio)'},{id:5,direcao:'saida',status:'falhou',texto:'Convite da Aula'}],eventos:[{id:10}]};
 test('valida evidência exata e direção, sem inventar mensagens, eventos ou conteúdo de áudio',()=>{
  const r=validarAnalise(c,{respostas:[{mensagem_id:2,classe:'aceitou',trecho:'Pode mandar',evento_id:999},{mensagem_id:3,classe:'recusa',trecho:'Texto inventado'},{mensagem_id:4,classe:'aceitou',trecho:'(áudio)'}],continuidade:{aceitou:true,mensagem_id:1,trecho:'Quer receber'},intencao:{pretende:true,mensagem_id:999,trecho:'sim'},convites:[{mensagem_id:5,evento_id:10,trecho:'Convite da Aula'}]});
@@ -15,3 +15,5 @@ test('JSON com explicação é extraído sem executar instruções e JSON trunca
 test('vínculo determinístico exige link exato ou título único; falha não é convite',()=>{const base={mensagens:[{id:1,direcao:'saida',status:'lido',texto:'Venha: https://exemplo.test/1'},{id:2,direcao:'saida',status:'falhou',texto:'Venha: https://exemplo.test/1'}],eventos:[{id:10,nome:'Uma palestra de filosofia muito especial',link:'https://exemplo.test/1'}]};assert.equal(convitesDeterministicos(base).length,1);});
 
 test('formato inválido ou mensagem de entrada omitida exige nova análise, sem publicar zero falso',()=>{assert.throws(()=>validarAnalise(c,{respostas:{},convites:[]}));assert.throws(()=>validarAnalise(c,{respostas:[],convites:[]}));});
+
+test('marcador explícito de atendimento futuro é automático; fala humana posterior exige análise de contexto',()=>{const conversa={mensagens:[{id:1,direcao:'entrada',texto:'Seja bem-vindo! Em breve você será atendido (a).'}]};assert.equal(identificarSomenteRespostasAutomaticas(conversa).respostas[0].classe,'automatica');conversa.mensagens.push({id:2,direcao:'entrada',texto:'Pode mandar os detalhes'});assert.equal(identificarSomenteRespostasAutomaticas(conversa),null);assert.equal(identificarSomenteRespostasAutomaticas({mensagens:[{id:1,direcao:'entrada',texto:'Bom dia, tudo bem?'}]}),null);});
