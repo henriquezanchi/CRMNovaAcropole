@@ -5,11 +5,11 @@ test('interação nova reclassifica snapshot, recusa altera funil e resultado an
  await db.exec(`create role anon;create role authenticated;create role service_role;
  create table mensagens_whatsapp(id bigint primary key,"pessoaIdentificador" text,filial text,direcao text,wa_status text,wa_message_id text,importado_manualmente boolean,criado_em timestamptz,corpo_texto text,tipo text);
  create table filiais(nome text,ativo boolean);create table eventos(id bigint primary key,filial text,nome text,data date,link_inscricao text);
- create table leads_inscricoes("pessoaIdentificador" text primary key,"pessoaNome" text,filial text,matricula_mercurio int,data_matricula date,data_matricula_verificada_mercurio_em timestamptz,historico_eventos jsonb);
+ create table leads_inscricoes("pessoaIdentificador" text primary key,"pessoaNome" text,filial text,matricula_mercurio int,data_matricula date,data_matricula_verificada_mercurio_em timestamptz,historico_eventos jsonb,acompanhamento jsonb);
  create table mercurio_alunos(matricula int,filial text,pessoa_identificador text,data_efetiva date,visto_em timestamptz);
  create table evento_leads(evento_id bigint,"pessoaIdentificador" text,origem text,compareceu boolean);
  create table log_atividade(id bigserial,filial text,acao text,autor text,pessoa_ids jsonb,detalhes jsonb);`);
- for(const f of ['migracao_funil_interacoes_objetivo.sql','migracao_funil_automatico.sql','migracao_relatorio_funil_automatico.sql'])await db.exec(fs.readFileSync(new URL('../'+f,import.meta.url),'utf8'));
+ for(const f of ['migracao_funil_interacoes_objetivo.sql','migracao_funil_automatico.sql','migracao_relatorio_funil_automatico.sql','migracao_listas_funil.sql'])await db.exec(fs.readFileSync(new URL('../'+f,import.meta.url),'utf8'));
  await db.exec(`insert into eventos values(1,'A','Aula',current_date,'https://example.test/1');insert into evento_leads values(1,'p','ulisses',true);
  insert into mensagens_whatsapp values(1,'p','A','saida','lido','w1',false,now()-interval '1 hour','Quer se inscrever na Aula?','texto'),(2,'p','A','entrada','entregue','w2',false,now(),'Vou me inscrever','texto');`);
  let c=(await db.query('select assumir_conversa_funil() c')).rows[0].c;
@@ -36,5 +36,17 @@ test('interação nova reclassifica snapshot, recusa altera funil e resultado an
  assert.equal(await salvar(c.versao,resultado),true);
  assert.equal((await db.query('select count(*)::int n from log_atividade')).rows[0].n,2); // idempotência
 
+ // O detalhamento usa a mesma coorte: inscrito sem mensagem não entra; total deduplica filiais.
+ await db.exec(`insert into evento_leads values(1,'sem-contato','ulisses',true);
+ insert into eventos values(2,'B','Outra aula',current_date,'https://example.test/2');
+ insert into evento_leads values(2,'p','ulisses',true);
+ insert into mensagens_whatsapp values(4,'p','B','saida','lido','w4',false,now(),'Convite outra aula','texto');
+ select registrar_convite_funil('w4',2);`);
+ const lista=async(filial=null,apos=null)=>(await db.query(`select leads_etapa_funil(now()-interval '2 days',now()+interval '1 day',$1,'inscritos',$2) r`,[filial,apos])).rows[0].r;
+ let listaTotal=await lista();assert.equal(listaTotal.total,1);assert.equal(listaTotal.leads.length,1);assert.equal(listaTotal.leads[0].contextos.length,2);
+ assert.equal((await lista('A')).leads[0].contextos[0].eventos[0].nome,'Aula');
+ assert.equal((await lista(null,'p')).leads.length,0);
+ assert.equal((await lista()).total,(await rel()).inscritos);
+ await assert.rejects(db.exec(`select leads_etapa_funil(now(),now(),null,'etapa-invalida',null)`));
  await db.close();
 });

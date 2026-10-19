@@ -1,6 +1,10 @@
 // Medição por fatos: toda a base é agregada no servidor, sem depender dos cards carregados.
 let funilInteracoesVersao = 0;
 let funilRevisaoAntes = null;
+let funilConsultaExibida = null;
+let funilLinhasExibidas = [];
+let funilListaEtapa = null;
+let funilListaVersao = 0;
 function percentualFunil(valor, base) {
     return base ? `${(100 * Number(valor) / Number(base)).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%` : '—';
 }
@@ -53,6 +57,8 @@ async function carregarFunilInteracoes() {
         if (error) throw error;
         if (cobertura.error) throw cobertura.error;
         const linhas = data || [];
+        funilConsultaExibida = { ...parametros };
+        funilLinhasExibidas = linhas;
         const total = linhas.find(l => l.total) || {};
         const situacao = cobertura.data || {};
         const etapas = [['contatados', 'Pessoas contatadas'], ['responderam', 'Responderam (qualquer resposta)'], ['validas', 'Respostas válidas'], ['aceitaram', 'Aceitaram continuar / receber informações'], ['intencoes', 'Disseram que vão se inscrever'], ['inscritos', 'Inscritos no evento'], ['presentes', 'Compareceram'], ['matriculados', 'Matrículas conferidas']];
@@ -60,9 +66,10 @@ async function carregarFunilInteracoes() {
         box.innerHTML = `<p><strong>${numero(total.mensagens)} mensagens enviadas</strong> para <strong>${numero(total.contatados)} pessoas identificadas</strong>. ${numero(total.pendentes)} pessoas com atualização da análise em andamento.</p>
         <p class="report-sub">Histórico completo: ${numero(situacao.mensagens_analisadas)} de ${numero(situacao.total_mensagens)} mensagens analisadas em ${numero(situacao.concluidas)} de ${numero(situacao.conversas)} conversas. ${numero(situacao.pendentes)} aguardam processamento; ${numero(situacao.erros)} tiveram falha e serão tentadas novamente. ${numero(situacao.midias_inconclusivas)} respostas em mídia sem evidência textual suficiente. Atualização automática em rodadas de aproximadamente um minuto; durante o processamento, o último resultado permanece visível.</p>
         <p class="report-sub">Deslize a tabela para ver todas as etapas.</p><div class="funil-tabela"><table class="tabela-simples"><thead><tr><th>Filial</th><th>Mensagens enviadas</th>${etapas.map(e => `<th>${e[1]}</th>`).join('')}<th>Atualização pendente (pessoas)</th></tr></thead>
-        <tbody>${linhas.map(l => `<tr><th scope="row">${escapeHTML(l.filial || 'Sem filial')}</th><td>${numero(l.mensagens)}<small>${percentualFunil(l.mensagens, total.mensagens)} dos envios</small></td>${etapas.map(e => `<td>${numero(l[e[0]])}<small>${percentualFunil(l[e[0]], l.contatados)} dos contatados</small></td>`).join('')}<td>${numero(l.pendentes)}</td></tr>`).join('')}</tbody></table></div>
+        <tbody>${linhas.map((l, indice) => `<tr><th scope="row">${escapeHTML(l.filial || 'Sem filial')}</th><td>${numero(l.mensagens)}<small>${percentualFunil(l.mensagens, total.mensagens)} dos envios</small></td>${etapas.map(e => `<td>${['aceitaram','intencoes','inscritos','presentes','matriculados'].includes(e[0]) ? `<button class="funil-numero" data-etapa="${e[0]}" data-linha="${indice}" aria-label="Ver ${e[1]}: ${escapeHTML(l.filial || 'Sem filial')}, ${numero(l[e[0]])} pessoas">${numero(l[e[0]])}</button>` : numero(l[e[0]])}<small>${percentualFunil(l[e[0]], l.contatados)} dos contatados</small></td>`).join('')}<td>${numero(l.pendentes)}</td></tr>`).join('')}</tbody></table></div>
         ${Number(total.sem_identificacao) ? `<p>${numero(total.sem_identificacao)} envios ainda sem pessoa vinculada: entram no volume de mensagens, mas não nas etapas de pessoas.</p>` : ''}
         <p class="report-sub">Para ajustar a abordagem, confira quantos respondem, quantos autorizam continuar e onde o avanço diminui. Análise pendente ou inconclusiva não significa falta de interesse. Convites antigos sem vínculo comprovado com o evento não entram na medição de inscrição e presença.</p>`;
+        box.querySelectorAll('[data-etapa]').forEach(botao => botao.addEventListener('click', () => abrirListaEtapaFunil(botao.dataset.etapa, Number(botao.dataset.linha))));
     } catch (e) { if (versao === funilInteracoesVersao) box.textContent = `Não foi possível consultar o funil: ${e.message}`; }
 }
 async function carregarRevisaoFunil(reiniciar) {
@@ -93,4 +100,66 @@ async function registrarConviteFunil(waId, eventoId) {
         const { error } = await window.supabaseClient.rpc('registrar_convite_funil', { p_wa_id: waId, p_evento: eventoId });
         if (error) console.warn('Convite enviado; vínculo de medição pendente.', error.message);
     } catch (e) { console.warn('Convite enviado; vínculo de medição pendente.', e.message); }
+}
+
+function dialogoLeadsFunil() {
+    let dialogo = document.getElementById('funilLeadsDialogo');
+    if (!dialogo) {
+        dialogo = document.createElement('dialog'); dialogo.id = 'funilLeadsDialogo'; dialogo.className = 'funil-leads-dialogo'; dialogo.setAttribute('aria-labelledby', 'funilLeadsTitulo');
+        dialogo.innerHTML = `<header><h3 id="funilLeadsTitulo"></h3><button class="btn-secondary" onclick="document.getElementById('funilLeadsDialogo').close()">Voltar ao relatório</button></header><p id="funilLeadsContexto"></p><div id="funilLeadsLista" aria-live="polite"></div><button id="funilLeadsMais" class="btn-secondary" hidden onclick="carregarListaEtapaFunil()">Carregar mais pessoas</button>`;
+        document.body.append(dialogo);
+    }
+    return dialogo;
+}
+async function abrirListaEtapaFunil(etapa, indice) {
+    const linha = funilLinhasExibidas[indice];
+    if (!linha || !funilConsultaExibida) return;
+    const rotulos = { aceitaram:'Aceitaram continuar / receber informações', intencoes:'Declararam intenção de inscrição', inscritos:'Inscritos nos eventos trabalhados', presentes:'Presença registrada', matriculados:'Matrículas conferidas' };
+    if (!rotulos[etapa]) return;
+    funilListaEtapa = { parametros:{ ...funilConsultaExibida, p_filial:linha.total ? funilConsultaExibida.p_filial : linha.filial, p_etapa:etapa }, pessoas:[], cursor:null, carregando:false, versao:++funilListaVersao };
+    const dialogo = dialogoLeadsFunil();
+    document.getElementById('funilLeadsTitulo').textContent = `${rotulos[etapa]} · ${linha.filial || 'Sem filial'}`;
+    const inicio = new Date(funilConsultaExibida.p_inicio).toLocaleDateString('pt-BR', { timeZone:'America/Sao_Paulo' });
+    const fim = new Date(Date.parse(funilConsultaExibida.p_fim)-1).toLocaleDateString('pt-BR', { timeZone:'America/Sao_Paulo' });
+    document.getElementById('funilLeadsContexto').textContent = `Pessoas contatadas entre ${inicio} e ${fim}, conforme a etapa selecionada. Inscritos e presentes pertencem aos eventos vinculados ao trabalho com esses contatos; não é a lista geral do evento. Nenhuma mensagem é enviada ao abrir a lista.`;
+    document.getElementById('funilLeadsLista').textContent = 'Consultando pessoas…'; document.getElementById('funilLeadsMais').hidden = true;
+    if (!dialogo.open) dialogo.showModal();
+    await carregarListaEtapaFunil();
+}
+async function carregarListaEtapaFunil() {
+    const consulta = funilListaEtapa;
+    if (!consulta || consulta.carregando) return;
+    consulta.carregando = true;
+    const mais = document.getElementById('funilLeadsMais'); mais.disabled = true;
+    try {
+        const {data,error} = await window.supabaseClient.rpc('leads_etapa_funil', { ...consulta.parametros, p_apos:consulta.cursor });
+        if (consulta !== funilListaEtapa) return;
+        if (error) throw error;
+        const novas = data?.leads || [];
+        consulta.pessoas.push(...novas); consulta.total = Number(data?.total || 0);
+        consulta.cursor = novas.length ? novas[novas.length-1].pessoa : consulta.cursor;
+        const hoje = new Date().toLocaleDateString('en-CA', {timeZone:'America/Sao_Paulo'});
+        document.getElementById('funilLeadsLista').innerHTML = `<p><strong>${consulta.total.toLocaleString('pt-BR')} pessoas nesta etapa</strong> · ${consulta.pessoas.length} exibidas. Consulta atualizada agora.</p>` + (consulta.pessoas.map((p, indice) => `<article class="funil-lead"><h4>${escapeHTML(p.nome || 'Contato '+p.pessoa)}</h4>
+        ${(p.contextos || []).map(c => `<p>${escapeHTML(c.filial || 'Sem filial')}</p>${c.trecho ? `<blockquote>${escapeHTML(c.trecho)}</blockquote>` : ''}${(c.eventos || []).map(e => `<div class="funil-lead-evento"><strong>${escapeHTML(e.nome)}</strong> · ${escapeHTML(new Date(e.data+'T12:00:00-03:00').toLocaleDateString('pt-BR'))}<p>${e.inscrito ? 'Inscrição identificada. ' : ''}${e.compareceu ? 'Presença registrada.' : e.data > hoje ? 'O evento ainda não aconteceu.' : 'Presença ainda não confirmada. Você pode perguntar se foi e como foi a experiência.'}</p></div>`).join('')}`).join('')}
+        <p class="report-sub">${escapeHTML(p.acompanhamento?.responsavel || 'Sem responsável registrado')}${p.acompanhamento?.proxima_em ? ' · Retorno: '+escapeHTML(new Date(p.acompanhamento.proxima_em).toLocaleString('pt-BR')) : ''}</p>
+        <div class="funil-lead-acoes"><button class="btn-primary" data-funil-conversa="${indice}">Abrir conversa</button><button class="btn-secondary" data-funil-atendimento="${indice}">Registrar atendimento / retorno</button></div></article>`).join('') || '<p>Nenhuma pessoa atende aos critérios desta etapa e período.</p>');
+        const box = document.getElementById('funilLeadsLista');
+        box.querySelectorAll('[data-funil-conversa]').forEach(b => b.addEventListener('click', () => { document.getElementById('funilLeadsDialogo').close(); abrirConversaNoWppUnificado(consulta.pessoas[Number(b.dataset.funilConversa)].pessoa); }));
+        box.querySelectorAll('[data-funil-atendimento]').forEach(b => b.addEventListener('click', () => abrirAtendimentoEtapaFunil(consulta.pessoas[Number(b.dataset.funilAtendimento)], b)));
+        mais.hidden = novas.length < 50 || consulta.pessoas.length >= consulta.total;
+    } catch (e) { if (consulta === funilListaEtapa) { document.getElementById('funilLeadsLista').textContent = `Não foi possível consultar a lista: ${e.message}`; mais.hidden = false; mais.textContent = 'Tentar novamente'; } }
+    finally { consulta.carregando = false; mais.disabled = false; }
+}
+async function abrirAtendimentoEtapaFunil(pessoa, botao) {
+    botao.disabled = true;
+    try {
+        if (!pessoa.filial_cadastro) throw new Error('Este contato não tem cadastro disponível. Consulte a conversa.');
+        if (pessoa.filial_cadastro !== filialAtual) {
+            const seletor = document.getElementById('filialSelect'); if (seletor) seletor.value = pessoa.filial_cadastro;
+            trocarFilial(pessoa.filial_cadastro);
+        }
+        document.getElementById('funilLeadsDialogo').close();
+        switchModule('tab-crm','Atendimento','Acolhimento e acompanhamento dos interessados');
+        await abrirAcompanhamentoDaFila(pessoa.pessoa);
+    } catch (e) { alert(e.message); } finally { botao.disabled = false; }
 }
