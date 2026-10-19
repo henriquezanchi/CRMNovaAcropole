@@ -15,3 +15,7 @@ verify_jwt = true
 # Este endpoint usa chave aleatória de acesso limitada a uma escola, verificada no servidor.
 [functions.painel-escola]
 verify_jwt = false
+
+# Trabalhador interno: token exclusivo no cabeçalho, conferido dentro da função.
+[functions.analisar-funil-conversas]
+verify_jwt = false
