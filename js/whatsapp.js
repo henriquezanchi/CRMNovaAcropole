@@ -3335,6 +3335,7 @@ async function enviarTemplateApiLote(tpl, linhas, { idProgresso, titulo, eventoA
                 if (error || !data || data.ok === false) {
                     return { ...l, ok: false, erro: (data && data.detalhe && data.detalhe.message) || error?.message || data?.erro || 'erro desconhecido' };
                 }
+                if (typeof registrarConviteFunil === 'function') await registrarConviteFunil(data.wa_message_id, eventoAtual ? eventoAtual.id : l.eventoId);
                 return { ...l, ok: true };
             } catch (e) {
                 return { ...l, ok: false, erro: e.message || String(e) };
@@ -3610,6 +3611,7 @@ async function confirmarConviteJanelaAberta() {
                     body: { pessoaIdentificador: c.pessoaIdentificador, tipo: 'texto', texto: c.texto, atendenteNome: (typeof obterNomeAtendente === 'function' ? obterNomeAtendente() : '') || '', origemEnvio: 'campanha' },
                 });
                 if (error || !data || data.ok === false) return { ...c, ok: false, erro: (data && data.detalhe && data.detalhe.message) || data?.erro || error?.message || 'erro desconhecido' };
+                if (typeof registrarConviteFunil === 'function') await registrarConviteFunil(data.wa_message_id, c.evento.id);
                 return { ...c, ok: true };
             } catch (e) {
                 return { ...c, ok: false, erro: String(e.message || e) };

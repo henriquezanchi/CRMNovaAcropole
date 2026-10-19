@@ -3116,6 +3116,7 @@ function calcularLargurasFunil(valores, { minimo = 26, quedaMinima = 14 } = {}) 
 }
 
 function atualizarRelatorios() {
+    if (typeof iniciarFunilInteracoes === 'function') iniciarFunilInteracoes();
     const container = document.getElementById('funnelChart');
     if (!container) return;
 

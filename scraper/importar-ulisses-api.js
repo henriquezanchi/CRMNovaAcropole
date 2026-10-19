@@ -513,7 +513,7 @@ export async function sincronizarComparecimentoViaApi(filialCrm, filialIdUlisses
         else novosGravados = novos.length;
     }
     const resultadosAtualizacao = await Promise.all(paraAtualizar.map(v =>
-        supabaseAdmin.from('evento_leads').update({ compareceu: v.compareceu }).eq('evento_id', v.evento_id).eq('pessoaIdentificador', v.pessoaIdentificador)
+        supabaseAdmin.from('evento_leads').update({ compareceu: v.compareceu, origem: 'ulisses' }).eq('evento_id', v.evento_id).eq('pessoaIdentificador', v.pessoaIdentificador)
     ));
     const atualizadosGravados = resultadosAtualizacao.filter(r => !r.error).length;
 
