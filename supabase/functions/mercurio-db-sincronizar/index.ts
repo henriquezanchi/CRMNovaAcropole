@@ -2,7 +2,7 @@
 // atualizado toda noite) com o CRM. Roda todo dia 06:30 Brasília (pg_cron,
 // migracao_mercurio_db.sql) ou sob demanda ({filial?} no corpo).
 //
-// O banco só tem alunos ATIVOS. Por filial (filiais.mercurio_unidade):
+// O banco nacional contém ativos e inativos. Esta rotina financeira consulta só ATI. Por filial (filiais.mercurio_unidade):
 //   1) mercurio_turmas  — turmas com a data de abertura (tur_inicio).
 //   2) mercurio_alunos  — 1 linha por aluno, com a COMPETÊNCIA de cobrança
 //      já calculada pela regra combinada com o usuário (ver calcularCompetencia).
@@ -118,7 +118,7 @@ async function sincronizarFilial(pma: any, filial: { id: number; nome: string; u
     const turmasBrutas = await pma.consultar(
         `SELECT tur_turma, tur_tipo, tur_nivel, tur_dia, tur_horario, tur_inicio, tur_previsao_formatura FROM turmas WHERE tur_unidade='${U}'`, "turmas");
     const alunosBrutos = await pma.consultar(
-        `SELECT cad_matr, cad_nome, cad_nivel, cad_tur_unidade, cad_turma, cad_ingresso, cad_reingresso, cad_recuperado, cad_midia_ingresso, cad_contribuicao, cad_cel_ddd, cad_cel_fone, cad_res_ddd, cad_res_fone, cad_email, cad_nascimento, cad_res_cidade, cad_res_uf FROM cadastro WHERE cad_unidade='${U}'`, "cadastro");
+        `SELECT cad_matr, cad_nome, cad_nivel, cad_tur_unidade, cad_turma, cad_ingresso, cad_reingresso, cad_recuperado, cad_midia_ingresso, cad_contribuicao, cad_cel_ddd, cad_cel_fone, cad_res_ddd, cad_res_fone, cad_email, cad_nascimento, cad_res_cidade, cad_res_uf FROM cadastro WHERE cad_unidade='${U}' AND cad_situacao='ATI'`, "cadastro");
     const fichasBrutas = await pma.consultar(
         `SELECT fic_matr, SUM(fic_status='ATR' AND (fic_ano*100+fic_mes) BETWEEN ${iniAtraso} AND ${fimAtraso}) AS atraso, MAX(fic_datapg) AS ultimo FROM fichas WHERE fic_unidade='${U}' AND fic_ano >= ${dIni.getUTCFullYear()} GROUP BY fic_matr`, "fichas");
 

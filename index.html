@@ -563,6 +563,7 @@
              ABA — LEADS A TRATAR (duplicados por telefone/nome + sem telefone)
         =========================================================== -->
         <div id="tab-leads-tratar" class="tab-pane">
+            <section id="painelAuditoriaBase" class="auditoria-painel"></section>
             <div class="agenda-content">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px;">
                     <div>
@@ -1240,7 +1241,7 @@
         </div>
         <div class="modal-body">
             <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
-                Detectado por: <strong id="mesclarInfoCriterio"></strong>. Escolha qual lead vai ficar (sobrevivente) — tags e histórico de eventos dos outros são incorporados a ele automaticamente. Os demais são <strong>apagados permanentemente</strong>. Essa ação não pode ser desfeita.
+                Detectado por: <strong id="mesclarInfoCriterio"></strong>. Escolha qual lead vai ficar (sobrevivente) — tags e histórico de eventos dos outros são incorporados a ele automaticamente. Conversas, eventos, presença e tarefas serão vinculados ao sobrevivente. O sistema guarda uma cópia integral da mesclagem e consulta novamente a situação de ativo somente para o cadastro resultante.
             </p>
             <div id="mesclarOpcoes"></div>
             <div id="mesclarConflitos"></div>
@@ -1838,6 +1839,7 @@
     <script src="js/importador.js"></script>
     <!-- 3b2. Módulo de "Leads a Tratar" (duplicados por telefone/nome + sem telefone) -->
     <script src="js/leads-a-tratar.js"></script>
+    <script src="js/auditoria-base.js"></script>
     <!-- 3c. Módulo de integração real com WhatsApp (Meta Cloud API) -->
     <script src="js/whatsapp.js"></script>
     <!-- 3c2. Importar Conversa de WhatsApp (feita fora do CRM, enquanto a API

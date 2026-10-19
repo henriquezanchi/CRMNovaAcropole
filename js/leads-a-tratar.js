@@ -140,6 +140,7 @@ function nomesCompativeisParaAutoMesclagem(nomeA, nomeB) {
 // mesmo telefone, nomes bem diferentes) pra cair de volta na revisão
 // manual normal, nunca mescla parcialmente um subconjunto sozinho.
 function grupoElegivelParaAutoMesclagem(membros) {
+    if (new Set(membros.map(m => m.matricula_mercurio).filter(Boolean).map(String)).size > 1) return false;
     for (let i = 0; i < membros.length; i++) {
         for (let j = i + 1; j < membros.length; j++) {
             if (!nomesCompativeisParaAutoMesclagem(membros[i].pessoaNome, membros[j].pessoaNome)) return false;
@@ -229,6 +230,7 @@ function recalcularLeadForteEJornadaAposMerge(tagsFinais) {
 // conflito aqui — é literalmente o mesmo em todo o grupo, por definição
 // (é o próprio critério de agrupamento).
 async function mesclarAutomaticamenteLeads(membros) {
+    if (!grupoElegivelParaAutoMesclagem(membros)) return { ok:false, erro:'Nomes ou matrículas precisam de conferência antes da mesclagem.' };
     const principal = escolherSobreviventeAutoMesclagem(membros);
     const outros = membros.filter(m => String(m.pessoaIdentificador) !== String(principal.pessoaIdentificador));
 
@@ -262,25 +264,23 @@ async function mesclarAutomaticamenteLeads(membros) {
     if (principal.pessoaTelefoneNumero) tagsFinais = tagsFinais.filter(t => t !== 'Sem Telefone');
     if (email) tagsFinais = tagsFinais.filter(t => t !== 'Sem E-mail');
 
-    const { error: erroUpdate } = await window.supabaseClient
-        .from(NOME_TABELA)
-        .update({
+    const idsOutros = outros.map(o => String(o.pessoaIdentificador));
+    const { error: erroUpdate } = await window.supabaseClient.rpc('mesclar_leads_preservando_vinculos', {
+        p_principal:String(principal.pessoaIdentificador), p_outros:idsOutros,
+        p_campos:{
             tags: JSON.stringify(tagsFinais),
             historico_eventos: eventosFinais,
             eventoNome: eventosFinais.map(e => e.evento).join(' | '),
             eventoData: eventosFinais.map(e => e.data).join(' | '),
             pessoaEmail: email || '',
             resumo_ia: resumoFinal
-        })
-        .eq('pessoaIdentificador', principal.pessoaIdentificador);
-    if (erroUpdate) return { ok: false, erro: erroUpdate.message };
-
-    const idsOutros = outros.map(o => String(o.pessoaIdentificador));
-    const { error: erroDelete } = await window.supabaseClient.from(NOME_TABELA).delete().in('pessoaIdentificador', idsOutros);
-    if (erroDelete) return { ok: false, erro: erroDelete.message };
+        },
+        p_autor:(typeof usuarioLogado === 'function' ? usuarioLogado()?.nome : '') || 'Equipe CRM'
+    });
+    if (erroUpdate) return { ok:false, erro:erroUpdate.message };
 
     if (typeof registrarLogAtividade === 'function') {
-        registrarLogAtividade('mesclar_leads', {
+        registrarLogAtividade('mesclagem_interface', {
             pessoaIds: [String(principal.pessoaIdentificador), ...idsOutros],
             detalhes: { sobrevivente: principal.pessoaNome, apagados: outros.map(o => o.pessoaNome), origem: 'automatica_telefone_nome' }
         });
@@ -340,7 +340,7 @@ async function detectarLeadsATratar(filial, logFn) {
     while (true) {
         const { data, error } = await window.supabaseClient
             .from(NOME_TABELA)
-            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, tags')
+            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, tags, matricula_mercurio')
             .eq('filial', filial)
             .order('pessoaIdentificador', { ascending: true })
             .range(offset, offset + passo - 1);
@@ -387,7 +387,7 @@ async function detectarLeadsATratar(filial, logFn) {
         const idsParaBuscar = gruposParaAutoMesclar.flat().map(m => String(m.pessoaIdentificador));
         const { data: leadsCompletos, error: erroCompletos } = await window.supabaseClient
             .from(NOME_TABELA)
-            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, tags, historico_eventos, resumo_ia')
+            .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, tags, historico_eventos, resumo_ia, matricula_mercurio')
             .in('pessoaIdentificador', idsParaBuscar);
         if (erroCompletos) {
             log('Aviso: não foi possível buscar dados completos pra mesclagem automática — ' + erroCompletos.message, 'warn');
@@ -546,6 +546,7 @@ async function detectarLeadsATratar(filial, logFn) {
 // ABA — carregamento e renderização
 // ==========================================
 async function carregarLeadsATratar() {
+    if (typeof carregarAuditoriaBase === 'function') carregarAuditoriaBase();
     const container = document.getElementById('leadsATratarLista');
     if (!container || !filialAtual) return;
     container.innerHTML = '<div class="agenda-vazio"><i class="fa-solid fa-circle-notch fa-spin"></i> Carregando...</div>';
@@ -1099,7 +1100,7 @@ async function confirmarMesclagem() {
     const outros = membrosEmMesclagem.filter(m => String(m.pessoaIdentificador) !== String(idPrincipal));
     if (!principal || outros.length === 0) return;
 
-    if (!confirm(`Mesclar ${outros.length + 1} leads em "${principal.pessoaNome}"? Os outros ${outros.length} lead(s) serão APAGADOS permanentemente (dados relevantes deles já são incorporados ao sobrevivente antes disso). Essa ação não pode ser desfeita.`)) return;
+    if (!confirm(`Mesclar ${outros.length + 1} leads em "${principal.pessoaNome}"? Os vínculos serão preservados no sobrevivente e uma cópia integral ficará no histórico técnico. Depois, só esse cadastro será consultado novamente entre os ativos.`)) return;
 
     // Tags: união, sem duplicar
     let tagsFinais = parseTags(principal.tags).map(t => t.trim()).filter(Boolean);
@@ -1180,9 +1181,10 @@ async function confirmarMesclagem() {
     if (telNumero) tagsFinais = tagsFinais.filter(t => t !== 'Sem Telefone');
     if (email) tagsFinais = tagsFinais.filter(t => t !== 'Sem E-mail');
 
-    const { error: erroUpdate } = await window.supabaseClient
-        .from(NOME_TABELA)
-        .update({
+    const idsOutros = outros.map(o => String(o.pessoaIdentificador));
+    const { error: erroUpdate } = await window.supabaseClient.rpc('mesclar_leads_preservando_vinculos', {
+        p_principal:String(idPrincipal), p_outros:idsOutros,
+        p_campos:{
             tags: JSON.stringify(tagsFinais),
             historico_eventos: eventosFinais,
             eventoNome: eventosFinais.map(e => e.evento).join(' | '),
@@ -1191,16 +1193,12 @@ async function confirmarMesclagem() {
             pessoaTelefoneNumero: telNumero || '',
             pessoaEmail: email || '',
             resumo_ia: resumoFinal
-        })
-        .eq('pessoaIdentificador', idPrincipal);
+        },
+        p_autor:(typeof usuarioLogado === 'function' ? usuarioLogado()?.nome : '') || 'Equipe CRM'
+    });
+    if (erroUpdate) { alert('Não foi possível mesclar. Nenhum vínculo foi apagado: '+erroUpdate.message); return; }
 
-    if (erroUpdate) { alert('Erro ao atualizar o lead principal: ' + erroUpdate.message); return; }
-
-    const idsOutros = outros.map(o => String(o.pessoaIdentificador));
-    const { error: erroDelete } = await window.supabaseClient.from(NOME_TABELA).delete().in('pessoaIdentificador', idsOutros);
-    if (erroDelete) { alert('O lead principal foi atualizado, mas houve erro ao apagar os duplicados: ' + erroDelete.message); return; }
-
-    registrarLogAtividade('mesclar_leads', {
+    registrarLogAtividade('mesclagem_interface', {
         pessoaIds: [String(idPrincipal), ...idsOutros],
         detalhes: {
             sobrevivente: principal.pessoaNome,
@@ -1218,6 +1216,7 @@ async function confirmarMesclagem() {
     }
 
     fecharModalMesclar();
+    if (typeof carregarAuditoriaBase === 'function') carregarAuditoriaBase();
     renderizarListaLeadsATratar();
 
     if (typeof carregarLeads === 'function' && filialAtual) carregarLeads(filialAtual, true);

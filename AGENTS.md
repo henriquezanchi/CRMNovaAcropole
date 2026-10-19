@@ -194,3 +194,7 @@ que não foi testado.
   partir dos ciclos de abertura de turma (`ciclos_turma`, cadastrados por
   filial em Relatórios) e manda o resumo pro WhatsApp do admin; o usuário
   revisa e fecha no CRM (`js/cobranca-ciclos.js`). Detalhes no CLAUDE.md.
+
+## Auditoria nacional de cadastros (19/10/2026)
+
+A view nacional do Mercúrio agora contém ATI e INA. A sincronização financeira deve filtrar `cad_situacao='ATI'`. A auditoria compara ambos; ausência não significa inativo. Painel em Cadastros e detalhes em `docs/AUDITORIA-BASE-CRM.md`. Mesclagens usam `mesclar_leads_preservando_vinculos`, com backup privado, aliases e reconsulta de ativos apenas dos sobreviventes. Não voltar ao antigo update/delete sem transferência de vínculos.

@@ -19,3 +19,7 @@ verify_jwt = false
 # Trabalhador interno: token exclusivo no cabeçalho, conferido dentro da função.
 [functions.analisar-funil-conversas]
 verify_jwt = false
+
+# Auditoria e reconsulta interna: token exclusivo conferido no servidor.
+[functions.auditar-base-crm]
+verify_jwt = false
