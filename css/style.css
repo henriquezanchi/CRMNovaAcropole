@@ -1297,3 +1297,17 @@ select:hover { border-color: #94a3b8; }
 .funil-resposta label { margin-bottom:12px; }
 .funil-resposta button { margin-right:10px; }
 @media(max-width:600px) { .funil-objetivo { padding:12px; } .funil-controles label { flex:1 1 140px; } .funil-controles button { width:100%; } }
+
+/* Controles do acompanhamento: alvos confortáveis, estado ativo e hierarquia consistentes. */
+.acompanhamento-atalhos { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:10px; }
+.acompanhamento-painel .btn-toggle { min-height:40px; padding:10px 14px; font-size:13px; line-height:1.35; border-radius:9px; justify-content:center; white-space:normal; text-align:center; }
+.acompanhamento-atalhos>.btn-toggle:first-child { background:var(--na-green); color:#fff; border-color:var(--na-green); }
+.acompanhamento-painel .btn-toggle[aria-pressed="true"] { background:#e8f5f1; color:var(--na-green-dark); border-color:var(--na-green); box-shadow:inset 0 0 0 1px var(--na-green); }
+.acompanhamento-painel button:focus-visible { outline:3px solid var(--na-gold); outline-offset:3px; }
+.acompanhamento-painel .sinal-resumo { cursor:pointer; min-height:100px; padding:16px; border-radius:12px; text-align:left; transition:background .15s,border-color .15s; }
+.acompanhamento-painel .sinal-resumo:hover { border-color:var(--na-green); background:#eff8f5; }
+.acompanhamento-evidencia { margin:8px 0; padding:10px 12px; border-left:3px solid var(--na-green); background:#eff8f5; white-space:pre-wrap; overflow-wrap:anywhere; font-size:13px; }
+@media(max-width:600px) { .acompanhamento-atalhos>.btn-toggle { flex:1 1 100%; } .acompanhamento-acoes>.btn-toggle { flex:1 1 145px; } }
+.acompanhamento-painel .sinais-resumo { grid-template-columns:repeat(4,minmax(0,1fr)); }
+@media(min-width:1700px) { .acompanhamento-painel .sinais-resumo { grid-template-columns:repeat(8,minmax(0,1fr)); } }
+@media(max-width:760px) { .acompanhamento-painel .sinais-resumo { grid-template-columns:repeat(2,minmax(0,1fr)); } }

@@ -1,4 +1,4 @@
-// Regras determinísticas: IA não escolhe contatos nem deduz intenção.
+// Organização por sinais registrados e evidências da análise automática; não autoriza envios.
 (function (raiz) {
     'use strict';
     const campos = {
@@ -72,6 +72,11 @@
             return resultado('participar', 3, 'Quer participar', 'Interesse em uma atividade com data definida registrado.', 'Conferir a confirmação, a presença e depois ouvir a experiência.');
         if (dado.intencao === 'conhecer')
             return resultado('conhecer', 4, 'Quer conhecer', 'Interesse em conhecer a escola registrado.', 'Conversar sobre uma oportunidade adequada, sem pressa.');
+        const analise = lead.analise_funil?.resultado;
+        if (analise?.intencao?.pretende === true && analise.intencao.trecho)
+            return resultado('evento', 3, 'Pretende se inscrever em evento', 'Intenção de inscrição em evento identificada na conversa; não é pedido de matrícula.', 'Consultar o evento e o que foi combinado antes de acompanhar a inscrição.');
+        if (analise?.continuidade?.aceitou === true && analise.continuidade.trecho)
+            return resultado('conversa', 4, 'Aceitou conversar ou receber informações', 'Aceitação identificada automaticamente na conversa; ainda sem intenção de matrícula comprovada.', 'Ler o contexto e responder ao pedido específico; isso não autoriza campanhas.');
         return resultado('qualificar', 5, 'Interesse a confirmar', dado.relacao === 'visitante' ? 'Já visitou; falta registrar a intenção atual.' : 'Ainda não há intenção atual registrada.', 'Conferir a conversa e registrar o que a pessoa realmente declarou.');
     }
     function atendimentoDiario(lead, agora = Date.now()) {

@@ -119,6 +119,16 @@ async function carregarFilaAcompanhamento() {
             linhas.push(...(data || []));
             if (!data || data.length < 1000) break;
         }
+        const analises = new Map();
+        for (let inicio = 0; ; inicio += 1000) {
+            const { data, error } = await window.supabaseClient.from('funil_analises_conversa')
+                .select('pessoa,resultado,analisado_em,estado').eq('filial', filial).order('pessoa').range(inicio, inicio + 999);
+            if (consulta !== acompanhamentoConsulta || filial !== filialAtual) return;
+            if (error) throw new Error('Não foi possível consultar a análise das conversas. Atualize para tentar novamente.');
+            (data || []).forEach(analise => analises.set(String(analise.pessoa), analise));
+            if (!data || data.length < 1000) break;
+        }
+        linhas.forEach(lead => { lead.analise_funil = analises.get(String(lead.pessoaIdentificador)) || null; });
         acompanhamentoFila = linhas;
         renderizarFilaAcompanhamento();
     } catch (erro) { if (consulta === acompanhamentoConsulta) el.textContent = erro.message; }
@@ -133,7 +143,7 @@ function renderizarFilaAcompanhamento() {
     });
     const resumo = AcompanhamentoModelo.resumir(acompanhamentoFila);
     const indicador = document.getElementById('acompanhamentoResumo');
-    if (indicador) indicador.textContent = `${resumo.atencao} retorno(s)/pedido(s) de atenção · ${resumo.inscricoes} inscrição(ões) em acompanhamento · ${resumo.semResponsavel} sem responsável · ${resumo.preferenciaPendente} preferências a conferir. Categorias podem se sobrepor.`;
+    if (indicador) indicador.textContent = `Datas e responsáveis são combinados pela equipe; a análise automática não inventa agendamentos. ${resumo.atencao} retorno(s)/pedido(s) de atenção · ${resumo.inscricoes} inscrição(ões) em acompanhamento · ${resumo.semResponsavel} sem responsável · ${resumo.preferenciaPendente} preferências a conferir. Categorias podem se sobrepor.`;
     renderizarSinaisMatricula();
     renderizarResumoDoDia();
     const contagem = document.getElementById('acompanhamentoContagem');
@@ -142,9 +152,11 @@ function renderizarFilaAcompanhamento() {
         const dado = AcompanhamentoModelo.normalizar(lead.acompanhamento);
         const sinal = AcompanhamentoModelo.proximidade(lead);
         const preferencia = AcompanhamentoModelo.impedimento(dado);
+        const evidencia = lead.analise_funil?.resultado;
+        const trecho = sinal.grupo === 'evento' ? evidencia?.intencao?.trecho : sinal.grupo === 'conversa' ? evidencia?.continuidade?.trecho : '';
         const dia = AcompanhamentoModelo.atendimentoDiario(lead);
-        return `<article><strong>${escapeHTML(lead.pessoaNome || 'Sem nome')}</strong><span class="sinal-matricula sinal-${sinal.grupo}">${escapeHTML(sinal.rotulo)}</span><span>${escapeHTML(sinal.motivo)}</span><small>Próximo cuidado: ${escapeHTML(sinal.acao)}</small><small>Fila diária: ${escapeHTML(dia.rotulo)}</small><small>Atendimento: ${escapeHTML(prioridade.motivo)}${preferencia ? ' · ' + escapeHTML(preferencia) : ''}</small><small>${dado.atualizado_em ? 'Registro de ' + escapeHTML(new Date(dado.atualizado_em).toLocaleDateString('pt-BR')) : 'Sem data de atualização da intenção'}</small><small>${escapeHTML(AcompanhamentoModelo.campos.origem[dado.origem])} · ${escapeHTML(dado.responsavel || 'Sem responsável')} · ${dado.proxima_em ? escapeHTML(new Date(dado.proxima_em).toLocaleString('pt-BR')) : 'Sem data'}</small><button type="button" class="btn-mini btn-secondary-mini" data-acompanhamento-id="${escapeHTML(String(lead.pessoaIdentificador))}">Abrir atendimento</button></article>`;
-    }).join('') || '<p>Nenhum contato neste filtro.</p>';
+        return `<article><strong>${escapeHTML(lead.pessoaNome || 'Sem nome')}</strong><span class="sinal-matricula sinal-${sinal.grupo}">${escapeHTML(sinal.rotulo)}</span><span>${escapeHTML(sinal.motivo)}</span><small>Próximo cuidado: ${escapeHTML(sinal.acao)}</small>${trecho ? `<blockquote class="acompanhamento-evidencia">${escapeHTML(trecho)}</blockquote><small>Identificado automaticamente na conversa${lead.analise_funil.estado !== 'concluido' ? ' · reanálise em andamento' : ''}. Não altera a autorização de envio.</small>` : ''}<small>Fila diária: ${escapeHTML(dia.rotulo)}</small><small>Atendimento: ${escapeHTML(prioridade.motivo)}${preferencia ? ' · ' + escapeHTML(preferencia) : ''}</small><small>${dado.atualizado_em ? 'Registro de ' + escapeHTML(new Date(dado.atualizado_em).toLocaleDateString('pt-BR')) : 'Sem data de atualização da intenção'}</small><small>${escapeHTML(AcompanhamentoModelo.campos.origem[dado.origem])} · ${escapeHTML(dado.responsavel || 'Sem responsável')} · ${dado.proxima_em ? escapeHTML(new Date(dado.proxima_em).toLocaleString('pt-BR')) : 'Sem data'}</small><button type="button" class="btn-mini btn-secondary-mini" data-acompanhamento-id="${escapeHTML(String(lead.pessoaIdentificador))}">Abrir atendimento</button></article>`;
+    }).join('') || (filtro === 'proximos' ? '<p>Ainda não há pedido de matrícula, cadastro em andamento ou visita com relato positivo registrado nesta escola. Consulte também as intenções de inscrição em evento e as conversas aceitas nos indicadores acima.</p>' : '<p>Nenhum contato neste filtro.</p>');
     el.querySelectorAll('[data-acompanhamento-id]').forEach(botao => botao.addEventListener('click', () => abrirAcompanhamentoDaFila(botao.dataset.acompanhamentoId)));
 }
 async function abrirAcompanhamentoDaFila(id) {
@@ -165,7 +177,7 @@ function mostrarProximosDaMatricula(filtro = 'proximos') {
 function renderizarSinaisMatricula() {
     const el = document.getElementById('sinaisMatricula');
     if (!el) return;
-    const grupos = [['proximos', 'Mais próximos da matrícula'], ['sinal:participar', 'Querem participar'], ['sinal:conhecer', 'Querem conhecer'], ['sinal:qualificar', 'Interesse a confirmar'], ['sinal:momento', 'Pausa / não contatar'], ['sinal:conferidos', 'Cadastros conferidos']];
+    const grupos = [['proximos', 'Mais próximos da matrícula'], ['sinal:evento', 'Intenção de inscrição em evento'], ['sinal:conversa', 'Aceitaram conversar'], ['sinal:participar', 'Querem participar'], ['sinal:conhecer', 'Querem conhecer'], ['sinal:qualificar', 'Interesse a confirmar'], ['sinal:momento', 'Pausa / não contatar'], ['sinal:conferidos', 'Cadastros conferidos']];
     const contagens = {};
     acompanhamentoFila.forEach(lead => { const grupo = AcompanhamentoModelo.proximidade(lead).grupo; contagens[grupo] = (contagens[grupo] || 0) + 1; });
     el.innerHTML = grupos.map(([filtro, titulo]) => {
@@ -187,3 +199,8 @@ function renderizarResumoDoDia() {
     }).join('');
     el.querySelectorAll('[data-dia]').forEach(botao => botao.addEventListener('click', () => { document.getElementById('acompanhamentoFiltro').value = 'dia:' + botao.dataset.dia; renderizarFilaAcompanhamento(); }));
 }
+
+// A análise é processada no servidor; mantém o painel aberto atualizado sem mudar o filtro.
+setInterval(() => {
+    if (!acompanhamentoSalvando && document.getElementById('tab-crm')?.classList.contains('active') && document.getElementById('painelInteresseMatricula')?.open) carregarFilaAcompanhamento();
+}, 60000);

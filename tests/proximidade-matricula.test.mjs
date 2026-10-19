@@ -28,3 +28,14 @@ test('fila dos mais próximos ordena evidência, mantém próxima data e restri�
  assert.deepEqual(Array.from(modelo.selecionarFila(leads,{filtro:'proximos'}),i=>i.lead.pessoaIdentificador),['4','2','3']);
  assert.equal(modelo.selecionarFila(leads,{filtro:'sinal:qualificar'}).length,0);
 });
+
+test('análise automática diferencia conversa, evento e matrícula sem autorizar campanha', () => {
+ const lead={pessoaIdentificador:'auto',acompanhamento:{},analise_funil:{resultado:{continuidade:{aceitou:true,trecho:'Pode mandar'}}}};
+ assert.equal(modelo.proximidade(lead).grupo,'conversa');
+ assert.equal(modelo.selecionarFila([lead],{filtro:'proximos'}).length,0);
+ assert.equal(modelo.prioridade(lead).campanha,false);
+ lead.analise_funil.resultado.intencao={pretende:true,trecho:'Vou me inscrever na palestra'};
+ assert.equal(modelo.proximidade(lead).grupo,'evento');
+ lead.acompanhamento={contato:'nao_contatar'};
+ assert.equal(modelo.proximidade(lead).grupo,'momento');
+});
