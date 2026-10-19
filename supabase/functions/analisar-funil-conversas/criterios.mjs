@@ -16,6 +16,9 @@ Não infira inscrição oficial, presença ou matrícula de texto, tags ou elogi
 
 export function validarAnalise(conversa, bruto) {
  const mensagens = conversa.mensagens || [];
+ if(!Array.isArray(bruto?.respostas) || !Array.isArray(bruto?.convites))throw new Error('Formato da análise inválido; tentar novamente.');
+ const idsRespondidos=new Set(bruto.respostas.map(r=>Number(r.mensagem_id)));
+ if(mensagens.some(m=>m.direcao==='entrada' && !idsRespondidos.has(Number(m.id))))throw new Error('Análise incompleta do histórico; tentar novamente.');
  const porId = new Map(mensagens.map(m => [Number(m.id), m]));
  const eventos = new Map((conversa.eventos || []).map(e => [Number(e.id), e]));
  const classes = new Set(['valida','aceitou','inscricao','recusa','automatica','inconclusiva']);

@@ -18,6 +18,13 @@ test('interação nova reclassifica snapshot, recusa altera funil e resultado an
  assert.equal(await salvar(c.versao,resultado),true);
  const rel=async()=>(await db.query(`select relatorio_funil_interacoes(now()-interval '2 days',now()+interval '1 day',null) r`)).rows[0].r.find(x=>x.total);
  let r=await rel();assert.equal(r.validas,1);assert.equal(r.aceitaram,1);assert.equal(r.intencoes,1);assert.equal(r.inscritos,1);assert.equal(r.presentes,1);assert.equal(r.pendentes,0);
+ await db.exec(`update evento_leads set origem='crm';`);
+ assert.equal((await rel()).inscritos,0);
+ await db.exec(`insert into leads_inscricoes("pessoaIdentificador",filial,historico_eventos) values('p','A',jsonb_build_array(jsonb_build_object('evento','Aula','data',to_char(current_date,'DD/MM/YYYY')||' 20:00:00')));`);
+ assert.equal((await rel()).inscritos,1); // histórico Ulisses comprova inscrição apesar da origem antiga
+ await db.exec(`update leads_inscricoes set historico_eventos='[]';`);
+ assert.equal((await rel()).inscritos,0); // convite sozinho não vira inscrição
+ await db.exec(`update evento_leads set origem='ulisses';`);
  await db.exec(`insert into mensagens_whatsapp values(3,'p','A','entrada','entregue','w3',false,now(),'Desisti, não quero mais informações','texto');`);
  assert.equal((await rel()).pendentes,1);assert.equal(await salvar(c.versao,resultado),false);
  c=(await db.query('select assumir_conversa_funil() c')).rows[0].c;
