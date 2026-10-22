@@ -3194,6 +3194,7 @@ function atualizarRelatorios() {
     if (typeof renderizarConciliacaoMercurio === 'function') renderizarConciliacaoMercurio();
     renderizarComissaoSdrTodasFiliais();
     if (typeof renderizarAcertosComissao === 'function') renderizarAcertosComissao();
+    if (typeof carregarRelatorioAnualMatriculas === 'function') carregarRelatorioAnualMatriculas();
     if (typeof renderizarCanalOrigemMercurio === 'function') renderizarCanalOrigemMercurio();
     renderizarRelatorioComparacaoFiliais();
     renderizarRelatorioJornadaBase();

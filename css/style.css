@@ -1355,3 +1355,88 @@ select:hover { border-color: #94a3b8; }
 .especialistas-tabela th,.especialistas-tabela td { text-align:left; padding:8px; border-bottom:1px solid var(--border-color,#ddd); }
 .audio-transcricao { margin-top:8px; white-space:pre-wrap; overflow-wrap:anywhere; }
 #especialistasMais[hidden] { display:none !important; }
+
+/* Relatórios: um assunto por vez, cartões leves e espaço para leitura. */
+#tab-relatorios .report-content { padding:32px clamp(16px,3vw,48px) 56px; background:#f7f9f8; }
+.relatorios-intro { margin-bottom:24px; }
+.relatorios-intro>span,.anual-sobre { color:#70877e; font-size:10px; font-weight:700; letter-spacing:1.8px; }
+.relatorios-intro h1 { margin:8px 0; font-size:28px; font-weight:650; color:#234f42; letter-spacing:-.6px; }
+.relatorios-intro p { color:#718079; font-size:13px; margin:0; line-height:1.7; }
+#tab-relatorios .atalhos-relatorios { display:flex; gap:6px; padding:6px; margin:0 0 30px; border:1px solid #e3eae6; border-radius:12px; background:#eef3f0; flex-wrap:wrap; }
+#tab-relatorios .atalhos-relatorios button { padding:11px 16px; border:0; border-radius:8px; background:transparent; color:#6a7f74; font-size:12px; font-weight:600; cursor:pointer; min-height:42px; }
+#tab-relatorios .atalhos-relatorios button[aria-pressed="true"] { color:#255e4b; background:#fff; box-shadow:0 1px 5px #244b3710; }
+#tab-relatorios button:focus-visible,#tab-relatorios select:focus-visible { outline:2px solid #448c75; outline-offset:3px; }
+.relatorios-assunto[hidden] { display:none !important; }
+.relatorios-assunto { display:grid; gap:28px; }
+.relatorios-assunto>.relatorio-bloco:not(.relatorio-anual) { padding:26px; border:1px solid #e5ece7; border-radius:16px; background:white; margin:0 !important; min-width:0; }
+#tab-relatorios h3 { line-height:1.5; }
+#tab-relatorios .report-sub { max-width:100%; line-height:1.8; color:#748079; margin:8px 0 20px; }
+#tab-relatorios .tabela-relatorio { display:table; border-collapse:collapse; width:100%; font-size:12px; }
+#tab-relatorios .tabela-relatorio th,#tab-relatorios .tabela-relatorio td { padding:13px 12px; border-bottom:1px solid #eef2ef; line-height:1.6; }
+#tab-relatorios .tabela-relatorio thead { color:#60776a; background:#f6f9f7; }
+#tab-relatorios .tabela-relatorio tbody tr:hover { background:#fafcfb; }
+#tab-relatorios .funnel-bar { background:linear-gradient(90deg,#79b5a2,#a4c9b7); border-radius:6px; color:#143c30; }
+#tab-relatorios .funnel-bar-wrapper { background:#eef3ef; height:32px; }
+#tab-relatorios .btn-secondary { border-color:#dfe8e2; border-radius:8px; padding:9px 12px; font-size:11px; box-shadow:none; }
+#relatorioAcertosComissao { margin-top:16px; }
+#relatorioAcertosComissao input { border:1px solid #dfe8e2; padding:8px; border-radius:6px; }
+.anual-cabecalho { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; margin:0 0 25px; }
+.anual-cabecalho h2 { font-size:25px; color:#244e40; letter-spacing:-.5px; font-weight:600; margin:8px 0; }
+.anual-cabecalho p { font-size:13px; line-height:1.8; color:#7b8780; margin:0; }
+.anual-filtros { display:flex; gap:16px; flex-wrap:wrap; align-items:end; margin-bottom:25px; }
+.anual-filtros label { display:flex; flex-direction:column; gap:8px; font-size:11px; color:#697e71; }
+.anual-filtros select { min-height:40px; max-width:100%; padding:8px 12px; border:1px solid #dfe8e2; border-radius:8px; background:#fff; color:#355e4c; font-size:12px; }
+.anual-fonte { font-size:11px; color:#87928b; padding:10px 0; margin-left:auto; }
+.anual-indicadores { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:18px; margin-bottom:28px; }
+.anual-indicadores article { padding:22px; background:white; border:1px solid #e6ece8; border-radius:14px; display:flex; flex-direction:column; gap:12px; }
+.anual-indicadores span { color:#7a8980; font-size:11px; line-height:1.5; }
+.anual-indicadores strong { font-size:31px; color:#39745b; font-weight:550; letter-spacing:-1px; line-height:1.15; }
+.anual-indicadores small { color:#8a978f; font-size:10px; line-height:1.7; }
+.anual-card { background:#fff; border:1px solid #e5ece7; border-radius:16px; padding:26px; margin-bottom:26px; min-width:0; }
+.anual-card h3 { margin:0 0 8px; color:#385e4b; font-size:14px; font-weight:600; }
+.anual-titulo-linha { display:flex; gap:16px; align-items:flex-start; justify-content:space-between; margin-bottom:24px; }
+.anual-titulo-linha p { font-size:11px; color:#849188; margin:0; line-height:1.7; }
+.anual-curva { display:block; width:100%; height:auto; max-height:360px; overflow:visible; }
+.anual-curva g:focus { outline:none; }
+.anual-curva g:focus circle { stroke:#133a2c; stroke-width:4; }
+.anual-legenda { font-size:10px; color:#8a978e; line-height:1.8; margin:15px 0 0; }
+.anual-duas-colunas { display:grid; grid-template-columns:1fr 1fr; gap:26px; align-items:start; }
+.anual-analise { font-size:13px; line-height:1.9; color:#657c6d; }
+.anual-analise p { margin:20px 0; }
+.anual-analise strong { color:#3b6a53; font-weight:600; }
+.anual-analise .anual-nota { font-size:11px; color:#8a978e; border-top:1px solid #eef2ef; padding-top:18px; margin-bottom:0; }
+.anual-ranking { list-style:none; padding:0; margin:22px 0 0; display:grid; gap:17px; }
+.anual-ranking li>div:first-child { display:flex; justify-content:space-between; gap:18px; color:#56725f; font-size:11px; }
+.anual-ranking strong { font-weight:600; color:#487b60; }
+.anual-trilho { height:5px; background:#f0f5f2; border-radius:5px; margin:8px 0 4px; }
+.anual-trilho span { display:block; height:100%; background:#a7c9b7; border-radius:5px; }
+.anual-ranking small { color:#95a197; font-size:9px; }
+.anual-tabela-wrap { overflow:auto; max-width:100%; }
+.anual-tabela { border-collapse:separate; border-spacing:0; width:100%; font-size:11px; white-space:nowrap; }
+.anual-tabela th,.anual-tabela td { text-align:right; padding:13px 11px; border-bottom:1px solid #eef3ef; color:#5d7666; }
+.anual-tabela th:first-child { text-align:left; position:sticky; left:0; background:white; z-index:1; min-width:200px; font-weight:500; }
+.anual-tabela thead th { font-weight:600; color:#89988d; background:#fafcfb; }
+.anual-tabela tfoot th,.anual-tabela tfoot td { font-weight:700; background:#f1f7f3; color:#3b6c50; }
+.anual-tabela .anual-zero { color:#aab6ad; }
+.anual-metodo { padding:10px 2px 28px; color:#7e8f82; font-size:11px; line-height:1.9; }
+.anual-metodo summary { cursor:pointer; color:#64816d; font-size:12px; }
+.anual-metodo p { max-width:950px; margin-top:16px; }
+@media(max-width:1000px) { .anual-indicadores { grid-template-columns:repeat(2,minmax(0,1fr)); } .anual-duas-colunas { grid-template-columns:1fr; gap:0; } }
+@media(max-width:600px) { #tab-relatorios .report-content { padding:20px 14px 40px; } .relatorios-assunto>.relatorio-bloco:not(.relatorio-anual),.anual-card { padding:18px; } .anual-cabecalho { flex-wrap:wrap; gap:14px; } .anual-cabecalho h2 { font-size:23px; } .anual-filtros label { flex:1 1 100%; } .anual-fonte { margin-left:0; } .anual-indicadores { gap:12px; } .anual-indicadores article { padding:17px; } .anual-indicadores strong { font-size:27px; } .anual-titulo-linha { flex-wrap:wrap; } .anual-curva { min-width:0; } #tab-relatorios .atalhos-relatorios { gap:4px; } #tab-relatorios .atalhos-relatorios button { flex:1 1 140px; font-size:11px; padding:10px; } }
+/* Contraste e tamanho confortáveis, sem achatar o gráfico no celular. */
+.relatorios-assunto>.relatorio-bloco:not(.relatorio-anual) { overflow-x:auto; }
+.anual-card h3 { font-size:16px; }
+.anual-filtros label,.anual-indicadores span { font-size:12px; }
+.anual-fonte,.anual-titulo-linha p,.anual-legenda,.anual-metodo { font-size:12px; color:#697d6e; }
+.anual-indicadores small { font-size:11px; color:#718575; }
+.anual-ranking li>div:first-child { font-size:12px; }
+.anual-ranking small { font-size:11px; color:#748978; }
+.anual-tabela { font-size:12px; }
+.anual-tabela thead th { color:#647c6b; }
+.anual-analise .anual-nota { color:#6f8375; font-size:12px; }
+.anual-curva-wrap { overflow-x:auto; }
+@media(max-width:600px) { .anual-curva { min-width:920px; max-height:none; } .anual-curva-wrap { margin-right:-3px; } }
+#tab-relatorios .atalhos-relatorios { position:sticky; top:0; z-index:12; }
+#relatorioKanbanCabecalho,#relatorioKanbanCabecalho>div:last-child { flex-wrap:wrap; }
+.relatorios-assunto { grid-template-columns:minmax(0,1fr); min-width:0; }
+.relatorio-anual { min-width:0; max-width:100%; }

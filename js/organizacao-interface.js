@@ -28,28 +28,42 @@ function organizarInterfaceCrm() {
     const relatorios = document.querySelector('#tab-relatorios .report-content');
     if (relatorios) {
         const grupos = [
-            ['Matrículas e conferência', ['relatorioMatriculasPorMes','relatorioConciliacaoMercurio'], true],
-            ['Cobranças e ciclos', ['relatorioCobrancaMensal','relatorioCiclosTurma','relatorioComissaoSdrTodasFiliais'], false],
-            ['Origem e relacionamento', ['relatorioJornadaBase','relatorioTemasEvento','relatorioCanalOrigemMercurio','relatorioMotivosPerda','relatorioComparacaoFiliais'], false],
-            ['Atendimento e equipe', ['relatorioSlaWhatsApp','resumoTrabalhoContainer'], false],
+            ['Panorama anual', ['relatorioAnualMatriculas']],
+            ['Matrículas e conferência', ['relatorioMatriculasPorMes','relatorioConciliacaoMercurio']],
+            ['Comissões e cobrança', ['relatorioComissaoSdrTodasFiliais','relatorioCobrancaMensal','relatorioCiclosTurma']],
+            ['Funil e relacionamento', ['funilInteracoes','relatorioKanbanCabecalho','funnelChart','relatorioJornadaBase','relatorioTemasEvento','relatorioCanalOrigemMercurio','relatorioMotivosPerda','relatorioComparacaoFiliais']],
+            ['Atendimento e equipe', ['relatorioSlaWhatsApp','resumoTrabalhoContainer']],
         ];
         const navegacao = document.createElement('nav'); navegacao.className = 'atalhos-relatorios'; navegacao.setAttribute('aria-label','Assuntos dos relatórios');
-        relatorios.prepend(navegacao);
-        grupos.forEach(([titulo, ids, aberto]) => {
-            const detalhes = document.createElement('details'); detalhes.className = 'secao-organizada'; detalhes.open = aberto;
-            const resumo = document.createElement('summary'); resumo.textContent = titulo; detalhes.append(resumo);
+        const cabecalho = document.createElement('header'); cabecalho.className = 'relatorios-intro';
+        cabecalho.innerHTML = '<span>VISÃO DE GESTÃO</span><h1>Relatórios</h1><p>Escolha um assunto para analisar os resultados com mais clareza.</p>';
+        const secoes = [], botoes = [];
+        grupos.forEach(([titulo, ids], indice) => {
+            const secao = document.createElement('section'); secao.className = 'relatorios-assunto'; secao.id = 'relatorios-assunto-' + indice;
+            secao.setAttribute('aria-label',titulo);
             ids.forEach(id => {
                 let bloco = document.getElementById(id);
                 if (!bloco) return;
                 while (bloco.parentElement && bloco.parentElement !== relatorios) bloco = bloco.parentElement;
-                if (bloco.parentElement === relatorios) { bloco.style.marginTop = ''; detalhes.append(bloco); }
+                if (bloco.parentElement === relatorios) { bloco.style.marginTop = ''; bloco.classList.add('relatorio-bloco'); secao.append(bloco); }
             });
-            if (detalhes.children.length === 1) return;
-            relatorios.append(detalhes);
+            if (!secao.children.length) return;
+            relatorios.append(secao); secoes.push(secao);
             const botao = document.createElement('button'); botao.type = 'button'; botao.textContent = titulo;
-            botao.addEventListener('click', () => { detalhes.open = true; resumo.scrollIntoView({block:'start',behavior:'auto'}); resumo.focus(); });
-            resumo.tabIndex = 0; navegacao.append(botao);
+            botao.setAttribute('aria-controls',secao.id);
+            botao.addEventListener('click', () => {
+                secoes.forEach(s => { s.hidden = s !== secao; });
+                botoes.forEach(b => b.setAttribute('aria-pressed',String(b === botao)));
+                try { sessionStorage.setItem('crm_relatorios_assunto',secao.id); } catch { /* armazenamento indisponível */ }
+            });
+            botoes.push(botao); navegacao.append(botao);
         });
+        relatorios.prepend(cabecalho,navegacao);
+        let selecionada = 'relatorios-assunto-0';
+        try { selecionada = sessionStorage.getItem('crm_relatorios_assunto') || selecionada; } catch { /* usa panorama */ }
+        const atual = secoes.find(s => s.id === selecionada) || secoes[0];
+        secoes.forEach(s => { s.hidden = s !== atual; });
+        botoes.forEach(b => b.setAttribute('aria-pressed',String(b.getAttribute('aria-controls') === atual?.id)));
     }
 }
 document.addEventListener('DOMContentLoaded', organizarInterfaceCrm);

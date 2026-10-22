@@ -347,6 +347,37 @@ async function sincronizarFilial(pma: any, filial: { id: number; nome: string; u
     };
 }
 
+// Estatística acadêmica inclui inativos e quem já avançou de nível.
+// Não reutiliza conta_remuneracao, que é uma regra financeira diferente.
+async function atualizarRelatorioMatriculas(pma: any, filial: any, ano: number, base: string) {
+    const fonteData = String(base || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fonteData)) throw new Error("Data da base do Mercúrio não informada");
+    const unidade = String(filial.mercurio_unidade).replace(/[^A-Z0-9]/gi, "");
+    const inicio = `${ano}-01-01`, fim = `${ano + 1}-01-01`;
+    const niveis = "'PP','N1','N2','N3','N4','N5','N6','N7','CA'";
+    const dados = await pma.consultar(
+        `SELECT mes, tipo, COUNT(DISTINCT cad_matr) AS quantidade FROM (` +
+        `SELECT cad_matr, MONTH(cad_ingresso) AS mes, 'nova' AS tipo FROM cadastro WHERE cad_unidade='${unidade}' AND cad_nivel IN (${niveis}) AND cad_ingresso >= '${inicio}' AND cad_ingresso < '${fim}' AND cad_ingresso < DATE_ADD('${fonteData}', INTERVAL 1 DAY) ` +
+        `UNION ALL SELECT cad_matr, MONTH(cad_reingresso) AS mes, 'reingresso' AS tipo FROM cadastro WHERE cad_unidade='${unidade}' AND cad_nivel IN (${niveis}) AND cad_recuperado='S' AND cad_reingresso >= '${inicio}' AND cad_reingresso < '${fim}' AND cad_reingresso < DATE_ADD('${fonteData}', INTERVAL 1 DAY) AND (cad_ingresso IS NULL OR cad_reingresso > cad_ingresso)` +
+        `) movimentos GROUP BY mes, tipo`, "cadastro");
+    const contagens = new Map<string, number>(dados.map((d: any) => [`${Number(d.mes)}|${d.tipo}`, Number(d.quantidade)]));
+    const mesBase = Number(fonteData.slice(5, 7)), anoBase = Number(fonteData.slice(0, 4));
+    const ultimoDia = new Date(Date.UTC(anoBase, mesBase, 0)).getUTCDate();
+    const membros = filial.membros != null ? Number(filial.membros) : filial.membros_mercurio == null ? null : Number(filial.membros_mercurio);
+    const linhas = Array.from({ length: 12 }, (_, i) => {
+        const mes = i + 1, disponivel = ano < anoBase || (ano === anoBase && mes <= mesBase);
+        return { filial_id: filial.id, ano, mes,
+            novas: disponivel ? (contagens.get(`${mes}|nova`) ?? 0) : null,
+            reingressos: disponivel ? (contagens.get(`${mes}|reingresso`) ?? 0) : null,
+            membros_referencia: Number.isSafeInteger(membros) && membros! >= 0 ? membros : null,
+            fonte_data: fonteData, parcial: ano === anoBase && mes === mesBase && Number(fonteData.slice(8, 10)) < ultimoDia,
+            atualizado_em: new Date().toISOString() };
+    });
+    const { error } = await supabaseAdmin.from("relatorio_matriculas_mensais").upsert(linhas, { onConflict: "filial_id,ano,mes" });
+    if (error) throw new Error(`relatório anual: ${error.message}`);
+    return { filial: filial.nome, ano, fonte_data: fonteData, novas: linhas.reduce((s, l) => s + (l.novas ?? 0), 0), reingressos: linhas.reduce((s, l) => s + (l.reingressos ?? 0), 0) };
+}
+
 Deno.serve(async (req) => {
     const cors = handleCors(req);
     if (cors) return cors;
@@ -357,7 +388,7 @@ Deno.serve(async (req) => {
     try {
         // Consulta administrativa sem importar pessoas nem alterar o CRM.
         // IDs do catálogo público não são os códigos legados do Mercúrio.
-        if (["consultar_membros_filiais", "consultar_matriculas_historicas"].includes(corpo.modo)) {
+        if (["consultar_membros_filiais", "consultar_matriculas_historicas", "atualizar_relatorio_matriculas"].includes(corpo.modo)) {
             // Esta função é publicada com verify_jwt=true: o gateway verifica
             // a assinatura antes da execução; aqui restringimos o papel.
             let papel = "";
@@ -370,6 +401,16 @@ Deno.serve(async (req) => {
             }
             const pma = await abrirSessaoPhpMyAdmin();
             const [atualizacao] = await pma.consultar("SELECT data FROM `atualização`", "atualização");
+            if (corpo.modo === "atualizar_relatorio_matriculas") {
+                const ano = corpo.ano ?? 2026;
+                if (!Number.isInteger(ano) || ano < 1900 || ano > 2100) return json({ ok: false, erro: "Ano inválido" }, 400);
+                const { data: filiais, error } = await supabaseAdmin.from("filiais").select("id,nome,mercurio_unidade,membros,membros_mercurio")
+                    .eq("ativo", true).is("filial_cobranca_id", null).not("mercurio_unidade", "is", null).order("id");
+                if (error) throw new Error(error.message);
+                const resultados = [];
+                for (const filial of filiais || []) resultados.push(await atualizarRelatorioMatriculas(pma, filial, ano, atualizacao?.data));
+                return json({ ok: true, resultados });
+            }
             if (corpo.modo === "consultar_matriculas_historicas") {
                 // Relatório agregado: inclui inativos, sem exportar nomes,
                 // contatos ou matrículas individuais. Datas fixas do pedido.
@@ -413,7 +454,18 @@ Deno.serve(async (req) => {
         const resultados: any[] = [];
         for (const f of filiais) {
             try {
-                resultados.push(await sincronizarFilial(pma, { id: f.id, nome: f.nome, unidade: f.mercurio_unidade }, inicioRodada));
+                const resultado: any = await sincronizarFilial(pma, { id: f.id, nome: f.nome, unidade: f.mercurio_unidade }, inicioRodada);
+                resultados.push(resultado);
+                try {
+                    const { data: atual } = await supabaseAdmin.from("filiais").select("id,nome,mercurio_unidade,membros,membros_mercurio").eq("id", f.id).single();
+                    if (atual) {
+                        // Mantém 2026 atualizável também após a virada do ano,
+                        // quando podem chegar registros acadêmicos atrasados.
+                        for (const ano of new Set([2026, new Date().getUTCFullYear()])) {
+                            await atualizarRelatorioMatriculas(pma, atual, ano, atualizacao?.data);
+                        }
+                    }
+                } catch (e) { resultado.relatorio_anual_erro = (e as Error).message; }
             } catch (e) {
                 resultados.push({ filial: f.nome, erro: (e as Error).message });
             }

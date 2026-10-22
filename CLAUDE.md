@@ -10743,3 +10743,41 @@ dossiês detalhados continuam no backfill diário de 30 por filial.
 Nenhum ciclo de abertura estava cadastrado na tabela na consulta desta sessão;
 a cobrança oficial por ciclo ainda depende do cadastro dessas janelas no CRM.
 Os acertos/simulações não inventam ciclos nem fecham faturas automaticamente.
+
+## Panorama anual e nova leitura dos relatórios (22/10/2026)
+
+`relatorio_matriculas_mensais` guarda estatística agregada por escola/ano/mês,
+com data da fonte, mês parcial e membros de referência. A sincronização do
+banco Mercúrio atualiza esse agregado por filial diariamente (ano atual e
+2026, inclusive após a virada). O modo administrativo
+`atualizar_relatorio_matriculas` aceita ano inteiro validado e exige service_role
+com JWT validado pelo gateway; não retorna dados pessoais.
+
+`js/relatorio-anual-matriculas.js`: panorama de 2026, curva SVG suave com pontos
+exatos, filtro por escola, alternância novos / novos+reingressos, tabela mensal,
+ranking por 100 membros atuais, análise determinística e exportação CSV/SVG.
+Inclui ATI+INA e PP/N1–N7/CA; progressão de nível não apaga ingresso novo.
+Novos usam ingresso, retornos usam reingresso confirmado posterior; são
+ocorrências diferentes e NÃO usam a regra financeira de uma comissão por
+matrícula/competência. Janos/Merlin fora. Não alterar retroativamente a prévia
+financeira só para igualar os dois conceitos.
+
+Fonte de 17/10/2026: 547 novos e 93 reingressos (640 ocorrências). Novos por
+mês Jan–Out: 44,60,75,77,35,55,44,76,54,27. Outubro parcial; Nov/Dez sem
+cobertura, não zero. Melhores meses completos novos: abril77, agosto76,
+março75. Maior volume novo: Setor Universitário100. Maiores índices novos
+por100 membros atuais: Barra230, GoiâniaII175, CidadeJardim138,1. Índice não é
+conversão nem crescimento; usa 807 membros atuais como referência, não o
+tamanho histórico da escola em cada mês. Jataí continua consolidada em Rio Verde.
+
+A organização dos relatórios passou de vários blocos abertos para cinco
+assuntos com navegação persistente: panorama anual, matrículas/conferência,
+comissões/cobrança, funil/relacionamento, atendimento/equipe. IDs existentes e
+rotinas de cálculo preservados. Cores suaves, cartões espaçados, contraste
+mais confortável, tabela e curva com rolagem própria no celular.
+
+Validação do panorama anual: 21 testes passam (incluindo acertos e pricing),
+Chromium com os agregados reais confirmou filtros, 547/640 na alternância,
+10 pontos até outubro, navegação entre os cinco assuntos, CSV e página sem
+rolagem horizontal global em 390px. Curva e tabela têm rolagem própria.
+Fonte administrativa atualizada e Edge ativa; o frontend é publicado por push.

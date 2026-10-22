@@ -455,8 +455,9 @@
         =========================================================== -->
         <div id="tab-relatorios" class="tab-pane">
             <div class="report-content">
+                <section id="relatorioAnualMatriculas" class="relatorio-anual"></section>
                 <section id="funilInteracoes" class="funil-objetivo"></section>
-                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px;">
+                <div id="relatorioKanbanCabecalho" style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px;">
                     <div>
                         <h3 style="font-size:16px; color:var(--na-green-dark);">Distribuição atual do Kanban</h3>
                         <p class="report-sub">Calculado em tempo real a partir dos leads carregados para a filial atual.</p>
@@ -1867,6 +1868,7 @@
     <script src="js/conciliacao-mercurio.js"></script>
     <script src="js/cobranca-ciclos.js"></script>
     <script src="js/comissao-acertos.js"></script>
+    <script src="js/relatorio-anual-matriculas.js"></script>
     <!-- 3f2b. Relatórios de WhatsApp (SLA, desempenho por atendente, volume) + Resumo do Trabalho na tela -->
     <script src="js/relatorios-whatsapp.js"></script>
     <script src="js/funil-interacoes.js"></script>
