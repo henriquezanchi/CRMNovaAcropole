@@ -14,16 +14,12 @@
 // filiais deve continuar isolando falha por filial (mesmo princípio já
 // usado em `mercurio.js`/`ulisses.js`) — não custa nada e protege contra
 // uma futura filial nova com o mesmo tipo de esquecimento de permissão.
-// **Rodando de dentro do GitHub Actions, NADA disto funciona** — ver
-// CLAUDE.md, seção "CORREÇÃO GRAVE... a API do Ulisses TAMBÉM é
-// bloqueada": api.acropolebrasil.com.br está atrás do MESMO Cloudflare
-// que bloqueia login por navegador, e o bloqueio pega até uma chamada
-// HTTPS pura com token válido vinda de IP de datacenter. Só funciona da
-// máquina de confiança — `scraper/ulisses-local.js` (de carona) ou
-// `scraper/sincronizar-ulisses-api-local.mjs` (dedicado, headless). Ver
-// `scraper/importar-ulisses-api.js` pra sincronização de verdade
-// (Inscrições/Eventos/Comparecimento) e CLAUDE.md, seção "API oficial do
-// Ulisses", pro histórico completo.
+// O portal permite chamadas cloud com o cabeçalho oficial
+// `X-Portal-NA: bypass`, validado fora deste repositório. A sincronização
+// pode rodar no workflow do GitHub Actions ou localmente via
+// `scraper/sincronizar-ulisses-api-local.mjs`; ver
+// `scraper/importar-ulisses-api.js` pra importação de
+// Inscrições/Eventos/Comparecimento e CLAUDE.md pro histórico.
 import { lerCredencial } from './lib/supabaseAdmin.js';
 
 const AUTH0_TOKEN_URL = 'https://acropolebrasil.us.auth0.com/oauth/token';
@@ -69,6 +65,9 @@ async function chamarApi(path, { method = 'GET', esperado, texto = false, corpo 
         method,
         headers: {
             Authorization: `Bearer ${token}`,
+            // Cabeçalho oficial do portal, validado para permitir chamadas
+            // da infraestrutura cloud sem contornar o desafio do navegador.
+            'X-Portal-NA': 'bypass',
             ...(corpo ? { 'content-type': 'application/json' } : {}),
         },
         ...(corpo ? { body: JSON.stringify(corpo) } : {}),

@@ -1,12 +1,7 @@
 // Edge Function: dispara o workflow do GitHub Actions (.github/workflows/
-// scraper.yml) sob demanda, a partir de um clique no CRM — em vez de
-// esperar o agendamento diário (05:00 Brasília). Só faz sentido pro
-// Mercúrio: tudo relacionado ao Ulisses (login manual E, confirmado
-// 2026-09-21, também a API oficial — api.acropolebrasil.com.br está
-// atrás do MESMO Cloudflare, que bloqueia até uma chamada HTTPS pura com
-// token vinda do GitHub Actions) precisa rodar da máquina de confiança —
-// ver scraper/ulisses-local.js / scraper/sincronizar-ulisses-api-local.mjs,
-// nunca por aqui.
+// scraper.yml) sob demanda, a partir de uma chamada do CRM. O workflow
+// executa Mercúrio por padrão ou Ulisses via API oficial quando receber
+// `modo: "ulisses_api"`.
 //
 // Usa a API REST do GitHub (workflow_dispatch), com um Personal Access
 // Token guardado como secret (GITHUB_TOKEN_DISPATCH — nome próprio pra
@@ -41,13 +36,20 @@ Deno.serve(async (req) => {
     // filial pra testar mais rápido, e evitar tráfego desnecessário no
     // Mercúrio conforme mais filiais forem entrando. String vazia/ausente
     // = comportamento de sempre (todas). Repassado como `inputs.filial`
-    // pro workflow_dispatch — o próprio `mercurio.js` já sabe filtrar por
-    // esse valor (env `FILTRO_FILIAL`, mesmo filtro do uso local por
-    // linha de comando).
+    // pro workflow_dispatch (env `FILTRO_FILIAL`, mesmo filtro do uso local).
+    // `modo` aceita `mercurio` ou `ulisses_api`; ausente mantém o fluxo
+    // anterior e qualquer outro valor é rejeitado.
     let filial = "";
+    let modo = "mercurio";
     try {
         const body = await req.json();
         if (body && typeof body.filial === "string") filial = body.filial;
+        if (body && body.modo !== undefined) {
+            if (body.modo !== "mercurio" && body.modo !== "ulisses_api") {
+                return json({ ok: false, erro: "modo precisa ser 'mercurio' ou 'ulisses_api'" }, 400);
+            }
+            modo = body.modo;
+        }
     } catch { /* corpo vazio ({}) é o caso normal (todas as filiais) */ }
 
     try {
@@ -61,7 +63,7 @@ Deno.serve(async (req) => {
                     "Content-Type": "application/json",
                     "User-Agent": "crm-nova-acropole-scraper-disparar",
                 },
-                body: JSON.stringify({ ref: GITHUB_REF, inputs: { filial } }),
+                body: JSON.stringify({ ref: GITHUB_REF, inputs: { filial, modo } }),
             },
         );
 

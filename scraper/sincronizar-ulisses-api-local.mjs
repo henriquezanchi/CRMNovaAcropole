@@ -1,5 +1,5 @@
-// Sincroniza eventos + Inscrições do Ulisses via API oficial — LOCAL,
-// mas 100% HEADLESS (sem janela de Chromium visível, sem login manual
+// Sincroniza eventos + Inscrições do Ulisses via API oficial — HEADLESS
+// (sem janela de Chromium visível, sem login manual
 // nenhum) — diferente de `ulisses-local.js`, que precisa de você resolver
 // o Cloudflare/logar à mão pro comparecimento.
 //
@@ -9,17 +9,15 @@
 // credentials — token, sem tela), então dá pra rodar sozinha, sem
 // supervisão — inclusive numa Tarefa Agendada do Windows, todo dia de
 // manhã, sem precisar o usuário estar na máquina. Reaproveita a MESMA
-// função (`executarSomenteUlissesApi`) que o CRM disparava antes via
-// GitHub Actions — descoberto (2026-09-21, 2 testes reais) que
-// api.acropolebrasil.com.br está atrás do MESMO Cloudflare que já
-// bloqueava login por navegador, e o bloqueio NÃO poupa chamada HTTPS
-// pura com token — GitHub Actions (IP de datacenter) recebe a mesma
-// página de desafio "Just a moment..." no lugar do JSON esperado, mesmo
-// com Bearer válido. Rodando desta máquina (IP residencial), funciona.
+// função (`executarSomenteUlissesApi`) que pode ser iniciada localmente
+// ou pelo workflow_dispatch do GitHub Actions (`modo=ulisses_api`). O
+// cliente envia o cabeçalho oficial `X-Portal-NA: bypass` aceito pelo
+// portal; credenciais OAuth e do CRM são lidas do cofre pelo runner.
 //
 // Uso:
 //   npm run ulisses-api-local              (todas as filiais ativas)
 //   npm run ulisses-api-local -- "Garavelo" (só 1 filial)
+//   node sincronizar-ulisses-api-local.mjs  (no workflow, modo=ulisses_api)
 //
 // Também aceita ser chamado pelo protocolo customizado
 // abrirulissesapi://rodar?filial=Garavelo (botão "Sincronizar via API do

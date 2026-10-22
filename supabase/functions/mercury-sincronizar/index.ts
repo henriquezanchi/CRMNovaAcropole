@@ -44,6 +44,51 @@ function json(body: unknown, status = 200) {
     return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
+function ehServiceRole(req: Request): boolean {
+    // O gateway valida a assinatura do JWT (verify_jwt=true); aqui usamos
+    // o claim validado para restringir consultas de descoberta ao serviço.
+    try {
+        const token = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+        const parte = token.split(".")[1];
+        if (!parte) return false;
+        const base64 = parte.replace(/-/g, "+").replace(/_/g, "/");
+        const preenchido = base64 + "=".repeat((4 - base64.length % 4) % 4);
+        return JSON.parse(atob(preenchido)).role === "service_role";
+    } catch { return false; }
+}
+
+function campoTexto(...valores: unknown[]): string | null {
+    for (const valor of valores) {
+        if (typeof valor === "string" && valor.trim()) return valor.trim();
+        if (typeof valor === "number" && Number.isFinite(valor)) return String(valor);
+    }
+    return null;
+}
+
+async function descobrirFiliaisMercury() {
+    const filiais = new Map<string, string | null>();
+    for await (const classe of paginarMercury<any>("/classes")) {
+        const unidade = classe.branch ?? classe.unit ?? classe.school ?? {};
+        const branchId = campoTexto(
+            classe.branchId, classe.branch_id, classe.unitId, classe.unit_id,
+            unidade.id, unidade.branchId, unidade.branch_id,
+        );
+        if (!branchId) continue;
+        const nome = campoTexto(
+            classe.branchName, classe.branch_name, classe.unitName, classe.unit_name,
+            unidade.name, unidade.nome, unidade.label,
+        );
+        // Uma turma sem o nome, eventualmente, não apaga o nome já achado
+        // em outra turma da mesma filial.
+        if (!filiais.has(branchId) || (!filiais.get(branchId) && nome)) {
+            filiais.set(branchId, nome);
+        }
+    }
+    return [...filiais.entries()]
+        .map(([branchId, nome]) => ({ branchId, nome }))
+        .sort((a, b) => a.branchId.localeCompare(b.branchId, "en", { numeric: true }));
+}
+
 function parseTags(bruto: unknown): string[] {
     if (!bruto) return [];
     if (Array.isArray(bruto)) return bruto as string[];
@@ -298,6 +343,16 @@ Deno.serve(async (req) => {
 
     let body: any = {};
     try { body = await req.json(); } catch { /* body vazio é válido */ }
+
+    if (body.modo === "descobrir_filiais") {
+        if (!ehServiceRole(req)) return json({ ok: false, erro: "Consulta restrita ao serviço" }, 403);
+        try {
+            return json({ ok: true, filiais: await descobrirFiliaisMercury() });
+        } catch (e) {
+            return json({ ok: false, erro: (e as Error).message }, 502);
+        }
+    }
+
     const filialFiltro: string | undefined = body.filial;
 
     const alvos = filialFiltro

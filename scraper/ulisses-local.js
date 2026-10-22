@@ -45,20 +45,10 @@ import { supabaseAdmin, lerCredencial, registrarStatusSincronizacao } from './li
 import { exportarCsvInscricoes, exportarCatalogoEventos, exportarComparecimento, sincronizarCatalogoEventosNoCrm, sincronizarComparecimentoNoCrm, processarFilaDesativacaoUlisses, salvarScreenshotErro } from './ulisses.js';
 import { verificarEventosPublicosDeTodasAsFiliais } from './verificar-eventos-publicos.js';
 import { importarNoCrm } from './importar-no-crm.js';
-// API oficial (eventos + Inscrições) — MOVIDA PRA CÁ (2026-09-21): rodava
-// dentro de scraper/mercurio.js (GitHub Actions), mas confirmado testando
-// de verdade (2 disparos reais, 2 bloqueios) que api.acropolebrasil.com.br
-// está atrás do MESMO Cloudflare que já bloqueava o login por navegador —
-// só que aqui o bloqueio acontece numa chamada HTTPS pura (com token
-// Bearer válido, sem navegador nenhum envolvido), então "não é navegação
-// de browser" NÃO era suficiente pra escapar dele, ao contrário do que se
-// assumia. Resposta real recebida do GitHub Actions:
-// `GET /facade/filiaisAtivas -> 403 ... "Just a moment..."` (a mesma
-// página de desafio do Cloudflare, servida no lugar do JSON esperado).
-// Rodando desta máquina (IP residencial, não datacenter), funciona sem
-// desafio nenhum — mesmo motivo de sempre pro resto deste arquivo. Ver
-// CLAUDE.md, seção "Origem dos vínculos evento_leads"/"API oficial do
-// Ulisses" pro histórico completo.
+// API oficial (eventos + Inscrições) — este fluxo local também usa a API,
+// mas o modo headless separado pode rodar no workflow do GitHub Actions,
+// com o cabeçalho oficial `X-Portal-NA: bypass`. O login e o
+// comparecimento pela tela continuam assistidos nesta máquina.
 import { sincronizarEventosUlissesApi, sincronizarInscricoesFilialViaApi, resolverFilialIdUlisses } from './importar-ulisses-api.js';
 import { filiaisAtivas as filiaisAtivasUlissesApi } from './ulisses-api.js';
 
@@ -357,8 +347,7 @@ async function main() {
     // Catálogo de eventos via API oficial — 1x, ANTES do loop (mesmo
     // motivo de sempre: Setor Universitário abastece várias filiais de
     // uma vez, precisa existir antes da sincronização de Inscrições de
-    // cada uma). Best-effort — se a API estiver fora do ar por outro
-    // motivo (não Cloudflare, já que rodamos localmente), cada filial só
+    // cada uma). Best-effort — se a API estiver fora do ar, cada filial só
     // pula essa etapa (ver `sincronizar-inscricoes-via-api` acima).
     let filiaisUlissesApi = null;
     try {

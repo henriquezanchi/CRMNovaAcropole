@@ -1,23 +1,22 @@
 name: Scraper Mercúrio
 
-# Só o Mercúrio roda aqui — nada do Ulisses (nem login manual, nem a API
-# oficial) funciona a partir deste workflow: confirmado 2 vezes de verdade
-# (2026-09-21) que api.acropolebrasil.com.br está atrás do MESMO
-# Cloudflare que já bloqueava login por navegador, e o bloqueio TAMBÉM
-# pega uma chamada HTTPS pura com token Bearer válido vinda do GitHub
-# Actions (IP de datacenter) — não escapa dele só por "não ser navegação
-# de browser", como se assumiu ao integrar a API aqui em 2026-09-18. Tudo
-# relacionado ao Ulisses (login manual E via API) vive 100% na máquina de
-# confiança do usuário — ver `scraper/ulisses-local.js` (login +
-# comparecimento, precisa de você) e
-# `scraper/sincronizar-ulisses-api-local.mjs` (eventos + Inscrições via
-# API, headless, sem supervisão — `npm run ulisses-api-local`).
-# `mercurio.js` ainda tem o código desse caminho (`executarSomenteUlissesApi()`),
-# mas com uma guarda que falha rápido se detectar `GITHUB_ACTIONS=true`,
-# em vez de tentar e ser bloqueado silenciosamente de novo.
+# O modo padrão é o Mercúrio. `modo=ulisses_api` roda a sincronização
+# headless da API oficial do Ulisses, que envia o cabeçalho permitido pelo
+# portal (`X-Portal-NA: bypass`) e reaproveita a importação existente no CRM.
+# Login manual/Playwright do Ulisses e comparecimento pela tela continuam
+# locais (`scraper/ulisses-local.js`); este modo importa eventos, inscrições
+# e comparecimento pela API.
 on:
   workflow_dispatch:
     inputs:
+      modo:
+        description: 'Integração a executar'
+        type: choice
+        required: true
+        default: mercurio
+        options:
+          - mercurio
+          - ulisses_api
       filial:
         description: 'Rodar só 1 filial (trecho do nome, ex: "Garavelo") — vazio roda todas'
         required: false
@@ -84,10 +83,17 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Mercúrio — login + exportar Ativos e Inativos
+        if: ${{ github.event.inputs.modo != 'ulisses_api' }}
         env:
           FILTRO_FILIAL: ${{ github.event.inputs.filial }}
         run: node mercurio.js
         continue-on-error: true
+
+      - name: Ulisses — API oficial, eventos, inscrições e comparecimento
+        if: ${{ github.event.inputs.modo == 'ulisses_api' }}
+        env:
+          FILTRO_FILIAL: ${{ github.event.inputs.filial }}
+        run: node sincronizar-ulisses-api-local.mjs
 
       - name: Guardar prints de erro (se algum passo falhou)
         if: always()

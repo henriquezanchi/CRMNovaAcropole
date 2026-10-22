@@ -80,17 +80,23 @@ export async function* paginarMercury<T = any>(pathBase: string, params: Record<
     }
 }
 
-// Mapeamento branchId (Mercury) -> nome da filial no CRM — confirmado
-// contra produção nesta sessão varrendo /classes (achou todas as 5 sem
-// ambiguidade). Mesmo espírito de MAPEAMENTO_FILIAL_ID_CONHECIDO já
-// usado pra API do Ulisses (poucas filiais, muda raramente — mapa fixo
-// no código é mais simples que uma coluna nova em `filiais`).
+// Mapeamento branchId (Mercury) -> nome da filial no CRM — IDs confirmados
+// consultando /classes. Jataí continua fora até localizar seu branchId na
+// fonte do Mercury. As quatro unidades fora do escopo atual (Alto Paraíso,
+// Itumbiara, Mineiros e Senador Canedo) não entram neste mapa.
 export const MAPEAMENTO_FILIAL_MERCURY: Record<string, string> = {
     "24": "Goiânia - Jardim América",
     "81": "Goiânia - Setor Oeste",
     "64": "Goiânia - Garavelo",
     "66": "Goiânia II",
     "52": "Barra do Garças/MT",
+    "8": "Goiânia - Setor Universitário",
+    "65": "Goiânia - Alto da Glória",
+    "57": "Goiânia - Cidade Jardim",
+    "58": "Goiânia - Eldorado",
+    "54": "Catalão",
+    "45": "Rio Verde",
+    "11": "Anápolis",
 };
 
 export function branchIdParaFilial(branchId: string): string | null {

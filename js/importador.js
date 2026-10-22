@@ -477,11 +477,8 @@ async function salvarCredencialScraper(sistema) {
 // SINCRONIZAÇÃO AUTOMÁTICA — dispara o Mercúrio sob demanda (GitHub
 // Actions, Edge Function scraper-disparar) + acompanha o status
 // ==========================================
-// O Ulisses NUNCA aparece com botão de disparo aqui — não tem como,
-// exige login manual numa máquina de confiança (Cloudflare). Só o
-// Mercúrio (100% headless, já rodava sozinho todo dia) ganha um botão
-// de "rodar agora", que só antecipa o mesmo job automático, sem inventar
-// nada novo.
+// O Ulisses via API também pode ser disparado pelo workflow headless; o
+// login e o comparecimento pela tela seguem no caminho local/assistido.
 let pollSincronizacaoTimer = null;
 
 // Popula o filtro de filial do botão "Rodar Mercúrio Agora" (dentro
@@ -510,8 +507,10 @@ async function abrirSincronizacaoScraper() {
     // o aviso de "rodando" + o link de cancelar (ver cancelarAcompanhamentoMercurio()) —
     // sem isso, fechar e reabrir o modal fazia o aviso desaparecer mesmo
     // com o botão ainda desabilitado.
-    if (disparoMercurioEmAndamento) {
-        await renderizarStatusSincronizacaoScraper('Rodando — acompanhando, isso costuma levar alguns minutos.', true);
+    if (disparoMercurioEmAndamento || disparoUlissesApiEmAndamento) {
+        const mensagemMercurio = disparoMercurioEmAndamento ? 'Rodando — acompanhando, isso costuma levar alguns minutos.' : null;
+        const mensagemUlisses = disparoUlissesApiEmAndamento ? 'Rodando via API — acompanhando a importação no workflow.' : null;
+        await renderizarStatusSincronizacaoScraper(mensagemMercurio, true, mensagemUlisses);
     } else {
         await renderizarStatusSincronizacaoScraper();
     }
@@ -521,14 +520,17 @@ async function abrirSincronizacaoScraper() {
 function fecharSincronizacaoScraper() {
     document.getElementById('modalSincronizacaoScraper').classList.remove('open');
     document.getElementById('overlayModalSincronizacaoScraper').classList.remove('active');
-    if (pollSincronizacaoTimer) { clearInterval(pollSincronizacaoTimer); pollSincronizacaoTimer = null; }
+    if (pollSincronizacaoTimer && !disparoMercurioEmAndamento && !disparoUlissesApiEmAndamento) {
+        clearInterval(pollSincronizacaoTimer);
+        pollSincronizacaoTimer = null;
+    }
 }
 
 // Pedido do usuário (2026-09-10): o status de cada sistema deve ficar
 // JUNTO das informações daquele sistema (não os 2 empilhados no fim da
 // tela) — por isso 2 containers separados, um logo abaixo do botão do
 // Mercúrio e outro logo abaixo do botão do Ulisses, em vez de 1 só.
-async function renderizarStatusSincronizacaoScraper(mensagemExtraMercurio, mostrarCancelar) {
+async function renderizarStatusSincronizacaoScraper(mensagemExtraMercurio, mostrarCancelar, mensagemExtraUlisses) {
     const containerMercurio = document.getElementById('sincronizacaoScraperStatusMercurio');
     const containerUlisses = document.getElementById('sincronizacaoScraperStatusUlisses');
     if (!containerMercurio || !containerUlisses) return;
@@ -574,7 +576,10 @@ async function renderizarStatusSincronizacaoScraper(mensagemExtraMercurio, mostr
         ${formatarLinha('Banco do Mercúrio — ativos, turmas, matrículas (última rodada)', ultimoMercurioDb)}
         ${formatarLinha('API do Mercury — inativos (última filial sincronizada)', ultimoMercuryApi)}
     `;
-    containerUlisses.innerHTML = formatarLinha('Ulisses (última rodada — manual OU via API)', ultimoUlisses);
+    containerUlisses.innerHTML = `
+        ${mensagemExtraUlisses ? `<p style="font-size:12px; color:var(--na-green-dark); margin-bottom:10px;"><i class="fa-solid fa-circle-notch fa-spin"></i> ${escapeHTML(mensagemExtraUlisses)}</p>` : ''}
+        ${formatarLinha('Ulisses (última rodada — manual OU via API)', ultimoUlisses)}
+    `;
 }
 
 // Bug real achado nesta sessão: existem AGORA 2 botões "Rodar Mercúrio
@@ -592,12 +597,18 @@ async function renderizarStatusSincronizacaoScraper(mensagemExtraMercurio, mostr
 // global (`disparoMercurioEmAndamento`) impede clique duplicado enquanto
 // uma rodada já está em andamento.
 let disparoMercurioEmAndamento = false;
+let disparoUlissesApiEmAndamento = false;
 
 function botoesDispararMercurio() {
     return [...document.querySelectorAll('.btn-disparar-mercurio')];
 }
 function atualizarBotoesDispararMercurio(disabled, html) {
     botoesDispararMercurio().forEach(b => { b.disabled = disabled; if (html) b.innerHTML = html; });
+    document.querySelectorAll('.btn-disparar-ulisses-api').forEach(b => { b.disabled = disabled; });
+}
+function atualizarBotaoDispararUlisses(disabled, html) {
+    document.querySelectorAll('.btn-disparar-ulisses-api').forEach(b => { b.disabled = disabled; if (html) b.innerHTML = html; });
+    botoesDispararMercurio().forEach(b => { b.disabled = disabled; });
 }
 
 // Chave de localStorage — bug real relatado pelo usuário (2026-09-10):
@@ -627,8 +638,8 @@ function limparAcompanhamentoMercurioLocal() {
 // conciliação — segundos) e a API do Mercury (inativos — ~1 min por filial).
 // Sem poll: as duas respondem na própria chamada.
 async function dispararMercurioAgora(filial = null) {
-    if (disparoMercurioEmAndamento) {
-        alert('Já tem uma sincronização do Mercúrio em andamento — aguarde terminar.');
+    if (disparoMercurioEmAndamento || disparoUlissesApiEmAndamento) {
+        alert('Já tem uma sincronização em andamento — aguarde terminar antes de iniciar outra.');
         return;
     }
     disparoMercurioEmAndamento = true;
@@ -729,27 +740,73 @@ function restaurarAcompanhamentoMercurioSeHouver() {
 }
 document.addEventListener('DOMContentLoaded', restaurarAcompanhamentoMercurioSeHouver);
 
-// SINCRONIZAÇÃO — SÓ O ULISSES VIA API: removida a versão baseada em GitHub
-// Actions (2026-09-21) — confirmado por 2 testes reais que esse domínio
-// bloqueia o GitHub Actions pelo Cloudflare mesmo numa chamada HTTPS pura
-// com token (não só navegação de browser). O botão "Sincronizar via API do
-// Ulisses agora" (index.html) usa o protocolo local abrirulissesapi://,
-// igual "Importar Ulisses" — roda 100% na máquina de confiança
-// (sincronizar-ulisses-api-local.mjs).
-//
-// Por filial (pedido do usuário, 2026-09-21 — "quando estivermos com 20
-// filiais, vai ficar impraticável esperar todas se eu precisar atualizar
-// uma específica"): a filial escolhida no MESMO `<select>` do botão do
-// Mercúrio vai como querystring na URL do protocolo
-// (`abrirulissesapi://rodar?filial=...`) — o Windows repassa a URL
-// completa pro `.bat`/script local (ver `Sincronizar Ulisses API.bat` e
-// o parsing em `sincronizar-ulisses-api-local.mjs`), que extrai o valor
-// e filtra como sempre (mesmo `FILTRO_FILIAL`/núcleo distintivo usado em
-// todo o resto do scraper). Vazio = todas as filiais, comportamento de
-// sempre.
-function abrirProtocoloUlissesApi(filial) {
-    const url = 'abrirulissesapi://rodar' + (filial ? `?filial=${encodeURIComponent(filial)}` : '');
-    window.location.href = url;
+// Dispara o modo Ulisses do workflow e acompanha o registro final de status.
+// OAuth e credenciais do CRM permanecem no cofre e nos secrets server-side.
+async function abrirProtocoloUlissesApi(filial) {
+    if (disparoMercurioEmAndamento || disparoUlissesApiEmAndamento) {
+        alert('Já tem uma sincronização em andamento — aguarde terminar antes de iniciar outra.');
+        return;
+    }
+    disparoUlissesApiEmAndamento = true;
+    atualizarBotaoDispararUlisses(true, '<i class="fa-solid fa-circle-notch fa-spin"></i> Disparando...');
+    if (typeof abrirSincronizacaoScraper === 'function') await abrirSincronizacaoScraper();
+
+    let timestampAntes = null;
+    try {
+        const { data: antes } = await window.supabaseClient
+            .from('status_sincronizacao_automatica')
+            .select('executado_em')
+            .eq('sistema', 'ulisses')
+            .eq('filial', 'GLOBAL')
+            .order('executado_em', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        timestampAntes = antes && antes.executado_em || null;
+
+        await renderizarStatusSincronizacaoScraper(null, false, `Disparando${filial ? ` para ${filial}` : ' para todas as filiais'}...`);
+        const { data, error } = await window.supabaseClient.functions.invoke('scraper-disparar', {
+            body: { modo: 'ulisses_api', filial: filial || '' },
+        });
+        if (error || !data || data.ok !== true) {
+            throw new Error((data && data.erro) || (error && error.message) || 'Não consegui disparar o workflow.');
+        }
+
+        atualizarBotaoDispararUlisses(true, '<i class="fa-solid fa-circle-notch fa-spin"></i> Rodando...');
+        const inicio = Date.now();
+        const timeoutMs = 30 * 60 * 1000;
+        pollSincronizacaoTimer = setInterval(async () => {
+            if (Date.now() - inicio > timeoutMs) {
+                clearInterval(pollSincronizacaoTimer);
+                pollSincronizacaoTimer = null;
+                disparoUlissesApiEmAndamento = false;
+                atualizarBotaoDispararUlisses(false, '<i class="fa-solid fa-cloud-arrow-down"></i> Sincronizar via API do Ulisses agora');
+                await renderizarStatusSincronizacaoScraper(null, false, 'Ainda não apareceu um status final depois de 30 minutos — confira a execução no GitHub Actions.');
+                return;
+            }
+
+            const { data: depois } = await window.supabaseClient
+                .from('status_sincronizacao_automatica')
+                .select('executado_em')
+                .eq('sistema', 'ulisses')
+                .eq('filial', 'GLOBAL')
+                .order('executado_em', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+            if (depois && depois.executado_em && depois.executado_em !== timestampAntes) {
+                clearInterval(pollSincronizacaoTimer);
+                pollSincronizacaoTimer = null;
+                disparoUlissesApiEmAndamento = false;
+                atualizarBotaoDispararUlisses(false, '<i class="fa-solid fa-cloud-arrow-down"></i> Sincronizar via API do Ulisses agora');
+                await renderizarStatusSincronizacaoScraper();
+            }
+        }, 15000);
+        await renderizarStatusSincronizacaoScraper(null, false, 'Workflow disparado — importando eventos, inscrições e comparecimento.');
+    } catch (e) {
+        disparoUlissesApiEmAndamento = false;
+        atualizarBotaoDispararUlisses(false, '<i class="fa-solid fa-cloud-arrow-down"></i> Sincronizar via API do Ulisses agora');
+        await renderizarStatusSincronizacaoScraper(null, false, `Falha ao disparar: ${e.message || String(e)}`);
+        alert('Falha ao disparar a sincronização do Ulisses: ' + (e.message || String(e)));
+    }
 }
 
 

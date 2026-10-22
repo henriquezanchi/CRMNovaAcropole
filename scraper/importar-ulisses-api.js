@@ -9,20 +9,10 @@
 // depender de seletor/HTML frágil), e cobre Inscrições+catálogo de
 // eventos sem precisar de login manual nenhum.
 //
-// CORREÇÃO GRAVE (2026-09-21): a premissa original aqui era "a API é só
-// uma chamada HTTPS autenticada, sem navegador, então não passa pelo
-// Cloudflare que bloqueia IP de datacenter" — **isso estava ERRADO**,
-// confirmado por 2 disparos reais via GitHub Actions, 2 bloqueios
-// idênticos (`GET /facade/filiaisAtivas -> 403 ... "Just a moment..."`,
-// a mesma página de desafio do Cloudflare, mesmo com Bearer token
-// válido). `api.acropolebrasil.com.br` também bloqueia por reputação de
-// IP/ASN (datacenter/cloud), não só por detectar navegação sem JS. Por
-// isso este módulo (embora continue funcionando perfeitamente bem)
-// NUNCA deve ser chamado de dentro do GitHub Actions — só da máquina de
-// confiança, via `scraper/ulisses-local.js` (de carona, junto com o
-// comparecimento) ou `scraper/sincronizar-ulisses-api-local.mjs`
-// (dedicado, headless, sem login nenhum). Ver CLAUDE.md, seção
-// "CORREÇÃO GRAVE... a API do Ulisses TAMBÉM é bloqueada".
+// Chamadas via cloud incluem o cabeçalho oficial `X-Portal-NA: bypass`
+// no cliente `ulisses-api.js` (validado fora deste repositório). O mesmo
+// módulo roda no modo local e no job headless do GitHub Actions; nenhuma
+// credencial OAuth é passada por argumento ou impressa no log.
 //
 // LIMITAÇÃO REAL, confirmada testando ao vivo (2026-09-18) — RESOLVIDA em
 // 2026-09-30: o endpoint que traria comparecimento de verdade

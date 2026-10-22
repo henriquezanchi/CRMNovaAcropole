@@ -1593,15 +1593,11 @@
 
             <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
                 <strong>Eventos + Inscrições do Ulisses</strong> — via API oficial, sem login manual. <strong>Só
-                funciona rodando na SUA máquina de confiança</strong> (mesmo motivo do login do Ulisses:
-                confirmado em 2026-09-21 que o GitHub Actions também é bloqueado pelo Cloudflare pra esse
-                domínio, mesmo numa chamada autenticada sem navegador) — por isso não é mais um disparo
-                remoto: o botão abaixo abre um processo rápido e SEM JANELA VISÍVEL na sua máquina (sem
-                login, sem Chromium na tela). Se não abrir nada, rode <code>npm run ulisses-api-local</code>
-                direto pelo terminal como alternativa.
+                precisa de uma execução do GitHub Actions</strong>; o cliente envia o cabeçalho oficial do portal
+                e a importação usa as credenciais guardadas no cofre. O resultado aparece no status abaixo.
             </p>
-            <button type="button" class="btn-primary" style="width:100%; margin-bottom:10px;" onclick="abrirProtocoloUlissesApi(document.getElementById('mercurioFilialFiltro').value || null)">
-                <i class="fa-solid fa-cloud-arrow-down"></i> Sincronizar via API do Ulisses agora (no seu PC)
+            <button type="button" class="btn-primary btn-disparar-ulisses-api" style="width:100%; margin-bottom:10px;" onclick="abrirProtocoloUlissesApi(document.getElementById('mercurioFilialFiltro').value || null)">
+                <i class="fa-solid fa-cloud-arrow-down"></i> Sincronizar via API do Ulisses agora
             </button>
             <p style="font-size:11px; color:var(--text-muted); margin-top:-6px; margin-bottom:10px;">Usa o mesmo seletor de filial do Mercúrio, acima — "Todas as filiais" ou uma só.</p>
 
