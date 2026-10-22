@@ -124,7 +124,12 @@ function exportarAcertosComissao() {
     const linhas = [['Filial','Mês','Comissão devida','Recebido','Diferença do mês','Saldo anterior','Comissão ajustada','Saldo seguinte','Observação'],
         ...linhasAcertoComissao.map(l => [filial?.nome || '', l.mes, l.comissao_devida, l.valor_recebido,
             ...[l.diferencaMes,l.saldoAnterior,l.ajustado,l.saldoSeguinte].map(v => v == null ? '' : (v / 100).toFixed(2)), l.observacao || ''])];
-    const csv = '\ufeff' + linhas.map(l => l.map(v => '"' + String(v ?? '').replace(/"/g,'""').replace(/^[=+@]/,"'$&") + '"').join(';')).join('\r\n');
+    const campo = v => {
+        let texto = String(v ?? '');
+        if (/^\s*[=+@-]/.test(texto) && !/^-?\d+(?:\.\d+)?$/.test(texto)) texto = "'" + texto;
+        return '"' + texto.replace(/"/g, '""') + '"';
+    };
+    const csv = '\ufeff' + linhas.map(l => l.map(campo).join(';')).join('\r\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a'); a.href=url; a.download=`acertos_comissao_${filialAcertoSelecionada}.csv`; a.click(); URL.revokeObjectURL(url);
 }

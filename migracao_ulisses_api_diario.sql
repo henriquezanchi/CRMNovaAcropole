@@ -9,6 +9,9 @@ begin
     modelo := replace(split_part(modelo,'body :=',1),'/functions/v1/cobranca-mensal','/functions/v1/scraper-disparar');
     perform cron.schedule('ulisses-api-diario','0 8 * * *',
         modelo || 'body := ''{"modo":"ulisses_api","filial":""}''::jsonb, timeout_milliseconds := 15000);');
+    -- O teste real em Actions recebeu 403 do Cloudflare, mesmo com os
+    -- headers oficiais. Só habilitar após a liberação/teste da origem.
+    perform cron.alter_job(jobid,active:=false) from cron.job where jobname='ulisses-api-diario';
 end;
 $$;
 commit;

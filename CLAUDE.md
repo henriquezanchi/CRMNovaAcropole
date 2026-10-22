@@ -10725,3 +10725,21 @@ Asaas futuro: usuário definiu 30% **do líquido após taxas**. Ver
 requisitos de subcontas/checkout e escrita no Mercúrio. Nenhuma conta ou
 cobrança foi criada nesta sessão. Não alterar a integração financeira do BPO
 por analogia: é outro produto e possui regra própria.
+
+Validação de publicação: 17 testes JS passaram, incluindo acertos e agrupamento;
+formulário do simulador verificado em Chromium com backend simulado e RPC
+verificado no banco em transação com rollback (gravação, versão concorrente,
+histórico, bloqueio de filial agrupada). Código do simulador confirmado no site.
+
+Limite operacional confirmado: dois disparos reais do Ulisses em Actions
+retornaram HTTP403/Cloudflare em `/facade/filiaisAtivas`, inclusive com User-Agent,
+Accept e cabeçalho oficial. Não confundir com falta de senha. A importação
+Ulisses das novas filiais **não foi concluída** nesta sessão. Preservado botão
+"Sincronizar API neste computador" e tarefas locais existentes. O novo cron
+cloud `ulisses-api-diario` ficou inativo até liberar e validar essa origem.
+Mercúrio DB/API importaram as sete novas bases (incluindo inativos via API);
+dossiês detalhados continuam no backfill diário de 30 por filial.
+
+Nenhum ciclo de abertura estava cadastrado na tabela na consulta desta sessão;
+a cobrança oficial por ciclo ainda depende do cadastro dessas janelas no CRM.
+Os acertos/simulações não inventam ciclos nem fecham faturas automaticamente.
