@@ -509,6 +509,8 @@
                     <h3 style="font-size:16px; color:var(--na-green-dark);">Comissão do SDR — Todas as Filiais (prévia ao vivo)</h3>
                     <p class="report-sub">Acompanhamento por mês de matrícula, com os membros de hoje. O valor oficial a cobrar é o da Cobrança Mensal, acima.</p>
                     <div id="relatorioComissaoSdrTodasFiliais"></div>
+                    <h4 style="margin-top:20px;">Simulador de comissões — recebimentos e acertos</h4>
+                    <div id="relatorioAcertosComissao"></div>
                 </div>
 
                 <div style="margin-top:30px;">
@@ -1592,19 +1594,21 @@
             <hr style="border:none; border-top:1px solid var(--border-color); margin:4px 0 14px;">
 
             <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
-                <strong>Eventos + Inscrições do Ulisses</strong> — via API oficial, sem login manual. <strong>Só
-                precisa de uma execução do GitHub Actions</strong>; o cliente envia o cabeçalho oficial do portal
-                e a importação usa as credenciais guardadas no cofre. O resultado aparece no status abaixo.
+                <strong>Eventos + Inscrições do Ulisses</strong> — a API oficial sincroniza eventos, inscrições e
+                comparecimento. Você pode executar a sincronização automaticamente ou pelo computador
+                configurado. Confira o resultado no status abaixo.
             </p>
             <button type="button" class="btn-primary btn-disparar-ulisses-api" style="width:100%; margin-bottom:10px;" onclick="abrirProtocoloUlissesApi(document.getElementById('mercurioFilialFiltro').value || null)">
                 <i class="fa-solid fa-cloud-arrow-down"></i> Sincronizar via API do Ulisses agora
             </button>
+            <button type="button" class="btn-secondary" style="width:100%; margin-bottom:10px;" onclick="abrirUlissesApiNesteComputador(document.getElementById('mercurioFilialFiltro').value || null)">
+                <i class="fa-solid fa-desktop"></i> Sincronizar API neste computador
+            </button>
             <p style="font-size:11px; color:var(--text-muted); margin-top:-6px; margin-bottom:10px;">Usa o mesmo seletor de filial do Mercúrio, acima — "Todas as filiais" ou uma só.</p>
 
             <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
-                <strong>Comparecimento (quem de fato compareceu)</strong> continua manual de propósito — a API
-                oficial não expõe esse dado pro nosso tipo de acesso (bug do lado deles), então ainda depende
-                de login na tela do Ulisses. O botão abaixo abre o Chromium direto na SUA máquina de
+                <strong>Importação assistida</strong> — alternativa para eventos antigos ou dados que não foram
+                sincronizados pela API. O botão abaixo abre o Chromium direto na SUA máquina de
                 confiança pra você fazer login à mão — <strong>só funciona neste computador</strong> (onde já
                 foi configurado), não em qualquer PC que acessar o CRM. Se não abrir nada, rode
                 <code>npm run ulisses-local</code> direto pelo terminal como alternativa.
@@ -1861,6 +1865,7 @@
     <script src="js/visao-geral.js"></script>
     <script src="js/conciliacao-mercurio.js"></script>
     <script src="js/cobranca-ciclos.js"></script>
+    <script src="js/comissao-acertos.js"></script>
     <!-- 3f2b. Relatórios de WhatsApp (SLA, desempenho por atendente, volume) + Resumo do Trabalho na tela -->
     <script src="js/relatorios-whatsapp.js"></script>
     <script src="js/funil-interacoes.js"></script>

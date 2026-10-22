@@ -2366,9 +2366,9 @@ async function renderizarListaFiliaisModal() {
             <input type="text" value="${escapeHTML(f.nome_com_preposicao || '')}" placeholder="Como falar dela naturalmente (ex: do Jardim América, de Barra do Garças)" onchange="atualizarPreposicaoFilial(${f.id}, this.value)">
             <input type="text" value="${escapeHTML(f.whatsapp_chefe_numero || '')}" placeholder="WhatsApp do chefe de filial (E.164, ex: 5562991234567) — aviso de aniversário e resumo de lead" onchange="atualizarWhatsappChefeFilial(${f.id}, this.value)">
             <input type="number" step="0.01" min="0" value="${f.valor_mensalidade != null ? f.valor_mensalidade : ''}" placeholder="Valor da mensalidade do ALUNO (R$) — base do cálculo de comissão de 30%" onchange="atualizarValorMensalidadeFilial(${f.id}, this.value)">
-            <input type="number" step="1" min="0" value="${f.membros != null ? f.membros : ''}" placeholder="Quantidade de MEMBROS — em branco usa a contagem automática do Mercúrio${f.membros_mercurio != null ? ` (hoje: ${f.membros_mercurio})` : ''} — define a faixa do Fixo do Módulo 2" onchange="atualizarMembrosFilial(${f.id}, this.value)">
+            <input type="number" step="1" min="0" value="${f.membros != null ? f.membros : ''}" placeholder="Quantidade de MEMBROS — em branco usa o Mercúrio${f.membros_mercurio != null ? ` (hoje: ${f.membros_mercurio})` : ''} — Fixo: R$4,96 por membro/mês" onchange="atualizarMembrosFilial(${f.id}, this.value)">
             <input type="text" maxlength="3" value="${escapeHTML(f.mercurio_unidade || '')}" placeholder="Código da unidade no Mercúrio (ex: JAM, GAR) — liga a sincronização diária do banco do Mercúrio" onchange="atualizarMercurioUnidadeFilial(${f.id}, this.value)">
-            <input type="number" step="0.01" min="0" value="${f.valor_fixo_mensal_agencia != null ? f.valor_fixo_mensal_agencia : ''}" placeholder="Ajuste manual do Valor Fixo (R$) — se preenchido, SUBSTITUI o cálculo automático pela faixa de membros" onchange="atualizarValorFixoFilial(${f.id}, this.value)">
+            <input type="number" step="0.01" min="0" value="${f.valor_fixo_mensal_agencia != null ? f.valor_fixo_mensal_agencia : ''}" placeholder="Ajuste manual do Valor Fixo (R$) — se preenchido, substitui membros × R$4,96" onchange="atualizarValorFixoFilial(${f.id}, this.value)">
             <input type="text" value="${escapeHTML(f.endereco || '')}" placeholder="Endereço completo — aparece na gaveta de qualquer lead desta filial" onchange="atualizarEnderecoFilial(${f.id}, this.value)">
         </div>
     `).join('');
@@ -2450,11 +2450,8 @@ async function atualizarModulo2ContratadoFilial(id, contratado) {
 }
 
 // Quantidade de MEMBROS — categoria própria do Mercúrio (menu "Membros",
-// NÃO é o mesmo que a tag "Ativo" nem "Ativo+Membro" do CRM, testado e
-// confirmado diferente) — manual, atualizado periodicamente pelo
-// usuário a partir do Mercúrio. Base da faixa de preço do Fixo do Módulo
-// 2: <=30 => R$250, <=80 => R$450, >80 => R$600. Ver
-// migracao_filial_pricing_proposta.sql.
+// NÃO é o mesmo que a tag "Ativo" nem "Ativo+Membro" do CRM). O campo
+// manual da filial vence; em branco, usa a contagem automática do Mercúrio.
 async function atualizarMercurioUnidadeFilial(id, novoValor) {
     const codigo = String(novoValor || '').trim().toUpperCase() || null;
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ mercurio_unidade: codigo }).eq('id', id);
@@ -2464,8 +2461,12 @@ async function atualizarMercurioUnidadeFilial(id, novoValor) {
 }
 
 async function atualizarMembrosFilial(id, novoValor) {
-    const numero = novoValor.trim() === '' ? null : parseInt(novoValor, 10);
-    const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ membros: (numero === null || isNaN(numero)) ? null : numero }).eq('id', id);
+    const numero = novoValor.trim() === '' ? null : Number(novoValor);
+    if (numero !== null && (!Number.isSafeInteger(numero) || numero < 0)) {
+        alert('A quantidade de membros precisa ser um número inteiro igual ou maior que zero.');
+        return;
+    }
+    const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ membros: numero }).eq('id', id);
     if (error) alert('Erro ao salvar: ' + error.message);
 }
 
@@ -3192,6 +3193,7 @@ function atualizarRelatorios() {
     if (typeof renderizarCiclosTurma === 'function') renderizarCiclosTurma();
     if (typeof renderizarConciliacaoMercurio === 'function') renderizarConciliacaoMercurio();
     renderizarComissaoSdrTodasFiliais();
+    if (typeof renderizarAcertosComissao === 'function') renderizarAcertosComissao();
     if (typeof renderizarCanalOrigemMercurio === 'function') renderizarCanalOrigemMercurio();
     renderizarRelatorioComparacaoFiliais();
     renderizarRelatorioJornadaBase();
@@ -3545,22 +3547,78 @@ async function renderizarRelatorioMatriculasPorMes() {
     `;
 }
 
-// Faixa de preço do Fixo mensal do Módulo 2 (Máquina/SDR), por
-// quantidade de MEMBROS (filiais.membros — categoria própria do
-// Mercúrio, manual, ver migracao_filial_pricing_proposta.sql). Testado
-// contra a planilha real do usuário: Jardim América 252 membros =>
-// R$600; Garavelo 25 => R$250; Setor Oeste 45 => R$450; Goiânia II 31
-// => R$450 — bateu exato nos 4 casos.
-function calcularValorFixoModulo2(filial) {
-    if (filial.valor_fixo_mensal_agencia != null) return Number(filial.valor_fixo_mensal_agencia); // override manual sempre vence
-    // Manual vence; em branco, usa a contagem automática do Mercúrio (N2-N7
-    // ativos, filiais.membros_mercurio, gravada por mercurio-db-sincronizar).
+const CENTAVOS_POR_MEMBRO_MODULO2 = 496;
+
+function numeroNaoNegativoModulo2(valor) {
+    if (valor == null || (typeof valor === 'string' && valor.trim() === '')) return null;
+    const numero = Number(valor);
+    return Number.isFinite(numero) && numero >= 0 ? numero : null;
+}
+
+function quantidadeMembrosModulo2(valor) {
+    const numero = numeroNaoNegativoModulo2(valor);
+    return Number.isSafeInteger(numero) ? numero : null;
+}
+
+function obterMembrosModulo2(filial) {
+    // O valor manual é autoritativo quando preenchido; se estiver inválido,
+    // não esconda o erro substituindo-o pela contagem automática.
     const membrosBase = filial.membros != null ? filial.membros : filial.membros_mercurio;
-    if (membrosBase == null) return null; // sem dado nenhum — não inventa valor
-    const membros = Number(membrosBase);
-    if (membros <= 30) return 250;
-    if (membros <= 80) return 450;
-    return 600;
+    return quantidadeMembrosModulo2(membrosBase);
+}
+
+function filialGrupoCobrancaModulo2(filial, filiais = (typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : [])) {
+    if (!filial || filial.filial_cobranca_id == null) return null;
+    return (filiais || []).find(f => String(f.id) === String(filial.filial_cobranca_id)) || null;
+}
+
+function detalharValorFixoModulo2(filial, filiais = (typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : [])) {
+    const grupo = filialGrupoCobrancaModulo2(filial, filiais);
+    if (grupo || filial?.filial_cobranca_id != null) {
+        return { valor: 0, manual: false, membros: null, agrupada: true, grupoNome: grupo?.nome || null };
+    }
+    const membros = obterMembrosModulo2(filial);
+    if (filial.valor_fixo_mensal_agencia != null) {
+        return { valor: numeroNaoNegativoModulo2(filial.valor_fixo_mensal_agencia), manual: true, membros, agrupada: false, grupoNome: null }; // override manual sempre vence, inclusive R$0
+    }
+    if (membros == null) return { valor: null, manual: filial.valor_fixo_mensal_agencia != null, membros, agrupada: false, grupoNome: null }; // sem contagem válida — não inventa valor
+    return { valor: membros * CENTAVOS_POR_MEMBRO_MODULO2 / 100, manual: false, membros, agrupada: false, grupoNome: null };
+}
+
+function calcularValorFixoModulo2(filial) {
+    const detalhe = detalharValorFixoModulo2(filial);
+    // Compatibilidade com os chamadores que esperam só o valor numérico.
+    return typeof detalhe === 'number' ? detalhe : detalhe.valor;
+}
+
+function motivoFixoPendenteModulo2(filial) {
+    if (filialGrupoCobrancaModulo2(filial) || filial?.filial_cobranca_id != null) return null;
+    if (filial.valor_fixo_mensal_agencia != null) {
+        return numeroNaoNegativoModulo2(filial.valor_fixo_mensal_agencia) == null
+            ? 'O ajuste manual do Fixo está inválido.' : null;
+    }
+    const membrosBase = filial.membros != null ? filial.membros : filial.membros_mercurio;
+    if (membrosBase == null || (typeof membrosBase === 'string' && membrosBase.trim() === '')) {
+        return 'Falta a quantidade de membros; informe-a manualmente ou sincronize o Mercúrio.';
+    }
+    return quantidadeMembrosModulo2(membrosBase) == null ? 'A quantidade de membros é inválida; corrija-a antes de cobrar.' : null;
+}
+
+function totalCobrarModulo2(fixo, comissao, contratado) {
+    if (!contratado) return 0;
+    if (fixo == null || comissao == null) return null;
+    return fixo + comissao;
+}
+
+function resultadoComissaoAgrupadaModulo2(filial, filiais = (typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : [])) {
+    const fixo = detalharValorFixoModulo2(filial, filiais);
+    if (!fixo.agrupada) return null;
+    return {
+        nome: filial.nome, fonte: 'agrupada', agrupada: true, grupoCobranca: fixo.grupoNome,
+        qtd: 0, investigar: null, informado: null, valorMensalidade: numeroNaoNegativoModulo2(filial.valor_mensalidade),
+        membros: null, membrosAutomatico: false, receita: 0, comissao: 0, valorFixo: 0,
+        fixoManual: false, cobraComissao: filial.modulo2_contratado !== false, totalCobrar: 0, erroCalculo: '',
+    };
 }
 
 // Conta matrículas REMUNERÁVEIS (ver contaComoMatriculaRemuneravel()) de
@@ -3646,20 +3704,27 @@ async function renderizarComissaoSdrTodasFiliais() {
     }
 
     const resultados = await Promise.all(filiais.map(async f => {
+        const agrupada = resultadoComissaoAgrupadaModulo2(f, filiais);
+        if (agrupada) return agrupada;
+        const fixo = detalharValorFixoModulo2(f);
         const fonte = f.mercurio_unidade && usaMercurioDb ? 'mercurio' : 'data_matricula';
         const c = conciliacao.get(f.nome) || { contam: [], investigar: [], informado: null };
         const qtd = fonte === 'mercurio' ? c.contam.length : await contarMatriculasRemuneraveisNoPeriodo(f.nome, inicio, fim);
         const investigar = fonte === 'mercurio' ? c.investigar.length : null;
         const informado = c.informado ? c.informado.quantidade : null;
-        const valorMensalidade = f.valor_mensalidade != null ? Number(f.valor_mensalidade) : null;
-        const receita = valorMensalidade != null ? qtd * valorMensalidade : null;
+        const valorMensalidade = numeroNaoNegativoModulo2(f.valor_mensalidade);
+        const receita = qtd === 0 ? 0 : valorMensalidade != null ? qtd * valorMensalidade : null;
         const comissao = receita != null ? receita * 0.30 : null;
-        const valorFixo = calcularValorFixoModulo2(f);
+        const valorFixo = fixo.valor;
         const cobraComissao = f.modulo2_contratado !== false; // Módulo 2 (SDR) contratado? — default true, ver migracao_filial_pricing_proposta.sql
-        const totalCobrar = cobraComissao ? (comissao || 0) + (valorFixo || 0) : 0;
-        const membros = f.membros != null ? f.membros : (f.membros_mercurio != null ? f.membros_mercurio : null);
+        const membros = fixo.membros;
         const membrosAutomatico = f.membros == null && f.membros_mercurio != null;
-        return { nome: f.nome, fonte, qtd, investigar, informado, valorMensalidade, membros, membrosAutomatico, receita, comissao, valorFixo, cobraComissao, totalCobrar };
+        const motivosCalculo = [];
+        if (cobraComissao && valorFixo == null) motivosCalculo.push(motivoFixoPendenteModulo2(f));
+        if (cobraComissao && qtd > 0 && (numeroNaoNegativoModulo2(valorMensalidade) == null)) motivosCalculo.push('Falta um valor de mensalidade válido para calcular a comissão de 30%.');
+        const erroCalculo = motivosCalculo.filter(Boolean).join(' ');
+        const totalCobrar = totalCobrarModulo2(valorFixo, qtd === 0 && comissao == null ? 0 : comissao, cobraComissao);
+        return { nome: f.nome, fonte, qtd, investigar, informado, valorMensalidade, membros, membrosAutomatico, receita, comissao, valorFixo, fixoManual: fixo.manual, cobraComissao, totalCobrar, erroCalculo };
     }));
 
     const formatarReal = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -3667,10 +3732,10 @@ async function renderizarComissaoSdrTodasFiliais() {
     // Totais de receita/comissão continuam somando TODO MUNDO (é informativo,
     // reflete o trabalho real feito) — só o "Total a Cobrar" abaixo respeita
     // o ativador de comissões por filial.
-    const totalReceita = resultados.reduce((s, r) => s + (r.receita || 0), 0);
-    const totalComissao = resultados.reduce((s, r) => s + (r.comissao || 0), 0);
-    const totalValorFixo = resultados.reduce((s, r) => s + (r.cobraComissao ? (r.valorFixo || 0) : 0), 0);
-    const totalACobrar = resultados.reduce((s, r) => s + r.totalCobrar, 0);
+    const totalReceita = resultados.some(r => r.qtd > 0 && r.receita == null) ? null : resultados.reduce((s, r) => s + (r.receita || 0), 0);
+    const totalComissao = resultados.some(r => r.comissao == null) ? null : resultados.reduce((s, r) => s + (r.comissao || 0), 0);
+    const totalValorFixo = resultados.some(r => r.cobraComissao && r.valorFixo == null) ? null : resultados.reduce((s, r) => s + (r.cobraComissao ? (r.valorFixo || 0) : 0), 0);
+    const totalACobrar = resultados.some(r => r.erroCalculo) ? null : resultados.reduce((s, r) => s + r.totalCobrar, 0);
     const totalInvestigar = resultados.reduce((s, r) => s + (r.investigar || 0), 0);
     const algumSemValor = resultados.some(r => r.valorMensalidade == null && r.qtd > 0);
     const algumaAntiga = resultados.some(r => r.fonte === 'data_matricula');
@@ -3682,7 +3747,7 @@ async function renderizarComissaoSdrTodasFiliais() {
     container.innerHTML = `
         <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px; flex-wrap:wrap;">
             <label style="font-size:12px; font-weight:600; color:var(--text-dark);">Mês:</label>
-            <select onchange="mesSelecionadoComissaoSdr = this.value; renderizarComissaoSdrTodasFiliais();" style="padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; outline:none;">
+            <select onchange="mesSelecionadoComissaoSdr = this.value; renderizarComissaoSdrTodasFiliais().then(() => { if(typeof renderizarAcertosComissao === 'function') renderizarAcertosComissao(); });" style="padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; outline:none;">
                 ${mesesOrdenados.slice().reverse().map(m => `<option value="${m}" ${m === mesSelecionadoComissaoSdr ? 'selected' : ''}>${rotuloMes(m)}</option>`).join('')}
             </select>
             <button class="btn-secondary" style="font-size:11px; padding:6px 10px;" onclick="exportarComissaoSdrCSV()"><i class="fa-solid fa-file-csv"></i> Exportar CSV</button>
@@ -3693,17 +3758,17 @@ async function renderizarComissaoSdrTodasFiliais() {
             <tbody>
                 ${resultados.map(r => `
                     <tr class="${r.nome === filialAtual ? 'linha-filial-atual' : ''}" style="${r.cobraComissao ? '' : 'opacity:0.55;'}">
-                        <td>${escapeHTML(r.nome)} ${r.cobraComissao ? '' : '<span class="tag tag-warning" style="font-size:10px;" title="Módulo 2 desligado em Gerenciar Filiais — não entra no total a cobrar">Não cobrada</span>'}</td>
+                        <td>${escapeHTML(r.nome)} ${r.agrupada ? `<span class="tag tag-warning" style="font-size:10px;" title="A base acadêmica é compartilhada e não deve ser contada duas vezes">Incluída na cobrança de ${escapeHTML(r.grupoCobranca || 'outra filial')}</span>` : (r.cobraComissao ? '' : '<span class="tag tag-warning" style="font-size:10px;" title="Módulo 2 desligado em Gerenciar Filiais — não entra no total a cobrar">Não cobrada</span>')}</td>
                         <td>${r.valorMensalidade != null ? formatarReal(r.valorMensalidade) : '—'}</td>
-                        <td>${r.membros != null ? `${r.membros}${r.membrosAutomatico ? ' <span title="Contagem automática do Mercúrio (N2 a N7 ativos)" style="font-size:10px; color:var(--text-muted);">(Mercúrio)</span>' : ''}` : '<span title="Preencha em Gerenciar Filiais pra calcular o Fixo">—</span>'}</td>
+                        <td>${r.membros != null ? `${r.membros}${r.membrosAutomatico ? ' <span title="Contagem automática do Mercúrio (N2 a N7 ativos)" style="font-size:10px; color:var(--text-muted);">(Mercúrio)</span>' : ''}` : `<span title="${escapeHTML(r.erroCalculo || 'Contagem de membros não informada')}">—</span>`}</td>
                         <td>${r.qtd}${r.fonte === 'data_matricula' ? ' <span title="Filial sem código do Mercúrio — contagem pela data_matricula do CRM" style="font-size:10px; color:var(--text-muted);">(CRM)</span>' : ''}</td>
                         <td>${r.investigar ? `<span class="tag tag-warning" style="font-size:10px;">${r.investigar}</span>` : (r.investigar === 0 ? '0' : '—')}</td>
                         <td>${r.informado != null ? r.informado : '—'}</td>
                         <td>${diferenca(r)}</td>
                         <td>${r.receita != null ? formatarReal(r.receita) : '—'}</td>
                         <td>${r.comissao != null ? formatarReal(r.comissao) : '—'}</td>
-                        <td>${r.valorFixo != null ? formatarReal(r.valorFixo) : '—'}</td>
-                        <td><strong>${formatarReal(r.totalCobrar)}</strong></td>
+                        <td>${r.valorFixo != null ? formatarReal(r.valorFixo) : (!r.cobraComissao ? '—' : `<span title="${escapeHTML(r.erroCalculo || 'Fixo pendente')}">Pendente</span>`)}</td>
+                        <td><strong>${r.totalCobrar != null ? formatarReal(r.totalCobrar) : `<span title="${escapeHTML(r.erroCalculo || 'Cálculo pendente')}">Pendente</span>`}</strong></td>
                     </tr>
                 `).join('')}
             </tbody>
@@ -3716,16 +3781,16 @@ async function renderizarComissaoSdrTodasFiliais() {
                     <td>${totalInvestigar || ''}</td>
                     <td></td>
                     <td></td>
-                    <td>${formatarReal(totalReceita)}</td>
-                    <td>${formatarReal(totalComissao)}</td>
-                    <td>${formatarReal(totalValorFixo)}</td>
-                    <td>${formatarReal(totalACobrar)}</td>
+                    <td>${totalReceita != null ? formatarReal(totalReceita) : '—'}</td>
+                    <td>${totalComissao != null ? formatarReal(totalComissao) : '—'}</td>
+                    <td>${totalValorFixo != null ? formatarReal(totalValorFixo) : '—'}</td>
+                    <td>${totalACobrar != null ? formatarReal(totalACobrar) : '<span title="Há filial com cálculo pendente">Pendente</span>'}</td>
                 </tr>
             </tfoot>
         </table>
         ${algumSemValor ? '<p style="font-size:11px; color:var(--text-muted); margin-top:8px;"><i class="fa-solid fa-circle-info"></i> Filial com matrícula mas sem valor de mensalidade configurado fica de fora do total de receita/comissão — configure em "Gerenciar Filiais".</p>' : ''}
         <p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> Matrículas pela conciliação do Mercúrio (detalhes, "Investigar" e o campo "Informado" ficam na seção "Conciliação de Matrículas por Turma", acima). "Investigar" não entra na cobrança até ser resolvido no Mercúrio. "Diferença" compara o Mercúrio com o informado pela escola: devolver ou cobrar a diferença.</p>
-        <p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> "Fixo (Módulo 2)" = faixa por quantidade de Membros (&lt;=30 R$250, &lt;=80 R$450, &gt;80 R$600). Membros manual (Gerenciar Filiais) vence; em branco, usa a contagem do Mercúrio. "Total a Cobrar" = Comissão + Fixo, só pra filiais com Módulo 2 ligado.</p>
+        <p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> "Fixo (Módulo 2)" = R$4,96 por membro por mês, sem mínimo nem teto. A quantidade manual em Gerenciar Filiais vence; em branco, usa a contagem automática do Mercúrio. O ajuste manual do valor fixo, quando preenchido, substitui esse cálculo. Sem contagem válida ou ajuste válido, o total fica pendente. "Total a Cobrar" = Comissão (30%) + Fixo, só pra filiais com Módulo 2 ligado.</p>
         ${algumaAntiga ? '<p style="font-size:11px; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-circle-info"></i> "(CRM)" = filial sem código do Mercúrio em Gerenciar Filiais: conta pela data_matricula do CRM (PP/N1/CA, ou Membro reingressado).</p>' : ''}
     `;
 }
@@ -3736,7 +3801,7 @@ function exportarComissaoSdrCSV() {
         return;
     }
     const { rotulo, resultados, totalQtd, totalReceita, totalComissao, totalValorFixo, totalACobrar } = ultimoResultadoComissaoSdr;
-    const cabecalho = ['Filial', 'Mês', 'Mensalidade', 'Membros', 'Matrículas', 'Investigar', 'Informado pela Escola', 'Receita (1º mês)', 'Comissão SDR (30%)', 'Fixo (Módulo 2)', 'Módulo 2 Contratado?', 'Total a Cobrar'];
+    const cabecalho = ['Filial', 'Mês', 'Mensalidade', 'Membros', 'Matrículas', 'Investigar', 'Informado pela Escola', 'Receita (1º mês)', 'Comissão SDR (30%)', 'Fixo Módulo 2 (R$4,96 por membro/mês)', 'Módulo 2 Contratado?', 'Total a Cobrar', 'Observação da cobrança'];
     const linhas = resultados.map(r => [
         r.nome,
         rotulo,
@@ -3749,9 +3814,10 @@ function exportarComissaoSdrCSV() {
         r.comissao != null ? r.comissao.toFixed(2) : '',
         r.valorFixo != null ? r.valorFixo.toFixed(2) : '',
         r.cobraComissao ? 'Sim' : 'Não',
-        r.totalCobrar.toFixed(2)
+        r.totalCobrar != null ? r.totalCobrar.toFixed(2) : '',
+        r.agrupada ? `Incluída na cobrança de ${r.grupoCobranca || 'outra filial'}; sem comissão própria` : ''
     ]);
-    linhas.push(['Total', rotulo, '', '', totalQtd, '', '', totalReceita.toFixed(2), totalComissao.toFixed(2), totalValorFixo.toFixed(2), '', totalACobrar.toFixed(2)]);
+    linhas.push(['Total', rotulo, '', '', totalQtd, '', '', totalReceita != null ? totalReceita.toFixed(2) : '', totalComissao != null ? totalComissao.toFixed(2) : '', totalValorFixo != null ? totalValorFixo.toFixed(2) : '', '', totalACobrar != null ? totalACobrar.toFixed(2) : '']);
 
     const csv = [cabecalho, ...linhas].map(linha => linha.map(csvEscapeCampo).join(',')).join('\r\n');
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }); // BOM pro Excel abrir acentuação certa
@@ -3811,7 +3877,7 @@ async function exportarComissaoSdrExcel() {
         const MONEY_FMT = '"R$" #,##0.00';
 
         // ---- Aba "Resumo" — mesmos números já calculados na tela ----
-        const cabResumo = ['Filial', 'Membros', 'Matrículas', 'Investigar', 'Informado pela Escola', 'Diferença (Mercúrio - Informado)', 'Mensalidade (R$)', 'Receita 1º Mês (R$)', 'Comissão SDR 30% (R$)', 'Fixo Módulo 2 (R$)', 'Módulo 2 Contratado?', 'Total a Cobrar (R$)'];
+        const cabResumo = ['Filial', 'Membros', 'Matrículas', 'Investigar', 'Informado pela Escola', 'Diferença (Mercúrio - Informado)', 'Mensalidade (R$)', 'Receita 1º Mês (R$)', 'Comissão SDR 30% (R$)', 'Fixo Módulo 2 (R$4,96 por membro/mês)', 'Módulo 2 Contratado?', 'Total a Cobrar (R$)', 'Observação da cobrança'];
         const linhasResumo = [cabResumo];
         for (const r of resultados) {
             linhasResumo.push([
@@ -3819,16 +3885,31 @@ async function exportarComissaoSdrExcel() {
                 r.informado != null ? r.qtd - r.informado : '',
                 r.valorMensalidade ?? '', r.receita ?? '', r.comissao ?? '', r.valorFixo ?? '',
                 r.cobraComissao ? 'Sim' : 'Não', r.totalCobrar,
+                r.agrupada ? `Incluída na cobrança de ${r.grupoCobranca || 'outra filial'}; sem comissão própria` : '',
             ]);
         }
-        linhasResumo.push(['TOTAL', '', totalQtd, '', '', '', '', totalReceita, totalComissao, totalValorFixo, '', totalACobrar]);
+        linhasResumo.push(['TOTAL', '', totalQtd, '', '', '', '', totalReceita, totalComissao, totalValorFixo, '', totalACobrar, '']);
         const wsResumo = XLSX.utils.aoa_to_sheet(linhasResumo);
-        wsResumo['!cols'] = [{ wch: 28 }, { wch: 10 }, { wch: 12 }, { wch: 11 }, { wch: 20 }, { wch: 22 }, { wch: 16 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 18 }, { wch: 16 }];
+        wsResumo['!cols'] = [{ wch: 28 }, { wch: 10 }, { wch: 12 }, { wch: 11 }, { wch: 20 }, { wch: 22 }, { wch: 16 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 18 }, { wch: 16 }, { wch: 36 }];
         aplicarFormatoMoedaColunasExcel(wsResumo, [7, 8, 9, 10, 12], linhasResumo.length, MONEY_FMT);
         XLSX.utils.book_append_sheet(wb, wsResumo, 'Resumo');
 
         // ---- 1 aba por filial — lista nominal dos matriculados do mês ----
         for (const r of resultados) {
+            if (r.agrupada) {
+                const linhasAgrupadas = [
+                    ['Filial', r.nome],
+                    ['Cobrança consolidada em', r.grupoCobranca || 'outra filial'],
+                    ['Matrículas consideradas nesta linha', 0],
+                    ['Comissão própria (30%)', 0],
+                    ['Observação', 'Base acadêmica compartilhada; não duplicar matrículas nem comissão da filial principal.'],
+                ];
+                const wsAgrupada = XLSX.utils.aoa_to_sheet(linhasAgrupadas);
+                wsAgrupada['!cols'] = [{ wch: 38 }, { wch: 58 }];
+                aplicarFormatoMoedaColunasExcel(wsAgrupada, [2], linhasAgrupadas.length, MONEY_FMT);
+                XLSX.utils.book_append_sheet(wb, wsAgrupada, sanitizarNomeAbaExcel(r.nome));
+                continue;
+            }
             if (r.fonte === 'mercurio') {
                 const c = (ultimoResultadoComissaoSdr.conciliacao && ultimoResultadoComissaoSdr.conciliacao.get(r.nome)) || { contam: [], investigar: [] };
                 const valor = r.valorMensalidade || 0;

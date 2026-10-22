@@ -29,6 +29,7 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
 
 const PERCENTUAL_COMISSAO = 0.3;
+const CENTAVOS_POR_MEMBRO_MODULO2 = 496;
 const DIA_COBRANCA = 10;
 const URL_CRM = "https://crm-nova-acropole-5dv3.vercel.app/";
 
@@ -70,10 +71,35 @@ function diaDeCobranca(ano: number, mes: number): string {
     }
 }
 
+function numeroNaoNegativo(valor: unknown): number | null {
+    if (valor == null || (typeof valor === "string" && valor.trim() === "")) return null;
+    const numero = Number(valor);
+    return Number.isFinite(numero) && numero >= 0 ? numero : null;
+}
+
+function quantidadeMembros(valor: unknown): number | null {
+    const numero = numeroNaoNegativo(valor);
+    return Number.isSafeInteger(numero) ? numero : null;
+}
+
+function obterQuantidadeMembrosFilial(f: any): number | null {
+    const membrosInformados = f.membros != null ? f.membros : f.membros_mercurio;
+    return quantidadeMembros(membrosInformados);
+}
+
 function valorFixo(f: any, membros: number | null): { valor: number | null; manual: boolean } {
-    if (f.valor_fixo_mensal_agencia != null) return { valor: Number(f.valor_fixo_mensal_agencia), manual: true };
-    if (membros == null) return { valor: null, manual: false };
-    return { valor: membros <= 30 ? 250 : membros <= 80 ? 450 : 600, manual: false };
+    if (f.valor_fixo_mensal_agencia != null) {
+        return { valor: numeroNaoNegativo(f.valor_fixo_mensal_agencia), manual: true };
+    }
+    const quantidade = quantidadeMembros(membros);
+    if (quantidade == null) return { valor: null, manual: false };
+    return { valor: quantidade * CENTAVOS_POR_MEMBRO_MODULO2 / 100, manual: false };
+}
+
+function totalCobrar(fixo: number | null, comissao: number | null, contratado: boolean): number | null {
+    if (!contratado) return 0;
+    if (fixo == null || comissao == null) return null;
+    return fixo + comissao;
 }
 
 async function lerTudo(montar: (de: number, ate: number) => any): Promise<any[]> {
@@ -89,7 +115,46 @@ async function lerTudo(montar: (de: number, ate: number) => any): Promise<any[]>
 const cicloQueContem = (ciclos: any[], data: string | null) =>
     data ? ciclos.find((c) => data >= c.inicio && data <= c.fim) || null : null;
 
+async function buscarFiliaisAtivasCobranca(corpo: any, banco = supabaseAdmin) {
+    let q = banco.from("filiais")
+        .select("id, nome, mercurio_unidade, filial_cobranca_id, membros, membros_mercurio, valor_fixo_mensal_agencia, valor_mensalidade, modulo2_contratado")
+        .eq("ativo", true).order("ordem");
+    if (corpo.filial) q = q.eq("nome", corpo.filial);
+    return q;
+}
+
+async function lerDadosMercurioFilial(f: any, banco = supabaseAdmin) {
+    if (typeof f.mercurio_unidade !== "string" || !f.mercurio_unidade.trim()) {
+        // Sem unidade mapeada, não consultar com `.eq("unidade", null)`:
+        // isso poderia parecer uma filial sem matrículas e produzir total parcial.
+        return { fonteDisponivel: false, turmas: [], alunos: [], investigar: [] };
+    }
+    const unidade = f.mercurio_unidade.trim();
+    const [turmas, alunos, investigar] = await Promise.all([
+        lerTudo((de, ate) => banco.from("mercurio_turmas").select("turma, tipo, nivel, inicio").eq("unidade", unidade).order("turma").range(de, ate)),
+        lerTudo((de, ate) => banco.from("mercurio_alunos")
+            .select("matricula, unidade, pessoa_identificador, nome, nivel, turma, turma_competencia, data_efetiva, programa, recuperado, ativo")
+            .eq("filial", f.nome).eq("conta_remuneracao", true).order("matricula").range(de, ate)),
+        lerTudo((de, ate) => banco.from("mercurio_alunos")
+            .select("matricula, unidade, pessoa_identificador, nome, nivel, turma, data_efetiva, motivo_investigar, ativo")
+            .eq("filial", f.nome).not("motivo_investigar", "is", null).order("matricula").range(de, ate)),
+    ]);
+    return { fonteDisponivel: true, turmas, alunos, investigar };
+}
+
+function resultadoFilialAgrupada(f: any) {
+    if (f?.filial_cobranca_id == null) return null;
+    const grupo = f.nome_filial_cobranca || null;
+    return {
+        filial: f.nome,
+        agrupadaEm: grupo,
+        pulada: grupo ? `cobrança consolidada em ${grupo}` : "cobrança consolidada em outra filial",
+    };
+}
+
 async function gerarFilial(f: any, mes: string, dataCobranca: string) {
+    const agrupada = resultadoFilialAgrupada(f);
+    if (agrupada) return agrupada;
     const { data: existente } = await supabaseAdmin.from("cobrancas_mensais")
         .select("id, status").eq("mes", mes).eq("filial", f.nome).maybeSingle();
     if (existente?.status === "fechada") return { filial: f.nome, pulada: "cobrança deste mês já fechada" };
@@ -98,18 +163,13 @@ async function gerarFilial(f: any, mes: string, dataCobranca: string) {
     await supabaseAdmin.from("cobrancas_mensais").delete()
         .eq("filial", f.nome).eq("status", "rascunho").neq("mes", mes);
 
-    const [ciclos, turmas, alunos, investigar, anterior] = await Promise.all([
+    const [ciclos, dadosMercurio, anterior] = await Promise.all([
         lerTudo((de, ate) => supabaseAdmin.from("ciclos_turma").select("id, nome, inicio, fim").eq("filial", f.nome).order("inicio").range(de, ate)),
-        lerTudo((de, ate) => supabaseAdmin.from("mercurio_turmas").select("turma, tipo, nivel, inicio").eq("unidade", f.mercurio_unidade).order("turma").range(de, ate)),
-        lerTudo((de, ate) => supabaseAdmin.from("mercurio_alunos")
-            .select("matricula, unidade, pessoa_identificador, nome, nivel, turma, turma_competencia, data_efetiva, programa, recuperado, ativo")
-            .eq("filial", f.nome).eq("conta_remuneracao", true).order("matricula").range(de, ate)),
-        lerTudo((de, ate) => supabaseAdmin.from("mercurio_alunos")
-            .select("matricula, unidade, pessoa_identificador, nome, nivel, turma, data_efetiva, motivo_investigar, ativo")
-            .eq("filial", f.nome).not("motivo_investigar", "is", null).order("matricula").range(de, ate)),
+        lerDadosMercurioFilial(f),
         supabaseAdmin.from("cobrancas_mensais").select("data_cobranca").eq("filial", f.nome)
             .eq("status", "fechada").lt("data_cobranca", dataCobranca).order("data_cobranca", { ascending: false }).limit(1),
     ]);
+    const { fonteDisponivel, turmas, alunos, investigar } = dadosMercurio;
     const jaCobrados = new Set((await lerTudo((de, ate) => {
         let q = supabaseAdmin.from("cobranca_itens").select("matricula, unidade").eq("filial", f.nome);
         if (existente) q = q.neq("cobranca_id", existente.id);
@@ -161,26 +221,46 @@ async function gerarFilial(f: any, mes: string, dataCobranca: string) {
         .map((a: any) => ({ matricula: a.matricula, nome: a.nome, nivel: a.nivel, turma: a.turma, data_efetiva: a.data_efetiva,
             motivo: a.motivo_investigar, ciclo_nome: a.ciclo.nome, pessoa_identificador: a.pessoa_identificador, ativo: a.ativo !== false }));
 
-    const membros = f.membros_mercurio != null ? Number(f.membros_mercurio) : null;
+    // A contagem manual configurada na filial é autoritativa; só em branco
+    // usamos a contagem automática sincronizada do Mercúrio.
+    const membrosInformados = f.membros != null ? f.membros : f.membros_mercurio;
+    const membros = obterQuantidadeMembrosFilial(f);
     const fixo = valorFixo(f, membros);
     const contratado = f.modulo2_contratado !== false;
     const incluidos = itens.filter((i) => i.incluido).length;
-    const mensalidade = Number(f.valor_mensalidade || 0);
-    const comissao = Math.round(incluidos * mensalidade * PERCENTUAL_COMISSAO * 100) / 100;
-    const total = contratado ? (fixo.valor || 0) + comissao : 0;
+    const mensalidade = numeroNaoNegativo(f.valor_mensalidade);
+    const comissao = contratado && !fonteDisponivel
+        ? null
+        : incluidos === 0 ? 0 : mensalidade == null ? null : Math.round(incluidos * mensalidade * PERCENTUAL_COMISSAO * 100) / 100;
+    const pendenciasCalculo: string[] = [];
+    if (contratado && !fonteDisponivel) pendenciasCalculo.push("unidade do Mercúrio não configurada; configure o vínculo antes de calcular matrículas e comissão");
+    if (contratado && fixo.valor == null) {
+        if (fixo.manual) pendenciasCalculo.push("ajuste manual do Fixo ausente ou inválido");
+        else if (membrosInformados == null || (typeof membrosInformados === "string" && membrosInformados.trim() === "")) {
+            pendenciasCalculo.push("contagem de membros ausente; informe a quantidade ou sincronize o Mercúrio");
+        } else pendenciasCalculo.push("contagem de membros inválida; corrija o valor antes de cobrar");
+    }
+    if (contratado && incluidos > 0 && mensalidade == null) pendenciasCalculo.push("mensalidade ausente ou inválida; não foi possível calcular a comissão de 30%");
+    const erroCalculo = pendenciasCalculo.length ? pendenciasCalculo.join("; ") : null;
+    const total = totalCobrar(fixo.valor, comissao, contratado);
 
     const linha = {
         mes, filial: f.nome, data_cobranca: dataCobranca, status: "rascunho",
         membros_congelados: membros, valor_fixo: fixo.valor, fixo_manual: fixo.manual,
-        modulo2_contratado: contratado, valor_mensalidade: f.valor_mensalidade, matriculas: incluidos,
+        modulo2_contratado: contratado, valor_mensalidade: mensalidade, matriculas: fonteDisponivel ? incluidos : null,
         comissao, total, janela_inicio: janelaInicio,
         ciclos: ciclosFechados.map((c: any) => ({ id: c.id, nome: c.nome, inicio: c.inicio, fim: c.fim })),
         investigar: listaInvestigar, gerado_em: new Date().toISOString(),
     };
     let cobrancaId: number;
     if (existente) {
-        const { error } = await supabaseAdmin.from("cobrancas_mensais").update(linha).eq("id", existente.id);
+        // Uma revisão pode fechar o rascunho enquanto os dados são lidos.
+        // A condição de status impede reabrir essa linha; confirme a escrita
+        // antes de substituir qualquer item da cobrança.
+        const { data: atualizada, error } = await supabaseAdmin.from("cobrancas_mensais").update(linha)
+            .eq("id", existente.id).eq("status", "rascunho").select("id").maybeSingle();
         if (error) throw new Error(`atualizar cobrança: ${error.message}`);
+        if (!atualizada) return { filial: f.nome, pulada: "a cobrança foi fechada durante a geração e não foi recalculada" };
         await supabaseAdmin.from("cobranca_itens").delete().eq("cobranca_id", existente.id);
         cobrancaId = existente.id;
     } else {
@@ -193,8 +273,8 @@ async function gerarFilial(f: any, mes: string, dataCobranca: string) {
         if (error) throw new Error(`gravar itens: ${error.message}`);
     }
     return {
-        filial: f.nome, cobrancaId, matriculas: incluidos, excluidos: itens.length - incluidos,
-        investigar: listaInvestigar.length, membros, fixo: fixo.valor, comissao, total, contratado,
+        filial: f.nome, cobrancaId, matriculas: fonteDisponivel ? incluidos : null, excluidos: itens.length - incluidos,
+        investigar: listaInvestigar.length, membros, fixo: fixo.valor, comissao, total, contratado, erroCalculo,
         semCiclos: ciclos.length === 0, ciclosCobertos: ciclosFechados.length,
     };
 }
@@ -205,15 +285,19 @@ function montarAviso(mes: string, dataCobranca: string, res: any[]) {
     const [a, m] = mes.split("-");
     const dataBR = dataCobranca.split("-").reverse().join("/");
     const linhas = res.filter((r) => !r.pulada && !r.erro).map((r) => {
-        if (!r.contratado) return `• *${r.filial}*: ${r.matriculas} matrícula(s) — não cobrada (Módulo 2 não contratado)`;
-        const extra = [r.investigar ? `${r.investigar} pra investigar` : "", r.semCiclos ? "SEM CICLO CADASTRADO" : ""].filter(Boolean).join(", ");
-        return `• *${r.filial}*: ${r.matriculas} matrícula(s), Fixo ${real(r.fixo)} (${r.membros ?? "?"} membros) + comissão ${real(r.comissao)} = *${real(r.total)}*${extra ? ` — ${extra}` : ""}`;
+        const matriculas = r.matriculas == null ? "matrículas não consultadas" : `${r.matriculas} matrícula(s)`;
+        if (!r.contratado) return `• *${r.filial}*: ${matriculas} — não cobrada (Módulo 2 não contratado)`;
+        const extra = [r.investigar ? `${r.investigar} pra investigar` : "", r.semCiclos ? "SEM CICLO CADASTRADO" : "", r.erroCalculo ? `CÁLCULO PENDENTE: ${r.erroCalculo}` : ""].filter(Boolean).join(", ");
+        const total = r.total == null ? "*PENDENTE*" : `*${real(r.total)}*`;
+        return `• *${r.filial}*: ${matriculas}, Fixo ${real(r.fixo)} (${r.membros ?? "?"} membros; R$4,96 por membro/mês) + comissão ${real(r.comissao)} = ${total}${extra ? ` — ${extra}` : ""}`;
     });
-    const total = res.reduce((s, r) => s + (r.total || 0), 0);
+    const total = res.some((r) => r.erroCalculo) ? null : res.reduce((s, r) => s + (r.total || 0), 0);
+    const agrupadas = res.filter((r) => r.agrupadaEm).map((r) => `• *${r.filial}*: cobrança consolidada em *${r.agrupadaEm}* (sem cobrança ou comissão duplicada)`);
     const problemas = res.filter((r) => r.erro).map((r) => `• ${r.filial}: erro — ${r.erro}`);
     return [
         `🧾 *Cobrança de ${m}/${a} pronta pra revisar* (corte em ${dataBR})`,
         "",
+        ...agrupadas,
         ...linhas,
         ...problemas,
         "",
@@ -237,16 +321,19 @@ Deno.serve(async (req) => {
     if (!forcar && dataBase !== diaCobranca) return json({ ok: true, naoEhDia: true, diaCobranca });
     const dataCobranca = forcar ? dataBase : diaCobranca;
 
-    let q = supabaseAdmin.from("filiais")
-        .select("id, nome, mercurio_unidade, membros_mercurio, valor_fixo_mensal_agencia, valor_mensalidade, modulo2_contratado")
-        .eq("ativo", true).not("mercurio_unidade", "is", null).order("ordem");
-    if (corpo.filial) q = q.eq("nome", corpo.filial);
-    const { data: filiais, error } = await q;
+    const { data: filiais, error } = await buscarFiliaisAtivasCobranca(corpo);
     if (error) return json({ ok: false, erro: error.message }, 500);
 
+    const mapaFilial = new Map<string, any>((filiais || []).map((f: any) => [String(f.id), f] as [string, any]));
     const resultados: any[] = [];
     for (const f of filiais || []) {
-        try { resultados.push(await gerarFilial(f, mes, dataCobranca)); }
+        let grupo = f.filial_cobranca_id == null ? null : mapaFilial.get(String(f.filial_cobranca_id));
+        if (f.filial_cobranca_id != null && !grupo) {
+            const { data } = await supabaseAdmin.from("filiais").select("id, nome").eq("id", f.filial_cobranca_id).maybeSingle();
+            grupo = data;
+        }
+        const filialComGrupo = grupo ? { ...f, nome_filial_cobranca: grupo.nome } : f;
+        try { resultados.push(await gerarFilial(filialComGrupo, mes, dataCobranca)); }
         catch (e) { resultados.push({ filial: f.nome, erro: (e as Error).message }); }
     }
 

@@ -11,6 +11,36 @@ const dataBRCob = (iso) => { if (!iso) return '—'; const [a, m, d] = String(is
 const realCob = (v) => v == null ? '—' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const hojeCob = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 
+function numeroValidoCobranca(valor) {
+    if (valor == null || (typeof valor === 'string' && valor.trim() === '')) return null;
+    const numero = Number(valor);
+    return Number.isFinite(numero) && numero >= 0 ? numero : null;
+}
+
+function motivoPendenciaCobranca(c) {
+    const filiais = typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : [];
+    const filial = filiais.find(f => f.nome === c.filial);
+    if (filial?.filial_cobranca_id != null) {
+        const grupo = filiais.find(f => String(f.id) === String(filial.filial_cobranca_id));
+        return `Esta filial está incluída na cobrança de ${grupo?.nome || 'outra filial'}; não feche uma cobrança própria.`;
+    }
+    if (c.modulo2_contratado === false) return null;
+    if (c.matriculas == null) return 'A quantidade de matrículas não foi consultada; configure o vínculo com o Mercúrio antes de cobrar.';
+    if (numeroValidoCobranca(c.valor_fixo) == null) {
+        if (c.fixo_manual) return 'O ajuste manual do Fixo está ausente ou inválido.';
+        const membros = c.membros_congelados;
+        if (membros == null || (typeof membros === 'string' && membros.trim() === '')) {
+            return 'A contagem de membros não foi congelada. Informe a quantidade ou sincronize o Mercúrio e gere uma nova prévia.';
+        }
+        return 'A contagem de membros congelada é inválida. Corrija-a e gere uma nova prévia.';
+    }
+    if (Number(c.matriculas || 0) > 0 && numeroValidoCobranca(c.valor_mensalidade) == null) {
+        return 'Falta o valor da mensalidade para calcular a comissão de 30%.';
+    }
+    if (numeroValidoCobranca(c.total) == null) return 'O total da cobrança não foi calculado.';
+    return null;
+}
+
 let mesSelecionadoCobranca = null;
 
 function filiaisComMercurio() {
@@ -188,45 +218,60 @@ async function renderizarCobrancaMensal() {
     catch (e) { container.innerHTML = cabecalho + `<p style="font-size:12px; color:#dc2626;">Erro: ${escapeHTML(e.message)}</p>`; return; }
 
     const fechada = cobrancas.length && cobrancas.every(c => c.status === 'fechada');
-    const totalGeral = cobrancas.reduce((s, c) => s + Number(c.total || 0), 0);
-    const totalMatriculas = cobrancas.reduce((s, c) => s + (c.matriculas || 0), 0);
+    const temTotalPendente = cobrancas.some(c => c.status === 'rascunho' && (motivoPendenciaCobranca(c) || (c.modulo2_contratado !== false && numeroValidoCobranca(c.total) == null)));
+    const totalGeral = temTotalPendente ? null : cobrancas.reduce((s, c) => s + Number(c.total || 0), 0);
+    const totalMatriculas = cobrancas.some(c => c.status === 'rascunho' && c.matriculas == null)
+        ? null
+        : cobrancas.reduce((s, c) => s + (c.matriculas || 0), 0);
+    const alertasPendencia = cobrancas.filter(c => c.status === 'rascunho').map(c => ({ filial: c.filial, motivo: motivoPendenciaCobranca(c) })).filter(c => c.motivo);
     container.innerHTML = cabecalho + `
         <div style="font-size:12px; margin-bottom:8px;">
             ${fechada
                 ? `<span class="tag tag-ativo">Fechada</span> em ${new Date(cobrancas[0].fechado_em).toLocaleString('pt-BR')}${cobrancas[0].fechado_por ? ` por ${escapeHTML(cobrancas[0].fechado_por)}` : ''}`
                 : `<span class="tag tag-warning">Rascunho</span> corte em ${dataBRCob(cobrancas[0]?.data_cobranca)} · gerado em ${cobrancas[0] ? new Date(cobrancas[0].gerado_em).toLocaleString('pt-BR') : '—'}`}
         </div>
+        ${alertasPendencia.length ? `<p style="font-size:12px; color:#b91c1c; margin:0 0 8px;"><i class="fa-solid fa-triangle-exclamation"></i> Fechamento bloqueado: ${alertasPendencia.map(p => `<strong>${escapeHTML(p.filial)}:</strong> ${escapeHTML(p.motivo)}`).join(' · ')}</p>` : ''}
         <table class="tabela-relatorio">
             <thead><tr><th>Filial</th><th>Ciclos cobertos</th><th>Membros (congelado)</th><th>Fixo</th><th>Matrículas</th><th>Investigar</th><th>Comissão (30%)</th><th>Total a cobrar</th></tr></thead>
             <tbody>
-                ${cobrancas.map(c => `
+                ${cobrancas.map(c => {
+                    const pendencia = c.status === 'rascunho' ? motivoPendenciaCobranca(c) : null;
+                    const filiais = typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : [];
+                    const filialAtual = filiais.find(f => f.nome === c.filial);
+                    const grupo = filialAtual?.filial_cobranca_id != null ? filiais.find(f => String(f.id) === String(filialAtual.filial_cobranca_id)) : null;
+                    return `
                     <tr style="${c.modulo2_contratado ? '' : 'opacity:.6;'}">
-                        <td>${escapeHTML(c.filial)}${c.modulo2_contratado ? '' : ' <span class="tag tag-exaluno" style="font-size:9px;">Não cobrada</span>'}</td>
+                        <td>${escapeHTML(c.filial)}${grupo ? ` <span class="tag tag-warning" style="font-size:9px;">Incluída em ${escapeHTML(grupo.nome)}</span>` : (c.modulo2_contratado ? '' : ' <span class="tag tag-exaluno" style="font-size:9px;">Não cobrada</span>')}</td>
                         <td>${(c.ciclos || []).length ? c.ciclos.map(x => escapeHTML(x.nome)).join('<br>') : '<span class="tag tag-warning" style="font-size:10px;">nenhum ciclo</span>'}</td>
                         <td>${c.membros_congelados ?? '—'}</td>
                         <td>${realCob(c.valor_fixo)}${c.fixo_manual ? ' <span class="conc-aluno-meta">(manual)</span>' : ''}</td>
-                        <td><strong>${c.matriculas}</strong>${c.itens.length > c.matriculas ? ` <span class="conc-aluno-meta">(${c.itens.length - c.matriculas} fora)</span>` : ''}</td>
+                        <td><strong>${c.matriculas ?? '—'}</strong>${c.matriculas != null && c.itens.length > c.matriculas ? ` <span class="conc-aluno-meta">(${c.itens.length - c.matriculas} fora)</span>` : ''}</td>
                         <td>${(c.investigar || []).length ? `<span class="tag tag-warning" style="font-size:10px;">${c.investigar.length}</span>` : '0'}</td>
                         <td>${realCob(c.comissao)}</td>
-                        <td><strong>${realCob(c.total)}</strong></td>
-                    </tr>`).join('')}
-                <tr style="font-weight:700; background:#f8fafc;"><td>TOTAL</td><td></td><td></td><td></td><td>${totalMatriculas}</td><td></td><td></td><td>${realCob(totalGeral)}</td></tr>
+                        <td><strong>${realCob(c.total)}${pendencia ? ` <span class="tag tag-error" title="${escapeHTML(pendencia)}" style="font-size:9px;">Pendente</span>` : ''}</strong></td>
+                    </tr>`;
+                }).join('')}
+                ${(typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : []).filter(f => f.filial_cobranca_id != null && !cobrancas.some(c => c.filial === f.nome)).map(f => {
+                    const grupo = filiaisDisponiveis.find(x => String(x.id) === String(f.filial_cobranca_id));
+                    return `<tr><td>${escapeHTML(f.nome)} <span class="tag tag-warning" style="font-size:9px;">Incluída em ${escapeHTML(grupo?.nome || 'outra filial')}</span></td><td>—</td><td>—</td><td>R$0,00</td><td>—</td><td>—</td><td>R$0,00</td><td>Consolidada em ${escapeHTML(grupo?.nome || 'outra filial')}</td></tr>`;
+                }).join('')}
+                <tr style="font-weight:700; background:#f8fafc;"><td>TOTAL</td><td></td><td></td><td></td><td>${totalMatriculas ?? '—'}</td><td></td><td></td><td>${realCob(totalGeral)}</td></tr>
             </tbody>
         </table>
         <div style="display:flex; gap:8px; margin:10px 0; flex-wrap:wrap;">
             <button class="btn-secondary" style="font-size:11px; padding:6px 10px;" onclick="exportarCobrancaMensalExcel()"><i class="fa-solid fa-file-excel"></i> Gerar Excel</button>
-            ${fechada ? '' : `<button class="btn-primary" style="font-size:11px; padding:6px 12px;" onclick="fecharCobrancaMes()"><i class="fa-solid fa-lock"></i> Fechar cobrança de ${rotuloMesCob(mesSelecionadoCobranca)}</button>`}
+            ${fechada ? '' : `<button class="btn-primary" style="font-size:11px; padding:6px 12px;" onclick="fecharCobrancaMes()" ${temTotalPendente ? 'disabled title="Há filial com cálculo pendente; corrija os dados antes de fechar."' : ''}><i class="fa-solid fa-lock"></i> Fechar cobrança de ${rotuloMesCob(mesSelecionadoCobranca)}</button>`}
         </div>
         <div class="conc-detalhes">
             ${cobrancas.filter(c => c.itens.length || (c.investigar || []).length).map(c => `
                 <details class="conc-filial">
-                    <summary>${escapeHTML(c.filial)} — ${c.matriculas} na cobrança${(c.investigar || []).length ? `, ${c.investigar.length} pra investigar` : ''}</summary>
+                    <summary>${escapeHTML(c.filial)} — ${c.matriculas == null ? 'matrículas não consultadas' : `${c.matriculas} na cobrança`}${(c.investigar || []).length ? `, ${c.investigar.length} pra investigar` : ''}</summary>
                     ${(c.investigar || []).length ? `<div class="conc-bloco-titulo conc-bloco-investigar">Investigar (não entram até serem corrigidos no Mercúrio)</div>
                         ${c.investigar.map(a => `<div class="conc-aluno" style="cursor:default;"><div><strong>${escapeHTML(a.nome || '')}</strong> <span class="conc-aluno-meta">matr. ${a.matricula} · ${escapeHTML(a.nivel || '')} · ${escapeHTML(a.turma || '')} · ${escapeHTML(a.ciclo_nome || '')}</span></div><div class="conc-aluno-motivo"><i class="fa-solid fa-magnifying-glass"></i> ${escapeHTML(a.motivo || '')}</div></div>`).join('')}` : ''}
                     ${c.itens.length ? `<div class="conc-bloco-titulo">Alunos da cobrança</div>${c.itens.map(i => htmlItemCobranca(i, c.status === 'fechada')).join('')}` : ''}
                 </details>`).join('')}
         </div>
-        <p class="report-sub" style="margin-top:10px;">Programa branco conta pela turma de abertura, quando o ciclo dela já terminou; complementar conta pela data individual. Desmarcar um aluno tira ele desta cobrança e de todas as seguintes. O Fixo usa os membros do Mercúrio congelados quando o rascunho foi gerado.</p>`;
+        <p class="report-sub" style="margin-top:10px;">Programa branco conta pela turma de abertura, quando o ciclo dela já terminou; complementar conta pela data individual. Desmarcar um aluno tira ele desta cobrança e de todas as seguintes. O Fixo é R$4,96 por membro por mês, sem mínimo nem teto; a quantidade manual da filial vence, e em branco usa o Mercúrio. A quantidade é congelada no rascunho. Rascunho com cálculo pendente não pode ser fechado.</p>`;
 }
 
 async function gerarPreviaCobranca(botao) {
@@ -236,7 +281,7 @@ async function gerarPreviaCobranca(botao) {
     try {
         const { data, error } = await window.supabaseClient.functions.invoke('cobranca-mensal', { body: { forcar: true, semAviso: true } });
         if (error) throw error;
-        const problemas = (data?.resultados || []).filter(r => r.erro || r.pulada).map(r => `${r.filial}: ${r.erro || r.pulada}`);
+        const problemas = (data?.resultados || []).filter(r => r.erro || r.pulada || r.erroCalculo).map(r => `${r.filial}: ${r.erro || r.pulada || r.erroCalculo}`);
         if (problemas.length) alert(problemas.join('\n'));
         mesSelecionadoCobranca = data?.mes || mesSelecionadoCobranca;
     } catch (e) {
@@ -249,14 +294,16 @@ async function gerarPreviaCobranca(botao) {
 
 async function recalcularTotaisCobranca(cobrancaId) {
     const [{ data: c }, { count }] = await Promise.all([
-        window.supabaseClient.from('cobrancas_mensais').select('valor_fixo, valor_mensalidade, modulo2_contratado').eq('id', cobrancaId).single(),
+        window.supabaseClient.from('cobrancas_mensais').select('valor_fixo, valor_mensalidade, matriculas, modulo2_contratado, status').eq('id', cobrancaId).single(),
         window.supabaseClient.from('cobranca_itens').select('id', { count: 'exact', head: true }).eq('cobranca_id', cobrancaId).eq('incluido', true),
     ]);
-    if (!c) return;
-    const matriculas = count || 0;
-    const comissao = Math.round(matriculas * Number(c.valor_mensalidade || 0) * 0.3 * 100) / 100;
-    const total = c.modulo2_contratado ? Number(c.valor_fixo || 0) + comissao : 0;
-    await window.supabaseClient.from('cobrancas_mensais').update({ matriculas, comissao, total }).eq('id', cobrancaId);
+    if (!c || c.status !== 'rascunho' || count == null) return; // nunca altera cobrança fechada nem presume 0 em falha de contagem
+    const matriculas = count;
+    const mensalidade = numeroValidoCobranca(c.valor_mensalidade);
+    const comissao = matriculas === 0 ? 0 : mensalidade == null ? null : Math.round(matriculas * mensalidade * 0.3 * 100) / 100;
+    const fixo = numeroValidoCobranca(c.valor_fixo);
+    const total = c.modulo2_contratado === false ? 0 : (fixo == null || comissao == null ? null : fixo + comissao);
+    await window.supabaseClient.from('cobrancas_mensais').update({ matriculas, comissao, total }).eq('id', cobrancaId).eq('status', 'rascunho');
 }
 
 async function alternarItemCobranca(itemId, cobrancaId, incluir) {
@@ -275,6 +322,16 @@ async function alternarItemCobranca(itemId, cobrancaId, incluir) {
 
 async function fecharCobrancaMes() {
     const mes = mesSelecionadoCobranca;
+    if (!mes) return;
+    let cobrancas;
+    try { cobrancas = await carregarCobrancasMes(mes); }
+    catch (e) { alert('Não foi possível conferir a cobrança antes do fechamento: ' + e.message); return; }
+    const pendentes = cobrancas.filter(c => c.status === 'rascunho').map(c => ({ filial: c.filial, motivo: motivoPendenciaCobranca(c) })).filter(c => c.motivo);
+    if (pendentes.length) {
+        alert(`Não é possível fechar a cobrança enquanto houver cálculo pendente:\n${pendentes.map(c => `• ${c.filial}: ${c.motivo}`).join('\n')}`);
+        renderizarCobrancaMensal();
+        return;
+    }
     if (!mes || !confirm(`Fechar a cobrança de ${rotuloMesCob(mes)}? Depois de fechada ela não muda mais, e os alunos dela nunca mais entram em outra cobrança.`)) return;
     const { error } = await window.supabaseClient.from('cobrancas_mensais')
         .update({ status: 'fechada', fechado_em: new Date().toISOString(), fechado_por: autorCob() })
@@ -291,21 +348,34 @@ async function exportarCobrancaMensalExcel() {
     try { cobrancas = await carregarCobrancasMes(mes); } catch (e) { alert('Erro: ' + e.message); return; }
     const MOEDA = '"R$" #,##0.00';
     const wb = XLSX.utils.book_new();
-    const resumo = [['Filial', 'Ciclos', 'Membros', 'Fixo', 'Matrículas', 'Mensalidade', 'Comissão (30%)', 'Total a cobrar', 'Status']];
-    cobrancas.forEach(c => resumo.push([c.filial, (c.ciclos || []).map(x => x.nome).join(', '), c.membros_congelados ?? '',
-        c.valor_fixo != null ? Number(c.valor_fixo) : '', c.matriculas, c.valor_mensalidade != null ? Number(c.valor_mensalidade) : '',
-        Number(c.comissao || 0), Number(c.total || 0), c.modulo2_contratado ? c.status : 'não cobrada']));
-    resumo.push(['TOTAL', '', '', '', cobrancas.reduce((s, c) => s + c.matriculas, 0), '', '', cobrancas.reduce((s, c) => s + Number(c.total || 0), 0), '']);
+    const resumo = [['Filial', 'Ciclos', 'Membros', 'Fixo (R$4,96 por membro/mês)', 'Matrículas', 'Mensalidade', 'Comissão (30%)', 'Total a cobrar', 'Status']];
+    cobrancas.forEach(c => {
+        const filiais = typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : [];
+        const filial = filiais.find(f => f.nome === c.filial);
+        const grupo = filial?.filial_cobranca_id != null ? filiais.find(f => String(f.id) === String(filial.filial_cobranca_id)) : null;
+        resumo.push([c.filial, grupo ? `Cobrança consolidada em ${grupo.nome}` : (c.ciclos || []).map(x => x.nome).join(', '), c.membros_congelados ?? '',
+            c.valor_fixo != null ? Number(c.valor_fixo) : '', c.matriculas ?? '', c.valor_mensalidade != null ? Number(c.valor_mensalidade) : '',
+            c.comissao != null ? Number(c.comissao) : '', c.total != null ? Number(c.total) : '', c.modulo2_contratado ? (motivoPendenciaCobranca(c) ? `${c.status} — cálculo pendente` : c.status) : 'não cobrada']);
+    });
+    (typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : []).filter(f => f.filial_cobranca_id != null && !cobrancas.some(c => c.filial === f.nome)).forEach(f => {
+        const grupo = filiaisDisponiveis.find(x => String(x.id) === String(f.filial_cobranca_id));
+        resumo.push([f.nome, `Cobrança consolidada em ${grupo?.nome || 'outra filial'}`, '', 0, '', '', 0, '', `incluída em ${grupo?.nome || 'outra filial'}`]);
+    });
+    const totalExportavel = cobrancas.some(c => (c.status === 'rascunho' && motivoPendenciaCobranca(c)) || (c.modulo2_contratado !== false && numeroValidoCobranca(c.total) == null))
+        ? '' : cobrancas.reduce((s, c) => s + Number(c.total || 0), 0);
+    const totalMatriculasExport = cobrancas.some(c => c.status === 'rascunho' && c.matriculas == null)
+        ? '' : cobrancas.reduce((s, c) => s + (c.matriculas || 0), 0);
+    resumo.push(['TOTAL', '', '', '', totalMatriculasExport, '', '', totalExportavel, '']);
     const wsR = XLSX.utils.aoa_to_sheet(resumo);
     wsR['!cols'] = [{ wch: 28 }, { wch: 26 }, { wch: 9 }, { wch: 12 }, { wch: 11 }, { wch: 12 }, { wch: 15 }, { wch: 15 }, { wch: 12 }];
     aplicarFormatoMoedaColunasExcel(wsR, [4, 6, 7, 8], resumo.length, MOEDA);
     XLSX.utils.book_append_sheet(wb, wsR, 'Resumo');
 
     cobrancas.forEach(c => {
-        const valor = Number(c.valor_mensalidade || 0);
+        const valor = numeroValidoCobranca(c.valor_mensalidade);
         const linhas = [['Nome', 'Matrícula', 'Nível', 'Turma', 'Abertura da turma / data', 'Matrícula em', 'Ciclo', 'Contribuição', 'Comissão (30%)']];
         c.itens.filter(i => i.incluido).forEach(i => linhas.push([i.nome || '', i.matricula, i.nivel || '', i.turma || '',
-            dataBRCob(i.data_referencia), dataBRCob(i.data_efetiva), i.ciclo_nome || '', valor, valor * 0.3]));
+            dataBRCob(i.data_referencia), dataBRCob(i.data_efetiva), i.ciclo_nome || '', valor ?? '', valor != null ? valor * 0.3 : '']));
         const n = linhas.length;
         const fora = c.itens.filter(i => !i.incluido);
         if (fora.length) { linhas.push([]); linhas.push(['FORA DA COBRANÇA', 'Matrícula', 'Motivo']); fora.forEach(i => linhas.push([i.nome || '', i.matricula, i.motivo_exclusao || ''])); }

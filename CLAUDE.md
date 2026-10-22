@@ -10669,3 +10669,59 @@ da cobrança vai pra seguinte; Membros congelados no dia da cobrança.
 - "Como conheceu a escola": no Mercúrio é o campo **"Meio pelo qual inscreveu
   no Nível 1"** da tela HISTÓRICO da ficha (`<select name="cmbmid">`). O campo
   "Origem" logo abaixo é outra coisa (`cad_origem`: N1/JN/PA/"??").
+
+## Tarifa final do Fixo do Módulo 2 (2026-10-22)
+
+Decisão confirmada pelo usuário: **R$4,96 por membro por mês, sem valor
+mínimo nem teto**, além da comissão já existente de 30% sobre as matrículas
+remuneráveis. O fixo é calculado em centavos inteiros (`membros × 496`),
+evitando divergência de arredondamento entre a tela e a Edge Function.
+
+- A quantidade manual em `filiais.membros` vence; quando está vazia, usa
+  `filiais.membros_mercurio`. A quantidade zero é válida. Uma quantidade
+  manual preenchida mas inválida não cai silenciosamente para o Mercúrio.
+- `valor_fixo_mensal_agencia` continua como ajuste manual autoritativo,
+  inclusive quando vale R$0.
+- Sem contagem válida e sem ajuste manual válido, o fixo e o total ficam
+  pendentes; a prévia não os converte em R$0, e o CRM bloqueia o fechamento.
+  Matrículas sem `valor_mensalidade` válido também deixam a comissão e o total
+  pendentes. Corrigir os dados e gerar a prévia novamente atualiza apenas um
+  rascunho.
+- Cobranças já fechadas não são recalculadas nem alteradas por essa regra.
+
+## Ampliação regional, recebimentos e acertos (22/10/2026)
+
+Escopo final autorizado: 13 filiais ativas — Jardim América, Setor Oeste,
+Garavelo, Goiânia II, Barra do Garças, Alto da Glória, Cidade Jardim,
+Eldorado, Setor Universitário, Catalão, Anápolis, Rio Verde e Jataí.
+Alto Paraíso, Itumbiara, Mineiros e Senador Canedo ficaram fora. As linhas
+cadastradas foram desativadas sem excluir dados importados.
+
+Jataí usa a base acadêmica de Rio Verde (confirmação do usuário), conservando
+seu CRM e Ulisses próprios. `filial_cobranca_id` aponta para Rio Verde: não
+copiar alunos/membros para Jataí nem duplicar comissão ou fixo. Contagem
+confirmada da base de 17/10: 807 membros, fixo consolidado R$4.002,72/mês.
+Mercúrio DB e API agora possuem 12 agendamentos individuais; a API começa
+03:45 Brasília, após as consultas do banco, evitando uma execução global longa.
+Chefes das novas filiais ainda serão informados pelo usuário no CRM.
+
+`js/comissao-acertos.js` e `migracao_comissao_acertos.sql`: simulador com
+comissão devida e efetivamente recebida por filial/mês; saldo em centavos
+acumulado, positivo a receber e negativo crédito da escola. Não somar saldo
+anterior de novo à receita, não misturar fixo, não assumir recebido em branco
+como zero. Recalcula todos os meses seguintes após correção antiga. Meses
+faltantes tornam saldo pendente. Grava via RPC com versão otimista e histórico;
+não altera cobranças fechadas. Jataí acerta pela filial Rio Verde.
+
+Importação agregada de jul/ago/set/2026 inclui ATI+INA e usa a última data de
+reingresso válido ou o ingresso. Prévia conservadora: 51/R$2.118 em julho,
+87/R$3.555 em agosto e 63/R$2.634 em setembro; total 201/R$8.307. Não é
+cobrança por ciclo, não comprova atribuição ao SDR, nem recebimento. Janos
+excluídos; 1 ingresso N2 de Eldorado em agosto (R$39) fica para conferir.
+As 36 prévias por filial/mês foram carregadas no simulador com recebido nulo.
+
+Asaas futuro: usuário definiu 30% **do líquido após taxas**. Ver
+`docs/ASAAS-MATRICULAS.md` com fontes oficiais, payload de referência e
+requisitos de subcontas/checkout e escrita no Mercúrio. Nenhuma conta ou
+cobrança foi criada nesta sessão. Não alterar a integração financeira do BPO
+por analogia: é outro produto e possui regra própria.

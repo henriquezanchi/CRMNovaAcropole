@@ -355,8 +355,54 @@ Deno.serve(async (req) => {
     try { corpo = await req.json(); } catch { /* corpo vazio = todas as filiais */ }
 
     try {
+        // Consulta administrativa sem importar pessoas nem alterar o CRM.
+        // IDs do catálogo público não são os códigos legados do Mercúrio.
+        if (["consultar_membros_filiais", "consultar_matriculas_historicas"].includes(corpo.modo)) {
+            // Esta função é publicada com verify_jwt=true: o gateway verifica
+            // a assinatura antes da execução; aqui restringimos o papel.
+            let papel = "";
+            try {
+                const token = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+                papel = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).role;
+            } catch { /* token ausente ou inválido */ }
+            if (papel !== "service_role") {
+                return json({ ok: false, erro: "Consulta restrita ao serviço" }, 403);
+            }
+            const pma = await abrirSessaoPhpMyAdmin();
+            const [atualizacao] = await pma.consultar("SELECT data FROM `atualização`", "atualização");
+            if (corpo.modo === "consultar_matriculas_historicas") {
+                // Relatório agregado: inclui inativos, sem exportar nomes,
+                // contatos ou matrículas individuais. Datas fixas do pedido.
+                const unidades = "'JAM','STO','GAR','BGA','GY2','ALT','PER','ELD','GYN','CAT','APS','RVD'";
+                const ingressos = await pma.consultar(
+                    `SELECT cad_unidade AS unidade, LEFT(cad_ingresso,7) AS mes, cad_nivel AS nivel, cad_situacao AS situacao, COUNT(DISTINCT cad_matr) AS quantidade FROM cadastro WHERE cad_unidade IN (${unidades}) AND cad_ingresso >= '2026-07-01' AND cad_ingresso < '2026-10-01' GROUP BY cad_unidade, LEFT(cad_ingresso,7), cad_nivel, cad_situacao`, "cadastro");
+                const reingressos = await pma.consultar(
+                    `SELECT cad_unidade AS unidade, LEFT(cad_reingresso,7) AS mes, cad_nivel AS nivel, cad_situacao AS situacao, COUNT(DISTINCT cad_matr) AS quantidade FROM cadastro WHERE cad_unidade IN (${unidades}) AND cad_recuperado='S' AND cad_reingresso >= '2026-07-01' AND cad_reingresso < '2026-10-01' AND (cad_ingresso IS NULL OR cad_reingresso > cad_ingresso) GROUP BY cad_unidade, LEFT(cad_reingresso,7), cad_nivel, cad_situacao`, "cadastro");
+                const dataEfetiva = "CASE WHEN cad_recuperado='S' AND cad_reingresso IS NOT NULL AND (cad_ingresso IS NULL OR cad_reingresso > cad_ingresso) THEN cad_reingresso ELSE cad_ingresso END";
+                const matriculas = await pma.consultar(
+                    `SELECT cad_unidade AS unidade, LEFT(${dataEfetiva},7) AS mes, cad_nivel AS nivel, cad_situacao AS situacao, CASE WHEN cad_recuperado='S' AND cad_reingresso IS NOT NULL AND (cad_ingresso IS NULL OR cad_reingresso > cad_ingresso) THEN 'reingresso' ELSE 'ingresso' END AS tipo, COUNT(DISTINCT cad_matr) AS quantidade FROM cadastro WHERE cad_unidade IN (${unidades}) AND (${dataEfetiva}) >= '2026-07-01' AND (${dataEfetiva}) < '2026-10-01' GROUP BY cad_unidade, LEFT(${dataEfetiva},7), cad_nivel, cad_situacao, tipo`, "cadastro");
+                return json({ ok: true, base_atualizada_em: atualizacao?.data ?? null, ingressos, reingressos, matriculas });
+            }
+            const unidades = await pma.consultar(
+                "SELECT uni_id, uni_nome, uni_cidade, uni_uf, uni_ativa FROM unidades WHERE uni_uf IN ('GO','MT')", "unidades");
+            const membros = await pma.consultar(
+                "SELECT cad_unidade, COUNT(*) AS membros FROM cadastro WHERE cad_situacao='ATI' AND cad_nivel IN ('N2','N3','N4','N5','N6','N7') GROUP BY cad_unidade", "cadastro");
+            const contagens = new Map(membros.map((m: any) => [String(m.cad_unidade).trim(), Number(m.membros)]));
+            return json({ ok: true, base_atualizada_em: atualizacao?.data ?? null,
+                unidades: unidades.map((u: any) => ({ ...u, membros: contagens.get(String(u.uni_id).trim()) ?? 0 })) });
+        }
+        let filialFonte = corpo.filial;
+        if (filialFonte) {
+            const { data: vinculada, error: erroVinculo } = await supabaseAdmin.from("filiais").select("filial_cobranca_id").eq("nome", filialFonte).eq("ativo", true).maybeSingle();
+            if (erroVinculo) throw new Error(erroVinculo.message);
+            if (vinculada?.filial_cobranca_id) {
+                const { data: base, error: erroBase } = await supabaseAdmin.from("filiais").select("nome").eq("id", vinculada.filial_cobranca_id).eq("ativo", true).single();
+                if (erroBase) throw new Error(erroBase.message);
+                filialFonte = base.nome;
+            }
+        }
         let q = supabaseAdmin.from("filiais").select("id, nome, mercurio_unidade").eq("ativo", true).not("mercurio_unidade", "is", null);
-        if (corpo.filial) q = q.eq("nome", corpo.filial);
+        if (filialFonte) q = q.eq("nome", filialFonte);
         const { data: filiais, error } = await q;
         if (error) throw new Error(error.message);
         if (!filiais?.length) return json({ ok: false, erro: "Nenhuma filial com mercurio_unidade configurado" }, 400);

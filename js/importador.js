@@ -742,6 +742,10 @@ document.addEventListener('DOMContentLoaded', restaurarAcompanhamentoMercurioSeH
 
 // Dispara o modo Ulisses do workflow e acompanha o registro final de status.
 // OAuth e credenciais do CRM permanecem no cofre e nos secrets server-side.
+function abrirUlissesApiNesteComputador(filial) {
+    window.location.href = 'abrirulissesapi://rodar' + (filial ? `?filial=${encodeURIComponent(filial)}` : '');
+}
+
 async function abrirProtocoloUlissesApi(filial) {
     if (disparoMercurioEmAndamento || disparoUlissesApiEmAndamento) {
         alert('Já tem uma sincronização em andamento — aguarde terminar antes de iniciar outra.');

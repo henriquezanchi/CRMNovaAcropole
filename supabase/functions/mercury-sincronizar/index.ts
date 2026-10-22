@@ -353,7 +353,16 @@ Deno.serve(async (req) => {
         }
     }
 
-    const filialFiltro: string | undefined = body.filial;
+    let filialFiltro: string | undefined = body.filial;
+    if (filialFiltro) {
+        const { data: vinculada, error } = await supabaseAdmin.from("filiais").select("filial_cobranca_id").eq("nome", filialFiltro).eq("ativo", true).maybeSingle();
+        if (error) return json({ ok: false, erro: error.message }, 500);
+        if (vinculada?.filial_cobranca_id) {
+            const { data: base, error: erroBase } = await supabaseAdmin.from("filiais").select("nome").eq("id", vinculada.filial_cobranca_id).eq("ativo", true).single();
+            if (erroBase) return json({ ok: false, erro: erroBase.message }, 400);
+            filialFiltro = base.nome;
+        }
+    }
 
     const alvos = filialFiltro
         ? [[filialParaBranchId(filialFiltro), filialFiltro]].filter(([bid]) => bid) as [string, string][]

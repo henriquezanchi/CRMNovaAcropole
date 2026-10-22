@@ -68,6 +68,8 @@ async function chamarApi(path, { method = 'GET', esperado, texto = false, corpo 
             // Cabeçalho oficial do portal, validado para permitir chamadas
             // da infraestrutura cloud sem contornar o desafio do navegador.
             'X-Portal-NA': 'bypass',
+            'User-Agent': 'PortalNovaAcropole/1.0 (CRM)',
+            Accept: 'application/json',
             ...(corpo ? { 'content-type': 'application/json' } : {}),
         },
         ...(corpo ? { body: JSON.stringify(corpo) } : {}),
