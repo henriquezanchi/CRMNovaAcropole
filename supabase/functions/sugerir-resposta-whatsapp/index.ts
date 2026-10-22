@@ -29,6 +29,7 @@ import { buscarExemplosEstilo } from "../_shared/exemplosEstilo.ts";
 import { buscarListaFiliais, linkMapsDaFilial } from "../_shared/filiaisInfo.ts";
 import { montarTabelaDiasSemana, adicionarMeses } from "../_shared/calendario.ts";
 import { buscarPersonaAtendente } from "../_shared/persona.ts";
+import { contextoOficialCRM } from "../_shared/contexto-oficial-crm.ts";
 import { prepararAgente } from "../_shared/agentes-crm.ts";
 import { chamarClaude } from "../_shared/anthropic.ts";
 
@@ -390,6 +391,8 @@ async function sugerirUma(contexto: string, contextoCRM: string, ultimaMensagem:
     catch { return {sugestao:null,lembreteData:null,lembreteMotivo:null,tagSugerida:null,erro:'qualificacao_indisponivel'}; }
     if(preparo.plano.bloqueado)return {agente:preparo.plano,sugestao:null,lembreteData:null,lembreteMotivo:null,tagSugerida:null};
     contexto = preparo.historico;
+    try { contextoCRM += await contextoOficialCRM(preparo.filial); }
+    catch { return {sugestao:null,lembreteData:null,lembreteMotivo:null,tagSugerida:null,erro:"contexto_oficial_indisponivel"}; }
     const resultado = await chamarClaude({
         apiKey: ANTHROPIC_API_KEY,
         modelo: MODELO,

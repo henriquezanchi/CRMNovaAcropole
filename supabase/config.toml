@@ -23,3 +23,10 @@ verify_jwt = false
 # Auditoria e reconsulta interna: token exclusivo conferido no servidor.
 [functions.auditar-base-crm]
 verify_jwt = false
+
+# Trabalhadores internos reutilizam o token exclusivo do funil.
+[functions.processar-especialistas]
+verify_jwt = false
+
+[functions.transcrever-audios-crm]
+verify_jwt = false

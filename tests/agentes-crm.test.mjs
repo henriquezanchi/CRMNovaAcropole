@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {AGENTES,validarQualificacao,coordenarAgente,instrucoesEspecialista} from '../supabase/functions/_shared/agentes-crm.mjs';
+import {AGENTES,qualificarComEvidencia,validarQualificacao,coordenarAgente,instrucoesEspecialista} from '../supabase/functions/_shared/agentes-crm.mjs';
 const mensagens=[{id:1,direcao:'saida',tipo:'texto',corpo_texto:'Quer fazer matrícula?'},{id:2,direcao:'entrada',tipo:'texto',corpo_texto:'Quero me inscrever na palestra'},{id:3,direcao:'entrada',tipo:'audio',corpo_texto:'Quero fazer matrícula'}];
 test('cada especialista tem missão própria e o coordenador mantém evidência sem alterar cadastro',()=>{
  for(const etapa of Object.keys(AGENTES).filter(k=>k!=='interno')){
@@ -27,4 +27,14 @@ test('restrição automática exige citação textual do contato',()=>{
  const m=[{id:5,direcao:'entrada',tipo:'texto',corpo_texto:'Não me contate mais'}];
  const q=validarQualificacao({etapa:'qualificacao',restricao:{tipo:'nao_contatar',mensagem_id:5,trecho:'Não me contate mais'}},m);
  assert.equal(coordenarAgente({},q).bloqueado,true);
+});
+
+test('resposta textual de botão pode sustentar qualificação sem presumir áudio ou imagem',()=>{
+ const q=validarQualificacao({etapa:'informacoes',evidencia:{mensagem_id:9,trecho:'Quero informações'}},[{id:9,direcao:'entrada',tipo:'botao',corpo_texto:'Quero informações'}]);assert.equal(q.etapa,'informacoes');
+});
+
+test('ID incorreto só é reparado por citação única; evidência ausente fica inconclusiva sem inventar etapa',()=>{
+ const q=qualificarComEvidencia({etapa:'eventos',evidencia:{mensagem_id:999,trecho:'Quero me inscrever na palestra'}},mensagens);assert.equal(q.evidencia.mensagem_id,2);
+ const r=qualificarComEvidencia({etapa:'matricula',evidencia:{mensagem_id:2,trecho:'Palavras inventadas'}},mensagens);assert.equal(r.etapa,'qualificacao');assert.ok(r.inconclusiva);
+ const repetidas=[{id:1,direcao:'entrada',tipo:'texto',corpo_texto:'Sim'},{id:2,direcao:'entrada',tipo:'texto',corpo_texto:'Sim'}];assert.ok(qualificarComEvidencia({etapa:'informacoes',evidencia:{mensagem_id:99,trecho:'Sim'}},repetidas).inconclusiva);
 });

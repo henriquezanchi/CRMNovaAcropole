@@ -203,3 +203,7 @@ A view nacional do Mercúrio agora contém ATI e INA. A sincronização financei
 ## Integridade dos contatos e IDs sintéticos (19/10/2026)
 
 Ver `docs/RECUPERACAO-CONTATOS.md`. Não fabricar DDD por escola, nem usar posição da lista como identidade. O importador usa IDs estáveis e confere colisões globalmente antes de gravar. `Contato em conferência` bloqueia envios; `Histórico em conferência` bloqueia auto mesclagem. Não remover essas sinalizações para conseguir executar uma campanha. Fonte recente mínima e backups ficam preservados nas tabelas de auditoria; eventos separados não comprovam participação. Status da rede exige contato e nome compatíveis, não basta telefone/e-mail de uma família.
+
+## Operação dos especialistas (22/10/2026)
+
+Ver `docs/OPERACAO-ESPECIALISTAS.md`. Cache e fila histórica são compartilhados pelos redatores e pelo trabalhador `processar-especialistas`. Toda alteração no histórico e toda transcrição devem invalidar a versão. Não remover limites diários nem tratar mídia sem transcrição como texto compreendido. Transcrição usa `OPENAI_API_KEY` exclusivamente no servidor e nunca altera o áudio/texto original. Fila operacional em `js/especialistas.js`, com paginação e limpeza na troca de filial. Custos em USD são estimativas com tarifa declarada, não fatura.

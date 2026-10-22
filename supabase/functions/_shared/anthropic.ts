@@ -26,6 +26,7 @@ import { supabaseAdmin } from "./supabaseAdmin.ts";
 export type RespostaClaude = {
     texto: string | null;
     erro?: string;
+    statusHttp?: number;
     usage?: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number };
 };
 
@@ -43,6 +44,7 @@ export async function chamarClaude(opts: {
     try {
         const resp = await fetch("https://api.anthropic.com/v1/messages", {
             method: "POST",
+            signal: AbortSignal.timeout(60000),
             // anthropic-beta: prompt-caching — achado testando ao vivo
             // (2026-10-01): sem este header, a Anthropic aceita o campo
             // `cache_control` sem erro nenhum, mas simplesmente IGNORA
@@ -67,7 +69,7 @@ export async function chamarClaude(opts: {
             }),
         });
         const respText = await resp.text();
-        if (!resp.ok) return { texto: null, erro: "resp_nao_ok: " + respText };
+        if (!resp.ok) return { texto: null, erro: "resp_nao_ok: " + respText, statusHttp: resp.status };
 
         const data = JSON.parse(respText);
         const texto = String(data.content?.[0]?.text ?? "");

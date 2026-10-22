@@ -27,6 +27,7 @@ import { buscarExemplosEstilo } from "../_shared/exemplosEstilo.ts";
 import { buscarListaFiliais, linkMapsDaFilial } from "../_shared/filiaisInfo.ts";
 import { montarTabelaDiasSemana, adicionarMeses } from "../_shared/calendario.ts";
 import { buscarPersonaAtendente } from "../_shared/persona.ts";
+import { contextoOficialCRM } from "../_shared/contexto-oficial-crm.ts";
 import { prepararAgente } from "../_shared/agentes-crm.ts";
 import { chamarClaude } from "../_shared/anthropic.ts";
 
@@ -304,6 +305,8 @@ async function classificarUma(item: Candidata, historico: string, dados: DadosEv
     catch { return {categoria:'ambiguo',sugestao_resposta:null,lembreteData:null,lembreteMotivo:null,debugErro:'qualificacao_indisponivel'}; }
     if(preparo.plano.bloqueado)return {agente:preparo.plano,categoria:'ambiguo',sugestao_resposta:null,lembreteData:null,lembreteMotivo:null};
     historico = preparo.historico;
+    try { persona += await contextoOficialCRM(preparo.filial); }
+    catch { return {categoria:"ambiguo",sugestao_resposta:null,lembreteData:null,lembreteMotivo:null,debugErro:"contexto_oficial_indisponivel"}; }
     const resultado = await chamarClaude({
         apiKey: ANTHROPIC_API_KEY,
         modelo: MODELO,

@@ -501,7 +501,7 @@ function htmlMensagemWpp(m, quotedInfo, termoBusca, ativoBusca) {
             <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; font-size:12px;">${escapeHTML(documento.nome_arquivo || 'Documento')}</span>
           </a>${m.corpo_texto ? textoComQuebrasDeLinha(m.corpo_texto, termoBusca) : ''}`
         : audioUrl
-        ? `<audio controls preload="none" style="max-width:220px; height:38px;"><source src="${escapeHTML(audioUrl)}"></audio>`
+        ? `<audio controls preload="none" style="max-width:220px; height:38px;"><source src="${escapeHTML(audioUrl)}"></audio>${m.transcricao_automatica ? `<details class="audio-transcricao"><summary>Transcrição automática — pode conter erros</summary><p>${escapeHTML(m.transcricao_automatica)}</p></details>` : ''}`
         : videoUrl
         ? `<video controls preload="metadata" style="max-width:100%; border-radius:6px; display:block; max-height:260px;"><source src="${escapeHTML(videoUrl)}"></video>${m.corpo_texto ? textoComQuebrasDeLinha(m.corpo_texto, termoBusca) : ''}`
         : stickerUrl
@@ -1086,7 +1086,18 @@ async function carregarHistoricoMensagens(pessoaIdentificador, antesDe) {
     if (antesDe) query = query.lt('criado_em', antesDe);
     const { data, error } = await query;
     if (error) { console.error('Erro ao carregar histórico do WhatsApp:', error); return []; }
-    return (data || []).reverse();
+    const mensagens = (data || []).reverse();
+    const idsAudio = mensagens.filter(m => m.tipo === 'audio').map(m => m.id);
+    if (idsAudio.length) {
+        try {
+            const {data: transcricoes, error: erroTranscricao} = await window.supabaseClient.rpc('crm_transcricoes_validas', {p_ids: idsAudio});
+            if (!erroTranscricao) {
+                const mapa = new Map((transcricoes || []).map(t => [String(t.id), t.texto]));
+                mensagens.forEach(m => { m.transcricao_automatica = mapa.get(String(m.id)) || null; });
+            }
+        } catch (_) { /* O player continua disponível se a transcrição ainda não foi implantada. */ }
+    }
+    return mensagens;
 }
 
 // ==========================================================
@@ -5323,7 +5334,7 @@ async function alternarSugestaoIaLead(leadId, valor) {
 function renderizarAgenteIaCRM(agente) {
     if (!agente || typeof agente.nome !== 'string') return '';
     const prova = agente.qualificacao?.evidencia;
-    return `<div class="agente-crm-contexto"><strong>Agente: ${escapeHTML(agente.nome)}</strong><p>${escapeHTML(agente.objetivo || '')}</p><small>${escapeHTML(agente.motivo || '')}</small>${prova?.trecho ? `<blockquote>${escapeHTML(prova.trecho)}</blockquote><small>Evidência da mensagem ${escapeHTML(String(prova.mensagem_id))}</small>` : ''}${agente.bloqueado ? '<p>Sem rascunho de contato. A pendência deve ser tratada internamente.</p>' : ''}</div>`;
+    return `<div class="agente-crm-contexto"><strong>Agente: ${escapeHTML(agente.nome)}</strong><p>${escapeHTML(agente.objetivo || '')}</p><small>${escapeHTML(agente.motivo || '')}</small>${prova?.trecho ? `<blockquote>${escapeHTML(prova.trecho)}</blockquote><small>Evidência da mensagem ${escapeHTML(String(prova.mensagem_id))}${prova.fonte === 'transcricao_automatica' ? ' · transcrição automática, sujeita a erro' : ''}</small>` : ''}${agente.bloqueado ? '<p>Sem rascunho de contato. A pendência deve ser tratada internamente.</p>' : ''}</div>`;
 }
 async function carregarSugestaoIaWpp(leadId) {
     const container = document.getElementById('wppSugestaoIaBox');

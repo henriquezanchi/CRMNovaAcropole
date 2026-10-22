@@ -3,7 +3,7 @@ import ts from '/workspace/BPO/node_modules/typescript/lib/typescript.js';
 async function carregar(caminho,nome,{preparar,chamar}){
  const src=(await readFile(caminho,'utf8')).replace(/^import .*;\n/gm,'');
  const js=ts.transpileModule(src,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
- return new Function('Deno','prepararAgente','chamarClaude','montarTabelaDiasSemana',js+'; return '+nome+';')({env:{get(){return 'teste';}},serve(){}},preparar,chamar,()=> 'Calendário de teste');
+ return new Function('Deno','prepararAgente','chamarClaude','montarTabelaDiasSemana','contextoOficialCRM',js+'; return '+nome+';')({env:{get(){return 'teste';}},serve(){}},preparar,chamar,()=> 'Calendário de teste',async()=> 'CONTEXTO OFICIAL TESTE');
 }
 const preparo={plano:{agente:'matricula',nome:'Apoio à matrícula',bloqueado:false},historico:'HISTÓRICO INTEGRAL TESTE',instrucoes:'MISSÃO MATRÍCULA TESTE'};
 test('agente especializado gera rascunho com histórico integral e contabilização por etapa',async()=>{

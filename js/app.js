@@ -228,6 +228,7 @@ function trocarFilial(novaFilial) {
 // 1. CARREGAMENTO DO BANCO (Busca os dados)
 // ==========================================
 async function carregarLeads(filial, resetar = true) {
+    if (resetar && typeof limparEspecialistas === 'function') limparEspecialistas();
     if (resetar && typeof acompanhamentoFila !== 'undefined') { acompanhamentoFila = []; acompanhamentoConsulta++; const lista = document.getElementById('acompanhamentoLista'); if (lista) lista.textContent = 'Atualize para consultar a escola selecionada.'; ['acompanhamentoResumo','acompanhamentoContagem','sinaisMatricula','acompanhamentoDia'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = ''; }); }
     filialAtual = filial;
     if (resetar) { versaoCargaLeads++; baseFiltravelCompleta = false; promessaBaseFiltravel = null; }

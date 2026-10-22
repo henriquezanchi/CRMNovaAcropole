@@ -251,6 +251,12 @@
              ABA 2 — CRM E PROSPECÇÃO (KANBAN) — lógica já 100% pronta
         =========================================================== -->
         <div id="tab-crm" class="tab-pane active">
+<section class="acompanhamento-painel"><details id="painelEspecialistas"><summary><strong>Atendimento por especialistas</strong></summary>
+<p>Qualificação automática do histórico, filas e passagens entre agentes. A classificação não libera contato nem substitui inscrição, presença ou matrícula oficial.</p>
+<div class="acompanhamento-acoes"><label>Agente<select id="especialistasAgente" onchange="carregarEspecialistas()"><option value="">Todos</option><option value="qualificacao">Qualificação</option><option value="informacoes">Informações iniciais</option><option value="eventos">Eventos e inscrições</option><option value="pos_evento">Pós-evento</option><option value="matricula">Matrícula</option><option value="antigos_alunos">Antigos alunos</option><option value="acolhimento">Atendimento de aluno</option><option value="interno">Conferência interna</option></select></label>
+<label>Busca<input id="especialistasBusca" type="search" placeholder="Nome, identificação ou responsável"></label><label><input id="especialistasMeus" type="checkbox"> Somente meus</label><button type="button" class="btn-toggle" onclick="carregarEspecialistas()">Atualizar fila</button><button type="button" class="btn-secondary" onclick="carregarMetricasEspecialistas()">Resultados e consumo</button></div>
+<p id="especialistasStatus" role="status" aria-live="polite">Atualize para consultar a escola selecionada.</p><p id="especialistasContagens"></p><div id="especialistasLista" class="especialistas-lista"></div><button id="especialistasMais" type="button" class="btn-toggle" hidden onclick="carregarEspecialistas(true)">Carregar mais 50</button><div id="especialistasMetricas"></div></details></section>
+
 <section class="acompanhamento-painel"><div class="acompanhamento-atalhos"><button type="button" class="btn-toggle" onclick="mostrarProximosDaMatricula()">Quem está mais próximo da matrícula?</button> <button type="button" class="btn-toggle" onclick="mostrarProximosDaMatricula('dia:pendentes')">Organizar atendimentos de hoje</button></div><details id="painelInteresseMatricula"><summary><strong>Interesse em matrícula e próximos passos</strong></summary>
 <p>Veja quem pediu inscrição, quem está concluindo o cadastro e quem visitou e relatou uma boa experiência. Combina registros da equipe com a análise automática das conversas, sem porcentagem de chance. Aceitar informações ou querer se inscrever em evento não equivale a querer se matricular. Inscrição no Ulisses, tags antigas e silêncio não comprovam interesse atual.</p><div id="acompanhamentoDia" class="acompanhamento-acoes" aria-label="Fila diária da escola"></div><div id="sinaisMatricula" class="sinais-resumo" aria-label="Sinais de interesse da escola"></div>
 <div class="acompanhamento-acoes"><button type="button" class="btn-toggle" onclick="carregarFilaAcompanhamento()">Atualizar acompanhamento da escola</button>
@@ -1835,6 +1841,7 @@
     <script src="js/acompanhamento-modelo.js"></script>
     <script src="js/app.js"></script>
     <script src="js/acompanhamento.js"></script>
+    <script src="js/especialistas.js"></script>
     <!-- 3b. Módulo do importador de planilhas (Ativos/Inativos/Inscrições) -->
     <script src="js/importador.js"></script>
     <!-- 3b2. Módulo de "Leads a Tratar" (duplicados por telefone/nome + sem telefone) -->

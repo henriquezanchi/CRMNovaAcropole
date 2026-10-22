@@ -1,3 +1,5 @@
+import {supabaseAdmin} from '../_shared/supabaseAdmin.ts';
+import {enriquecerTranscricoes} from '../_shared/transcricoes-crm.ts';
 import { REGRAS, validarAnalise, extrairJsonAnalise, convitesDeterministicos, FERRAMENTA_ANALISE, identificarSomenteRespostasAutomaticas } from './criterios.mjs';
 const url=Deno.env.get('SUPABASE_URL')!;
 const service=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -9,6 +11,7 @@ async function rpc(nome:string,body:unknown={}) {
 }
 async function processar(c:any) {
  try {
+  c={...c,mensagens:await enriquecerTranscricoes(supabaseAdmin,c.mensagens)};
   const automatica=identificarSomenteRespostasAutomaticas(c);
   let bruto:any=automatica||{respostas:[],continuidade:{aceitou:null},intencao:{pretende:null},convites:[]};
   if(!automatica && c.mensagens.some((m:any)=>m.direcao==='entrada')) {
