@@ -100,3 +100,11 @@ O usuário pede economia de tokens: não reexplorar o repositório inteiro nem r
 - Caches iniciais: quatro filiais preparados; Jardim América (`JAM`) ficou pendente na ponte e precisa diagnóstico. A interface preserva estado pendente/permite repetir; não inventar dados nem ampliar acesso para contornar.
 - Dependência temporária PGlite/symlink removidos do CRM após os testes.
 - Próxima ação: commits/push dos dois projetos e confirmar a publicação Vercel. Atualizar abaixo com os hashes.
+
+### Publicação e correção final
+
+- Código principal enviado: BPO `eca25db` (integrou também os documentos enviados pelo Claude), CRM `71f0d56`.
+- Produção confirmou rota cron nova rejeitando chamada sem segredo (401) e novo motor CRM disponível (200).
+- Jardim América foi consultado com sucesso: 10.605 interessados, fonte 17/10. O cache grande foi gravado pela API REST privada, evitando limite do SQL de gerenciamento. **Agora os cinco caches iniciais estão preparados; a pendência JAM anterior está resolvida.**
+- Lista de interessados recebeu busca e paginação de 50 cartões para suportar esse volume.
+- Para o Claude: começar por este documento; nenhum segredo precisa ser copiado da conversa. Documentação de operação e contrato estão nos arquivos indicados.
