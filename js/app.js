@@ -93,7 +93,7 @@ let filtrosColuna = {}; // { chaveDaColuna: { tags, evento, dataDe, dataAte, tem
 // cada coluna ordena os próprios cards de forma independente. Só em
 // memória (mesmo padrão de filtrosColuna) — não persiste entre sessões,
 // volta pro "padrão" (data de chegada) a cada reload.
-let ordenacaoColuna = {}; // { chaveDaColuna: 'padrao'|'az'|'za'|'tags_desc'|'lead_forte'|'nivel_aluno'|'prioridade' }
+let ordenacaoColuna = {}; // { chaveDaColuna: 'padrao'|'az'|'za'|'nivel_aluno' }
 function getOrdenacaoColuna(key) {
     return ordenacaoColuna[key] || 'padrao';
 }
@@ -106,16 +106,7 @@ function definirOrdenacaoColuna(key, valor) {
 function compararLeadsPorOrdenacao(a, b, opcao) {
     if (opcao === 'az') return (a.pessoaNome || "").localeCompare(b.pessoaNome || "");
     if (opcao === 'za') return (b.pessoaNome || "").localeCompare(a.pessoaNome || "");
-    if (opcao === 'tags_desc') return contarTags(b) - contarTags(a);
-    if (opcao === 'lead_forte') return rankLeadForte(a) - rankLeadForte(b);
     if (opcao === 'nivel_aluno') return rankNivelAluno(a) - rankNivelAluno(b);
-    if (opcao === 'prioridade') {
-        const diffLeadForte = rankLeadForte(a) - rankLeadForte(b);
-        if (diffLeadForte !== 0) return diffLeadForte;
-        const diffTags = contarTags(b) - contarTags(a);
-        if (diffTags !== 0) return diffTags;
-        return (a.pessoaNome || "").localeCompare(b.pessoaNome || "");
-    }
     return 0; // 'padrao' — mantém a ordem de chegada (não reordena)
 }
 
@@ -546,10 +537,7 @@ function renderizarColunas() {
                     <option value="padrao" ${getOrdenacaoColuna(col.key) === 'padrao' ? 'selected' : ''}>Data de Chegada (Padrão)</option>
                     <option value="az" ${getOrdenacaoColuna(col.key) === 'az' ? 'selected' : ''}>Nome (A - Z)</option>
                     <option value="za" ${getOrdenacaoColuna(col.key) === 'za' ? 'selected' : ''}>Nome (Z - A)</option>
-                    <option value="prioridade" ${getOrdenacaoColuna(col.key) === 'prioridade' ? 'selected' : ''}>Prioridade de Contato</option>
-                    <option value="lead_forte" ${getOrdenacaoColuna(col.key) === 'lead_forte' ? 'selected' : ''}>Lead Forte (Nível 1 primeiro)</option>
                     <option value="nivel_aluno" ${getOrdenacaoColuna(col.key) === 'nivel_aluno' ? 'selected' : ''}>Nível de Aluno</option>
-                    <option value="tags_desc" ${getOrdenacaoColuna(col.key) === 'tags_desc' ? 'selected' : ''}>Mais Tags Primeiro</option>
                 </select>
                 ${col.key.toLowerCase().includes('matricul') || col.label.toLowerCase().includes('matricul') ? `
                     <span class="col-matricula-info" title="Matrículas novas do Mercúrio já entram sozinhas (todo dia às 5h, ou na hora pelo botão 'Sincronização Automática')" onclick="switchModule('tab-importar', 'Importar Planilhas', 'Ativos, Inativos e Inscrições → CRM')">
@@ -693,14 +681,12 @@ function montarGavetaColunas(contagemPorColuna) {
 // ==========================================
 const ORDEM_NIVEL_ALUNO = ['CA', 'Merlin', 'JN', 'PP', 'N1', 'Membro'];
 
-function contarTags(lead) {
-    return parseTags(lead.tags).filter(t => t.trim() !== '').length;
-}
-
-// 1 = mais propenso a matricular ... 99 = não é Lead Forte (vai pro final)
-function rankLeadForte(lead) {
-    const tag = parseTags(lead.tags).find(t => /^Lead Forte [1-3]$/.test(t.trim()));
-    return tag ? Number(tag.trim().slice(-1)) : 99;
+// Tags antigas derivadas de contagens de eventos não devem aparecer como
+// interesse ou influenciar a navegação visual. Os valores salvos ficam
+// intactos para manter o histórico; filtros e renderizadores apenas ocultam.
+function ehTagHeuristicaLegada(tag) {
+    const texto = String(tag || '').trim();
+    return /^Lead Forte(?:\s+[1-3])?$/i.test(texto) || /^Jornada\s*:/i.test(texto) || /^Retorno:\s*Só 1 Evento$/i.test(texto);
 }
 
 // Posição na progressão TA → JN → PP → N1 → Membro; sem nível vai pro final
@@ -712,7 +698,7 @@ function rankNivelAluno(lead) {
 
 function organizarTagsDoCartao(tags) {
     const aliases = { 'Aluno Ativo':'Ativo', 'Ex-Aluno (Inativo)':'Inativo' };
-    const unicas = [...new Set(tags.map(tag => String(tag).trim()).filter(Boolean).map(tag => Object.hasOwn(aliases, tag) ? aliases[tag] : tag))];
+    const unicas = [...new Set(tags.map(tag => String(tag).trim()).filter(tag => Boolean(tag) && !ehTagHeuristicaLegada(tag)).map(tag => Object.hasOwn(aliases, tag) ? aliases[tag] : tag))];
     const prioridades = ['Não Contatar','Perdido','Ativo','Inativo','Recuperado'];
     const destaque = unicas.filter(tag => prioridades.includes(tag)).sort((a,b) => prioridades.indexOf(a)-prioridades.indexOf(b));
     const operacionais = unicas.filter(tag => !destaque.includes(tag) && !/^(CRM$|Trilha:|Jornada:|Retorno:|Contato Recente:)/i.test(tag));
@@ -788,7 +774,7 @@ function renderizarCards() {
         const tagsArray = parseTags(lead.tags);
 
         const tagsLimpo = tagsArray.map(t => t.trim());
-        tagsLimpo.filter(Boolean).forEach(tag => tagsPorColuna[colunaAlvo]?.add(tag));
+        tagsLimpo.filter(tag => Boolean(tag) && !ehTagHeuristicaLegada(tag)).forEach(tag => tagsPorColuna[colunaAlvo]?.add(tag));
         let badgesHTML = montarTagsDoCartao(tagsArray);
         if (typeof AcompanhamentoModelo !== 'undefined') {
             const sinal = AcompanhamentoModelo.proximidade(lead);
@@ -800,7 +786,7 @@ function renderizarCards() {
         }
 
         const identificador = lead.pessoaIdentificador;
-        const tagsAttr = escapeHTML(tagsArray.map(t => t.trim()).filter(Boolean).join('|'));
+        const tagsAttr = escapeHTML(tagsArray.map(t => t.trim()).filter(t => Boolean(t) && !ehTagHeuristicaLegada(t)).join('|'));
         const textoBuscaAttr = escapeHTML(
             `${lead.pessoaNome || ''} ${lead.pessoaTelefoneDDD || ''} ${lead.pessoaTelefoneNumero || ''} ${lead.pessoaEmail || ''}`.toLowerCase()
         );
@@ -915,7 +901,6 @@ function renderizarCards() {
     //    sozinha quando você clica nela, via switchModule().)
     sincronizarAbaAtiva();
 
-    if (typeof verificarNotificacoesLeadForte === 'function') verificarNotificacoesLeadForte();
 }
 
 function sincronizarAbaAtiva() {
@@ -1042,7 +1027,8 @@ function montarDropdownFiltroColuna(key, tagsDisponiveis) {
     const filtro = getFiltroColuna(key);
     // Um filtro sem correspondência deve mostrar zero, não desmarcar a tag
     // e revelar todos os contatos da coluna silenciosamente.
-    const tagsComSugeridas = Array.from(new Set([...tagsDisponiveis, ...TAGS_SUGERIDAS, ...filtro.tags, ...filtro.tagsExcluidas])).sort();
+    const tagsComSugeridas = Array.from(new Set([...tagsDisponiveis, ...TAGS_SUGERIDAS, ...filtro.tags, ...filtro.tagsExcluidas]))
+        .filter(tag => !ehTagHeuristicaLegada(tag)).sort();
     opcoesFiltroColuna[key] = { tags: tagsComSugeridas };
 
     montarChipsTagsAgrupados(`tagsChips-${key}`, tagsComSugeridas, filtro.tags, (v) => toggleFiltroColunaChip(key, 'tags', v));
@@ -1153,7 +1139,7 @@ function atualizarBadgeFiltroColuna(key) {
 // um lead que bate no filtro mas está numa coluna recolhida (sem elemento
 // no DOM) simplesmente não aparece em lugar nenhum, dando a falsa
 // impressão de que "não achou nada" (bug real relatado pelo usuário,
-// clicando nos KPIs "Resgates Efetivados"/"Lead Forte" do Dashboard).
+// clicando nos KPIs de resgate ou matrícula do Dashboard).
 async function quickFilterTag(tag) {
     if (colunasRecolhidas.size > 0) {
         colunasRecolhidas.clear();
@@ -1199,13 +1185,14 @@ function registrarUsoFiltroTag(tag) {
 // Enquanto o uso real ainda não preenche as 5 vagas, completa com esse
 // ponto de partida — assim que o time realmente usar 5 tags diferentes em
 // filtros, essas sugestões somem sozinhas, substituídas pelo uso de verdade.
-const FILTROS_RAPIDOS_PADRAO = ['Lead Forte 1', 'Jornada: Engajado', 'Ativo', 'Inativo', 'Indicação de Aluno'];
+const FILTROS_RAPIDOS_PADRAO = ['Ativo', 'Inativo', 'Não Contatar', 'Indicação de Aluno', 'Convite: Pediu Informação'];
 
 function renderizarFiltrosRapidos() {
     const container = document.getElementById('filtrosRapidosContainer');
     if (!container) return;
 
     const usados = Object.entries(usoFiltrosTags)
+        .filter(([tag]) => !ehTagHeuristicaLegada(tag))
         .sort((a, b) => b[1] - a[1])
         .map(([tag]) => tag);
 
@@ -2691,55 +2678,43 @@ function atualizarDashboard() {
     setTextoElemento('kpiNovasMatriculas', novasMatriculas.toLocaleString('pt-BR'));
     setTextoElemento('kpiResgates', resgates.toLocaleString('pt-BR'));
 
-    renderizarResumoLeadForte();
-    renderizarResumoJornada();
-    renderizarResumoRetorno1Evento();
+    renderizarResumoInteresseProximoPasso();
     renderizarFeedAtividades();
     atualizarLembretesPendentes();
     atualizarAniversariantes();
     atualizarFollowupEventos();
 }
 
-// Mesma lógica de rankLeadForte()/renderizarCards() pra reconhecer a tag
-// (com ou sem nível — formato antigo não entra na contagem, já que não dá
-// pra saber o nível dele). Proxy igual os outros KPIs (leadsAtuais).
-function renderizarResumoLeadForte() {
-    const container = document.getElementById('leadForteResumo');
+// O painel resume apenas declarações explícitas registradas no CRM. Sem
+// declaração, o estado permanece "a confirmar"; tags, inscrição ou
+// contagem de eventos não são convertidas em interesse.
+function renderizarResumoInteresseProximoPasso() {
+    const container = document.getElementById('interesseProximoPassoResumo');
     if (!container) return;
-
-    const contagem = { 1: 0, 2: 0, 3: 0 };
-    leadsAtuais.forEach(l => {
-        const tag = parseTags(l.tags).map(t => t.trim()).find(t => /^Lead Forte [1-3]$/.test(t));
-        if (tag) contagem[tag.slice(-1)]++;
-    });
-
-    const NIVEIS = [
-        { n: 1, classe: 'tag-strong-1', icone: 'fa-solid fa-fire' },
-        { n: 2, classe: 'tag-strong-2', icone: 'fa-solid fa-star' },
-        { n: 3, classe: 'tag-strong-3', icone: 'fa-regular fa-star' },
-    ];
-    container.innerHTML = NIVEIS.map(({ n, classe, icone }) => `
-        <div class="lead-forte-resumo-item ${classe}" onclick="filtrarPorLeadForte(${n})" title="Ver esses leads no CRM">
-            <div class="lead-forte-resumo-valor">${contagem[n].toLocaleString('pt-BR')}</div>
-            <div class="lead-forte-resumo-label"><i class="${icone}"></i> Nível ${n}</div>
-        </div>
-    `).join('');
-}
-
-// Clicar num card de "Lead Forte por Nível" no Dashboard leva direto pro
-// CRM já filtrado por aquele nível — reaproveita quickFilterTag() (o mesmo
-// mecanismo do Filtro Rápido), que aplica a tag em TODAS as colunas de
-// uma vez e conta como uso pra fins de aparecer nos filtros rápidos depois.
-// limparFiltros() primeiro: cada navegação vinda do Dashboard/Agenda do Dia
-// (Lead Forte, Novas Matrículas, Resgates Efetivados) é uma troca de
-// contexto, não uma combinação — sem isso, clicar em "Novas Matrículas"
-// depois de "Resgates Efetivados" continuava com o filtro de "Recuperado"
-// ativo, escondendo quem não tinha essa tag (bug real relatado pelo
-// usuário).
-function filtrarPorLeadForte(nivel) {
-    switchModule('tab-crm', 'Prospecção Ativa', 'CRM Modularizado VS Code');
-    limparFiltros();
-    quickFilterTag(`Lead Forte ${nivel}`);
+    const fallback = 'Avaliação por evidências no painel de aberturas.';
+    const api = globalThis.PropensaoCRM;
+    if (!api || typeof api.avaliarLead !== 'function' || typeof api.resumo !== 'function') {
+        container.textContent = fallback;
+        return;
+    }
+    try {
+        const avaliacoes = leadsAtuais.map(lead => api.avaliarLead({ lead, abertura: {} }));
+        const resumo = api.resumo(avaliacoes);
+        const interesse = resumo.interesse || {};
+        const adequacao = resumo.adequacaoTurma || {};
+        container.innerHTML = `
+            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:8px;">
+                <div class="lead-forte-resumo-item"><div class="lead-forte-resumo-valor">${Number(interesse.interessado || 0).toLocaleString('pt-BR')}</div><div class="lead-forte-resumo-label">Interesse declarado</div></div>
+                <div class="lead-forte-resumo-item"><div class="lead-forte-resumo-valor">${Number(interesse.sem_interesse || 0).toLocaleString('pt-BR')}</div><div class="lead-forte-resumo-label">Sem interesse agora</div></div>
+                <div class="lead-forte-resumo-item"><div class="lead-forte-resumo-valor">${Number(interesse.a_confirmar || 0).toLocaleString('pt-BR')}</div><div class="lead-forte-resumo-label">Interesse a confirmar</div></div>
+                <div class="lead-forte-resumo-item"><div class="lead-forte-resumo-valor">${Number(adequacao.a_confirmar || 0).toLocaleString('pt-BR')}</div><div class="lead-forte-resumo-label">Horário a confirmar</div></div>
+            </div>
+            <p style="font-size:11px; color:var(--text-muted); margin:8px 0 0;">Resumo dos ${Number(resumo.total || 0).toLocaleString('pt-BR')} leads carregados. Inscrições e registros de eventos não comprovam presença ou interesse.</p>
+        `;
+    } catch (erro) {
+        console.warn('Não foi possível resumir as evidências de interesse:', erro);
+        container.textContent = fallback;
+    }
 }
 
 // Clicar no KPI "Novas Matrículas" leva direto pra coluna de Matriculados
@@ -2761,81 +2736,11 @@ function irParaColunaMatriculados() {
 }
 
 // Clicar no KPI "Resgates Efetivados" leva pro CRM já filtrado pela tag
-// "Recuperado" (mesmo mecanismo de quickFilterTag usado por
-// filtrarPorLeadForte acima) — é o critério principal do próprio KPI.
+// "Recuperado" — é o critério principal do próprio KPI.
 function filtrarPorRecuperados() {
     switchModule('tab-crm', 'Prospecção Ativa', 'CRM Modularizado VS Code');
     limparFiltros();
     quickFilterTag('Recuperado');
-}
-
-// "Verdadeiros" Leads Fortes: quem já frequentou a trilha Filosófica é um
-// sinal mais específico de propensão a matricular do que o Lead Forte
-// puro (que conta qualquer evento, inclusive só Artes/Dev. Pessoal) —
-// "Engajado" (trilha Filosófica + Lead Forte 1 ou 2) é a lista pra
-// começar os contatos por ela. Mesma lógica de contagem de
-// renderizarRelatorioJornadaBase(), só que sem Matriculado/Em Recuperação
-// (não são alvo de prospecção) e com os cards clicáveis, igual ao resumo
-// de Lead Forte acima.
-function renderizarResumoJornada() {
-    const container = document.getElementById('jornadaResumo');
-    if (!container) return;
-
-    const contagem = { 'Descoberta': 0, 'Interesse Emergente': 0, 'Engajado': 0 };
-    leadsAtuais.forEach(l => {
-        const tags = parseTags(l.tags).map(t => t.trim());
-        const tagJornada = tags.find(t => /^Jornada: /.test(t));
-        if (!tagJornada) return;
-        const estagio = tagJornada.replace(/^Jornada: /, '');
-        if (contagem.hasOwnProperty(estagio)) contagem[estagio]++;
-    });
-
-    const ESTAGIOS = [
-        { estagio: 'Descoberta', classe: 'tag-strong-3', icone: 'fa-solid fa-seedling' },
-        { estagio: 'Interesse Emergente', classe: 'tag-strong-2', icone: 'fa-solid fa-magnifying-glass' },
-        { estagio: 'Engajado', classe: 'tag-strong-1', icone: 'fa-solid fa-fire' },
-    ];
-    container.innerHTML = ESTAGIOS.map(({ estagio, classe, icone }) => `
-        <div class="lead-forte-resumo-item ${classe}" onclick="filtrarPorJornada('${estagio}')" title="Ver esses leads no CRM">
-            <div class="lead-forte-resumo-valor">${contagem[estagio].toLocaleString('pt-BR')}</div>
-            <div class="lead-forte-resumo-label"><i class="${icone}"></i> ${escapeHTML(estagio)}</div>
-        </div>
-    `).join('');
-}
-
-function filtrarPorJornada(estagio) {
-    switchModule('tab-crm', 'Prospecção Ativa', 'CRM Modularizado VS Code');
-    quickFilterTag(`Jornada: ${estagio}`);
-}
-
-// KPI novo (2026-10-01), achado numa avaliação de conversão: quem já é
-// aluno frequentou ~4x mais eventos em média (3,95) do que quem nunca
-// converte (1,39) — e 79% dos prospects nunca passam de 0-1 evento. Este
-// card conta quem já está marcado "Retorno: Só 1 Evento" (calculada no
-// importador, ver calcularTagsTrilhaEJornada() em js/importador.js) —
-// exatamente quem está "a 1 evento de distância" de sair desse grupo
-// estagnado. Mesmo padrão proxy (sobre leadsAtuais) do resto do Dashboard.
-function renderizarResumoRetorno1Evento() {
-    const container = document.getElementById('retorno1EventoResumo');
-    if (!container) return;
-
-    let total = 0;
-    leadsAtuais.forEach(l => {
-        const tags = parseTags(l.tags).map(t => t.trim());
-        if (tags.includes('Retorno: Só 1 Evento')) total++;
-    });
-
-    container.innerHTML = `
-        <div class="lead-forte-resumo-item tag-warning" onclick="filtrarPorRetorno1Evento()" title="Ver esses leads no CRM — já vieram 1x, só precisam de um convite pra voltar">
-            <div class="lead-forte-resumo-valor">${total.toLocaleString('pt-BR')}</div>
-            <div class="lead-forte-resumo-label"><i class="fa-solid fa-rotate-left"></i> Vieram 1x, nunca voltaram</div>
-        </div>
-    `;
-}
-
-function filtrarPorRetorno1Evento() {
-    switchModule('tab-crm', 'Prospecção Ativa', 'CRM Modularizado VS Code');
-    quickFilterTag('Retorno: Só 1 Evento');
 }
 
 // Diferente dos KPIs acima (proxy, calculados só em cima do que já está no
@@ -3154,7 +3059,7 @@ function atualizarRelatorios() {
     // cada etapa, cor por posição — cinza/dourado/azul/verde, igual o
     // protótipo aprovado) em vez da barra fina antiga. Só esta função usa
     // essas classes (funil-etapa-*) — os outros funis do app (Motivos de
-    // Perda, Jornada da Base) continuam com .funnel-bar-wrapper/.funnel-bar,
+    // Perda) continuam com .funnel-bar-wrapper/.funnel-bar,
     // sem qualquer mudança.
     const PALETA_ETAPAS = [
         { borda: '#cbd5e1', fundo: '#f1f5f9', cor: 'var(--text-dark)' },
@@ -3197,7 +3102,6 @@ function atualizarRelatorios() {
     if (typeof carregarRelatorioAnualMatriculas === 'function') carregarRelatorioAnualMatriculas();
     if (typeof renderizarCanalOrigemMercurio === 'function') renderizarCanalOrigemMercurio();
     renderizarRelatorioComparacaoFiliais();
-    renderizarRelatorioJornadaBase();
     if (typeof carregarRelatoriosWhatsApp === 'function') carregarRelatoriosWhatsApp();
     if (typeof carregarResumoTrabalho === 'function') carregarResumoTrabalho();
     renderizarRelatorioMotivosPerda();
@@ -3245,113 +3149,9 @@ function renderizarRelatorioMotivosPerda() {
     `;
 }
 
-// Proxy sobre leadsAtuais (mesma limitação dos outros KPIs/relatórios do
-// dashboard). Distribui a base em estágios do sistema de follow-up
-// (Trilhas de Interesse + Jornada, ver migracao_trilhas_tipo_evento.sql):
-// prospectos passam por Descoberta -> Interesse Emergente -> Engajado
-// antes de Matricular; quem já é Ativo conta como "Matriculado" e quem é
-// Inativo como "Em Recuperação", independente de ter tag de Jornada (essa
-// só é gerada pelo importador pra quem ainda é só prospecto). Quem nunca
-// apareceu em nenhum evento classificado numa trilha fica fora do funil
-// (não força um estágio sem sinal nenhum).
-function renderizarRelatorioJornadaBase() {
-    const container = document.getElementById('relatorioJornadaBase');
-    if (!container) return;
-
-    const contagem = { 'Descoberta': 0, 'Interesse Emergente': 0, 'Engajado': 0, 'Matriculado': 0, 'Em Recuperação': 0 };
-    leadsAtuais.forEach(lead => {
-        const tags = parseTags(lead.tags).map(t => t.trim());
-        if (tags.includes('Ativo') || tags.includes('Aluno Ativo')) { contagem['Matriculado']++; return; }
-        if (tags.includes('Inativo') || tags.includes('Ex-Aluno (Inativo)')) { contagem['Em Recuperação']++; return; }
-        const tagJornada = tags.find(t => /^Jornada: /.test(t));
-        if (tagJornada) {
-            const estagio = tagJornada.replace(/^Jornada: /, '');
-            if (contagem.hasOwnProperty(estagio)) contagem[estagio]++;
-        }
-    });
-
-    const totalNoFunil = Object.values(contagem).reduce((a, b) => a + b, 0);
-    if (totalNoFunil === 0) {
-        container.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Nenhum lead classificado em trilha/jornada ainda — configure "Trilhas de Interesse" na aba Importar e reimporte as planilhas.</p>';
-        return;
-    }
-
-    // Descoberta → Interesse Emergente → Engajado é uma progressão real
-    // (cada estágio pressupõe mais engajamento que o anterior), mas
-    // Matriculado/Em Recuperação NÃO são "o próximo passo depois de
-    // Engajado" — são 2 DESTINOS diferentes (virou aluno, ou já foi aluno
-    // e precisa ser resgatado), por isso ficam lado a lado formando a
-    // base do funil, em vez de mais uma etapa única embaixo (pedido
-    // explícito do usuário).
-    const ETAPAS_SEQUENCIA = ['Descoberta', 'Interesse Emergente', 'Engajado'];
-    const PALETA_JORNADA = [
-        { borda: '#cbd5e1', fundo: '#f1f5f9', cor: 'var(--text-dark)' },
-        { borda: 'var(--na-gold)', fundo: '#fdfaf5', cor: 'var(--text-dark)' },
-        { borda: '#3b82f6', fundo: '#eff6ff', cor: 'var(--text-dark)' },
-    ];
-    // % de cada estágio sobre os "leads ÚTEIS" — quem ainda NÃO é
-    // Matriculado (Descoberta + Interesse Emergente + Engajado + Em
-    // Recuperação). **Bug real corrigido**: a versão anterior calculava
-    // a largura de cada barra como % do MAIOR valor entre os 5 grupos
-    // (ex: Interesse Emergente com 124 pessoas virava "100%" só por ser
-    // o maior, não por representar 100% de coisa nenhuma) — sem
-    // denominador que fizesse sentido, o número não dizia nada real.
-    // Agora os 4 valores do funil de prospecção sempre somam 100% entre
-    // si; Matriculado fica de fora do denominador de propósito (é a
-    // META, não faz sentido competir por fatia do funil que já converteu).
-    const totalUteis = contagem['Descoberta'] + contagem['Interesse Emergente'] + contagem['Engajado'] + contagem['Em Recuperação'];
-    const pctDe = (valor) => totalUteis > 0 ? Math.round((valor / totalUteis) * 100) : 0;
-    const larguraDe = (valor) => Math.max(15, pctDe(valor));
-
-    const htmlSequencia = ETAPAS_SEQUENCIA.map((label, i) => {
-        const paleta = PALETA_JORNADA[i];
-        const seta = i > 0 ? `<div class="funil-etapa-seta"><i class="fa-solid fa-arrow-down"></i></div>` : '';
-        return `
-            ${seta}
-            <div class="funil-etapa-card" style="width:${larguraDe(contagem[label])}%; border-left-color:${paleta.borda}; background:${paleta.fundo};">
-                <div class="funil-etapa-titulo" style="color:${paleta.cor};">${escapeHTML(label)}</div>
-                <div class="funil-etapa-valor-bloco">
-                    <div class="funil-etapa-valor" style="color:${paleta.cor};">${contagem[label].toLocaleString('pt-BR')}</div>
-                    <div class="funil-etapa-pct">${pctDe(contagem[label])}% dos leads úteis</div>
-                </div>
-            </div>
-        `;
-    }).join('');
-
-    // Base dupla: largura total do par = largura da etapa "Engajado"
-    // (última sequencial), dividida entre os 2 destinos proporcional ao
-    // valor de cada um — visualmente "o funil se bifurca" na saída.
-    const valorMatriculado = contagem['Matriculado'];
-    const valorRecuperacao = contagem['Em Recuperação'];
-    const somaBase = Math.max(1, valorMatriculado + valorRecuperacao);
-    const larguraDisponivel = larguraDe(contagem['Engajado']);
-    const wMatriculado = Math.max(20, Math.round(larguraDisponivel * (valorMatriculado / somaBase)));
-    const wRecuperacao = Math.max(20, Math.round(larguraDisponivel * (valorRecuperacao / somaBase)));
-
-    const htmlBase = `
-        <div class="funil-etapa-seta"><i class="fa-solid fa-arrow-down"></i></div>
-        <div class="funil-base-dupla">
-            <div class="funil-etapa-card funil-base-item" style="width:${wMatriculado}%; border-left-color:var(--na-green); background:#f0fdf4;">
-                <div class="funil-etapa-titulo" style="color:var(--na-green-dark);">Matriculado</div>
-                <div class="funil-etapa-valor" style="color:var(--na-green-dark);">${valorMatriculado.toLocaleString('pt-BR')}</div>
-            </div>
-            <div class="funil-etapa-card funil-base-item" style="width:${wRecuperacao}%; border-left-color:#b45309; background:#fffbeb;">
-                <div class="funil-etapa-titulo" style="color:#b45309;">Em Recuperação</div>
-                <div class="funil-etapa-valor" style="color:#b45309;">${valorRecuperacao.toLocaleString('pt-BR')}</div>
-                <div class="funil-etapa-pct">${pctDe(valorRecuperacao)}% dos leads úteis</div>
-            </div>
-        </div>
-    `;
-
-    container.innerHTML = `<div class="funil-visual">${htmlSequencia}${htmlBase}</div>`;
-}
-
-// Proxy sobre leadsAtuais (mesma limitação dos outros KPIs do Dashboard —
-// não é o banco inteiro se ainda houver "Carregar Mais" pendente). Pra
-// cada tema que aparece em QUALQUER evento do histórico do lead, conta 1
-// "participação" e verifica se esse lead já tem data_matricula preenchida
-// (sinal de matrícula confirmada, independente de qual coluna do Kanban
-// ele está — funil_agencia é só configuração local de cada navegador).
+// Resume referências a temas de eventos no histórico carregado e quantas
+// pessoas desse grupo têm matrícula registrada. A referência histórica não
+// demonstra inscrição, presença ou interesse atual.
 function renderizarRelatorioTemasEvento() {
     const container = document.getElementById('relatorioTemasEvento');
     if (!container) return;
@@ -3381,7 +3181,7 @@ function renderizarRelatorioTemasEvento() {
 
     container.innerHTML = `
         <table class="tabela-relatorio">
-            <thead><tr><th>Tema</th><th>Leads</th><th>Matriculados</th><th>Taxa</th></tr></thead>
+            <thead><tr><th>Tema</th><th>Pessoas com referência</th><th>Matrículas registradas</th><th>Percentual do grupo</th></tr></thead>
             <tbody>${linhas.map(l => `
                 <tr>
                     <td>${escapeHTML(l.tema)}</td>
@@ -4063,8 +3863,8 @@ async function carregarTagsSugeridas() {
         console.warn('Não foi possível carregar tags_sugeridas (rode migracao_tags_sugeridas.sql e migracao_tags_familia.sql se ainda não rodou).', error);
         return;
     }
-    TAGS_SUGERIDAS = (data || []).map(row => row.tag);
-    mapaFamiliaManual = new Map((data || []).filter(row => row.familia).map(row => [row.tag, row.familia]));
+    TAGS_SUGERIDAS = (data || []).map(row => row.tag).filter(tag => !ehTagHeuristicaLegada(tag));
+    mapaFamiliaManual = new Map((data || []).filter(row => row.familia && !ehTagHeuristicaLegada(row.tag)).map(row => [row.tag, row.familia]));
     montarDatalistTagsSugeridas();
 }
 
@@ -4081,7 +3881,7 @@ const TAGS_SISTEMA_SUGERIDAS_MANUALMENTE = ['Ativo', 'Inativo', 'Não Contatar']
 function montarDatalistTagsSugeridas() {
     const datalist = document.getElementById('tagsSugeridasList');
     if (!datalist) return;
-    const todas = [...TAGS_SISTEMA_SUGERIDAS_MANUALMENTE, ...TAGS_SUGERIDAS];
+    const todas = [...TAGS_SISTEMA_SUGERIDAS_MANUALMENTE, ...TAGS_SUGERIDAS].filter(tag => !ehTagHeuristicaLegada(tag));
     datalist.innerHTML = todas.map(t => `<option value="${escapeHTML(t)}"></option>`).join('');
 }
 
@@ -4117,13 +3917,14 @@ async function renderizarListaTagsModal() {
     }
 
     tagsSugeridasModalCache = data || [];
+    const tagsVisiveis = tagsSugeridasModalCache.filter(row => !ehTagHeuristicaLegada(row.tag));
 
     // Agrupa pelo que estiver em "familia" (escolhido manualmente); sem
     // familia definida, cai no padrão automático por texto, só pra exibir
     // organizado — assim que a pessoa mexer no <select> da linha, a tag
     // ganha uma família explícita de verdade.
     const grupos = new Map();
-    tagsSugeridasModalCache.forEach(row => {
+    tagsVisiveis.forEach(row => {
         const label = row.familia || identificarFamiliaTag(row.tag).label;
         if (!grupos.has(label)) grupos.set(label, []);
         grupos.get(label).push(row);
@@ -4131,7 +3932,7 @@ async function renderizarListaTagsModal() {
     const ordemLabels = FAMILIAS_TAG.map(f => f.label);
     const labelsOrdenados = Array.from(grupos.keys()).sort((a, b) => ordemLabels.indexOf(a) - ordemLabels.indexOf(b));
 
-    if (tagsSugeridasModalCache.length === 0) {
+    if (tagsVisiveis.length === 0) {
         container.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Nenhuma tag sugerida ainda.</p>';
         return;
     }
@@ -4213,19 +4014,14 @@ const FAMILIAS_TAG = [
         // um lead cadastrado manualmente (abrirNovoLeadManual()) — nunca
         // veio de Mercúrio/Ulisses, e a tag é PERMANENTE (só some se o lead
         // inteiro for apagado, ver bloqueio em removerTag()).
-        testar: t => t === 'Ativo' || t === 'Aluno Ativo' || t === 'Inativo' || t === 'Ex-Aluno (Inativo)' || t === 'Recuperado' || t === 'Perdido' || t === TAG_LEAD_MANUAL || /^Lead Forte( [1-3])?$/.test(t),
+        testar: t => t === 'Ativo' || t === 'Aluno Ativo' || t === 'Inativo' || t === 'Ex-Aluno (Inativo)' || t === 'Recuperado' || t === 'Perdido' || t === TAG_LEAD_MANUAL,
         classe: t => {
             if (t === 'Ativo' || t === 'Aluno Ativo') return 'tag-ativo';
             if (t === 'Inativo' || t === 'Ex-Aluno (Inativo)') return 'tag-exaluno';
             if (t === 'Recuperado') return 'tag-recuperado';
             if (t === 'Perdido') return 'tag-perdido';
             if (t === TAG_LEAD_MANUAL) return 'tag-crm';
-            // Cada grau de Lead Forte tem uma cor/intensidade própria
-            // (tag-strong-1 = mais quente/saturado, tag-strong-3 = mais
-            // apagado) — .tag-strong sozinha é só o fallback pro formato
-            // antigo sem nível.
-            const nivel = t.match(/^Lead Forte ([1-3])$/);
-            return nivel ? `tag-strong tag-strong-${nivel[1]}` : 'tag-strong';
+            return 'tag-info';
         },
     },
     // "Inscrito: Abertura de Turma" — alerta pra NUNCA ligar oferecendo
@@ -4245,17 +4041,9 @@ const FAMILIAS_TAG = [
     // gera "Merlin" a partir de 2026-09-10, ver classificarNivel() em
     // js/importador.js).
     { label: 'Nível', testar: t => /^(TA|Merlin|CA|JN|PP|N[1-7]|Membro)$/i.test(t), classe: () => 'tag-nivel' },
-    // "Trilha: X" / "Jornada: X" — geradas pelo importador a partir do
-    // histórico de eventos + config de trilhas_tipo_evento (sistema de
-    // follow-up). Cor própria pra distinguir de tag customizada comum.
-    { label: 'Jornada', testar: t => /^(Trilha|Jornada): /i.test(t), classe: () => 'tag-jornada' },
-    // "Retorno: Só 1 Evento" — pedido do usuário (2026-10-01), achado numa
-    // avaliação de conversão: quem já é aluno frequentou ~4x mais eventos
-    // em média do que quem nunca converte, e 79% dos prospects nunca
-    // passam de 0-1 evento. Cor própria (âmbar, mesmo tom de "precisa de
-    // atenção" já usado em Sem Telefone/Sem E-mail) pra chamar atenção de
-    // quem está "a 1 evento de distância" de sair desse grupo estagnado.
-    { label: 'Retorno', testar: t => /^Retorno: /i.test(t), classe: () => 'tag-warning' },
+    // Trilhas continuam disponíveis como histórico categorizado; a antiga
+    // tag Jornada, derivada de contagens, é ocultada por ehTagHeuristicaLegada.
+    { label: 'Trilha', testar: t => /^Trilha: /i.test(t), classe: () => 'tag-jornada' },
     // "Convite: X" — classificação automática da resposta a um convite de
     // evento (pedido do usuário 2026-09-28, reunião com a Ediliene — ver
     // Edge Function classificar-resposta-convite). Cor varia por
@@ -4330,6 +4118,7 @@ let mapaFamiliaManual = new Map();
 
 function identificarFamiliaTag(tag) {
     const t = (tag || '').trim();
+    if (ehTagHeuristicaLegada(t)) return FAMILIAS_TAG[FAMILIAS_TAG.length - 1];
     const familiaManual = mapaFamiliaManual.get(t);
     if (familiaManual) {
         const encontrada = FAMILIAS_TAG.find(f => f.label === familiaManual);
@@ -5254,7 +5043,7 @@ function renderDrawerTags() {
     container.innerHTML = "";
     tags.forEach((t, index) => {
         const tagLimpa = t.trim();
-        if (tagLimpa !== "") {
+        if (tagLimpa !== "" && !ehTagHeuristicaLegada(tagLimpa)) {
             container.innerHTML += `<span class="tag ${classeVisualTag(tagLimpa)}" style="font-size: 11px; padding: 6px 10px;">${escapeHTML(tagLimpa)} <i class="fa-solid fa-xmark tag-remove" onclick="removerTag(${index})" title="Remover Tag"></i></span>`;
         }
     });

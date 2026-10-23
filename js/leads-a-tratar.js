@@ -169,14 +169,6 @@ function escolherSobreviventeAutoMesclagem(membros) {
     })[0];
 }
 
-// Bug real achado pelo usuário (2026-10-06): "Retorno: Só 1 Evento" (só
-// válida quando historico_eventos tem EXATAMENTE 1 entrada, ver
-// calcularTagsTrilhaEJornada() em js/importador.js) sobrevivia depois de
-// uma mesclagem UNIR o histórico de 2 leads — a mesclagem só fazia UNIÃO
-// das tags já existentes, nunca RECALCULAVA uma tag DERIVADA do
-// histórico combinado. 173 leads encontrados com esse resíduo em
-// produção, corrigidos manualmente — esta função evita que aconteça de
-// novo em qualquer mesclagem futura (automática ou manual).
 // Bug real achado pelo usuário (2026-10-06): NASRAH NICOLAS acumulou 17
 // cópias da MESMA nota "E-mail alternativo" no resumo_ia — o dedup
 // (`new Set(resumos)`) tratava cada resumo_ia JÁ MESCLADO (um blob
@@ -195,33 +187,6 @@ function montarResumoFinalMesclagem(resumosBrutos, notasExtra) {
     });
     if (notasExtra && notasExtra.length > 0) segmentos.push(notasExtra.join('\n'));
     return segmentos.length > 0 ? Array.from(new Set(segmentos)).join('\n---\n') : null;
-}
-
-function recalcularTagRetornoAposMerge(tagsFinais, eventosFinais) {
-    const semRetorno = tagsFinais.filter(t => t !== 'Retorno: Só 1 Evento');
-    const jaAlunoOuExAluno = semRetorno.some(t => ['Ativo', 'Aluno Ativo', 'Inativo', 'Ex-Aluno (Inativo)'].includes(t));
-    if (!jaAlunoOuExAluno && (eventosFinais || []).length === 1) semRetorno.push('Retorno: Só 1 Evento');
-    return semRetorno;
-}
-
-// Bug real corrigido (2026-10-06, pedido do usuário: "membros ativos não
-// podem ser marcados como lead forte de nenhum grau. Eles já são alunos,
-// não são mais leads"): "Lead Forte N"/"Jornada: X" só fazem sentido pra
-// quem NÃO é Ativo/Inativo (ver `calcularNivelLeadForte()`/
-// `calcularTagsTrilhaEJornada()`, js/importador.js — as duas já nascem
-// condicionadas a isso na importação normal). Mas a mesclagem só fazia
-// UNIÃO das tags dos membros (sem saber dessa regra de exclusividade) —
-// se um dos duplicados já carregava "Lead Forte 2"/"Jornada: Engajado" de
-// antes (ex: era só prospecto quando ganhou a tag, depois matriculou), a
-// união trazia essas tags de volta pro sobrevivente mesmo ele já sendo
-// Ativo. Mesma classe do bug já corrigido pra "Retorno: Só 1 Evento"
-// acima — 270 leads (Lead Forte) + 200 (Jornada) encontrados em produção
-// nesta rodada, limpos via SQL direto; esta função evita que o problema
-// volte a crescer a partir de agora.
-function recalcularLeadForteEJornadaAposMerge(tagsFinais) {
-    const jaAlunoOuExAluno = tagsFinais.some(t => ['Ativo', 'Aluno Ativo', 'Inativo', 'Ex-Aluno (Inativo)'].includes(t));
-    if (!jaAlunoOuExAluno) return tagsFinais;
-    return tagsFinais.filter(t => !/^Lead Forte \d$/.test(t) && !t.startsWith('Jornada: '));
 }
 
 // Mesma incorporação de dados já usada na mesclagem manual
@@ -245,9 +210,6 @@ async function mesclarAutomaticamenteLeads(membros) {
         const chave = chaveEvento(e);
         if (!eventosExistentes.has(chave)) { eventosFinais.push(e); eventosExistentes.add(chave); }
     }));
-    tagsFinais = recalcularTagRetornoAposMerge(tagsFinais, eventosFinais);
-    tagsFinais = recalcularLeadForteEJornadaAposMerge(tagsFinais);
-
     const notasContatoAlternativo = [];
     let email = principal.pessoaEmail;
     if (!email) {
@@ -609,8 +571,14 @@ function toggleSecaoLeadsATratar(criterio) {
 // tags depois de já ter aberto "Mesclar" (renderizarOpcoesPrincipalMesclagem()).
 // `pessoa_tags` é um snapshot gravado na varredura (migracao_leads_a_tratar_tags.sql)
 // — sem a migração rodada, fica `undefined`/vazio e simplesmente não mostra nada.
+function ehTagLegadaLeadsATratar(tag) {
+    if (typeof ehTagHeuristicaLegada === 'function') return ehTagHeuristicaLegada(tag);
+    const texto = String(tag || '').trim();
+    return /^Lead Forte(?:\s+[1-3])?$/i.test(texto) || /^Jornada\s*:/i.test(texto) || /^Retorno:\s*Só 1 Evento$/i.test(texto);
+}
+
 function htmlTagsMembroLeadsATratar(m) {
-    const tags = (typeof parseTags === 'function' ? parseTags(m.pessoa_tags) : []).map(t => t.trim()).filter(Boolean);
+    const tags = (typeof parseTags === 'function' ? parseTags(m.pessoa_tags) : []).map(t => t.trim()).filter(t => Boolean(t) && !ehTagLegadaLeadsATratar(t));
     if (tags.length === 0) return '';
     const classeTag = typeof classeVisualTag === 'function' ? classeVisualTag : () => '';
     return `<div class="duplicado-membro-tags">${tags.map(t => `<span class="tag ${classeTag(t)}" style="font-size:10px; padding:2px 7px;">${escapeHTML(t)}</span>`).join('')}</div>`;
@@ -984,7 +952,7 @@ function renderizarOpcoesPrincipalMesclagem() {
     const container = document.getElementById('mesclarOpcoes');
     container.innerHTML = membrosEmMesclagem.map((m, i) => {
         const tel = [m.pessoaTelefoneDDD, m.pessoaTelefoneNumero].filter(Boolean).join(' ') || 'Sem telefone';
-        const nTags = parseTags(m.tags).filter(t => t.trim()).length;
+        const nTags = parseTags(m.tags).filter(t => t.trim() && !ehTagLegadaLeadsATratar(t)).length;
         const nEventos = Array.isArray(m.historico_eventos) ? m.historico_eventos.length : 0;
         return `
             <label class="mesclar-opcao">
@@ -994,7 +962,7 @@ function renderizarOpcoesPrincipalMesclagem() {
                     <div class="mesclar-opcao-meta">
                         <i class="fa-solid fa-phone"></i> ${escapeHTML(tel)} ·
                         <i class="fa-solid fa-envelope"></i> ${escapeHTML(m.pessoaEmail || 'Sem e-mail')} ·
-                        ${nTags} tag(s) · ${nEventos} evento(s)
+                        ${nTags} tag(s) · ${nEventos} registro(s) de evento no histórico
                     </div>
                 </div>
             </label>
@@ -1121,9 +1089,6 @@ async function confirmarMesclagem() {
             if (!eventosExistentes.has(chave)) { eventosFinais.push(e); eventosExistentes.add(chave); }
         });
     });
-    tagsFinais = recalcularTagRetornoAposMerge(tagsFinais, eventosFinais);
-    tagsFinais = recalcularLeadForteEJornadaAposMerge(tagsFinais);
-
     // Anotações extras pra quando a pessoa escolhe "Manter os dois" — o
     // valor não escolhido como principal não pode ser perdido (o cadastro
     // só tem 1 campo de telefone/e-mail), então vai pro resumo_ia como nota,

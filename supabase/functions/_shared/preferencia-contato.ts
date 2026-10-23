@@ -18,3 +18,8 @@ export function motivoIntegridadeContato(valor: unknown): string {
  try { if(typeof tags==='string') tags=JSON.parse(tags); } catch { return 'Não foi possível conferir a integridade do cadastro.'; }
  return Array.isArray(tags)&&tags.includes('Contato em conferência') ? 'Contato em conferência: o telefone pode pertencer a outra pessoa. Confira a fonte antes de enviar.' : '';
 }
+
+export function temTagNaoContatar(valor:unknown):boolean {
+ try{for(let i=0;i<4&&typeof valor==='string';i++)valor=JSON.parse(valor);}catch{return true;}
+ return Array.isArray(valor)&&valor.some(t=>String(t).trim().normalize('NFC').toLowerCase()==='não contatar');
+}

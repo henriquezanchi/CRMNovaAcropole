@@ -17,7 +17,7 @@
         const dado = valor && typeof valor === 'object' && !Array.isArray(valor) ? valor : {};
         const resultado = {};
         Object.keys(campos).forEach(chave => { resultado[chave] = Object.hasOwn(campos[chave], dado[chave]) ? dado[chave] : Object.keys(campos[chave])[0]; });
-        ['responsavel', 'proxima_em', 'pausa_ate', 'nota', 'atualizado_em', 'atualizado_por', 'referencia_registro', 'conferido_em', 'pedido_escola'].forEach(chave => { resultado[chave] = typeof dado[chave] === 'string' ? dado[chave] : ''; });
+        ['responsavel', 'proxima_em', 'pausa_ate', 'nota', 'atualizado_em', 'atualizado_por', 'intencao_atualizado_em', 'intencao_atualizado_por', 'preferencia_contato_em', 'preferencia_contato_por', 'referencia_registro', 'conferido_em', 'pedido_escola'].forEach(chave => { resultado[chave] = typeof dado[chave] === 'string' ? dado[chave] : ''; });
         resultado.revisao = Number.isSafeInteger(dado.revisao) && dado.revisao >= 0 ? dado.revisao : 0;
         return resultado;
     }

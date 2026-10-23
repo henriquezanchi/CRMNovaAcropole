@@ -3,7 +3,9 @@
 // ==========================================================
 // Este módulo lê as 3 planilhas da filial, cruza os dados por nome
 // normalizado, monta o histórico de eventos de cada pessoa e classifica
-// cada lead com uma tag ("Ativo" / "Inativo" / Lead Forte).
+// cada lead com fatos do cadastro e da conversa. Inscrição em atividade,
+// presença e interesse são dimensões distintas; a ausência de conversa fica
+// como "Interesse a confirmar" até haver uma declaração datada e atribuída.
 // Nada é enviado ao Supabase até o usuário revisar a prévia e clicar em
 // "Confirmar e Enviar".
 //
@@ -167,114 +169,42 @@ function classificarNivel(nivelBruto) {
     return null;
 }
 
-// ==========================================
-// PONTUAÇÃO CONFIGURÁVEL DO "LEAD FORTE" (nível 1-3, 1 = mais propenso)
-// ==========================================
-// Os pesos ficam em DADOS (tabela config_pontuacao_lead_forte), não em
-// código — o usuário pretende reajustá-los depois de analisar
-// estatisticamente (via IA) o perfil de quem realmente virou aluno, sem
-// precisar mexer aqui. Se a tabela ainda não existir (migração não
-// rodada), cai num padrão embutido e a importação segue normalmente.
-const CONFIG_PONTUACAO_PADRAO = {
-    pontos_por_evento: 10,
-    pontos_por_tipo_distinto: 5,
-    pontos_evento_recente_dias: 90,
-    bonus_evento_recente: 15,
-    limite_nivel_1: 40,
-    limite_nivel_2: 20,
-    dias_gate_nivel_1: 30,
+// Resumo de conversa com origem rastreável. Campo vazio/sem autor/data não
+// vira declaração: a avaliação mantém o estado desconhecido.
+const TAGS_ESTADO_CONVERSA = ['Interesse declarado', 'Interesse declarado: não', 'Interesse a confirmar'];
+const LABEL_PROXIMA_ACAO_IMPORTACAO = {
+    responder: 'Responder dúvida/pedido', convidar: 'Fazer convite', confirmar: 'Confirmar presença',
+    ouvir: 'Ouvir após a visita', inscrever: 'Auxiliar inscrição', conferir: 'Conferir registro oficial',
+    retornar: 'Retornar na data combinada',
 };
-
-async function carregarConfigPontuacaoLeadForte() {
-    try {
-        const { data, error } = await window.supabaseClient
-            .from('config_pontuacao_lead_forte')
-            .select('*')
-            .eq('id', 1)
-            .single();
-        if (error || !data) throw error || new Error('config não encontrada');
-        return data;
-    } catch (e) {
-        logImport('Config de pontuação do Lead Forte não encontrada (rode migracao_pontuacao_lead_forte.sql se ainda não rodou) — usando valores padrão.', 'warn');
-        return CONFIG_PONTUACAO_PADRAO;
+function tagsEstadoConversa(acompanhamento) {
+    const dado = acompanhamento && typeof acompanhamento === 'object' ? acompanhamento : {};
+    const intencoesConhecidas = ['conhecer', 'participar', 'inscrever', 'depois', 'nao'];
+    const dataIntencao = dado.intencao_atualizado_em || dado.atualizado_em;
+    const responsavelIntencao = dado.intencao_atualizado_por || dado.atualizado_por;
+    const registroDatado = typeof dataIntencao === 'string' && Number.isFinite(Date.parse(dataIntencao)) && Date.parse(dataIntencao) <= Date.now()
+        && typeof responsavelIntencao === 'string' && responsavelIntencao.trim();
+    const intencaoValida = registroDatado && intencoesConhecidas.includes(dado.intencao);
+    const tags = [intencaoValida ? (dado.intencao === 'nao' ? 'Interesse declarado: não' : 'Interesse declarado') : 'Interesse a confirmar'];
+    if (dado.contato === 'nao_contatar') tags.push('Não contatar');
+    const rotuloAcao = LABEL_PROXIMA_ACAO_IMPORTACAO[dado.proximo];
+    if (rotuloAcao && dado.responsavel && typeof dado.proxima_em === 'string' && Number.isFinite(Date.parse(dado.proxima_em))) {
+        tags.push(`Próxima ação: ${rotuloAcao}`);
     }
+    return tags;
 }
 
-// eventos: array de {evento, data, tipo, tema?} (mesmo formato de pessoa.eventos).
-// Usa parseDataBR(), definida globalmente em js/app.js (carregado antes deste arquivo).
-function calcularNivelLeadForte(eventos, config) {
-    if (!eventos || eventos.length === 0) return 3;
-
-    let pontos = eventos.length * config.pontos_por_evento;
-
-    const tiposDistintos = new Set(eventos.map(e => e.tipo).filter(Boolean));
-    pontos += tiposDistintos.size * config.pontos_por_tipo_distinto;
-
-    const datas = eventos.map(e => parseDataBR(e.data)).filter(Boolean);
-    let diasDesdeUltimo = Infinity;
-    if (datas.length > 0) {
-        const maisRecente = new Date(Math.max(...datas.map(d => d.getTime())));
-        diasDesdeUltimo = (Date.now() - maisRecente.getTime()) / (1000 * 60 * 60 * 24);
-        if (diasDesdeUltimo <= config.pontos_evento_recente_dias) pontos += config.bonus_evento_recente;
-    }
-
-    // Nível 1 exige, além da pontuação, ter vindo em algum evento
-    // recentemente (janela própria — dias_gate_nivel_1 — separada do
-    // pontos_evento_recente_dias usado só pra bônus de pontuação acima).
-    // Sem essa trava, alguém com muitos eventos só que faz tempo (sem
-    // sinal de que ainda está engajado agora) ficaria marcado como "mais
-    // propenso a matricular", o que não faz sentido. Cai pro nível 2
-    // nesse caso, mesmo com pontuação de nível 1.
-    const diasGateNivel1 = config.dias_gate_nivel_1 ?? 30;
-    if (pontos >= config.limite_nivel_1 && diasDesdeUltimo <= diasGateNivel1) return 1;
-    if (pontos >= config.limite_nivel_2) return 2;
-    return 3;
+function ehTagEstadoConversa(tag) {
+    return TAGS_ESTADO_CONVERSA.includes(tag) || /^Próxima ação: /.test(tag);
 }
 
-// Tela "Configurar critérios de Lead Forte" — os campos ficam em
-// config_pontuacao_lead_forte, não em código, exatamente pra dar pra
-// reajustar os pesos depois sem depender de uma nova sessão de código.
-async function abrirConfigPontuacao() {
-    const config = await carregarConfigPontuacaoLeadForte();
-    document.getElementById('cfgPontosPorEvento').value = config.pontos_por_evento;
-    document.getElementById('cfgPontosPorTipo').value = config.pontos_por_tipo_distinto;
-    document.getElementById('cfgDiasRecente').value = config.pontos_evento_recente_dias;
-    document.getElementById('cfgBonusRecente').value = config.bonus_evento_recente;
-    document.getElementById('cfgLimiteNivel1').value = config.limite_nivel_1;
-    document.getElementById('cfgLimiteNivel2').value = config.limite_nivel_2;
-    document.getElementById('cfgDiasGateNivel1').value = config.dias_gate_nivel_1 ?? 30;
-    document.getElementById('modalPontuacao').classList.add('open');
-    document.getElementById('overlayModalPontuacao').classList.add('active');
-}
-function fecharConfigPontuacao() {
-    document.getElementById('modalPontuacao').classList.remove('open');
-    document.getElementById('overlayModalPontuacao').classList.remove('active');
-}
-async function salvarConfigPontuacao() {
-    const payload = {
-        id: 1,
-        pontos_por_evento: Number(document.getElementById('cfgPontosPorEvento').value) || 0,
-        pontos_por_tipo_distinto: Number(document.getElementById('cfgPontosPorTipo').value) || 0,
-        pontos_evento_recente_dias: Number(document.getElementById('cfgDiasRecente').value) || 0,
-        bonus_evento_recente: Number(document.getElementById('cfgBonusRecente').value) || 0,
-        limite_nivel_1: Number(document.getElementById('cfgLimiteNivel1').value) || 0,
-        limite_nivel_2: Number(document.getElementById('cfgLimiteNivel2').value) || 0,
-        dias_gate_nivel_1: Number(document.getElementById('cfgDiasGateNivel1').value) || 0,
-        atualizado_em: new Date().toISOString(),
-    };
-
-    if (payload.limite_nivel_2 > payload.limite_nivel_1) {
-        alert('O limite do nível 2 precisa ser menor ou igual ao limite do nível 1.');
-        return;
-    }
-
-    const { error } = await window.supabaseClient
-        .from('config_pontuacao_lead_forte')
-        .upsert(payload, { onConflict: 'id' });
-
-    if (error) { alert('Erro ao salvar critérios: ' + error.message); return; }
-    alert('Critérios salvos! Valem a partir da próxima importação.');
-    fecharConfigPontuacao();
+function acompanhamentoTemPreferenciaAtualizada(acompanhamento) {
+    const data = acompanhamento?.preferencia_contato_em;
+    const responsavel = acompanhamento?.preferencia_contato_por;
+    return !!acompanhamento && ['permitido', 'pausado', 'nao_contatar'].includes(acompanhamento.contato)
+        && typeof data === 'string' && Number.isFinite(Date.parse(data))
+        && Date.parse(data) <= Date.now()
+        && typeof responsavel === 'string' && responsavel.trim();
 }
 
 // DDD pertence ao telefone da pessoa, nunca à cidade da escola.
@@ -309,62 +239,6 @@ function conflitosIdentidadeImportacao(registros, existentes) {
 
 // ==========================================
 // TAGS DE TRILHA E ESTÁGIO DA JORNADA
-// ==========================================
-// "Trilha" agrupa os TIPOS de evento (ver classificarTipoEvento() acima,
-// dirigido pelo catálogo tipos_evento) em 3 grandes interesses —
-// Filosófica / Desenvolvimento Pessoal / Artes — pra dar pra mapear a
-// jornada de quem vem em atividades pagas/abertas sem nunca ter tido
-// contato com filosofia ainda. mapaTipoTrilha já foi carregado junto do
-// catálogo de classificação (carregarCatalogoTiposEvento(), acima).
-
-// Tags "Trilha: X" — uma por trilha distinta já visitada pelo lead (pode
-// acumular mais de uma, ex: veio numa Oficina de Artes E numa Palestra).
-// Tag "Jornada: X" — só gerada pra quem NÃO é Ativo/Inativo (aluno atual
-// ou ex-aluno já tem sinal de sobra nas tags de sistema; a Jornada existe
-// pra priorizar quem ainda é só prospecto, ajudando a decidir quem
-// nutrir pra matrícula):
-//   - "Descoberta": só passou por trilhas fora da Filosófica (Artes/Dev.
-//     Pessoal) — nunca teve contato direto com filosofia.
-//   - "Interesse Emergente": já veio em algo da trilha Filosófica, mas o
-//     Lead Forte não é 1 nem 2 (baixa frequência/diversidade/recência).
-//   - "Engajado": trilha Filosófica + Lead Forte 1 ou 2 — já dá sinal
-//     forte de propensão a matricular.
-function calcularTagsTrilhaEJornada(eventos, tagsBase, mapaTrilha) {
-    const jaAlunoOuExAluno = tagsBase.some(t => ['Ativo', 'Aluno Ativo', 'Inativo', 'Ex-Aluno (Inativo)'].includes(t));
-
-    // "Retorno: Só 1 Evento" — pedido do usuário (2026-10-01), achado numa
-    // avaliação de conversão real: quem JÁ é aluno frequentou em média
-    // 3,95 eventos antes de converter; quem nunca converte frequentou só
-    // 1,39 em média — e 79% dos prospects nunca passam de 0-1 evento. Essa
-    // tag marca exatamente quem está "a 1 evento de distância" de sair
-    // desse grupo estagnado — não é sobre contatar mais, é sobre trazer de
-    // volta pra um 2º evento especificamente. Calculada FORA do bloco de
-    // trilha abaixo (que pode retornar cedo se nenhum evento tiver tipo
-    // classificado) — o que importa aqui é só a CONTAGEM bruta de eventos,
-    // não a trilha deles. Só pra quem ainda não é aluno/ex-aluno (1 evento
-    // já atendido não é "estagnação" nenhuma pra quem já converteu).
-    const tagsRetorno = (!jaAlunoOuExAluno && (eventos || []).length === 1) ? ['Retorno: Só 1 Evento'] : [];
-
-    const trilhas = new Set();
-    (eventos || []).forEach(e => {
-        const trilha = mapaTrilha.get(e.tipo);
-        if (trilha) trilhas.add(trilha);
-    });
-    if (trilhas.size === 0) return tagsRetorno;
-
-    const tagsTrilha = Array.from(trilhas).sort().map(t => `Trilha: ${t}`);
-    if (jaAlunoOuExAluno) return tagsTrilha;
-
-    const tagLeadForte = tagsBase.find(t => /^Lead Forte [1-3]$/.test(t));
-    const nivelLeadForte = tagLeadForte ? Number(tagLeadForte.split(' ')[2]) : null;
-
-    const jornada = !trilhas.has('Filosófica')
-        ? 'Descoberta'
-        : (nivelLeadForte === 1 || nivelLeadForte === 2) ? 'Engajado' : 'Interesse Emergente';
-
-    return [...tagsRetorno, ...tagsTrilha, `Jornada: ${jornada}`];
-}
-
 // ==========================================
 // LOGIN AUTOMÁTICO (Ulisses/Mercúrio) — cofre de credenciais do scraper
 // ==========================================
@@ -918,7 +792,7 @@ function montarRegistroLead(pessoa, tags, filial, extras = {}) {
     // Tags de "Cadastro" — sinalizam dados de contato faltando (só o caso
     // negativo/acionável ganha badge, ter os dois normalmente não precisa
     // de destaque visual).
-    const tagsFinais = [...tags, ...calcularTagsTrilhaEJornada(eventosOrdenados, tags, mapaTipoTrilha), ...calcularTagInscricaoAberturaTurma(eventosOrdenados)];
+    const tagsFinais = [...new Set([...tags, ...(!tags.some(t => ['Ativo', 'Aluno Ativo', 'Inativo', 'Ex-Aluno (Inativo)'].includes(t)) ? ['Interesse a confirmar'] : []), ...calcularTagInscricaoAberturaTurma(eventosOrdenados)])];
     if (!pessoa.pessoaTelefoneNumero || String(pessoa.pessoaTelefoneNumero).trim() === '') tagsFinais.push('Sem Telefone');
     else if (!pessoa.pessoaTelefoneDDD) tagsFinais.push('Telefone sem DDD confirmado');
     if (!pessoa.pessoaEmail || String(pessoa.pessoaEmail).trim() === '') tagsFinais.push('Sem E-mail');
@@ -1069,7 +943,7 @@ async function processarPlanilhas() {
     if (temMercurio && temUlisses) {
         logImport('Lendo planilhas...');
     } else if (temMercurio) {
-        logImport('Lendo planilhas — SÓ Mercúrio (Ativos/Inativos) desta vez. Telefone/e-mail/eventos/Lead Forte de quem já existe no CRM ficam como estavam.', 'warn');
+        logImport('Lendo planilhas — SÓ Mercúrio (Ativos/Inativos) desta vez. Contatos, eventos e acompanhamento de quem já existe no CRM ficam como estavam.', 'warn');
         if (!temAtivos || !temInativos) logImport(`Só ${temAtivos ? 'Ativos' : 'Inativos'} foi selecionado, sem o outro — segue só com o que tem.`, 'warn');
     } else {
         logImport('Lendo planilha — SÓ Ulisses (Inscrições) desta vez. Ativo/Inativo/Nível de quem já existe no CRM ficam como estavam.', 'warn');
@@ -1254,10 +1128,8 @@ async function processarPlanilhas() {
     await classificarTemasEventos(pessoasInscricoes);
 
     // ---- 3) Cruza cada pessoa das Inscrições com Ativos/Inativos ----
-    const configPontuacao = await carregarConfigPontuacaoLeadForte();
     const leadsFinais = [];
-    let contAlunoAtivo = 0, contExAluno = 0, contLeadForte = 0;
-    const contPorNivelLeadForte = { 1: 0, 2: 0, 3: 0 };
+    let contAlunoAtivo = 0, contExAluno = 0;
 
     let contExAlunoPorTelefone = 0;
     pessoasInscricoes.forEach(pessoa => {
@@ -1299,10 +1171,7 @@ async function processarPlanilhas() {
             if (matchInativoPorTelefone) contExAlunoPorTelefone++;
             contExAluno++;
         } else {
-            const nivelLeadForte = calcularNivelLeadForte(pessoa.eventos, configPontuacao);
-            tags.push('Lead Forte ' + nivelLeadForte);
-            contPorNivelLeadForte[nivelLeadForte]++;
-            contLeadForte++;
+            tags.push('Interesse a confirmar');
         }
 
         leadsFinais.push(montarRegistroLead(pessoa, tags, filialDestino, { motivoSaida, dataSaida, matriculaMercurio }));
@@ -1347,15 +1216,7 @@ async function processarPlanilhas() {
     if (contExAlunoPorTelefone > 0) {
         logImport(`${contExAlunoPorTelefone} desses foram casados por TELEFONE, não por nome (nome provavelmente com erro de digitação numa das planilhas).`, 'ok');
     }
-    logImport(`Lead Forte: ${contLeadForte} (nível 1: ${contPorNivelLeadForte[1]}, nível 2: ${contPorNivelLeadForte[2]}, nível 3: ${contPorNivelLeadForte[3]})`, 'ok');
-    if (mapaTipoTrilha.size > 0) {
-        const contPorJornada = { 'Descoberta': 0, 'Interesse Emergente': 0, 'Engajado': 0 };
-        leadsFinais.forEach(l => {
-            const m = l.tags.match(/"Jornada: ([^"]+)"/);
-            if (m && contPorJornada.hasOwnProperty(m[1])) contPorJornada[m[1]]++;
-        });
-        logImport(`Jornada (prospectos): Descoberta ${contPorJornada['Descoberta']}, Interesse Emergente ${contPorJornada['Interesse Emergente']}, Engajado ${contPorJornada['Engajado']}`, 'ok');
-    }
+    logImport('Prospectos sem declaração registrada permanecem com “Interesse a confirmar”; inscrição em evento não altera esse estado.', 'ok');
     logImport(`TOTAL de leads prontos: ${leadsFinais.length}`, 'ok');
     logImport('Nada foi enviado ainda. Confira a prévia abaixo.');
 
@@ -1369,13 +1230,11 @@ async function processarPlanilhas() {
         resumo: {
             alunoAtivo: contAlunoAtivo + contAtivosSemInscricao,
             exAluno: contExAluno + contInativosSemInscricao,
-            leadForte: contLeadForte,
             total: leadsFinais.length
         },
         // Guardado pra resgatarLinhaAuditoria() poder reproduzir o mesmo
         // cruzamento do passo 3 pra uma linha isolada, sem reprocessar tudo.
         auditoria: auditoriaImportacao,
-        configPontuacao,
         mapaAtivos,
         mapaInativos,
     };
@@ -1444,7 +1303,7 @@ function renderizarAuditoriaImportacao(resultado) {
 }
 
 // Reproduz o mesmo cruzamento do passo 3 de processarPlanilhas() (Ativo /
-// Inativo / Lead Forte) pra uma única linha órfã da auditoria, e empilha
+// Inativo / estado de interesse a confirmar) pra uma única linha órfã da auditoria, e empilha
 // o lead resultante em resultadoImportacao.leads — como nada foi enviado
 // ao Supabase ainda, ele já sai incluído no próximo "Confirmar e Enviar",
 // sem precisar de uma chamada separada ao banco.
@@ -1453,7 +1312,7 @@ function resgatarLinhaAuditoria(indice) {
     const linha = resultadoImportacao.auditoria.inscricoesSemId[indice];
     if (!linha || linha.resgatada || !linha.resgatavel) return;
 
-    const { mapaAtivos, mapaInativos, configPontuacao, filial } = resultadoImportacao;
+    const { mapaAtivos, mapaInativos, filial } = resultadoImportacao;
     const chave = normalizarNomeImport(linha.pessoaNome);
     const eventos = linha.eventoNome ? [{ evento: linha.eventoNome, data: linha.eventoData, tipo: classificarTipoEvento(linha.eventoNome) }] : [];
     const tags = [];
@@ -1474,8 +1333,7 @@ function resgatarLinhaAuditoria(indice) {
         motivoSaida = info.motivo || null;
         dataSaida = info.dataSaida || null;
     } else {
-        const nivel = calcularNivelLeadForte(eventos, configPontuacao);
-        tags.push('Lead Forte ' + nivel);
+        tags.push('Interesse a confirmar');
     }
 
     // Mesmo risco de colisão cross-filial já corrigido em
@@ -1497,7 +1355,6 @@ function resgatarLinhaAuditoria(indice) {
     resultadoImportacao.resumo.total++;
     if (tags.includes('Ativo')) resultadoImportacao.resumo.alunoAtivo++;
     if (tags.includes('Inativo')) resultadoImportacao.resumo.exAluno++;
-    if (tags.some(t => /^Lead Forte/.test(t))) resultadoImportacao.resumo.leadForte++;
 
     linha.resgatada = true;
     logImport(`Linha ${linha.linha} das Inscrições resgatada como novo lead: ${linha.pessoaNome} (ID sintético ${idSintetico}).`, 'ok');
@@ -1521,7 +1378,6 @@ function renderizarPreviaImportacao(resultado) {
             <div class="import-summary-card"><div class="import-summary-value">${resultado.resumo.total.toLocaleString('pt-BR')}</div><div class="import-summary-label">Total de Leads</div></div>
             <div class="import-summary-card"><div class="import-summary-value">${resultado.resumo.alunoAtivo.toLocaleString('pt-BR')}</div><div class="import-summary-label">Ativo</div></div>
             <div class="import-summary-card"><div class="import-summary-value">${resultado.resumo.exAluno.toLocaleString('pt-BR')}</div><div class="import-summary-label">Inativo</div></div>
-            <div class="import-summary-card"><div class="import-summary-value">${resultado.resumo.leadForte.toLocaleString('pt-BR')}</div><div class="import-summary-label">Lead Forte</div></div>
         </div>
 
         <div class="import-table-wrapper">
@@ -1723,7 +1579,7 @@ async function confirmarEnviarImportacao() {
     while (true) {
         const { data, error } = await window.supabaseClient
             .from(NOME_TABELA)
-            .select('pessoaIdentificador, pessoaNome, tags, funil_agencia, resumo_ia, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, pessoaStatus, telemarketingStatus, eventoNome, eventoData, historico_eventos, motivo_saida, data_saida, matricula_mercurio, data_matricula')
+            .select('pessoaIdentificador, pessoaNome, tags, acompanhamento, funil_agencia, resumo_ia, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, pessoaStatus, telemarketingStatus, eventoNome, eventoData, historico_eventos, motivo_saida, data_saida, matricula_mercurio, data_matricula')
             .eq('filial', resultadoImportacao.filial)
             .order('pessoaIdentificador', { ascending: true })
             .range(inicio, inicio + passo - 1);
@@ -1818,7 +1674,7 @@ async function confirmarEnviarImportacao() {
     //      engano do lado de quem exportou — por isso é só INFORMATIVO, não
     //      muda tag nem coluna de ninguém sozinho.
     //      Numa importação PARCIAL, isso precisa ser ESCOPADO — senão toda
-    //      importação só-Mercúrio "acharia" que todo prospecto Lead Forte
+    //      importação só-Mercúrio "acharia" que todo prospecto
     //      sumiu (ele nunca esteve em Ativos/Inativos mesmo), e toda
     //      importação só-Ulisses "acharia" que todo Ativo/Inativo sem
     //      correspondência em Inscrições sumiu (idem, nunca esteve lá).
@@ -1849,14 +1705,14 @@ async function confirmarEnviarImportacao() {
     // que o time já tenha adicionado manualmente num lead existente é
     // preservada. Inclui os nomes antigos ("Aluno Ativo"/"Ex-Aluno (Inativo)")
     // além dos atuais ("Ativo"/"Inativo"), pra uma reimportação trocar o
-    // nome antigo pelo novo em vez de deixar os dois acumulados. "Lead
-    // Forte" cobre tanto o formato antigo (sem nível) quanto o novo ("Lead
-    // Forte 1/2/3"), e o regex de nível cobre tanto o esquema antigo
-    // (N1-N7 direto) quanto o atual (TA/JN/PP/N1/Membro).
+    // nome antigo pelo novo em vez de deixar os dois acumulados. Rótulos
+    // derivados de contagem/eventos são removidos; o histórico bruto fica.
     const TAGS_SISTEMA_EXATAS = ['Aluno Ativo', 'Ativo', 'Ex-Aluno (Inativo)', 'Inativo', 'Telefone sem DDD confirmado'];
     function ehTagDeSistema(tag) {
         return TAGS_SISTEMA_EXATAS.includes(tag)
             || /^Lead Forte( [1-3])?$/.test(tag)
+            || ehTagEstadoConversa(tag)
+            || tag === 'Não contatar'
             // TA fica no regex por compatibilidade com tags antigas (o
             // importador só GERA "Merlin"/"CA" a partir de 2026-09-10, ver
             // classificarNivel()) — sem isso, um lead cujo nível mudasse
@@ -1870,26 +1726,17 @@ async function confirmarEnviarImportacao() {
     // Subconjuntos de `ehTagDeSistema()` usados só na importação PARCIAL,
     // pra saber qual "metade" da classificação esta rodada tem autoridade
     // pra recalcular:
-    // - "Status" (Ativo/Inativo/Nível + Lead Forte + Jornada) é um grupo
+    // - "Status" (Ativo/Inativo/Nível) é um grupo
     //   ATÔMICO decidido pelo if/else do passo 3 de processarPlanilhas() —
-    //   só confiável com dado do MERCÚRIO. "Lead Forte" é o fallback de
-    //   "não bateu em Ativos/Inativos" e "Jornada" só é calculada pra quem
-    //   NÃO é Ativo/Inativo — sem o Mercúrio pra confirmar isso, os dois
-    //   ficam sem base (foi exatamente o bug pego no teste ao vivo: uma
-    //   importação só-Ulisses recalculava "Lead Forte" por cima de um lead
-    //   que já era "Ativo", já que sem Ativos/Inativos nesta rodada
-    //   mapaAtivos/mapaInativos ficam vazios e todo mundo cai no fallback).
-    // - "Trilha" (e "Inscrito: Abertura de Turma", mesmo princípio) só
-    //   depende de historico_eventos (tipo/data de evento) — não do status
-    //   Ativo/Inativo/Lead Forte — então só precisa do ULISSES.
+    //   só confiável com dado do MERCÚRIO.
+    // - As tags de conversa são atualizadas a partir de acompanhamento
+    //   explícito; o histórico de evento nunca se transforma em interesse.
     function ehTagStatusMercurio(tag) {
         return TAGS_SISTEMA_EXATAS.includes(tag)
-            || /^(TA|JN|PP|N[1-7]|Membro)$/.test(tag)
-            || /^Lead Forte( [1-3])?$/.test(tag)
-            || /^Jornada: /.test(tag);
+            || /^(TA|JN|PP|N[1-7]|Membro)$/.test(tag);
     }
     function ehTagTrilha(tag) {
-        return /^(Trilha|Retorno): /.test(tag) || tag === 'Inscrito: Abertura de Turma';
+        return tag === 'Inscrito: Abertura de Turma';
     }
     const primeiraColuna = (typeof columnsConfig !== 'undefined' && columnsConfig.length > 0) ? columnsConfig[0].key : 'Frios';
 
@@ -1924,12 +1771,8 @@ async function confirmarEnviarImportacao() {
             try { tagsAntigas = JSON.parse(existente.tags || '[]'); } catch (e) { tagsAntigas = []; }
 
             // Importação PARCIAL sem Mercúrio (só Ulisses desta vez): não dá
-            // pra saber se a pessoa continua Ativa/Inativa/em que Nível sem
-            // a planilha — preserva o grupo "status" (Ativo/Inativo/Nível +
-            // Lead Forte + Jornada, ver ehTagStatusMercurio()) que já
-            // existia, em vez de deixar o fallback "Lead Forte" desta
-            // rodada (mapaAtivos/mapaInativos vazios = todo mundo cai no
-            // fallback) pisar em cima de um "Ativo" que já era verdade.
+            // pra saber se a pessoa continua Ativa/Inativa ou em que nível;
+            // preserva o estado acadêmico existente.
             if (!modo.temMercurio) {
                 tagsNovas = tagsNovas.filter(t => !ehTagStatusMercurio(t));
                 tagsAntigas.filter(ehTagStatusMercurio).forEach(t => { if (!tagsNovas.includes(t)) tagsNovas.push(t); });
@@ -1937,15 +1780,15 @@ async function confirmarEnviarImportacao() {
                 if (!leadFinal.data_saida && existente.data_saida) leadFinal.data_saida = existente.data_saida;
             }
             // Importação PARCIAL sem Ulisses (só Mercúrio desta vez): não dá
-            // pra recalcular telefone/e-mail/status/eventos/Trilha com
-            // confiança (sem histórico de evento fresco) — preserva o que
-            // já existia. "Status" (Lead Forte/Jornada) nem chega a
-            // aparecer fresco aqui (o passo 3 de processarPlanilhas() só
-            // roda com Ulisses presente), então não precisa de tratamento
-            // especial nesta metade.
+            // pra recalcular telefone/e-mail/status/eventos com confiança
+            // (sem histórico de evento fresco) — preserva o que já existia.
+            // O acompanhamento explícito também fica preservado nesta
+            // importação parcial; a tag de inscrição continua sendo só fato.
             if (!modo.temUlisses) {
                 tagsNovas = tagsNovas.filter(t => !ehTagTrilha(t));
                 tagsAntigas.filter(ehTagTrilha).forEach(t => { if (!tagsNovas.includes(t)) tagsNovas.push(t); });
+                tagsNovas = tagsNovas.filter(t => !ehTagEstadoConversa(t));
+                tagsAntigas.filter(ehTagEstadoConversa).forEach(t => { if (!tagsNovas.includes(t)) tagsNovas.push(t); });
 
                 if (existente.pessoaTelefoneNumero) {
                     leadFinal.pessoaTelefoneDDD = existente.pessoaTelefoneDDD;
@@ -1956,6 +1799,13 @@ async function confirmarEnviarImportacao() {
                 if (existente.telemarketingStatus) leadFinal.telemarketingStatus = existente.telemarketingStatus;
                 if (existente.eventoNome) { leadFinal.eventoNome = existente.eventoNome; leadFinal.eventoData = existente.eventoData; }
                 if (existente.historico_eventos) leadFinal.historico_eventos = existente.historico_eventos;
+            } else {
+                tagsNovas = tagsNovas.filter(t => !ehTagEstadoConversa(t));
+                const estadoConversa = tagsEstadoConversa(existente.acompanhamento);
+                const tagsEstadoInteresse = tagsNovas.some(t => ['Ativo', 'Aluno Ativo', 'Inativo', 'Ex-Aluno (Inativo)'].includes(t))
+                    ? estadoConversa.filter(t => !TAGS_ESTADO_CONVERSA.includes(t))
+                    : estadoConversa;
+                tagsNovas.push(...tagsEstadoInteresse);
             }
 
             // "Sem Telefone"/"Sem E-mail" recalculados sempre em cima do
@@ -1970,6 +1820,13 @@ async function confirmarEnviarImportacao() {
 
             const tagsCustomizadasMantidas = tagsAntigas.filter(t => !ehTagDeSistema(t));
             let tagsFinais = Array.from(new Set([...tagsNovas, ...tagsCustomizadasMantidas]));
+            const preferenciaAtualizada = acompanhamentoTemPreferenciaAtualizada(existente.acompanhamento);
+            if (existente.acompanhamento?.contato === 'nao_contatar' || (!preferenciaAtualizada && tagsAntigas.includes('Não contatar'))) {
+                tagsFinais.push('Não contatar');
+            }
+            if (preferenciaAtualizada && existente.acompanhamento?.contato === 'permitido') {
+                tagsFinais = tagsFinais.filter(t => t !== 'Não contatar');
+            }
 
             const estavaInativo = tagsAntigas.includes('Inativo') || tagsAntigas.includes('Ex-Aluno (Inativo)');
             const agoraAtivo = tagsFinais.includes('Ativo');

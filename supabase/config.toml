@@ -20,6 +20,10 @@ verify_jwt = true
 [functions.mercurio-db-sincronizar]
 verify_jwt = true
 
+# Ponte privada de avaliações do BPO, com validação adicional de service_role.
+[functions.bpo-aberturas]
+verify_jwt = true
+
 # Este endpoint usa chave aleatória de acesso limitada a uma escola, verificada no servidor.
 [functions.painel-escola]
 verify_jwt = false

@@ -360,6 +360,7 @@ async function enviarSugestaoRespostaConvite(classificacaoId, pessoaIdentificado
     const textarea = document.getElementById(`convitesRespostaTexto-${classificacaoId}`);
     const texto = textarea ? textarea.value.trim() : '';
     if (!texto) { alert('O texto está vazio.'); return; }
+    if (typeof permitirEnvioManualWpp !== 'function' || !(await permitirEnvioManualWpp(pessoaIdentificador))) return;
 
     const item = botaoEl.closest('.activity-item');
     if (botaoEl) { botaoEl.disabled = true; botaoEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
@@ -384,15 +385,11 @@ async function descartarSugestaoRespostaConvite(classificacaoId, botaoEl) {
 }
 
 // ---------------------------------------------------------
-// 2. 50 leads mais prioritários pra contatar, TODAS as filiais
+// 2. Registros de inscrição em aberturas futuras, TODAS as filiais
 // ---------------------------------------------------------
-// Critério: quem já tem uma inscrição futura numa Abertura de Turma vem
-// primeiro (ordenado pela data mais próxima — é quem tem prazo real),
-// depois o resto ordenado pelo funil de conversão (Jornada de
-// Interesse/Lead Forte — mesmas tags de sistema já calculadas na
-// importação, ver js/importador.js). Só 50 no TOTAL, não por filial —
-// é uma lista única de "quem ligar primeiro hoje". Exclui quem já está
-// numa coluna de Matriculados (não precisa mais ser contatado pra isso).
+// A lista é contexto para conferir a situação da inscrição. Inscrição não
+// comprova presença nem declaração de interesse, e quem pediu não contato
+// não deve aparecer como sugestão de contato.
 const LIMITE_AGENDA_GERAL_LEADS = 50;
 
 function _diasParaAberturaTurma(lead) {
@@ -409,12 +406,28 @@ function _diasParaAberturaTurma(lead) {
     return melhor;
 }
 
-function _rankJornadaAgendaGeral(lead) {
-    const tags = parseTags(lead.tags).map(t => t.trim());
-    if (tags.includes('Jornada: Engajado')) return 1;
-    if (tags.includes('Jornada: Interesse Emergente')) return 2;
-    if (tags.includes('Jornada: Descoberta')) return 3;
-    return 9;
+async function filtrarNaoContatarAgendaGeral(leads) {
+    const ids = [...new Set(leads.map(lead => String(lead.pessoaIdentificador)))];
+    const mapa = new Map();
+    for (let inicio = 0; inicio < ids.length; inicio += 500) {
+        const { data, error } = await window.supabaseClient.from(NOME_TABELA)
+            .select('pessoaIdentificador, filial, acompanhamento, tags')
+            .in('pessoaIdentificador', ids.slice(inicio, inicio + 500));
+        if (error || !Array.isArray(data)) return { leads: [], ocultos: 0, erro: true };
+        data.forEach(lead => mapa.set(`${lead.filial}\0${lead.pessoaIdentificador}`, lead));
+    }
+    const chaveLead = lead => `${lead.filial}\0${lead.pessoaIdentificador}`;
+    if (leads.some(lead => !mapa.has(chaveLead(lead)))) return { leads: [], ocultos: 0, erro: true };
+    const resultado = [];
+    let ocultos = 0;
+    leads.forEach(lead => {
+        const atual = mapa.get(chaveLead(lead));
+        const tags = typeof parseTags === 'function' ? parseTags(atual.tags).map(tag => String(tag).trim().toLocaleLowerCase('pt-BR')) : [];
+        const pediuNaoContato = atual.acompanhamento?.contato === 'nao_contatar' || tags.includes('não contatar');
+        if (pediuNaoContato) { ocultos++; return; }
+        resultado.push(lead);
+    });
+    return { leads: resultado, ocultos, erro: false };
 }
 
 async function carregarAgendaGeralLeadsPrioritarios() {
@@ -422,80 +435,58 @@ async function carregarAgendaGeralLeadsPrioritarios() {
     if (!container) return;
     container.innerHTML = '<div style="font-size:12px; color:var(--text-muted);">Carregando...</div>';
 
-    // Candidatos: só quem já tem algum sinal de prioridade (evita puxar a
-    // base inteira todo dia). O filtro por CONTEÚDO de `tags` (jsonb) não
-    // dá pra fazer com `.ilike()`/`.or()` do supabase-js — o PostgREST não
-    // aceita cast (`coluna::tipo`) nem solto nem dentro do filtro `or=(...)`,
-    // sempre cai no operador cru de jsonb ("operator does not exist: jsonb
-    // ~~* unknown"). Resolvido com uma função SQL simples
-    // (leads_agenda_geral_prioritarios(), migracao_rpc_leads_agenda_geral.sql).
+    // O RPC devolve inscrições registradas em aberturas de turma. A lista
+    // serve para conferir o registro, não para inferir comparecimento ou
+    // propensão a matrícula.
     const { data, error } = await window.supabaseClient.rpc('leads_agenda_geral_prioritarios');
 
     if (error) {
-        container.innerHTML = '<div style="font-size:11px; color:var(--text-muted);">Erro ao carregar leads prioritários — veja o console.</div>';
+        container.innerHTML = '<div style="font-size:11px; color:var(--text-muted);">Erro ao carregar inscrições registradas — veja o console.</div>';
         console.error(error);
         return;
     }
 
-    // "Último contato" (pedido do usuário, 2026-09-30) — não insistir em
-    // quem JÁ foi contatado hoje (carimbado automaticamente a cada envio
-    // real de WhatsApp, whatsapp-send; ou manualmente via "Registrar
-    // Contato" na gaveta, js/app.js) — some da lista de "quem contatar
-    // hoje" até virar amanhã. Empate nos critérios de sempre desempata
-    // por quem está há MAIS tempo sem contato (ou nunca contatado).
+    // Não repetir no mesmo dia um contato que já foi registrado pela equipe.
     const hojeISO = new Date().toISOString().slice(0, 10);
-    const candidatos = (data || [])
+    let candidatos = (data || [])
         .filter(l => !/matricul/i.test(l.funil_agencia || ''))
         .filter(l => !l.ultimo_contato_em || l.ultimo_contato_em.slice(0, 10) !== hojeISO);
 
     candidatos.forEach(l => {
         l._diasAbertura = _diasParaAberturaTurma(l);
-        // "Retorno: Só 1 Evento" (2026-10-01) — achado numa avaliação de
-        // conversão: quem já é aluno frequentou ~4x mais eventos em média
-        // do que quem nunca converte. Prioridade logo ATRÁS de "Abertura
-        // de Turma chegando" e ACIMA de Lead Forte — é um sinal mais
-        // específico e mais recente que achamos nos dados do que a
-        // pontuação genérica de Lead Forte 3 (que é a maioria da base).
-        l._temRetorno1Evento = parseTags(l.tags).map(t => t.trim()).includes('Retorno: Só 1 Evento') ? 0 : 1;
-        l._rankForte = rankLeadForte(l);
-        l._rankJornada = _rankJornadaAgendaGeral(l);
-        l._diasSemContato = l.ultimo_contato_em
-            ? Math.floor((Date.now() - new Date(l.ultimo_contato_em).getTime()) / 86400000)
-            : Infinity;
     });
+    candidatos = candidatos.filter(l => l._diasAbertura !== Infinity);
+
+    const filtragemContato = await filtrarNaoContatarAgendaGeral(candidatos);
+    if (filtragemContato.erro) {
+        container.innerHTML = '<div style="font-size:11px; color:var(--text-muted);">Lista oculta: não foi possível confirmar as preferências de contato.</div>';
+        return;
+    }
+    candidatos = filtragemContato.leads;
 
     candidatos.sort((a, b) => {
-        if (a._diasAbertura !== b._diasAbertura) return a._diasAbertura - b._diasAbertura;
-        if (a._temRetorno1Evento !== b._temRetorno1Evento) return a._temRetorno1Evento - b._temRetorno1Evento;
-        if (a._rankForte !== b._rankForte) return a._rankForte - b._rankForte;
-        if (a._rankJornada !== b._rankJornada) return a._rankJornada - b._rankJornada;
-        if (contarTags(b) !== contarTags(a)) return contarTags(b) - contarTags(a);
-        return b._diasSemContato - a._diasSemContato;
+        const diferencaData = a._diasAbertura - b._diasAbertura;
+        return diferencaData || String(a.pessoaNome || '').localeCompare(String(b.pessoaNome || ''));
     });
 
     const top50 = candidatos.slice(0, LIMITE_AGENDA_GERAL_LEADS);
 
     if (top50.length === 0) {
-        container.innerHTML = '<div style="font-size:12px; color:var(--text-muted);">Nenhum lead prioritário identificado hoje.</div>';
+        container.innerHTML = `<div style="font-size:12px; color:var(--text-muted);">Nenhuma inscrição em abertura futura encontrada.${filtragemContato.ocultos ? ` ${filtragemContato.ocultos} registro(s) com pedido de não contato foram ocultados.` : ''}</div>`;
         return;
     }
 
     container.innerHTML = top50.map(l => {
-        const motivo = l._diasAbertura !== Infinity
-            ? `<span class="tag-inscrito-turma" style="display:inline-block; padding:1px 6px; border-radius:4px; font-size:10px;">Turma em ${l._diasAbertura === 0 ? 'HOJE' : `${l._diasAbertura}d`}</span>`
-            : (l._temRetorno1Evento === 0
-                ? `<span class="tag-warning" style="display:inline-block; padding:1px 6px; border-radius:4px; font-size:10px;">Só veio 1x</span>`
-                : (l._rankForte < 99 ? `<span class="tag-strong tag-strong-${l._rankForte}" style="display:inline-block; padding:1px 6px; border-radius:4px; font-size:10px;">Lead Forte ${l._rankForte}</span>` : ''));
-        const contatoTxt = l._diasSemContato === Infinity ? 'Nunca contatado' : `Contatado há ${l._diasSemContato}d`;
+        const motivo = `<span class="tag-inscrito-turma" style="display:inline-block; padding:1px 6px; border-radius:4px; font-size:10px;">Inscrição registrada · abertura em ${l._diasAbertura === 0 ? 'hoje' : `${l._diasAbertura}d`}</span>`;
         return `
             <div class="activity-item" style="cursor:pointer;" onclick="abrirResultadoBuscaGlobal('${l.pessoaIdentificador}')">
                 <div class="activity-dot"></div>
                 <div>
                     <div><strong>${escapeHTML(l.pessoaNome || 'Lead sem nome')}</strong> ${motivo}</div>
-                    <div class="activity-time">${escapeHTML(l.filial || '')} · ${contatoTxt}</div>
+                    <div class="activity-time">${escapeHTML(l.filial || '')} · situação da presença a confirmar</div>
                 </div>
             </div>`;
-    }).join('');
+    }).join('') + (filtragemContato.ocultos ? `<div class="activity-time">${filtragemContato.ocultos} registro(s) com pedido de não contato foram ocultados.</div>` : '');
 }
 
 // ---------------------------------------------------------

@@ -9,6 +9,9 @@ test('tags duplicadas e aliases são compactados sem alterar a origem',()=>{
  const grupos=ctx.organizarTagsDoCartao(origem);assert.equal(grupos.principais[0],'Não Contatar');assert.equal(grupos.principais.filter(t=>t==='Ativo').length,1);assert.ok(grupos.outras.includes('CRM'));assert.ok(grupos.outras.includes('Trilha: Filosófica'));assert.deepEqual(origem,copia);
 });
 test('cartão tem até três destaques e conserva as demais tags acessíveis',()=>{
- const origem=['Não Contatar','Ativo','Lead Forte 2','Jornada: Engajado','Retorno: Só 1 Evento','Horário a combinar'];const grupos=ctx.organizarTagsDoCartao(origem);
- assert.equal(grupos.principais.length,3);assert.equal(grupos.principais.length+grupos.outras.length,origem.length);
+ const origem=['Não Contatar','Ativo','Indicação de Aluno','Convite: Pediu Informação','Horário a combinar','Lead Forte 2','Jornada: Engajado','Retorno: Só 1 Evento'];const grupos=ctx.organizarTagsDoCartao(origem);
+ const exibidas=[...grupos.principais,...grupos.outras];
+ const legado=/^(Lead Forte(?:\s+[1-3])?|Jornada\s*:|Retorno:\s*Só 1 Evento)/i;
+ assert.equal(grupos.principais.length,3);
+ assert.deepEqual(exibidas.sort(),origem.filter(tag=>!legado.test(tag)).sort());
 });

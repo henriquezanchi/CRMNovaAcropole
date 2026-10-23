@@ -207,19 +207,37 @@ function janelaAberta(mensagens) {
     return (Date.now() - new Date(ultima.criado_em).getTime()) < 24 * 60 * 60 * 1000;
 }
 
-// "Bloquear envio manual pra quem pediu Não Contatar, a menos que a
-// própria pessoa tenha iniciado a conversa" (pedido do usuário,
-// 2026-10-08) — olha a mensagem MAIS ANTIGA já carregada (`mensagens`
-// vem cronológica, mais antiga primeiro — carregarHistoricoMensagens())
-// pra saber quem começou: se foi o LEAD quem escreveu primeiro (não nós
-// que abordamos ele), o SDR ainda pode responder mesmo com a tag
-// aplicada depois. Limitação aceita: conversas com mais de 200 mensagens
-// (TAMANHO_PAGINA_HISTORICO_WPP) só enxergam a mais antiga da PÁGINA já
-// carregada, não a 1ª mensagem de todos os tempos — na prática, quem já
-// pediu "Não Contatar" raramente tem uma conversa tão longa assim.
-function conversaIniciadaPeloLead(mensagens) {
-    if (!mensagens || mensagens.length === 0) return false;
-    return mensagens[0].direcao === 'entrada';
+async function consultarEstadoContatoManualWpp(pessoaIdentificador) {
+    if (!pessoaIdentificador) return { ok: false, erro: true, bloqueado: true };
+    try {
+        const { data, error } = await window.supabaseClient.from(NOME_TABELA)
+            .select('tags, acompanhamento')
+            .eq('pessoaIdentificador', String(pessoaIdentificador))
+            .maybeSingle();
+        if (error || !data) return { ok: false, erro: true, bloqueado: true };
+        let acompanhamento = data.acompanhamento;
+        if (typeof acompanhamento === 'string') {
+            try { acompanhamento = JSON.parse(acompanhamento); } catch (_) { return { ok: false, erro: true, bloqueado: true }; }
+        }
+        const tags = (typeof parseTags === 'function' ? parseTags(data.tags) : []).map(tag => String(tag).trim().toLocaleLowerCase('pt-BR'));
+        const bloqueado = acompanhamento?.contato === 'nao_contatar' || tags.includes('não contatar') || tags.includes('nao contatar');
+        return { ok: true, erro: false, bloqueado, tags: data.tags, acompanhamento };
+    } catch (_) {
+        return { ok: false, erro: true, bloqueado: true };
+    }
+}
+
+async function permitirEnvioManualWpp(pessoaIdentificador) {
+    const estado = await consultarEstadoContatoManualWpp(pessoaIdentificador);
+    if (!estado.ok) {
+        alert('Não foi possível confirmar a preferência de contato. O envio está bloqueado até a confirmação.');
+        return false;
+    }
+    if (estado.bloqueado) {
+        alert('Este lead pediu para não ser contatado. O envio foi bloqueado.');
+        return false;
+    }
+    return true;
 }
 
 // Monta uma mensagem de erro mais útil que só "message" — inclui o código
@@ -729,6 +747,7 @@ async function tentarEnviarRespostaRapidaComFoto(resposta, leadId) {
     const primeiroNome = (typeof nomeParaChamar === 'function') ? nomeParaChamar(lead) : (lead.pessoaNome || 'o lead');
 
     if (!confirm(`Esta resposta está linkada ao evento "${evento.nome}" (${dataFormatada}), que tem foto cadastrada.\n\nEnviar a FOTO DE VERDADE + a legenda abaixo pra ${primeiroNome}, em vez de só preencher a caixa?\n\nLegenda: "${caption}"`)) return false;
+    if (!(await permitirEnvioManualWpp(leadId))) return true;
 
     const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
         body: { pessoaIdentificador: leadId, tipo: 'imagem', imagemUrl: evento.imagem_url, caption, atendenteNome: (typeof obterNomeAtendente === 'function') ? obterNomeAtendente() : '' }
@@ -1034,6 +1053,7 @@ function abrirSeletorEncaminharWpp(msg) {
 
 async function confirmarEncaminharWpp(msg, leadIdDestino, nomeDestino) {
     if (!confirm(`Encaminhar esta mensagem pra ${nomeDestino}?`)) return;
+    if (!(await permitirEnvioManualWpp(leadIdDestino))) return;
     fecharEncaminharWpp();
 
     let body;
@@ -1057,6 +1077,7 @@ async function confirmarEncaminharWpp(msg, leadIdDestino, nomeDestino) {
 
 async function enviarReacaoWpp(leadId, mensagemAlvoId, emoji) {
     if (!leadId || !mensagemAlvoId) return;
+    if (!(await permitirEnvioManualWpp(leadId))) return;
     const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
         body: { pessoaIdentificador: leadId, tipo: 'reacao', mensagemAlvoId, emoji, atendenteNome: obterNomeAtendente() }
     });
@@ -1146,13 +1167,13 @@ function criarChatController({ messagesId, inputAreaId }) {
     // "igual no whatsapp real") — { waId, preview, remetente: 'saida'|'entrada' }
     // do balão clicado; null = não está respondendo nada em particular.
     let respondendoA = null;
-    // Bloqueio de "Não Contatar" (pedido do usuário, 2026-10-08): true
-    // quando o lead tem a tag E a conversa NÃO foi iniciada por ele
-    // mesmo — ver atualizarAvisoNaoContatar()/conversaIniciadaPeloLead().
-    // Checado em enviarMensagem() ANTES de qualquer envio manual, nunca
-    // confiando só no atributo `disabled` do HTML (que é só reforço
-    // visual, pode dessincronizar).
-    let bloqueioNaoContatar = false;
+    // A preferência precisa ser lida do banco antes de qualquer envio.
+    // Enquanto a consulta está pendente ou falha, o chat fica bloqueado;
+    // `enviarMensagem()` e o envio de template consultam de novo no clique.
+    let bloqueioNaoContatar = true;
+    let bloqueioVisualAplicado = false;
+    let estadoPreferenciaContato = { ok: false, erro: true, bloqueado: true };
+    let verificandoPreferenciaContato = false;
     // Busca dentro da conversa aberta — pedido do usuário (2026-09-29:
     // "implemente tudo que for possível"; refinado 2026-09-30: "busca com
     // destaque + navegação entre resultados, igual no whatsapp real").
@@ -1296,38 +1317,65 @@ function criarChatController({ messagesId, inputAreaId }) {
         container.insertBefore(barra, container.firstChild);
     }
 
-    // Aviso fixo acima da caixa de texto quando o lead já tem a tag
-    // "Não Contatar" — pedido do usuário (2026-10-08, plano "Qualificação
-    // do Lead"); endurecido no mesmo dia: "vamos bloquear o envio manual,
-    // a menos que a própria pessoa tenha iniciado a conversa". Ou seja:
-    // se foi NÓS quem procuramos ela primeiro (1ª mensagem da conversa é
-    // 'saida'), o pedido de "não contatar" é respeitado de verdade — a
-    // caixa de texto/botão de enviar ficam desabilitados, e
-    // `bloqueioNaoContatar` barra qualquer tentativa de envio mesmo que
-    // alguém force o HTML. Se foi ELA quem procurou a escola primeiro
-    // (1ª mensagem é 'entrada'), o SDR continua podendo responder — só
-    // avisa, não bloqueia (mesmo comportamento de antes).
-    function atualizarAvisoNaoContatar(tagsLead, iniciadaPeloLead) {
+    function aplicarBloqueioVisualContato() {
+        const container = el(inputAreaId);
+        if (!container) return;
+        const input = container.querySelector('.chat-input');
+        const botaoEnviar = container.querySelector('.btn-send');
+        const botaoTemplate = container.querySelector('.wpp-template-enviar');
+        if (bloqueioNaoContatar) {
+            if (input) input.disabled = true;
+            if (botaoEnviar) botaoEnviar.disabled = true;
+            if (botaoTemplate) botaoTemplate.disabled = true;
+            bloqueioVisualAplicado = true;
+        } else if (bloqueioVisualAplicado) {
+            if (input) input.disabled = false;
+            if (botaoEnviar) botaoEnviar.disabled = false;
+            if (botaoTemplate) botaoTemplate.disabled = false;
+            bloqueioVisualAplicado = false;
+        }
+    }
+
+    // O painel mostra o estado vindo da consulta fresca, nunca só as tags
+    // que estavam em memória quando a conversa foi aberta.
+    function atualizarAvisoNaoContatar(estado) {
+        estadoPreferenciaContato = estado || { ok: false, erro: true, bloqueado: true };
+        bloqueioNaoContatar = !estadoPreferenciaContato.ok || Boolean(estadoPreferenciaContato.bloqueado);
         const container = el(inputAreaId);
         if (!container) return;
         const avisoAntigo = container.querySelector('.wpp-nao-contatar-bar');
         if (avisoAntigo) avisoAntigo.remove();
-        const tags = (typeof parseTags === 'function' ? parseTags(tagsLead) : []).map(t => String(t).trim());
-        const temTag = tags.includes('Não Contatar');
-        bloqueioNaoContatar = temTag && !iniciadaPeloLead;
-
-        const input = container.querySelector('.chat-input');
-        const botaoEnviar = container.querySelector('.btn-send');
-        if (input) input.disabled = bloqueioNaoContatar;
-        if (botaoEnviar) botaoEnviar.disabled = bloqueioNaoContatar;
-
-        if (!temTag) return;
+        aplicarBloqueioVisualContato();
+        if (!bloqueioNaoContatar) return;
         const aviso = document.createElement('div');
         aviso.className = 'wpp-nao-contatar-bar';
-        aviso.innerHTML = bloqueioNaoContatar
-            ? '<i class="fa-solid fa-ban"></i> Este lead pediu para não ser contatado — envio bloqueado. Só é possível responder se ele mesmo procurar a escola primeiro.'
-            : '<i class="fa-solid fa-triangle-exclamation"></i> Este lead pediu para não ser contatado — envio liberado porque foi ele quem procurou a escola.';
+        aviso.innerHTML = estadoPreferenciaContato.ok
+            ? '<i class="fa-solid fa-ban"></i> Este lead pediu para não ser contatado — envio bloqueado.'
+            : '<i class="fa-solid fa-triangle-exclamation"></i> Preferência de contato não confirmada — envio bloqueado até a consulta ser concluída.';
         container.insertBefore(aviso, container.firstChild);
+    }
+
+    async function confirmarPreferenciaAntesDeEnviar() {
+        const leadConsultado = String(leadId || '');
+        if (!leadConsultado || verificandoPreferenciaContato) return false;
+        verificandoPreferenciaContato = true;
+        atualizarAvisoNaoContatar({ ok: false, erro: true, bloqueado: true });
+        try {
+            const estado = await consultarEstadoContatoManualWpp(leadConsultado);
+            if (String(leadId || '') !== leadConsultado) return false;
+            atualizarAvisoNaoContatar(estado);
+            if (!estado.ok) {
+                alert('Não foi possível confirmar a preferência de contato. O envio está bloqueado até a confirmação.');
+                return false;
+            }
+            if (estado.bloqueado) {
+                alert('Este lead pediu para não ser contatado. O envio foi bloqueado.');
+                return false;
+            }
+            return true;
+        } finally {
+            verificandoPreferenciaContato = false;
+        }
     }
 
     // "Fidelidade ao WhatsApp real" (pedido do usuário, 2026-09-28) — o
@@ -1517,6 +1565,7 @@ function criarChatController({ messagesId, inputAreaId }) {
         select.addEventListener('change', montarCamposVariaveis);
 
         botao.addEventListener('click', async () => {
+            if (!(await confirmarPreferenciaAntesDeEnviar())) return;
             const tpl = TEMPLATES_WHATSAPP[Number(select.value)];
             const params = [...varsEl.querySelectorAll('.wpp-template-var')].map(i => i.value.trim());
             if (tpl.variaveis?.length && params.some(p => !p)) { alert('Preencha todas as variáveis do modelo.'); return; }
@@ -1554,6 +1603,7 @@ function criarChatController({ messagesId, inputAreaId }) {
         container.innerHTML = htmlSeletorTemplate();
         ligarHandlersTemplate(container);
         atualizarBarraRespondendo();
+        atualizarAvisoNaoContatar(estadoPreferenciaContato);
     }
 
     // Anexar foto/documento (pedido do usuário, 2026-09-28: "máximo de
@@ -1697,6 +1747,7 @@ function criarChatController({ messagesId, inputAreaId }) {
 
         if (!forcarRecriar && janelaAberta(mensagens) && container.querySelector('.chat-input')) {
             atualizarBarraRespondendo();
+            atualizarAvisoNaoContatar(estadoPreferenciaContato);
             return;
         }
 
@@ -1757,6 +1808,7 @@ function criarChatController({ messagesId, inputAreaId }) {
             return;
         }
         atualizarBarraRespondendo();
+        atualizarAvisoNaoContatar(estadoPreferenciaContato);
     }
 
     // Decide entre texto livre e anexo (foto/documento, legenda = o texto
@@ -1765,10 +1817,15 @@ function criarChatController({ messagesId, inputAreaId }) {
     // `disabled` do HTML (reforço visual, pode dessincronizar se o
     // elemento for recriado/manipulado por fora).
     async function enviarMensagem(input) {
-        if (bloqueioNaoContatar) {
-            alert('Este lead pediu para não ser contatado. O envio só é permitido se ele mesmo procurar a escola primeiro.');
+        if (!anexoPendente && !input.value.trim()) return;
+        const destino = String(leadId || '');
+        input.disabled = true;
+        if (!(await confirmarPreferenciaAntesDeEnviar())) {
+            if (String(leadId || '') === destino && input.isConnected) input.disabled = bloqueioNaoContatar;
             return;
         }
+        if (String(leadId || '') !== destino || !input.isConnected) return;
+        input.disabled = false;
         if (anexoPendente) { await enviarComAnexo(input); return; }
         await enviarTexto(input);
     }
@@ -1917,6 +1974,9 @@ function criarChatController({ messagesId, inputAreaId }) {
 
         const inputContainer = el(inputAreaId);
         if (inputContainer) inputContainer.innerHTML = '';
+        bloqueioNaoContatar = true;
+        estadoPreferenciaContato = { ok: false, erro: true, bloqueado: true };
+        const consultaPreferencia = consultarEstadoContatoManualWpp(pessoaIdentificador);
         const historico = await carregarHistoricoMensagens(pessoaIdentificador);
         if (versao !== versaoAbertura) return;
         mensagens = historico;
@@ -1924,14 +1984,10 @@ function criarChatController({ messagesId, inputAreaId }) {
         renderizarMensagens();
         renderizarAreaInput(true); // troca de conversa — sempre reconstrói, nunca herda rascunho/foco da conversa anterior
         if (templateNomeForcado) selecionarTemplatePorNome(templateNomeForcado);
-        // Aviso/bloqueio de "Não Contatar" — busca fresca (tags podem ter
-        // mudado desde a última vez que este lead foi carregado em
-        // leadsAtuais). `mensagens` já está carregado neste ponto, dá pra
-        // calcular quem iniciou a conversa sem query extra.
-        const iniciadaPeloLead = conversaIniciadaPeloLead(mensagens);
-        window.supabaseClient.from(NOME_TABELA).select('tags').eq('pessoaIdentificador', leadId).maybeSingle()
-            .then(({ data }) => { if (leadId === pessoaIdentificador) atualizarAvisoNaoContatar(data ? data.tags : null, iniciadaPeloLead); })
-            .catch(() => {});
+        atualizarAvisoNaoContatar(estadoPreferenciaContato);
+        consultaPreferencia.then(estado => {
+            if (versao === versaoAbertura && String(leadId) === String(pessoaIdentificador)) atualizarAvisoNaoContatar(estado);
+        });
         // Confirmação de leitura ativa (pedido do usuário, 2026-09-29):
         // marca a última mensagem RECEBIDA como lida na Meta (✓✓ azul do
         // lado do lead) ao abrir a conversa — cobre WhatsApp Unificado E
@@ -1963,6 +2019,8 @@ function criarChatController({ messagesId, inputAreaId }) {
         pararGravacaoSeAtiva(true);
         leadId = null;
         mensagens = [];
+        bloqueioNaoContatar = true;
+        estadoPreferenciaContato = { ok: false, erro: true, bloqueado: true };
     }
 
     // Pré-preenche a caixa de texto livre com um texto pronto (ex: convite
@@ -2000,6 +2058,7 @@ async function enviarAniversarioRapido(leadId, nomeLead, filialLead, botaoEl) {
 
     const nome = nomeLead || 'esse lead';
     if (!confirm(`Mandar "Feliz Aniversário" pra ${nome} agora?`)) return;
+    if (!(await permitirEnvioManualWpp(leadId))) return;
 
     if (botaoEl) { botaoEl.disabled = true; botaoEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
     try {
@@ -2222,6 +2281,7 @@ async function confirmarConviteComFoto() {
     const caption = `📢 ${evento.nome} — ${dataFormatada}! Compartilhe no seu Status do WhatsApp ou nos Stories do Instagram e ajude a divulgar 💙`;
 
     if (!confirm(`Enviar a foto do evento "${evento.nome}" pra ${primeiroNome}, pronta pra ela compartilhar no Status/Stories?\n\nLegenda: "${caption}"`)) return;
+    if (!(await permitirEnvioManualWpp(currentLeadId))) return;
     fecharSeletorConviteEvento();
 
     const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
@@ -2288,6 +2348,7 @@ async function enviarConviteAberturaTurmaFilial() {
     }
 
     if (!confirm(`Enviar convite (foto + link) da próxima Abertura de Turma ("${evento.nome}", ${dataFormatada}) pra ${primeiroNome}, pronto pra encaminhar pros contatos e grupos dele(a)?`)) return;
+    if (!(await permitirEnvioManualWpp(currentLeadId))) return;
 
     const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
         body: { pessoaIdentificador: currentLeadId, tipo: 'imagem', imagemUrl: evento.imagem_url, caption, atendenteNome: obterNomeAtendente() }
@@ -2326,7 +2387,7 @@ function montarTextoConviteEvento(lead, evento, templateCustom, semApresentacao)
     // Interesses — só as tags da família "Interesses / Origem" (mesma
     // classificação já usada pra colorir o badge da tag, ver FAMILIAS_TAG
     // em js/app.js), não qualquer tag (não faz sentido citar "Sem Telefone"
-    // ou "Lead Forte 1" como "interesse" num convite).
+    // ou histórico de eventos como "interesse" num convite).
     const interesses = (typeof identificarFamiliaTag === 'function')
         ? tagsLead.filter(t => identificarFamiliaTag(t).label === 'Interesses / Origem')
         : [];
@@ -2933,15 +2994,27 @@ async function filtrarExclusaoInteligenteWpp(ids, { excluir30Dias = true } = {})
     if (unicos.length === 0) return { validos: [], excluidos: [] };
     const tagsExclusao = excluir30Dias ? [...TAGS_EXCLUSAO_CAMPANHA_WPP, TAG_EXCLUSAO_30_DIAS_OPCIONAL] : TAGS_EXCLUSAO_CAMPANHA_WPP;
     await garantirRedeAtivosInativosCarregada();
-    const { data } = await window.supabaseClient.from(NOME_TABELA).select('pessoaIdentificador, pessoaNome, tags, filial, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, data_matricula').in('pessoaIdentificador', unicos);
+    const { data, error } = await window.supabaseClient.from(NOME_TABELA).select('pessoaIdentificador, pessoaNome, tags, acompanhamento, filial, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, data_matricula').in('pessoaIdentificador', unicos);
+    if (error || !Array.isArray(data)) {
+        console.warn('Não foi possível confirmar as preferências de contato para a seleção em massa:', error);
+        return {
+            validos: [],
+            excluidos: unicos.map(id => ({ id, nome: id, motivo: 'Preferência de contato não confirmada' })),
+        };
+    }
     const mapa = new Map((data || []).map(r => [String(r.pessoaIdentificador), r]));
     const validos = [];
     const excluidos = [];
     for (const id of unicos) {
         const r = mapa.get(id);
-        const tags = r ? parseTags(r.tags).map(t => String(t).trim()) : [];
-        const motivoTag = tagsExclusao.find(t => tags.includes(t));
+        if (!r) { excluidos.push({ id, nome: id, motivo: 'Cadastro não encontrado para confirmar preferência de contato' }); continue; }
+        const tags = parseTags(r.tags).map(t => String(t).trim());
+        const motivoTag = tagsExclusao.find(t => tags.some(tag => tag.toLocaleLowerCase('pt-BR') === t.toLocaleLowerCase('pt-BR')));
         if (motivoTag) { excluidos.push({ id, nome: r ? r.pessoaNome : id, motivo: motivoTag }); continue; }
+        if (r.acompanhamento?.contato === 'nao_contatar') {
+            excluidos.push({ id, nome: r.pessoaNome || id, motivo: 'Preferência registrada: não contatar' });
+            continue;
+        }
         // "Já matriculado" (pedido do usuário, 2026-10-08, plano
         // "Qualificação do Lead") — quem já tem data_matricula preenchida
         // já é aluno, mesmo que ainda esteja fisicamente numa coluna fria
@@ -2978,8 +3051,10 @@ function htmlAvisoExclusaoInteligenteWpp(excluidos) {
 function popularTagsConviteApiSegmento() {
     const select = document.getElementById('conviteApiTagSelect');
     if (!select) return;
-    const tagsSistema = ['Lead Forte 1', 'Lead Forte 2', 'Lead Forte 3', 'Jornada: Descoberta', 'Jornada: Interesse Emergente', 'Jornada: Engajado', 'Ativo', 'Inativo'];
-    const catalogo = typeof TAGS_SUGERIDAS !== 'undefined' ? TAGS_SUGERIDAS : [];
+    const tagsSistema = ['Ativo', 'Inativo'];
+    const catalogo = typeof TAGS_SUGERIDAS !== 'undefined'
+        ? TAGS_SUGERIDAS.filter(tag => !(typeof ehTagHeuristicaLegada === 'function' && ehTagHeuristicaLegada(tag)))
+        : [];
     const todas = [...new Set([...tagsSistema, ...catalogo])];
     select.innerHTML = todas.map(t => `<option value="${escapeHTML(t)}">${escapeHTML(t)}</option>`).join('');
 }
@@ -3782,15 +3857,10 @@ async function calcularCotaProporcionalPrioridade() {
     `;
 }
 
-// Camada 1 de pontuação (grátis): quanto mais perto o evento, mais
-// pontos (até +300), somado ao sinal de engajamento que já existe em
-// tags (Lead Forte/Jornada/já pediu informação sobre um convite).
+// Camada 1 usa só a proximidade da data e o pedido explícito de informação
+// sobre um convite. Tags derivadas de contagem de eventos não pontuam.
 function pontuarCandidatoPrioridade(tags, diasAteEvento) {
     let pontos = Math.max(0, 60 - diasAteEvento) * 5;
-    if (tags.includes('Lead Forte 1')) pontos += 150;
-    else if (tags.includes('Lead Forte 2')) pontos += 90;
-    else if (tags.includes('Lead Forte 3')) pontos += 40;
-    if (tags.includes('Jornada: Engajado')) pontos += 60;
     if (tags.includes('Convite: Pediu Informação')) pontos += 80;
     return pontos;
 }
@@ -4909,7 +4979,9 @@ function renderizarTagsWpp(leadId) {
     if (!lead) { container.innerHTML = ''; return; }
 
     const tags = (typeof parseTags === 'function' ? parseTags(lead.tags) : []);
-    const badges = tags.map((t, i) => {
+    const badges = tags.map((t, i) => ({ tag: t, indice: i }))
+        .filter(item => !(typeof ehTagHeuristicaLegada === 'function' && ehTagHeuristicaLegada(item.tag)))
+        .map(({ tag: t, indice: i }) => {
         const tagLimpa = (t || '').trim();
         if (!tagLimpa) return '';
         const classe = typeof classeVisualTag === 'function' ? classeVisualTag(tagLimpa) : '';
@@ -5410,6 +5482,7 @@ async function enviarSugestaoIaWpp(id, leadId) {
     const textarea = document.getElementById('wppSugestaoTexto');
     const texto = textarea ? textarea.value.trim() : '';
     if (!texto) return;
+    if (!(await permitirEnvioManualWpp(leadId))) return;
 
     const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
         body: { pessoaIdentificador: leadId, tipo: 'texto', texto, atendenteNome: obterNomeAtendente(), rascunhoAgente: {tipo: 'geral', id} }
@@ -5592,16 +5665,12 @@ async function renderizarContatosWpp(filtro = '') {
         // um cálculo obscuro/só-da-IA): sugestão de IA pronta pra revisar
         // pesa mais que tudo (já tem uma resposta pronta, só falta
         // autorizar); depois janela fechando (urgência real de prazo);
-        // depois Lead Forte (potencial de conversão); depois não lida.
+        // depois não lida.
         const pontuar = ({ conversa, lead }) => {
             let pontos = 0;
             if (idsComSugestaoPendente.has(String(lead.pessoaIdentificador))) pontos += 1000;
             const restante = horasRestantesJanelaWpp(conversa);
             if (restante !== null) pontos += restante < 4 ? 400 : restante < 12 ? 200 : 50;
-            const tags = typeof parseTags === 'function' ? parseTags(lead.tags) : [];
-            if (tags.includes('Lead Forte 1')) pontos += 300;
-            else if (tags.includes('Lead Forte 2')) pontos += 180;
-            else if (tags.includes('Lead Forte 3')) pontos += 90;
             if (conversaNaoLidaWpp(conversa)) pontos += 60;
             return pontos;
         };

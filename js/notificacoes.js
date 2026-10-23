@@ -1,8 +1,8 @@
 // ==========================================================
 // CENTRAL DE NOTIFICAÇÕES — sino no topbar, avisa sobre coisas que
 // merecem atenção sem precisar ficar checando o CRM manualmente:
-// Lead Forte 1 novo, evento quase lotado, lembrete de follow-up vencido/
-// de hoje, e mensagem de WhatsApp recebida (mesmo se o chat daquele lead
+// evento quase lotado, lembrete de follow-up vencido/de hoje e mensagem
+// de WhatsApp recebida (mesmo se o chat daquele lead
 // não estiver aberto). Tudo em memória (não persiste no banco nem entre
 // sessões) — é um alerta do momento, não um histórico.
 //
@@ -136,61 +136,7 @@ document.addEventListener('click', (e) => {
 });
 
 // ==========================================
-// GATILHO 1: Lead Forte 1 novo
-// ==========================================
-// Chamada de dentro de renderizarCards() (js/app.js) — reaproveita
-// leadsAtuais, sem query extra. Na 1ª vez que roda pra uma filial, só
-// estabelece a base (todo mundo que já tinha a tag "Lead Forte 1") sem
-// notificar — senão TODOS os Lead Forte 1 já existentes disparariam
-// notificação assim que a página abre. Dali em diante, só quem aparece
-// de novo (reimportação, matrícula-importer criando lead novo etc.) gera
-// notificação. Limitação conhecida: um Lead Forte 1 que só é carregado
-// depois via "Carregar Mais" (não estava nos primeiros 500) pode disparar
-// 1 notificação "atrasada" na hora que a página buscar aquele lote — nunca
-// mais que isso, e é um efeito colateral aceitável da paginação.
-let leadForteBaselinePronta = false;
-let leadForteJaVistos = new Set();
-
-function resetarNotificacoesLeadForte() {
-    leadForteBaselinePronta = false;
-    leadForteJaVistos = new Set();
-}
-
-function verificarNotificacoesLeadForte() {
-    if (typeof leadsAtuais === 'undefined' || typeof parseTags !== 'function') return;
-
-    const atuais = new Set();
-    leadsAtuais.forEach(l => {
-        const tags = parseTags(l.tags).map(t => t.trim());
-        if (tags.includes('Lead Forte 1')) atuais.add(String(l.pessoaIdentificador));
-    });
-
-    if (!leadForteBaselinePronta) {
-        leadForteJaVistos = atuais;
-        leadForteBaselinePronta = true;
-        return;
-    }
-
-    atuais.forEach(id => {
-        if (leadForteJaVistos.has(id)) return;
-        leadForteJaVistos.add(id);
-        const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === id);
-        if (!lead) return;
-        // Pedido do usuário (2026-10-06): "quando surgir novos leads
-        // fortes, indique na notificação de qual unidade ele é" — sem
-        // isso, com várias filiais usando o mesmo painel, não dava pra
-        // saber pra quem ligar sem abrir o lead primeiro.
-        adicionarNotificacao({
-            icone: 'fa-solid fa-fire',
-            titulo: 'Novo Lead Forte 1',
-            mensagem: `${lead.pessoaNome || 'Lead sem nome'} (${lead.filial || 'filial não informada'}) — alta propensão a matricular.`,
-            aoClicar: () => { if (typeof abrirResultadoBuscaGlobal === 'function') abrirResultadoBuscaGlobal(id); },
-        });
-    });
-}
-
-// ==========================================
-// GATILHO 2: Evento quase lotado
+// GATILHO 1: Evento quase lotado
 // ==========================================
 // Chamada de dentro de renderizarListaEventos() (js/eventos.js) —
 // reaproveita eventosAtuais/participantesResumoPorEvento já carregados.
@@ -706,12 +652,11 @@ async function verificarNotificacoesMencoes() {
 
 // ==========================================
 // TROCA DE FILIAL — reseta os gatilhos que dependem de qual filial está
-// ativa (baseline de Lead Forte, eventos já notificados, canal do WhatsApp).
+// ativa (eventos já notificados, canal do WhatsApp).
 // Chamada de dentro de carregarLeads() (js/app.js) sempre que resetar=true
 // (troca de filial ou carga inicial — não em "Carregar Mais").
 // ==========================================
 function iniciarNotificacoesParaFilial() {
-    resetarNotificacoesLeadForte();
     resetarNotificacoesEventos();
     iniciarNotificacoesWhatsAppGlobais();
     verificarNotificacoesLembretes();

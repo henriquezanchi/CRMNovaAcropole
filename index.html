@@ -136,7 +136,7 @@
                             <div class="activity-list" id="agendaGeralAniversariantes"></div>
                         </div>
                         <div class="activity-card" style="flex:none; max-height:280px;">
-                            <div class="activity-header"><i class="fa-solid fa-phone"></i> 50 Leads Prioritários pra Contatar</div>
+                            <div class="activity-header"><i class="fa-solid fa-calendar-check"></i> Inscrições em Aberturas Próximas — confirmar presença</div>
                             <div class="activity-list" id="agendaGeralLeadsPrioritarios"></div>
                         </div>
                         <div class="activity-card" style="flex:none; max-height:280px;">
@@ -199,26 +199,9 @@
                     </div>
                 </div>
 
-                <!-- Lead Forte por nível (1 = mais propenso), métrica-proxy igual os KPIs acima -->
-                <div class="activity-card" id="leadForteCard" style="flex:none;">
-                    <div class="activity-header"><i class="fa-solid fa-star"></i> Lead Forte por Nível</div>
-                    <div class="lead-forte-resumo" id="leadForteResumo"></div>
-                </div>
-
-                <!-- "Verdadeiros" Leads Fortes: prospectos com trilha Filosófica, por
-                     estágio da jornada — clicar já filtra o CRM pra começar os contatos -->
-                <div class="activity-card" id="jornadaCard" style="flex:none;">
-                    <div class="activity-header"><i class="fa-solid fa-route"></i> Jornada até a Matrícula</div>
-                    <div class="lead-forte-resumo" id="jornadaResumo"></div>
-                </div>
-
-                <!-- Pedido do usuário (2026-10-01), achado numa avaliação de conversão:
-                     quem já é aluno frequentou ~4x mais eventos em média do que quem
-                     nunca converte, e 79% dos prospects nunca passam de 0-1 evento —
-                     clicar já filtra o CRM por "Retorno: Só 1 Evento" (ver FAMILIAS_TAG). -->
-                <div class="activity-card" id="retorno1EventoCard" style="flex:none;">
-                    <div class="activity-header"><i class="fa-solid fa-rotate-left"></i> A 1 Evento de Voltar a Engajar</div>
-                    <div class="lead-forte-resumo" id="retorno1EventoResumo"></div>
+                <div class="activity-card" id="interesseProximoPassoCard" style="flex:none;">
+                    <div class="activity-header"><i class="fa-solid fa-clipboard-check"></i> Interesse e próximo passo</div>
+                    <div id="interesseProximoPassoResumo" style="font-size:12px; color:var(--text-muted);">Avaliação por evidências no painel de aberturas.</div>
                 </div>
 
                 <!-- Lembretes de follow-up (snooze) vencidos hoje ou atrasados, da filial atual -->
@@ -471,14 +454,8 @@
                 <div class="funnel" id="funnelChart"></div>
 
                 <div style="margin-top:30px;">
-                    <h3 style="font-size:16px; color:var(--na-green-dark);">Jornada da Base</h3>
-                    <p class="report-sub">Sistema de follow-up: distribui os leads em estágios (Descoberta → Interesse Emergente → Engajado → Matriculado, além de Em Recuperação) com base nas trilhas de interesse frequentadas — configure em "Trilhas de Interesse" na aba Importar.</p>
-                    <div class="funnel" id="relatorioJornadaBase"></div>
-                </div>
-
-                <div style="margin-top:30px;">
-                    <h3 style="font-size:16px; color:var(--na-green-dark);">Conversão por Tema de Evento</h3>
-                    <p class="report-sub">Cruza o tema de cada evento (classificado por IA na importação de planilhas) com quem já matriculou — proxy sobre os leads já carregados, mesmo espírito dos KPIs do Dashboard.</p>
+                    <h3 style="font-size:16px; color:var(--na-green-dark);">Histórico de eventos e matrículas por tema</h3>
+                    <p class="report-sub">Agrupa pessoas com referência a cada tema no histórico e mostra quantas têm matrícula registrada. O histórico pode indicar inscrição ou vínculo; não confirma comparecimento nem interesse atual. O percentual é a parcela matriculada entre as pessoas com essa referência.</p>
                     <div id="relatorioTemasEvento"></div>
                 </div>
 
@@ -622,16 +599,15 @@
                         <h3 style="font-size:16px; color:var(--na-green-dark);">Importar Planilhas</h3>
                         <p class="report-sub">
                             Sobe as planilhas da filial (Ativos, Inativos e Inscrições) e o CRM cruza tudo sozinho:
-                            marca quem é Ativo, Inativo ou Lead Forte (níveis 1 a 3), e monta o histórico de eventos de cada pessoa.
+                            marca quem é Ativo ou Inativo e monta o histórico de eventos registrados para cada pessoa.
                             <strong>As 3 não precisam vir juntas</strong> — dá pra subir só o Mercúrio (Ativos/Inativos) ou só
                             o Ulisses (Inscrições) quando um dos dois não estiver pronto; pra quem já existe no CRM, o que a
-                            planilha ausente não cobre (telefone/e-mail/eventos/Lead Forte SEM Ulisses, ou Ativo/Inativo/Nível
+                            planilha ausente não cobre (telefone/e-mail/eventos SEM Ulisses, ou Ativo/Inativo/Nível
                             SEM Mercúrio) fica como já estava, sem risco de apagar dado bom.
                             Nada é enviado ao banco até você conferir a prévia e clicar em "Confirmar e Enviar".
                         </p>
                     </div>
                     <div style="display:flex; gap:8px;">
-                        <button class="btn-secondary" style="white-space:nowrap;" onclick="abrirConfigPontuacao()"><i class="fa-solid fa-sliders"></i> Critérios de Lead Forte</button>
                         <button class="btn-secondary" style="white-space:nowrap;" onclick="abrirCredenciaisScraper()"><i class="fa-solid fa-key"></i> Login Automático (Ulisses/Mercúrio)</button>
                         <button class="btn-secondary" style="white-space:nowrap;" onclick="abrirSincronizacaoScraper()"><i class="fa-solid fa-robot"></i> Sincronização Automática</button>
                     </div>
@@ -1464,7 +1440,7 @@
             <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharGerenciarTiposEvento()"><i class="fa-solid fa-xmark"></i></button>
         </div>
         <div class="modal-body">
-            <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">Catálogo compartilhado entre todo mundo que usa o CRM — edite o texto, reordene ou remova. Renomear aqui NÃO muda o tipo de eventos já cadastrados (o texto fica gravado em cada evento na hora que ele foi salvo). A <strong>Trilha</strong> e as <strong>palavras-chave</strong> de cada tipo alimentam a classificação automática e as tags de Trilha/Jornada na importação de planilhas — mudar aqui já vale a partir da próxima importação.</p>
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">Catálogo compartilhado entre todo mundo que usa o CRM — edite o texto, reordene ou remova. Renomear aqui NÃO muda o tipo de eventos já cadastrados (o texto fica gravado em cada evento na hora que ele foi salvo). A <strong>Trilha</strong> e as <strong>palavras-chave</strong> de cada tipo alimentam a classificação histórica de eventos na importação de planilhas — mudar aqui já vale a partir da próxima importação.</p>
             <div id="tiposEventoList"></div>
             <div class="coluna-row" style="margin-top:14px; background:#f0fdf4; border-color:#bbf7d0;">
                 <input type="text" id="novoTipoEventoTexto" placeholder="Nome do novo tipo" style="flex:1;" onkeydown="if(event.key==='Enter') adicionarTipoEvento()">
@@ -1473,54 +1449,6 @@
         </div>
         <div class="modal-footer">
             <button class="btn-primary" onclick="fecharGerenciarTiposEvento()"><i class="fa-solid fa-check"></i> Concluir</button>
-        </div>
-    </div>
-
-    <!-- Modal: Critérios de pontuação do Lead Forte (nível 1-3) -->
-    <div class="overlay" id="overlayModalPontuacao" onclick="fecharConfigPontuacao()"></div>
-    <div class="modal" id="modalPontuacao">
-        <div class="modal-header">
-            <h3><i class="fa-solid fa-star"></i> Critérios de Lead Forte</h3>
-            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharConfigPontuacao()"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-        <div class="modal-body">
-            <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">
-                Quem veio em evento(s) mas nunca foi aluno recebe uma pontuação com base no histórico de participação,
-                e vira "Lead Forte 1" (mais propenso a matricular), "2" ou "3" conforme os limites abaixo. Esses valores
-                ficam salvos no banco (não no código) — dá pra reajustar aqui a qualquer momento, inclusive depois de
-                analisar estatisticamente quem realmente converteu em aluno. Vale a partir da <strong>próxima importação</strong>.
-            </p>
-            <div class="filter-group">
-                <label>Pontos por evento que a pessoa participou</label>
-                <input type="number" id="cfgPontosPorEvento" min="0">
-            </div>
-            <div class="filter-group">
-                <label>Pontos por TIPO distinto de evento (Palestra, Curso, Oficina...)</label>
-                <input type="number" id="cfgPontosPorTipo" min="0">
-            </div>
-            <div class="filter-group">
-                <label>Janela de "engajamento recente" (dias desde o último evento)</label>
-                <input type="number" id="cfgDiasRecente" min="0">
-            </div>
-            <div class="filter-group">
-                <label>Bônus se o último evento caiu dentro dessa janela</label>
-                <input type="number" id="cfgBonusRecente" min="0">
-            </div>
-            <div class="filter-group">
-                <label>Pontuação mínima para Lead Forte 1 (o mais propenso)</label>
-                <input type="number" id="cfgLimiteNivel1" min="0">
-            </div>
-            <div class="filter-group">
-                <label>Pontuação mínima para Lead Forte 2 (abaixo disso = nível 3)</label>
-                <input type="number" id="cfgLimiteNivel2" min="0">
-            </div>
-            <div class="filter-group">
-                <label>Nível 1 também exige evento nos últimos N dias (senão cai pro nível 2, mesmo com pontuação de nível 1)</label>
-                <input type="number" id="cfgDiasGateNivel1" min="0">
-            </div>
-        </div>
-        <div class="modal-footer">
-            <button class="btn-primary" onclick="salvarConfigPontuacao()"><i class="fa-solid fa-check"></i> Salvar Critérios</button>
         </div>
     </div>
 
@@ -1841,6 +1769,8 @@
     <script src="js/log-atividade.js"></script>
     <!-- 3. Chama o SEU arquivo de lógica que acabamos de criar -->
     <script src="js/acompanhamento-modelo.js"></script>
+    <script src="js/propensao-modelo.js"></script>
+    <script src="js/propensao-crm.js"></script>
     <script src="js/app.js"></script>
     <script src="js/acompanhamento.js"></script>
     <script src="js/especialistas.js"></script>

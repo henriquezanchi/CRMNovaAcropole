@@ -10781,3 +10781,8 @@ Chromium com os agregados reais confirmou filtros, 547/640 na alternância,
 10 pontos até outubro, navegação entre os cinco assuntos, CSV e página sem
 rolagem horizontal global em 390px. Curva e tabela têm rolagem própria.
 Fonte administrativa atualizada e Edge ativa; o frontend é publicado por push.
+
+
+## Continuidade — aberturas e avaliação de interessados (23/10/2026)
+
+Leia primeiro [o documento de continuidade](docs/CONTINUIDADE-ABERTURAS-CRM-2026-10-23.md) e os manuais nele indicados. Ele registra decisões, arquivos, migrações já aplicadas, testes e passos finais. Lead Forte foi descontinuado por solicitação explícita do usuário; não restaurar a heurística por quantidade de inscrições.

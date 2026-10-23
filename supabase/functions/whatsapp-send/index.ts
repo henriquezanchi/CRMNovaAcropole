@@ -7,7 +7,7 @@
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin, NOME_TABELA_LEADS, NOME_TABELA_MENSAGENS } from "../_shared/supabaseAdmin.ts";
 import { montarNumeroE164 } from "../_shared/telefone.ts";
-import { motivoBloqueioContato, motivoIntegridadeContato } from "../_shared/preferencia-contato.ts";
+import { motivoBloqueioContato, motivoIntegridadeContato, temTagNaoContatar } from "../_shared/preferencia-contato.ts";
 import { motivoRascunhoAgente } from "../_shared/rascunho-agente.mjs";
 import { aplicarReacao } from "../_shared/reacoes.ts";
 
@@ -109,7 +109,7 @@ Deno.serve(async (req) => {
         if (erroLead || !lead) return json({ ok: false, erro: "lead_nao_encontrado" }, 404);
         const integridade = motivoIntegridadeContato(lead.tags);
         if (integridade) return json({ok:false,erro:'cadastro_em_conferencia',detalhe:{message:integridade}},409);
-        const bloqueioContato = motivoBloqueioContato(lead.acompanhamento, origemEnvio === 'campanha' || tipo === 'template');
+        const bloqueioContato = motivoBloqueioContato(lead.acompanhamento, origemEnvio === 'campanha' || tipo === 'template') || (temTagNaoContatar(lead.tags)?'Pedido de não contato registrado.':'');
         if (bloqueioContato && tipo !== 'reacao') return json({ ok: false, erro: 'preferencia_contato', detalhe: { message: bloqueioContato } }, 409);
         if(corpoReq.rascunhoAgente){
             const motivo=await motivoRascunhoAgente(supabaseAdmin,corpoReq.rascunhoAgente,pessoaIdentificador,lead.filial,lead);

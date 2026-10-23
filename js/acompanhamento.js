@@ -79,6 +79,20 @@ async function salvarAcompanhamento(lead) {
         dado.revisao = AcompanhamentoModelo.normalizar(anterior).revisao + 1;
         dado.atualizado_em = new Date().toISOString();
         dado.atualizado_por = usuario.nome;
+        if (dado.intencao !== anterior.intencao) {
+            dado.intencao_atualizado_em = dado.atualizado_em;
+            dado.intencao_atualizado_por = dado.atualizado_por;
+        } else {
+            dado.intencao_atualizado_em = anterior.intencao_atualizado_em || anterior.atualizado_em || '';
+            dado.intencao_atualizado_por = anterior.intencao_atualizado_por || anterior.atualizado_por || '';
+        }
+        if (dado.contato !== anterior.contato) {
+            dado.preferencia_contato_em = dado.atualizado_em;
+            dado.preferencia_contato_por = dado.atualizado_por;
+        } else {
+            dado.preferencia_contato_em = anterior.preferencia_contato_em || '';
+            dado.preferencia_contato_por = anterior.preferencia_contato_por || '';
+        }
         formulario.querySelector('fieldset').disabled = true;
         const { data, error } = await window.supabaseClient.from(NOME_TABELA)
             .update({ acompanhamento: dado }).eq('pessoaIdentificador', lead.pessoaIdentificador).eq('filial', lead.filial)

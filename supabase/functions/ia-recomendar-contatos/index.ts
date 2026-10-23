@@ -7,7 +7,7 @@
 // consulta ao banco — quem decide QUEM contatar (a lista de leads e por
 // que eles são prioritários) é o FRONTEND (js/tarefas.js), reaproveitando
 // a MESMA lógica de ranking já usada em "50 Leads Prioritários"
-// (js/visao-geral.js: rankLeadForte/Jornada/Abertura de Turma/SLA — 100%
+// (js/visao-geral.js: inscrição em abertura, retorno combinado e SLA — 100%
 // determinística, sem IA). Aqui a IA só recebe os sinais JÁ CALCULADOS de
 // cada lead e escreve, por lead:
 // - "motivo": por que ele está nesta lista (1 frase, factual, só com o
@@ -19,6 +19,8 @@
 // Mesmo padrão de `classificar-temas`: recebe dados já filtrados pelo
 // frontend, chama a Anthropic API, devolve JSON. Quem GRAVA (Tarefa,
 // abordagem_sugerida do lead, log_atividade) é o frontend depois.
+import {supabaseAdmin,NOME_TABELA_LEADS} from "../_shared/supabaseAdmin.ts";
+import {motivoBloqueioContato,motivoIntegridadeContato,temTagNaoContatar} from "../_shared/preferencia-contato.ts";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY")!;
@@ -46,6 +48,9 @@ Para CADA lead da lista, escreva:
 
 Regras importantes:
 - NUNCA invente nome de evento, data, ou qualquer fato que não esteja nos sinais fornecidos.
+- Inscrição em evento não comprova comparecimento nem intenção de matrícula. Só mencione presença se houver confirmação explícita.
+- Não use tags antigas Lead Forte/Jornada como evidência de interesse. Interesse e disponibilidade só podem ser declarados pela pessoa.
+- Não sugira contato quando houver pedido de não contato ou restrição registrada.
 - Se os sinais forem escassos, prefira uma abordagem mais genérica (mas ainda calorosa) a inventar contexto.
 - Responda SOMENTE com um array JSON válido, na MESMA ORDEM da lista recebida, sem texto antes ou depois, no formato: [{"motivo": "...", "abordagem": "..."}, ...]
 
@@ -73,10 +78,16 @@ Deno.serve(async (req) => {
         return json({ ok: false, erro: "json_invalido" }, 400);
     }
 
-    const leads = (corpo.leads || []).filter((l) => l && l.pessoaIdentificador);
+    let leads = (corpo.leads || []).filter((l) => l && l.pessoaIdentificador);
     if (leads.length === 0) return json({ ok: true, recomendacoes: [] });
     if (leads.length > 40) return json({ ok: false, erro: "muitos_leads_de_uma_vez_maximo_40" }, 400);
 
+    // A preferência canônica é reconferida no servidor antes de gastar com IA.
+    const {data:cadastros,error:erroCadastros}=await supabaseAdmin.from(NOME_TABELA_LEADS).select('pessoaIdentificador,acompanhamento,tags,lixeira_em').in('pessoaIdentificador',leads.map(l=>l.pessoaIdentificador));
+    if(erroCadastros||!cadastros)return json({ok:false,erro:'preferencias_indisponiveis'},503);
+    const permitidos=new Set(cadastros.filter(l=>!l.lixeira_em&&!motivoBloqueioContato(l.acompanhamento,false)&&!motivoIntegridadeContato(l.tags)&&!temTagNaoContatar(l.tags)).map(l=>String(l.pessoaIdentificador)));
+    leads=leads.filter(l=>permitidos.has(String(l.pessoaIdentificador)));
+    if(!leads.length)return json({ok:true,recomendacoes:[]});
     try {
         const resp = await fetch("https://api.anthropic.com/v1/messages", {
             method: "POST",
