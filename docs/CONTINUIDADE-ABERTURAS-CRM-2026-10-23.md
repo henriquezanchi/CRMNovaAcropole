@@ -108,3 +108,9 @@ O usuário pede economia de tokens: não reexplorar o repositório inteiro nem r
 - Jardim América foi consultado com sucesso: 10.605 interessados, fonte 17/10. O cache grande foi gravado pela API REST privada, evitando limite do SQL de gerenciamento. **Agora os cinco caches iniciais estão preparados; a pendência JAM anterior está resolvida.**
 - Lista de interessados recebeu busca e paginação de 50 cartões para suportar esse volume.
 - Para o Claude: começar por este documento; nenhum segredo precisa ser copiado da conversa. Documentação de operação e contrato estão nos arquivos indicados.
+
+### Escopo adicional da conversa ainda a desenvolver
+
+As sugestões amplas também aprovadas incluíam uma jornada individual de acolhimento, central geral de solicitações internas, passagem de função assistida e uma página Minha escola consolidando todas as áreas. **Não foram construídos novos módulos dedicados a essas quatro sugestões nesta rodada**; verificar os recursos existentes antes de expandir. Biblioteca aceita links HTTPS, ainda não upload binário próprio. Reuniões/planos são publicações e tarefas; não há novo sistema de videoconferência nem disparos externos. O núcleo de abertura/secretarias/avaliação está implementado, mas não afirmar que todas as sugestões de experiência do membro já foram concluídas.
+
+Últimos commits enviados: BPO `2e1970b`, CRM `b028ead`. A última alteração funcional foi paginação/busca; build passou. Produção do núcleo foi verificada; a publicação Vercel desse último patch não foi acompanhada até o status final.
