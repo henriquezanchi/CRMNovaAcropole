@@ -1436,7 +1436,8 @@ select:hover { border-color: #94a3b8; }
 .anual-analise .anual-nota { color:#6f8375; font-size:12px; }
 .anual-curva-wrap { overflow-x:auto; }
 @media(max-width:600px) { .anual-curva { min-width:920px; max-height:none; } .anual-curva-wrap { margin-right:-3px; } }
-#tab-relatorios .atalhos-relatorios { position:sticky; top:0; z-index:12; }
+/* Abaixo da topbar (5), acima dos cabeçalhos da tabela (1). */
+#tab-relatorios .atalhos-relatorios { position:sticky; top:0; z-index:2; }
 #relatorioKanbanCabecalho,#relatorioKanbanCabecalho>div:last-child { flex-wrap:wrap; }
 .relatorios-assunto { grid-template-columns:minmax(0,1fr); min-width:0; }
 .relatorio-anual { min-width:0; max-width:100%; }
