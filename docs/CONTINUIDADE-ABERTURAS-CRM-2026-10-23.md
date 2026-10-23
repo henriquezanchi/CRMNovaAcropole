@@ -118,3 +118,10 @@ As sugestões amplas também aprovadas incluíam uma jornada individual de acolh
 ### Correção de arquitetura solicitada pelo usuário: secretarias independentes
 
 O usuário rejeitou a área central “Rede de Secretarias”. Materiais, avisos, reuniões e mandatos agora ficam dentro de cada secretaria; não restaurar o menu central. Admin nacional/regional da Economia não administra outras secretarias nem ganha dados financeiros locais por esse mandato. Loader aceita secretariaAtual obrigatória, restringe contexto, publicações, mandatos e escalas antes do DTO; formulários fixos da secretaria. Páginas operacionais têm entrada `?aba=orientacoes`; genéricas `/secretarias/[nome]`; o link antigo redireciona. Testes específicos confirmam isolamento de namespace. Sem alteração de schema ou dados existentes.
+
+
+### Ajustes para o primeiro teste de abertura (23/10)
+
+Cartão Interessados abre a lista e explica que o total representa contatos importados, não matrículas previstas. Formulário sem nome do curso ou código acadêmico; título gerado pela data/horário, associação posterior explícita ao Mercúrio sem criar turmas. Edições preservam associação e título existentes. Docentes usam Member.isPedagogo do importador Mercúrio, com filial/ativo também validados no servidor; pessoas gerais continuam em tarefas/escalas.
+
+Novo campo opcional inscricoesAte (fim do dia de São Paulo) limita incorporação de matrículas e fechamento das coortes, sem bloquear presenças posteriores. Sem prazo mantém janela anterior de 30 dias. Migration 20261023030000_abertura_inscricoes_ate aplicada e registrada via Management API. Base docente disponível de Barra do Garças: 6 professores/32 ativos; sincronização Mercúrio continua com ressalva de fonte 17/10.
