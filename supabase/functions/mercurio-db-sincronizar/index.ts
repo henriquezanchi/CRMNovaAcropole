@@ -388,7 +388,7 @@ Deno.serve(async (req) => {
     try {
         // Consulta administrativa sem importar pessoas nem alterar o CRM.
         // IDs do catálogo público não são os códigos legados do Mercúrio.
-        if (["consultar_membros_filiais", "consultar_matriculas_historicas", "atualizar_relatorio_matriculas"].includes(corpo.modo)) {
+        if (["consultar_membros_filiais", "consultar_matriculas_historicas", "atualizar_relatorio_matriculas", "exportar_identidades_ativas"].includes(corpo.modo)) {
             // Esta função é publicada com verify_jwt=true: o gateway verifica
             // a assinatura antes da execução; aqui restringimos o papel.
             let papel = "";
@@ -401,6 +401,21 @@ Deno.serve(async (req) => {
             }
             const pma = await abrirSessaoPhpMyAdmin();
             const [atualizacao] = await pma.consultar("SELECT data FROM `atualização`", "atualização");
+            if (corpo.modo === "exportar_identidades_ativas") {
+                // Conciliação autorizada da Acrópole Play: exporta somente
+                // hashes e IDs acadêmicos; nomes/e-mails ficam no servidor.
+                const linhas = await pma.consultar("SELECT cad_matr, cad_unidade, cad_nome, cad_email FROM cadastro WHERE cad_situacao='ATI' AND cad_email IS NOT NULL AND TRIM(cad_email)<>''", "cadastro");
+                const hash = async (s: string) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)))].map(b => b.toString(16).padStart(2, "0")).join("");
+                const alunos = [];
+                for (let i = 0; i < linhas.length; i += 128) {
+                    alunos.push(...await Promise.all(linhas.slice(i, i + 128).map(async (a: any) => ({
+                        mercurioId: String(a.cad_matr), unidade: String(a.cad_unidade).trim(),
+                        emailHash: await hash(String(a.cad_email).trim().toLowerCase()),
+                        nameHash: await hash(String(a.cad_nome).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim()),
+                    }))));
+                }
+                return json({ ok: true, base_atualizada_em: atualizacao?.data ?? null, alunos });
+            }
             if (corpo.modo === "atualizar_relatorio_matriculas") {
                 const ano = corpo.ano ?? 2026;
                 if (!Number.isInteger(ano) || ano < 1900 || ano > 2100) return json({ ok: false, erro: "Ano inválido" }, 400);
