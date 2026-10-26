@@ -118,7 +118,7 @@ async function sincronizarFilial(pma: any, filial: { id: number; nome: string; u
     const turmasBrutas = await pma.consultar(
         `SELECT tur_turma, tur_tipo, tur_nivel, tur_dia, tur_horario, tur_inicio, tur_previsao_formatura FROM turmas WHERE tur_unidade='${U}'`, "turmas");
     const alunosBrutos = await pma.consultar(
-        `SELECT cad_matr, cad_nome, cad_nivel, cad_tur_unidade, cad_turma, cad_ingresso, cad_reingresso, cad_recuperado, cad_midia_ingresso, cad_contribuicao, cad_cel_ddd, cad_cel_fone, cad_res_ddd, cad_res_fone, cad_email, cad_nascimento, cad_res_cidade, cad_res_uf FROM cadastro WHERE cad_unidade='${U}' AND cad_situacao='ATI'`, "cadastro");
+        `SELECT cad_matr, cad_nome, cad_nivel, cad_tur_unidade, cad_turma, cad_ingresso, cad_reingresso, cad_recuperado, cad_midia_ingresso, cad_cel_ddd, cad_cel_fone, cad_res_ddd, cad_res_fone, cad_email, cad_nascimento, cad_res_cidade, cad_res_uf FROM cadastro WHERE cad_unidade='${U}' AND cad_situacao='ATI'`, "cadastro");
     const fichasBrutas = await pma.consultar(
         `SELECT fic_matr, SUM(fic_status='ATR' AND (fic_ano*100+fic_mes) BETWEEN ${iniAtraso} AND ${fimAtraso}) AS atraso, MAX(fic_datapg) AS ultimo FROM fichas WHERE fic_unidade='${U}' AND fic_ano >= ${dIni.getUTCFullYear()} GROUP BY fic_matr`, "fichas");
 
@@ -260,7 +260,7 @@ async function sincronizarFilial(pma: any, filial: { id: number; nome: string; u
             ingresso: base.ingresso, reingresso: base.reingresso, recuperado: base.recuperado,
             ...comp,
             midia_ingresso: b.cad_midia_ingresso != null ? Number(b.cad_midia_ingresso) : null,
-            contribuicao: b.cad_contribuicao != null ? Number(b.cad_contribuicao) : null,
+            contribuicao: null, // cad_contribuicao saiu da view em 25/10/2026 (sem uso no Mercúrio há 10+ anos)
             meses_em_atraso: mesesAtraso, ultimo_pagamento: ficha ? dataOuNull(ficha.ultimo) : null,
             ativo: true, visto_em: inicioRodada, removido_em: null,
         });
@@ -378,6 +378,16 @@ async function atualizarRelatorioMatriculas(pma: any, filial: any, ano: number, 
     return { filial: filial.nome, ano, fonte_data: fonteData, novas: linhas.reduce((s, l) => s + (l.novas ?? 0), 0), reingressos: linhas.reduce((s, l) => s + (l.reingressos ?? 0), 0) };
 }
 
+// Desde 24/10/2026 a tabela cadastro é uma VIEW online (sem carga noturna);
+// a tabela `atualização` ficou parada na última carga. Vale a mais recente
+// entre a carga registrada e o momento da consulta (Brasília).
+async function dataBaseMercurio(pma: any): Promise<{ data: string }> {
+    const [registro] = await pma.consultar("SELECT data FROM `atualização`", "atualização").catch(() => []);
+    const agora = new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "medium" }).format(new Date());
+    const carga = String(registro?.data || "");
+    return { data: carga > agora ? carga : agora };
+}
+
 Deno.serve(async (req) => {
     const cors = handleCors(req);
     if (cors) return cors;
@@ -400,7 +410,7 @@ Deno.serve(async (req) => {
                 return json({ ok: false, erro: "Consulta restrita ao serviço" }, 403);
             }
             const pma = await abrirSessaoPhpMyAdmin();
-            const [atualizacao] = await pma.consultar("SELECT data FROM `atualização`", "atualização");
+            const atualizacao = await dataBaseMercurio(pma);
             if (corpo.modo === "exportar_identidades_ativas") {
                 // Conciliação autorizada da Acrópole Play: exporta somente
                 // hashes e IDs acadêmicos; nomes/e-mails ficam no servidor.
@@ -464,7 +474,7 @@ Deno.serve(async (req) => {
         if (!filiais?.length) return json({ ok: false, erro: "Nenhuma filial com mercurio_unidade configurado" }, 400);
 
         const pma = await abrirSessaoPhpMyAdmin();
-        const [atualizacao] = await pma.consultar("SELECT data FROM `atualização`", "atualização");
+        const atualizacao = await dataBaseMercurio(pma);
 
         const resultados: any[] = [];
         for (const f of filiais) {

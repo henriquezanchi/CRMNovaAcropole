@@ -10786,3 +10786,16 @@ Fonte administrativa atualizada e Edge ativa; o frontend é publicado por push.
 ## Continuidade — aberturas e avaliação de interessados (23/10/2026)
 
 Leia primeiro [o documento de continuidade](docs/CONTINUIDADE-ABERTURAS-CRM-2026-10-23.md) e os manuais nele indicados. Ele registra decisões, arquivos, migrações já aplicadas, testes e passos finais. Lead Forte foi descontinuado por solicitação explícita do usuário; não restaurar a heurística por quantidade de inscrições.
+
+## Mercúrio online por VIEW (25/10/2026)
+
+O professor João Guilherme trocou `cadastro`, `reciboc` e `reciboi` por VIEWS
+online no `oinabview` (sem carga noturna). `cad_recuperado`, `cad_dirigente`,
+`cad_empresa` e `cad_cad_pedagogo` (nome com "cad_" repetido, assim mesmo)
+estão disponíveis; `cad_contribuicao` foi removida de vez (sem uso no Mercúrio
+há 10+ anos) — não voltar a consultá-la. `fichas`, `turmas`, `unidades` e
+`atualização` continuam tabelas; `atualização` ficou parada em 17/10, então
+`dataBaseMercurio()` (`mercurio-db-sincronizar`) usa a mais recente entre ela e
+o momento da consulta em Brasília. Recibos com data futura são normais
+(compensação bancária de fim de semana/feriado). Ainda contém CPF/RG: nunca
+trazer pro CRM.
