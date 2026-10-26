@@ -168,8 +168,10 @@ async function sincronizarPeopleDaFilial(filial: string, branchId: string) {
         );
         tagsFinais.push(novoAtivo ? "Ativo" : "Inativo");
         if (nivelTag) tagsFinais.push(nivelTag);
-        if (viraRecuperado) tagsFinais.push("Recuperado");
-        else if (tagsAntigas.includes("Recuperado")) tagsFinais.push("Recuperado"); // preserva, é permanente
+        // "Recuperado" é permanente e já sobrevive ao filtro acima; só entra de novo
+        // se ainda não estiver (antes era empurrado a cada rodada e se repetia).
+        if (viraRecuperado && !tagsFinais.includes("Recuperado")) tagsFinais.push("Recuperado");
+        tagsFinais = [...new Set(tagsFinais)];
 
         const pessoaIdentificador = leadExistente
             ? leadExistente.pessoaIdentificador

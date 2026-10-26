@@ -300,6 +300,7 @@ async function sincronizarFilial(pma: any, filial: { id: number; nome: string; u
         if (!lead.cidade && b.cad_res_cidade) payload.cidade = String(b.cad_res_cidade).trim();
         if (!lead.uf && b.cad_res_uf) payload.uf = String(b.cad_res_uf).trim();
 
+        tags = [...new Set(tags)];
         const mudouTags = JSON.stringify([...tags].sort()) !== JSON.stringify([...tagsAntigas].sort());
         if (mudouTags) payload.tags = JSON.stringify(tags);
         if (Object.keys(payload).length) atualizacoesLeads.push({ id: lead.pessoaIdentificador, payload });

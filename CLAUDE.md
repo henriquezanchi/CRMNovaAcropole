@@ -10799,3 +10799,20 @@ há 10+ anos) — não voltar a consultá-la. `fichas`, `turmas`, `unidades` e
 o momento da consulta em Brasília. Recibos com data futura são normais
 (compensação bancária de fim de semana/feriado). Ainda contém CPF/RG: nunca
 trazer pro CRM.
+
+## Coluna Matriculados ajustada + "Recuperado" repetido (26/10/2026)
+
+- `mercury-sincronizar` empurrava "Recuperado" de novo a cada rodada (o filtro
+  já preservava a tag e o código a acrescentava outra vez): 3.004 leads com a
+  tag repetida (até 8x). Corrigido nas 2 sincronizações (dedupe por `Set`) e
+  limpo no banco preservando ordem/formato (`log_atividade`,
+  `acao='limpeza_tags_repetidas'`).
+- Coluna "Matriculados" = matrícula de out/2026 confirmada no Mercúrio
+  (`mercurio_alunos` ativo, `conta_remuneracao`, `competencia` do mês). 21
+  leads movidos pra "Frios" — resíduo da movimentação de 08/10, feita quando
+  `data_matricula` ainda estava errada (competências antigas, alunos que saíram,
+  sem cadastro no Mercúrio). Log `acao='mover_lead'`, autor "Claude (ajuste da
+  coluna Matriculados)". Itumbiara (filial inativa) não foi tocada.
+- Pendência: CLARA FLEURY (560207, Ulisses) e CLARA GONCALVES FLEURY
+  (940000010, Mercúrio matr. 53102) em Goiânia II parecem a mesma pessoa, mas
+  com telefone/e-mail diferentes — não mesclado automaticamente.
