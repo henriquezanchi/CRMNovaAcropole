@@ -59,11 +59,22 @@ async function obterTokenUlissesApi() {
 // que a resposta não for 2xx (inclusive 401 — o chamador decide o que
 // fazer, ex: testar-ulisses-api.js trata 401 como "esperado, ainda
 // bloqueado" em vez de falha).
+// Ponte da Cloudflare (2026-10-26, a mesma do Portal do Membro, infra/ponte-cloudflare no repositório do Portal):
+// o Cloudflare da Acrópole Brasil desafia chamadas vindas de datacenter (GitHub Actions recebia 403 mesmo com o
+// cabeçalho oficial), mas deixa passar as que saem de dentro da Cloudflare. Com PONTE_URL e PONTE_CHAVE no ambiente,
+// a chamada passa pela ponte; sem eles (rodando no computador), vai direto como antes. A ponte repassa método,
+// corpo e Authorization.
+function urlDaApi(path) {
+    const destino = `${API_BASE_URL}${path}`;
+    return process.env.PONTE_URL && process.env.PONTE_CHAVE ? `${process.env.PONTE_URL}/?url=${encodeURIComponent(destino)}` : destino;
+}
+
 async function chamarApi(path, { method = 'GET', esperado, texto = false, corpo } = {}) {
     const token = await obterTokenUlissesApi();
-    const resp = await fetch(`${API_BASE_URL}${path}`, {
+    const resp = await fetch(urlDaApi(path), {
         method,
         headers: {
+            ...(process.env.PONTE_URL && process.env.PONTE_CHAVE ? { 'x-ponte-chave': process.env.PONTE_CHAVE } : {}),
             Authorization: `Bearer ${token}`,
             // Cabeçalho oficial do portal, validado para permitir chamadas
             // da infraestrutura cloud sem contornar o desafio do navegador.

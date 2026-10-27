@@ -55,9 +55,12 @@ on:
 # na raiz, sem precisar confiar em nenhum lock do lado do CRM/navegador
 # (que só protege contra clique duplicado NO MESMO navegador — não contra
 # o cron diário, outro dispositivo, ou outra aba).
+# 26/10/2026: fila separada por modo. Antes um disparo do Ulisses (agora agendado de 3 em 3 h na reta final de
+# eventos) cancelaria uma rodada do Mercúrio em andamento. Mercúrio mantém "o novo cancela o anterior" (motivo
+# acima); o Ulisses espera a vez em vez de cancelar (duas rotinas do Ulisses podem cair perto uma da outra).
 concurrency:
-  group: scraper-mercurio
-  cancel-in-progress: true
+  group: scraper-${{ github.event.inputs.modo || 'mercurio' }}
+  cancel-in-progress: ${{ (github.event.inputs.modo || 'mercurio') == 'mercurio' }}
 
 jobs:
   scraper:
@@ -93,6 +96,10 @@ jobs:
         if: ${{ github.event.inputs.modo == 'ulisses_api' }}
         env:
           FILTRO_FILIAL: ${{ github.event.inputs.filial }}
+          # Ponte da Cloudflare (a mesma do Portal do Membro): o Cloudflare da Acrópole Brasil bloqueia o Actions
+          # direto (403), mas aceita a chamada que sai da Cloudflare. Ver urlDaApi() em scraper/ulisses-api.js.
+          PONTE_URL: ${{ secrets.PONTE_URL }}
+          PONTE_CHAVE: ${{ secrets.PONTE_CHAVE }}
         run: node sincronizar-ulisses-api-local.mjs
 
       - name: Guardar prints de erro (se algum passo falhou)

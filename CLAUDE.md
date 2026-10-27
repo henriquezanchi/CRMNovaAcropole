@@ -10816,3 +10816,22 @@ trazer pro CRM.
 - Pendência: CLARA FLEURY (560207, Ulisses) e CLARA GONCALVES FLEURY
   (940000010, Mercúrio matr. 53102) em Goiânia II parecem a mesma pessoa, mas
   com telefone/e-mail diferentes — não mesclado automaticamente.
+
+## Ulisses na nuvem pela ponte da Cloudflare (2026-10-26)
+
+Pedido do usuário: tirar do computador dele as três Tarefas Agendadas do Windows do Ulisses (diária, semana do
+evento, reta final), que abriam uma janela preta a cada disparo e só rodavam com a máquina ligada.
+- `scraper/ulisses-api.js`: `urlDaApi()` passa as chamadas da API do Ulisses pela **ponte da Cloudflare do Portal do
+  Membro** (`infra/ponte-cloudflare` no repositório BPO; host `api.acropolebrasil.com.br` liberado) quando há
+  `PONTE_URL` e `PONTE_CHAVE`; sem elas, chamada direta como antes. Testado do computador do usuário pela ponte:
+  `/facade/filiaisAtivas` respondeu (141 filiais). O token continua vindo do Auth0 direto (não é bloqueado).
+- `.github/workflows/scraper.yml`: o passo `modo=ulisses_api` recebe `PONTE_URL`/`PONTE_CHAVE` dos segredos do
+  repositório; fila separada por modo (`scraper-<modo>`): o Mercúrio mantém "o novo cancela o anterior", o Ulisses
+  espera a vez (antes um disparo do Ulisses cancelaria uma rodada do Mercúrio).
+- `migracao_ulisses_api_nuvem.sql`: religa `ulisses-api-diario` (05:00) e cria `ulisses-api-semana-evento` (6 h, só
+  com evento ativo nos próximos 7 dias) e `ulisses-api-reta-final` (3 h, evento hoje/amanhã), com a regra no próprio
+  pg_cron. **Aplicar só depois** de cadastrar os segredos `PONTE_URL`/`PONTE_CHAVE` no GitHub e de uma rodada manual
+  `modo=ulisses_api` dar certo; depois, desligar as três tarefas "CRM - Ulisses *" do Windows.
+- A pasta `C:\Scrapper` no computador do usuário é uma cópia antiga (parada em 15/09, com mudanças locais nunca
+  enviadas que já existem, mais novas, no GitHub). Não usar como base; a cópia atual está em
+  `projetos/crm-nova-acropole`.
