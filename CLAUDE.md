@@ -10835,3 +10835,40 @@ evento, reta final), que abriam uma janela preta a cada disparo e só rodavam co
 - A pasta `C:\Scrapper` no computador do usuário é uma cópia antiga (parada em 15/09, com mudanças locais nunca
   enviadas que já existem, mais novas, no GitHub). Não usar como base; a cópia atual está em
   `projetos/crm-nova-acropole`.
+
+## Memória da conversa + qualificação menos travada (28/10/2026)
+
+Pedido do usuário: qualificar as conversas lendo tudo uma vez e, depois, só o
+resumo + o que chegou novo; a IA estava cautelosa demais (quase todo mundo
+ficava "a qualificar").
+
+- `crm_memoria_conversa` (`migracao_memoria_conversas_ia.sql`, JÁ RODADA):
+  por filial+pessoa guarda `resumo` datado, `perfil` (interesses,
+  disponibilidade, objecoes, contexto — cada item com `mensagem_id`+`trecho`
+  literal do contato; item sem prova é descartado), `proximo_passo`,
+  `qualificacao`, `ate_mensagem_id`/`qtd_ate`/`transcritas` (ponto de corte) e
+  `incrementos`. Escrita só pelas Edge Functions; leitura pública.
+- `planejarLeitura()` (`_shared/agentes-crm.mjs`): com memória válida a IA
+  recebe `memoria_anterior` + 6 mensagens de contexto + só as novas. Relê tudo
+  quando: não há memória, o histórico até o corte mudou (contagem diferente),
+  chegou transcrição de áudio antigo, versão mudou ou após 20 leituras
+  incrementais (revisão periódica). A memória só é gravada depois da
+  qualificação publicada.
+- Especialistas (sugestão de resposta etc.) recebem a conversa inteira se tiver
+  até 40 mensagens; acima disso, resumo + perfil + últimas 40.
+- Etapa provável: `etapa_provavel` + `indicio` (fala literal do contato) quando
+  não há pedido explícito. Nunca vale para matrícula. Etapa confirmada sem
+  prova cai para provável se houver indício. A fila de especialidades e o
+  coordenador usam a provável quando não há confirmada; bloqueios (Não
+  Contatar, pausa, conferência) continuam prevalecendo. `confianca`:
+  confirmada/provavel/sem_sinal. `VERSAO_AGENTES` = agentes-crm-v3.
+- `extrairJsonIA()` aceita texto em volta do JSON; resposta sem JSON vira o
+  erro específico "Resposta da IA fora do formato JSON." (antes caía no
+  genérico — era a causa provável das 34 conversas travadas).
+- Limites: 800 mil caracteres e 60 áudios por dia (`crm_ia_config`).
+- Tela: bloco "O que a conversa já mostrou" no topo do acompanhamento do lead
+  (`carregarMemoriaConversaIA()`, `js/acompanhamento.js`, só `textContent`); a
+  fila de especialidades mostra "(provável)".
+- Testes: `tests/agentes-crm-memoria.test.mjs`. Os testes que transpilam
+  TypeScript aceitam `TYPESCRIPT_MODULE` (caminho do typescript.js) e removem
+  imports com CRLF.

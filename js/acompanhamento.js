@@ -19,6 +19,7 @@ function renderizarAcompanhamento(lead) {
     const sinal = AcompanhamentoModelo.proximidade(lead);
     const trabalho = AcompanhamentoModelo.trabalhoEspecializado(lead);
     el.innerHTML = `<details open><summary><strong>Acolhimento e próximo passo</strong></summary>
+        <section id="memoriaConversaIA" class="memoria-ia" hidden></section>
         <p><strong>Frente: ${escapeHTML(trabalho.frente)}</strong> · ${escapeHTML(trabalho.objetivo)}</p><p>Próximo passo sugerido: ${escapeHTML(trabalho.proximo)}</p>
         <p id="acompanhamentoSinalAtual"><strong>${escapeHTML(sinal.rotulo)}</strong> · ${escapeHTML(sinal.motivo)}</p><p>Registre o que a pessoa declarou. Silêncio não é recusa; simpatia não é confirmação. Conte no contexto breve qual fala sustenta a intenção, sem copiar dados íntimos.</p>
         ${!schemaPronto ? '<p role="status">Atualização do banco pendente. Os registros antigos continuam disponíveis.</p>' : ''}
@@ -37,6 +38,7 @@ function renderizarAcompanhamento(lead) {
         <small>${dado.atualizado_em ? 'Último registro: ' + escapeHTML(new Date(dado.atualizado_em).toLocaleString('pt-BR')) + ' · ' + escapeHTML(dado.atualizado_por) : 'Sem acompanhamento registrado.'}</small>
         <aside id="acompanhamentoSugestao" class="acompanhamento-sugestao"></aside></details>`;
     renderizarSugestaoConversa(dado);
+    carregarMemoriaConversaIA(lead);
     const form = document.getElementById('acompanhamentoForm');
     const essenciais = ['intencao', 'contato', 'proximo', 'responsavel', 'proxima_em'];
     const grade = form.querySelector('.acompanhamento-grade');
@@ -46,6 +48,57 @@ function renderizarAcompanhamento(lead) {
     [...grade.children].forEach(label => { if (!essenciais.includes(label.querySelector('[name]')?.name)) complemento.append(label); });
     grade.after(detalhes);
     document.getElementById('acompanhamentoForm').addEventListener('submit', evento => { evento.preventDefault(); salvarAcompanhamento(lead); });
+}
+// Memória escrita pela IA de qualificação: resumo datado + perfil, cada item com a fala que o comprova.
+const ROTULOS_ETAPA_IA = { qualificacao: 'A qualificar', informacoes: 'Informações iniciais', eventos: 'Eventos e inscrições', pos_evento: 'Pós-evento', matricula: 'Matrícula', antigos_alunos: 'Antigo aluno', acolhimento: 'Aluno atual' };
+const ROTULOS_PERFIL_IA = { interesses: 'Interesses', disponibilidade: 'Disponibilidade', objecoes: 'Objeções', contexto: 'Contexto' };
+async function carregarMemoriaConversaIA(lead) {
+    const el = document.getElementById('memoriaConversaIA');
+    if (!el || !lead?.pessoaIdentificador || !lead.filial || !window.supabaseClient) return;
+    const pessoa = String(lead.pessoaIdentificador);
+    el.dataset.pessoa = pessoa;
+    const { data, error } = await window.supabaseClient.from('crm_memoria_conversa')
+        .select('resumo,perfil,proximo_passo,qualificacao,gerado_em').eq('filial', lead.filial).eq('pessoa', pessoa).maybeSingle();
+    if (!el.isConnected || el.dataset.pessoa !== pessoa) return;
+    if (error || !data?.resumo) { el.hidden = true; return; }
+    el.replaceChildren();
+    const titulo = document.createElement('h4'); titulo.textContent = 'O que a conversa já mostrou'; el.append(titulo);
+    const q = data.qualificacao || {};
+    const confirmada = q.etapa && q.etapa !== 'qualificacao';
+    const etapa = confirmada ? q.etapa : (q.etapa_provavel || 'qualificacao');
+    const linhaEtapa = document.createElement('p'); linhaEtapa.className = 'memoria-ia-etapa';
+    const rotulo = document.createElement('strong'); rotulo.textContent = 'Etapa: ';
+    linhaEtapa.append(rotulo, ROTULOS_ETAPA_IA[etapa] || etapa);
+    if (!confirmada && q.etapa_provavel) { const selo = document.createElement('span'); selo.className = 'memoria-ia-selo'; selo.textContent = 'provável'; linhaEtapa.append(' ', selo); }
+    el.append(linhaEtapa);
+    const prova = confirmada ? q.evidencia : q.indicio;
+    if (prova?.trecho) { const citacao = document.createElement('blockquote'); citacao.textContent = prova.trecho; el.append(citacao); }
+    const resumo = document.createElement('p'); resumo.className = 'memoria-ia-resumo'; resumo.textContent = data.resumo; el.append(resumo);
+    const perfil = data.perfil || {};
+    const campos = Object.keys(ROTULOS_PERFIL_IA).filter(campo => Array.isArray(perfil[campo]) && perfil[campo].length);
+    if (campos.length) {
+        const lista = document.createElement('dl'); lista.className = 'memoria-ia-perfil';
+        for (const campo of campos) {
+            const dt = document.createElement('dt'); dt.textContent = ROTULOS_PERFIL_IA[campo];
+            const dd = document.createElement('dd');
+            for (const item of perfil[campo]) {
+                const chip = document.createElement('span'); chip.className = 'memoria-ia-chip';
+                chip.textContent = item.valor; chip.title = 'Disse: “' + item.trecho + '”';
+                dd.append(chip);
+            }
+            lista.append(dt, dd);
+        }
+        el.append(lista);
+    }
+    if (data.proximo_passo) {
+        const passo = document.createElement('p'); const rotuloPasso = document.createElement('strong');
+        rotuloPasso.textContent = 'Próximo passo sugerido: '; passo.append(rotuloPasso, data.proximo_passo); el.append(passo);
+    }
+    const rodape = document.createElement('small');
+    const quando = data.gerado_em ? new Date(data.gerado_em).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '';
+    rodape.textContent = `Leitura da IA${quando ? ' em ' + quando : ''}. Passe o mouse num item do perfil para ver a frase da pessoa. Confira antes de usar.`;
+    el.append(rodape);
+    el.hidden = false;
 }
 function renderizarSugestaoConversa(dado) {
     const el = document.getElementById('acompanhamentoSugestao');

@@ -1,7 +1,7 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises';
-import ts from '/workspace/BPO/node_modules/typescript/lib/typescript.js';
+const {default:ts}=await import(process.env.TYPESCRIPT_MODULE||'/workspace/BPO/node_modules/typescript/lib/typescript.js');
 async function carregar(caminho,nome,{preparar,chamar}){
- const src=(await readFile(caminho,'utf8')).replace(/^import .*;\n/gm,'');
+ const src=(await readFile(caminho,'utf8')).replace(/^import .*;\r?\n/gm,'');
  const js=ts.transpileModule(src,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
  return new Function('Deno','prepararAgente','chamarClaude','montarTabelaDiasSemana','contextoOficialCRM',js+'; return '+nome+';')({env:{get(){return 'teste';}},serve(){}},preparar,chamar,()=> 'Calendário de teste',async()=> 'CONTEXTO OFICIAL TESTE');
 }

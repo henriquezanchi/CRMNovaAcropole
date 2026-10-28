@@ -1164,6 +1164,16 @@ select:hover { border-color: #94a3b8; }
 .aberturas-conferencia input,.aberturas-conferencia select { width:100%; min-width:0; padding:9px; border:1px solid var(--border-color); border-radius:6px; }
 .aberturas-conferencia p,.aberturas-conferencia small { font-size:12px; line-height:1.5; }
 @media(max-width:600px) { .aberturas-conferencia input,.aberturas-conferencia select { font-size:16px; } .participante-row { flex-wrap:wrap; } .participante-info { min-width:0; overflow-wrap:anywhere; } }
+.memoria-ia { margin:10px 0 14px; padding:10px 12px; border:1px solid var(--border-color); border-radius:8px; background:#f6faf9; }
+.memoria-ia h4 { margin:0 0 6px; font-size:13px; color:var(--na-green-dark); }
+.memoria-ia p { margin:0 0 6px; font-size:12.5px; line-height:1.45; }
+.memoria-ia blockquote { margin:0 0 8px; padding:4px 8px; border-left:2px solid var(--border-color); color:var(--text-muted); font-size:12px; font-style:italic; }
+.memoria-ia small { color:var(--text-muted); font-size:11px; }
+.memoria-ia-selo { display:inline-block; padding:1px 7px; border-radius:999px; background:#fff4cc; color:#7a5a00; font-size:11px; font-weight:600; }
+.memoria-ia-perfil { display:grid; grid-template-columns:auto 1fr; gap:4px 10px; margin:0 0 8px; font-size:12px; }
+.memoria-ia-perfil dt { font-weight:600; color:var(--text-dark); }
+.memoria-ia-perfil dd { margin:0; display:flex; flex-wrap:wrap; gap:4px; }
+.memoria-ia-chip { padding:1px 8px; border-radius:999px; background:#e8f3f1; color:var(--na-green-dark); cursor:help; }
 .acompanhamento-sugestao { border-top:1px solid var(--border-color); margin-top:14px; padding-top:10px; }
 .acompanhamento-sugestao h4 { margin:0 0 6px; font-size:13px; }
 .acompanhamento-sugestao textarea { min-height:110px; margin-bottom:8px; }
