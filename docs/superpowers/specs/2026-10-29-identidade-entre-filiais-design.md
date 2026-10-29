@@ -8,7 +8,7 @@ A mesma pessoa às vezes está cadastrada em mais de uma filial. Hoje dois SDRs 
 
 1. Encontrar os e-mails repetidos em toda a base, inclusive entre filiais.
 2. **Mesma filial:** com o mesmo e-mail, telefone e nome compatível, mesclar direto, como já se faz hoje.
-3. **Filiais diferentes:** com o mesmo e-mail, telefone e nome compatível, **não mesclar**. Os cadastros ficam ligados como a mesma pessoa, cada um na sua filial, e ganham a tag "Várias Filiais".
+3. **Filiais diferentes:** com o mesmo e-mail, telefone e nome compatível, **não mesclar**. Os cadastros ficam ligados como a mesma pessoa, cada um na sua filial, e cada cadastro ganha uma tag "Também em: <filial>" para cada outra filial onde a pessoa está.
 4. Quando um SDR conversa com essa pessoa por uma filial, a outra filial fica **travada** para envio. A trava cai depois de **15 dias sem nenhuma mensagem**, de nenhum dos lados.
 5. Os grupos que não batem em tudo vão para a revisão manual que já existe.
 
@@ -24,7 +24,8 @@ Kanban, conversas, qualificação da IA, importação do Ulisses e alunos do Mer
 
 - Nova coluna `leads_inscricoes.identidade_id uuid` (nula para quem não tem cadastro em outra filial), com índice.
 - Todos os membros de uma identidade compartilham o mesmo `identidade_id`.
-- A tag "Várias Filiais" vai em cada membro. O resumo de cada membro ganha uma nota, por exemplo: "Também cadastrado em: Setor Oeste (cadastro 12345)". A nota não se repete a cada varredura.
+- Cada membro ganha uma tag **"Também em: <filial>"** para cada **outra** filial da identidade, nunca a própria. Exemplo: o cadastro do Jardim América ganha "Também em: Setor Oeste", e o do Setor Oeste ganha "Também em: Jardim América". O nome da filial perde o prefixo "Goiânia - " ("Goiânia II" fica igual). As tags são recalculadas a partir dos membros atuais sempre que alguém entra ou sai da identidade, então nunca ficam desatualizadas. A importação de planilhas preserva essas tags, como qualquer tag fora do sistema.
+- Nova família de tag "Filiais" em `FAMILIAS_TAG` (`/^Também em: /`), com cor própria, para o card mostrar de longe em quais outras filiais a pessoa está.
 - Um cadastro mesclado depois (`crm_leads_mesclados`) passa o `identidade_id` para o cadastro que ficou.
 
 ### 2. Varredura por e-mail (`crm_varrer_emails_repetidos(p_aplicar boolean)`)
@@ -47,7 +48,7 @@ Agendamento: uma vez por dia (06:20 Brasília), depois das importações da madr
 
 ### 3. Ligar à mão (tela de revisão)
 
-Os casos entre filiais aparecem na tela de auditoria (`js/auditoria-base.js`, função `auditar-base-crm`) com o botão **"É a mesma pessoa: ligar"**. O botão chama uma RPC (`crm_ligar_identidade(p_ids text[])`) que confere se as filiais são distintas e se nenhum membro está na lixeira, atribui o `identidade_id`, aplica a tag e a nota e marca o caso como resolvido. Não mescla nem apaga nada. O botão de descartar continua como hoje.
+Os casos entre filiais aparecem na tela de auditoria (`js/auditoria-base.js`, função `auditar-base-crm`) com o botão **"É a mesma pessoa: ligar"**. O botão chama uma RPC (`crm_ligar_identidade(p_ids text[])`) que confere se as filiais são distintas e se nenhum membro está na lixeira, atribui o `identidade_id`, recalcula as tags "Também em:" e marca o caso como resolvido. Não mescla nem apaga nada. O botão de descartar continua como hoje.
 
 ### 4. Trava de conversa (`crm_trava_identidade(p_pessoa text)`)
 
@@ -66,7 +67,7 @@ Quem usa a trava:
 - **`whatsapp-send`:** para um lead travado, recusa qualquer envio exceto reação, com `erro: 'conversa_em_outra_filial'` e uma mensagem com filial, atendente e data de liberação.
 - **Disparos em massa** (`filtrarExclusaoInteligenteWpp`): exclui os travados, com o motivo "Em conversa pela filial X".
 - **Gaveta do lead e chat:** uma faixa "Em conversa pela filial X, com Fulano, até DD/MM", com a caixa de texto desabilitada.
-- **Card no Kanban:** o selo "Várias Filiais" e, quando travado, "Em conversa por X".
+- **Card no Kanban:** as tags "Também em: <filial>" e, quando travado, o selo "Em conversa por X".
 
 ### 5. Mensagem recebida (`whatsapp-webhook`)
 
@@ -90,7 +91,7 @@ Isso tira essas pessoas de "Não Identificados". Candidatos de identidades difer
 
 - **Pessoa nova numa terceira filial:** a varredura do dia seguinte a liga à identidade existente, se as regras passarem.
 - **Membros com telefones diferentes depois de ligados** (alguém editou um deles): a ligação continua. A trava usa a identidade, não o telefone.
-- **Ligação errada:** um botão "Desligar" na gaveta remove o membro da identidade, tira a tag e grava no log. Nada é apagado.
+- **Ligação errada:** um botão "Desligar" na gaveta remove o membro da identidade, recalcula as tags "Também em:" de todos os membros e grava no log. Nada é apagado.
 - **Falha na trava** (erro de consulta): `whatsapp-send` bloqueia o envio de modelos, que é o lado seguro, e libera respostas dentro da janela de 24h. A conversa não pode ficar presa por erro técnico.
 
 ## Testes
