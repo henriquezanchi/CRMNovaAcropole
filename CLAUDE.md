@@ -10900,6 +10900,12 @@ JÁ RODADA; cron `kanban-reorganizar` a cada 15 min,
 - Selo nos cards de Vai à Palestra/Como Foi: inscrito ou não no Ulisses e presença
   registrada ou não (`carregarStatusEventosKanban()`), sem IA.
 - Varredura inicial: 1.576 movimentos (lote `09637fd9-b890-4a48-8952-0e03c3021f2d`).
+- **Bug real (29/10, mesmo dia): CRM parou de carregar pra quem já tinha colunas salvas.** As constantes
+  `VERSAO_COLUNAS_KANBAN`/`CHAVE_STORAGE_VERSAO_COLUNAS`/`COLUNAS_KANBAN_ANTIGAS` foram declaradas no meio do
+  `js/app.js`, mas `let columnsConfig = carregarColunasLocal()` roda no topo do arquivo → "Cannot access before
+  initialization", o `app.js` inteiro parava e nada carregava (navegador limpo passava no 1º acesso, porque a
+  constante nem era consultada). Movidas pro topo, junto de `CHAVE_STORAGE_COLUNAS`. Regra: constante usada por
+  algo que roda na carga do arquivo fica ACIMA desse uso.
 
 ## Inscrição no Ulisses conta como contato permitido (29/10/2026)
 
