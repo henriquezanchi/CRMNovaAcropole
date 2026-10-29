@@ -10988,7 +10988,12 @@ Especificação: `docs/superpowers/specs/2026-10-29-requalificacao-leads-design.
   ligado à ficha do Mercúrio quando têm o mesmo e-mail OU telefone E o mesmo primeiro nome (família divide contato —
   primeiro nome diferente nunca mescla; cadastro que bate com 2+ fichas fica de fora). Fica sempre o cadastro do
   Mercúrio. 1ª rodada: 390 pessoas, 405 cadastros removidos, 0 falhas.
-- **Ulisses parado desde 19/10:** última importação de Inscrições de Barra do Garças em 19/10; tentativas de 22/10
-  barradas pelo Cloudflare (403); cron `ulisses-api-diario` inativo (depende de PONTE_URL/PONTE_CHAVE no GitHub).
-  Leitura direta da API a partir do computador funciona (Dia Mundial da Filosofia, Barra: 8 inscritos no Ulisses,
-  3 ainda inexistentes no CRM).
+- **Ulisses na nuvem RELIGADO (29/10):** estava parado desde 19/10 (403 do Cloudflare). Segredos `PONTE_URL`/
+  `PONTE_CHAVE` copiados do `.env` (não do `.env.local`, que tem as linhas vazias) do Portal
+  (`C:\Users\Henrique Zanchi\projetos\portal-na`) para o GitHub do CRM; `migracao_ulisses_api_nuvem.sql` aplicada
+  (diário 05:00, 6 h na semana do evento, 3 h na véspera/dia). Tarefas do Windows já estavam desligadas.
+  Correções no caminho: `csvInscricoes` exige `Accept` de CSV (pedia JSON → 406, `scraper/ulisses-api.js`); a
+  importação pula só os cadastros cujo ID do Ulisses já é de outra pessoa/filial, em vez de travar a filial inteira;
+  mesmo ID real + mesmo primeiro nome não é conflito (sobrenome oficial do Mercúrio após mesclagem) e quem tem
+  matrícula mantém o nome do Mercúrio; `crm_reorganizar_kanban` não protege quem está em Frios (cadastro novo nascia
+  "movido à mão"); `scraper/importar-no-crm.js` devolve o log da tela quando o envio é interrompido.
