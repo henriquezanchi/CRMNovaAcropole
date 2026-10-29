@@ -5,6 +5,8 @@
 --    mercurio_pessoas e chama crm_requalificar_leads() para o sobrevivente.
 --  * crm_reorganizar_kanban: aluno ativo / matrícula do mês / Não Contatar vão
 --    para a coluna certa mesmo se o card foi movido à mão há menos de 3 dias.
+--    Quem está em Frios (porta de entrada, inclusive cadastro recém-criado, que
+--    nasce com data de agora e parecia 'movido à mão') também não fica protegido.
 begin;
 CREATE OR REPLACE FUNCTION public.mesclar_leads_preservando_vinculos(p_principal text, p_outros text[], p_campos jsonb, p_autor text DEFAULT 'Equipe CRM'::text)
  RETURNS jsonb
@@ -91,7 +93,7 @@ begin
  create temp table _crm_kanban_mov as
  select a.* from crm_kanban_alvos() a
  where a.alvo is distinct from a.atual
-  and (p_forcar or a.alvo in ('Alunos','Matriculados','Truncados') or not (a.atualizado_em > now()-interval '3 days'
+  and (p_forcar or a.alvo in ('Alunos','Matriculados','Truncados') or a.atual = 'Frios' or not (a.atualizado_em > now()-interval '3 days'
    and (a.auto_em is null or a.atualizado_em > a.auto_em + interval '5 seconds')));
  select count(*) into v_total from _crm_kanban_mov;
  select coalesce(jsonb_object_agg(k,n),'{}'::jsonb) into v_mov
