@@ -10917,3 +10917,14 @@ responder. Não se grava "permitido" em ninguém; a regra é que mudou.
 (`lead.inscritoUlisses`) concordam — teste em `tests/acompanhamento.test.mjs`.
 Primeiro uso: 15 mensagens "como foi" com `contato_ulisses` (modelo aprovado,
 pt_BR) para quem tinha presença confirmada nos eventos de 01–24/10.
+
+## Disparo em massa nunca vai pra conversa em andamento (29/10/2026)
+
+Pedido do usuário: "os disparos em massa não podem ser para quem está com conversa ativa (há menos de uma
+semana)". `filtrarExclusaoInteligenteWpp()` (`js/whatsapp.js`, portão único das listas de disparo em massa)
+exclui quem tem qualquer mensagem, nossa ou do contato, nos últimos 7 dias (`DIAS_CONVERSA_ATIVA_CAMPANHA`,
+via `vw_wpp_conversas`, em lotes de 200 ids), com o motivo "Conversa em andamento (última mensagem em DD/MM)".
+A tag "Contato Recente: 7 dias" só cobria o que NÓS mandamos. Se a consulta falhar, ninguém entra na lista.
+Exceção: "Convidar (Janela Aberta)" passa `excluirConversaAtiva: false`, porque existe justamente pra quem
+acabou de escrever. Sem trava no `whatsapp-send`: lá `origemEnvio='campanha'` também é usado por lembrete de
+evento confirmado, pesquisa de no-show e reengajamento, que precisam falar com conversas em andamento.

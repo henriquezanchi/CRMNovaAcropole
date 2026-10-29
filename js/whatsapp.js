@@ -2983,17 +2983,47 @@ async function garantirRedeAtivosInativosCarregada() {
     }
 }
 
+// Conversa ativa (pedido do usuário, 2026-10-29): disparo em massa nunca
+// vai pra quem trocou mensagem com a gente (de qualquer lado) nos últimos
+// 7 dias — essa pessoa está sendo atendida 1 a 1, e um convite genérico
+// no meio da conversa soa robotizado. A tag "Contato Recente: 7 dias" só
+// cobre o que NÓS mandamos; isto cobre também quem escreveu pra gente.
+// Usa vw_wpp_conversas (1 linha por lead, já com a última mensagem).
+const DIAS_CONVERSA_ATIVA_CAMPANHA = 7;
+async function buscarConversasAtivasCampanha(ids) {
+    const desde = new Date(Date.now() - DIAS_CONVERSA_ATIVA_CAMPANHA * 86400000).toISOString();
+    const ativas = new Map();
+    for (let i = 0; i < ids.length; i += 200) {
+        const { data, error } = await window.supabaseClient.from('vw_wpp_conversas')
+            .select('pessoaIdentificador, ultima_mensagem_em')
+            .in('pessoaIdentificador', ids.slice(i, i + 200))
+            .gte('ultima_mensagem_em', desde);
+        if (error) throw error;
+        (data || []).forEach(c => ativas.set(String(c.pessoaIdentificador), c.ultima_mensagem_em));
+    }
+    return ativas;
+}
+
 // Busca tags FRESCAS direto do banco (nunca confia só no que já está em
 // `leadsAtuais`, que pode estar desatualizado — e o modo "segmento" do
 // Convidar API nem devolve `tags`, ver leads_por_tag_filial()). Devolve
 // `{validos, excluidos}` — `excluidos` já vem com o motivo (qual tag
 // bateu, ou "Ativo em outra unidade"), pra mostrar na tela sem esconder
-// a decisão.
-async function filtrarExclusaoInteligenteWpp(ids, { excluir30Dias = true } = {}) {
+// a decisão. `excluirConversaAtiva: false` só no "Convidar (Janela
+// Aberta)", que existe justamente pra quem acabou de escrever pra gente.
+async function filtrarExclusaoInteligenteWpp(ids, { excluir30Dias = true, excluirConversaAtiva = true } = {}) {
     const unicos = [...new Set((ids || []).map(String))];
     if (unicos.length === 0) return { validos: [], excluidos: [] };
     const tagsExclusao = excluir30Dias ? [...TAGS_EXCLUSAO_CAMPANHA_WPP, TAG_EXCLUSAO_30_DIAS_OPCIONAL] : TAGS_EXCLUSAO_CAMPANHA_WPP;
     await garantirRedeAtivosInativosCarregada();
+    let conversasAtivas = new Map();
+    if (excluirConversaAtiva) {
+        try { conversasAtivas = await buscarConversasAtivasCampanha(unicos); }
+        catch (e) {
+            console.warn('Não foi possível conferir conversas em andamento para a seleção em massa:', e);
+            return { validos: [], excluidos: unicos.map(id => ({ id, nome: id, motivo: 'Conversa em andamento não confirmada' })) };
+        }
+    }
     const { data, error } = await window.supabaseClient.from(NOME_TABELA).select('pessoaIdentificador, pessoaNome, tags, acompanhamento, filial, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, data_matricula').in('pessoaIdentificador', unicos);
     if (error || !Array.isArray(data)) {
         console.warn('Não foi possível confirmar as preferências de contato para a seleção em massa:', error);
@@ -3013,6 +3043,11 @@ async function filtrarExclusaoInteligenteWpp(ids, { excluir30Dias = true } = {})
         if (motivoTag) { excluidos.push({ id, nome: r ? r.pessoaNome : id, motivo: motivoTag }); continue; }
         if (r.acompanhamento?.contato === 'nao_contatar') {
             excluidos.push({ id, nome: r.pessoaNome || id, motivo: 'Preferência registrada: não contatar' });
+            continue;
+        }
+        if (conversasAtivas.has(id)) {
+            const ultima = new Date(conversasAtivas.get(id)).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+            excluidos.push({ id, nome: r.pessoaNome || id, motivo: `Conversa em andamento (última mensagem em ${ultima})` });
             continue;
         }
         // "Já matriculado" (pedido do usuário, 2026-10-08, plano
@@ -3043,7 +3078,7 @@ async function filtrarExclusaoInteligenteWpp(ids, { excluir30Dias = true } = {})
 // nos 3 pontos de disparo em massa, pra não repetir o mesmo markup.
 function htmlAvisoExclusaoInteligenteWpp(excluidos) {
     if (!excluidos || excluidos.length === 0) return '';
-    return `<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-shield-halved"></i> ${excluidos.length} lead(s) excluído(s) automaticamente (já disseram que não vão, pediram pra não ser contatados, ou já falamos com eles recentemente). <details style="margin-top:4px;"><summary style="cursor:pointer;">Ver quem e por quê</summary>${excluidos.map(e => `${escapeHTML(e.nome)} — <em>${escapeHTML(e.motivo)}</em>`).join('<br>')}</details></p>`;
+    return `<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-shield-halved"></i> ${excluidos.length} lead(s) excluído(s) automaticamente (já disseram que não vão, pediram pra não ser contatados, já falamos com eles recentemente ou estão com conversa em andamento). <details style="margin-top:4px;"><summary style="cursor:pointer;">Ver quem e por quê</summary>${excluidos.map(e => `${escapeHTML(e.nome)} — <em>${escapeHTML(e.motivo)}</em>`).join('<br>')}</details></p>`;
 }
 
 // Tags mais úteis pra uma campanha de convite — sistema (sempre existem)
@@ -3613,7 +3648,7 @@ async function iniciarConviteJanelaAberta() {
     // mesmo quem acabou de responder pode já ter dito "não vou" ou pedido
     // pra não ser contatado numa conversa anterior.
     const check30DiasJanela = document.getElementById('conviteJanelaAbertaExcluir30DiasCheck');
-    const { validos: idsValidos, excluidos: excluidosInteligente } = await filtrarExclusaoInteligenteWpp(semConfirmado.map(c => c.pessoaIdentificador), { excluir30Dias: !check30DiasJanela || check30DiasJanela.checked });
+    const { validos: idsValidos, excluidos: excluidosInteligente } = await filtrarExclusaoInteligenteWpp(semConfirmado.map(c => c.pessoaIdentificador), { excluir30Dias: !check30DiasJanela || check30DiasJanela.checked, excluirConversaAtiva: false });
     const setValidos = new Set(idsValidos.map(String));
     conviteJanelaAbertaCandidatos = semConfirmado.filter(c => setValidos.has(String(c.pessoaIdentificador)));
     conviteJanelaAbertaExcluidosInteligente = excluidosInteligente;
