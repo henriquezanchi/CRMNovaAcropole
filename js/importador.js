@@ -244,6 +244,11 @@ function conflitosIdentidadeImportacao(registros, existentes) {
         if (antes.filial !== l.filial) return true;
         if (antes.matricula_mercurio && l.matricula_mercurio && String(antes.matricula_mercurio)!==String(l.matricula_mercurio)) return true;
         if (normalizarNomeImport(antes.pessoaNome) === normalizarNomeImport(l.pessoaNome)) return false;
+        // ID real do Ulisses (não sintético), mesma filial e mesmo primeiro nome: é a
+        // mesma pessoa com o nome oficial do Mercúrio (sobrenome de casada, abreviação)
+        // depois de uma mesclagem — caso Andressa Sousa/Andressa Alves (29/10/2026).
+        const primeiroNome = nome => normalizarNomeImport(nome).split(' ')[0];
+        if (Number(l.pessoaIdentificador) < BASE_ID_ATIVOS_SEM_INSCRICAO && primeiroNome(antes.pessoaNome) === primeiroNome(l.pessoaNome)) return false;
         return typeof nomesCompativeisParaAutoMesclagem !== 'function' || !nomesCompativeisParaAutoMesclagem(antes.pessoaNome, l.pessoaNome);
     });
 }
@@ -2026,6 +2031,8 @@ async function confirmarEnviarImportacao() {
             const antigo = existentes.get(String(r.pessoaIdentificador));
             const mantidas = antigo ? parseTags(antigo.tags).filter(ehTagQualificacaoMercurio) : [];
             r.tags = JSON.stringify([...new Set([...novas, ...mantidas])]);
+            // Quem tem matrícula ligada fica com o nome oficial do Mercúrio.
+            if (antigo && antigo.matricula_mercurio && antigo.pessoaNome) r.pessoaNome = antigo.pessoaNome;
         });
     }
 
