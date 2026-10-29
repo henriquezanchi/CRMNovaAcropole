@@ -33,6 +33,13 @@ const TAG_LEAD_MANUAL = 'CRM';
 const CHAVE_STORAGE_COLUNAS = 'crm_na_colunas_config';
 const CHAVE_STORAGE_COLUNAS_RECOLHIDAS = 'crm_na_colunas_recolhidas';
 const CHAVE_STORAGE_FILIAL = 'crm_na_filial_atual';
+// Versão das colunas do Kanban por tarefa (ver colunasPadrao()). PRECISA
+// ficar antes de `let columnsConfig = carregarColunasLocal()` mais abaixo:
+// declarada depois, ela ainda não existe quando o navegador já tem colunas
+// salvas, e o arquivo inteiro para de carregar (bug real de 2026-10-29).
+const VERSAO_COLUNAS_KANBAN = 'tarefas-2026-10-29';
+const CHAVE_STORAGE_VERSAO_COLUNAS = 'crm_na_colunas_versao';
+const COLUNAS_KANBAN_ANTIGAS = ['Abordagem', 'RSVP'];
 
 // Coluna LEGADA: o importador (js/importador.js) criava ela automaticamente
 // pra leads novos sem telefone — desde que a aba "Leads a Tratar" existe
@@ -129,10 +136,9 @@ function getFiltroColuna(key) {
 // (é a 1ª coluna, destino do importador/Mercúrio) e só muda o rótulo.
 // A chave da coluna "Matricular" é "QuerEntrar" de propósito: várias
 // heurísticas procuram "matriculad" na chave pra achar a coluna Matriculados.
-const VERSAO_COLUNAS_KANBAN = 'tarefas-2026-10-29';
-const CHAVE_STORAGE_VERSAO_COLUNAS = 'crm_na_colunas_versao';
-const COLUNAS_KANBAN_ANTIGAS = ['Abordagem', 'RSVP'];
-
+// As constantes de versão ficam no topo do arquivo (perto de
+// CHAVE_STORAGE_COLUNAS), porque carregarColunasLocal() roda já na criação
+// de columnsConfig.
 function colunasPadrao() {
     return [
         { key: 'Frios', label: 'Convidar p/ Palestra', color: '#64748b' },
