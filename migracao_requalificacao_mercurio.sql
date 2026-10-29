@@ -86,7 +86,19 @@ returns boolean language sql immutable as $$
   or (t like 'Convite: %' and t not in ('Convite: Não Pode Ir','Convite: Sem Interesse'));
 $$;
 
-create or replace function crm_requalificar_leads(p_filial text default null, p_aplicar boolean default true)
+-- Nível do aluno pelo código do Mercúrio (mesmo mapeamento de nivelPorCodigoMercury).
+create or replace function crm_tag_nivel_mercurio(p_nivel text)
+returns text language sql immutable as $$
+ select case upper(trim(coalesce(p_nivel,'')))
+  when 'TA' then 'Merlin' when 'CO' then 'Merlin' when 'CA' then 'CA' when 'JN' then 'JN'
+  when 'PP' then 'PP' when 'N1' then 'N1'
+  when 'N2' then 'Membro' when 'N3' then 'Membro' when 'N4' then 'Membro' when 'N5' then 'Membro' when 'N6' then 'Membro' when 'N7' then 'Membro'
+ end;
+$$;
+
+-- p_pessoa: requalifica um lead só (usado logo depois de uma mesclagem).
+drop function if exists crm_requalificar_leads(text, boolean);
+create or replace function crm_requalificar_leads(p_filial text default null, p_aplicar boolean default true, p_pessoa text default null)
 returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$
 declare v_hoje date := (now() at time zone 'America/Sao_Paulo')::date; v_res jsonb; v_total int;
 begin
@@ -94,9 +106,9 @@ begin
  create temp table _rq as
  with alvo as (
   select l."pessoaIdentificador" pessoa, l.filial, l.tags, l."pessoaNome" nome, lower(nullif(trim(l."pessoaEmail"),'')) email,
-   crm_chave_telefone(l."pessoaTelefoneDDD", l."pessoaTelefoneNumero") tel, l.motivo_saida, l.data_saida
+   crm_chave_telefone(l."pessoaTelefoneDDD", l."pessoaTelefoneNumero") tel, l.motivo_saida, l.data_saida, l.matricula_mercurio matricula
   from leads_inscricoes l join filiais f on f.nome=l.filial and f.ativo and nullif(trim(f.mercurio_unidade),'') is not null
-  where l.lixeira_em is null and (p_filial is null or l.filial=p_filial)
+  where l.lixeira_em is null and (p_filial is null or l.filial=p_filial) and (p_pessoa is null or l."pessoaIdentificador"=p_pessoa)
  ),
  propria as (
   select a.pessoa,
@@ -104,14 +116,19 @@ begin
    (array_agg(m.baixa_em order by m.baixa_em desc nulls last) filter (where m.situacao='INA'))[1] baixa_em,
    (array_agg(m.baixa_codigo order by m.baixa_em desc nulls last) filter (where m.situacao='INA'))[1] baixa_codigo,
    bool_or(m.situacao='INA') inativo,
-   (array_agg(m.baixa_motivo order by m.baixa_em desc nulls last) filter (where m.situacao='INA'))[1] baixa_motivo
-  from alvo a join mercurio_pessoas m on m.pessoa_identificador=a.pessoa and m.filial=a.filial group by a.pessoa
+   (array_agg(m.baixa_motivo order by m.baixa_em desc nulls last) filter (where m.situacao='INA'))[1] baixa_motivo,
+   -- nível atual: o da matrícula ativa; sem ativa, o da saída mais recente
+   (array_agg(m.nivel order by (m.situacao='ATI') desc, m.baixa_em desc nulls last))[1] nivel
+  -- vínculo pelo id do lead OU pelo número de matrícula (sobrevive a mesclagens antigas)
+  from alvo a join mercurio_pessoas m on m.filial=a.filial and (m.pessoa_identificador=a.pessoa or (a.matricula is not null and m.matricula=a.matricula))
+  group by a.pessoa
  ),
- outra as ( -- ativo em outra filial, pela mesma pessoa (e-mail, ou telefone com o mesmo primeiro nome)
+ outra as ( -- ativo em outra filial: e-mail OU telefone igual, sempre com o mesmo primeiro
+  -- nome (e-mail e telefone da família são compartilhados com frequência)
   select a.pessoa, min(m.filial) filial_ativa
   from alvo a join mercurio_pessoas m on m.situacao='ATI' and m.filial<>a.filial
-   and ((a.email is not null and m.email=a.email)
-     or (a.tel is not null and m.tel_chave=a.tel and crm_primeiro_nome(a.nome)=crm_primeiro_nome(m.nome)))
+   and ((a.email is not null and m.email=a.email) or (a.tel is not null and m.tel_chave=a.tel))
+   and crm_primeiro_nome(a.nome)=crm_primeiro_nome(m.nome)
   group by a.pessoa
  ),
  ev as (
@@ -130,6 +147,7 @@ begin
   case when coalesce(p.ativo,false) then a.filial when o.filial_ativa is not null then o.filial_ativa end filial_ativa,
   coalesce(p.inativo,false) and not coalesce(p.ativo,false) and o.filial_ativa is null inativo,
   p.baixa_em, p.baixa_codigo, p.baixa_motivo, crm_categoria_saida(p.baixa_codigo) categoria,
+  p.pessoa is not null ligado, crm_tag_nivel_mercurio(p.nivel) tag_nivel,
   ev.futuro, ev.ultimo_passado, ev.compareceu_30d, ev.ultimo_qualquer, w.ultima_entrada,
   a.motivo_saida, a.data_saida
  from alvo a left join propria p on p.pessoa=a.pessoa left join outra o on o.pessoa=a.pessoa
@@ -139,6 +157,9 @@ begin
  update _rq r set tags_novas = (
   select to_jsonb(coalesce(jsonb_agg(distinct t order by t),'[]'::jsonb)::text) from (
    select t from jsonb_array_elements_text(crm_tags_lista(r.tags_antigas)) t where not crm_tag_qualificacao_mercurio(t)
+    -- quem tem vínculo com o Mercúrio fica só com o nível de lá (nunca dois níveis)
+    and not (r.ligado and t in ('Merlin','TA','CA','JN','PP','N1','N2','N3','N4','N5','N6','N7','Membro'))
+   union all select r.tag_nivel where r.ligado and r.tag_nivel is not null
    union all select 'Ativo: '||crm_filial_curta(r.filial_ativa) where r.filial_ativa is not null
    union all select 'Inativo' where r.inativo
    union all select 'Saída: '||r.categoria where r.inativo
@@ -177,6 +198,6 @@ begin
  drop table if exists _rq;
  return v_res || jsonb_build_object('aplicado', p_aplicar and v_total > 0);
 end $$;
-revoke all on function crm_requalificar_leads(text,boolean) from public, anon, authenticated;
+revoke all on function crm_requalificar_leads(text,boolean,text) from public, anon, authenticated;
 
 commit;

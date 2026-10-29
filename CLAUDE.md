@@ -10975,3 +10975,11 @@ Especificação: `docs/superpowers/specs/2026-10-29-requalificacao-leads-design.
 - Pedido explícito de "não me contate" (frases fixas, sem IA) vira "Não Contatar" no `whatsapp-webhook`.
 - Primeira rodada: Jardim América 326 ativos (310 no banco + 16 de outra filial) e 2.461 inativos; 10 filiais
   requalificadas; Kanban reorganizado no lote `29a8aaea-06d1-4b8f-8442-92627c252b25`.
+- **Mesclagem requalifica (29/10, `migracao_mesclagem_requalifica.sql`):** `mesclar_leads_preservando_vinculos`
+  reponta `mercurio_pessoas` e chama `crm_requalificar_leads(filial, true, p_principal)` — a união das etiquetas
+  nunca deixa dois níveis, Ativo com temperatura etc. A requalificação também passou a ser dona do NÍVEL de quem tem
+  vínculo com o Mercúrio (`crm_tag_nivel_mercurio`) e liga lead↔ficha também por `matricula_mercurio`
+  (`migracao_repontar_mercurio_mesclados.sql` corrigiu fichas que apontavam para cadastros já mesclados).
+  `crm_reorganizar_kanban`: a proteção de 3 dias (card movido à mão) não vale quando o destino é Alunos, Matriculados
+  ou Truncados. "Ativo em outra filial" exige o mesmo primeiro nome também quando o e-mail bate (família divide
+  e-mail: 583 casos de e-mail igual com primeiro nome diferente).
