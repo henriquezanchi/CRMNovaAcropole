@@ -920,7 +920,7 @@ async function efetivarMatriculasEmMassa(pessoaIds) {
     if (typeof getColumnKeys !== 'function') return;
 
     const validKeys = getColumnKeys();
-    const matriculadosKey = validKeys.find(k => k.toLowerCase().includes('matricul'));
+    const matriculadosKey = validKeys.find(k => k.toLowerCase().includes('matriculad'));
     if (!matriculadosKey) {
         alert('Nenhuma coluna com "Matriculados" no nome foi encontrada — crie ou renomeie uma coluna do Kanban pra isso antes de marcar matrícula por aqui.');
         return;

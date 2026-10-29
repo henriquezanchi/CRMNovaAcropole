@@ -122,33 +122,109 @@ function getFiltroColuna(key) {
     return filtrosColuna[key];
 }
 
+// Kanban por TAREFA (2026-10-29, pedido do usuário): cada coluna diz o que
+// fazer com o lead. O banco move os cards sozinho a cada 15 minutos
+// (crm_reorganizar_kanban(), migracao_kanban_tarefas.sql) — as chaves aqui
+// precisam bater exatamente com as usadas lá. "Frios" mantém a chave antiga
+// (é a 1ª coluna, destino do importador/Mercúrio) e só muda o rótulo.
+// A chave da coluna "Matricular" é "QuerEntrar" de propósito: várias
+// heurísticas procuram "matriculad" na chave pra achar a coluna Matriculados.
+const VERSAO_COLUNAS_KANBAN = 'tarefas-2026-10-29';
+const CHAVE_STORAGE_VERSAO_COLUNAS = 'crm_na_colunas_versao';
+const COLUNAS_KANBAN_ANTIGAS = ['Abordagem', 'RSVP'];
+
 function colunasPadrao() {
     return [
-        { key: 'Frios', label: 'Frios', color: '#64748b' },
-        { key: 'Abordagem', label: 'Em Abordagem', color: '#FFCA00' },
-        { key: 'RSVP', label: 'RSVP Ativo', color: '#3b82f6' },
+        { key: 'Frios', label: 'Convidar p/ Palestra', color: '#64748b' },
+        { key: 'VaiPalestra', label: 'Vai à Palestra', color: '#009485' },
+        { key: 'ComoFoi', label: 'Perguntar Como Foi', color: '#F39300' },
+        { key: 'FalarCurso', label: 'Falar do Curso', color: '#FFCA00' },
+        { key: 'QuerEntrar', label: 'Matricular', color: '#05433B' },
         { key: 'Matriculados', label: 'Matriculados', color: '#086357' },
-        // Pedido do usuário (2026-09-15): lead fora do escopo de verdade
-        // (mudou de cidade, respondeu com grosseria, é aluno/prospecto de
-        // OUTRA escola/franquia etc.) — diferente de "Perdido" (que
-        // significa "tentamos vender e não deu certo"), aqui o lead nunca
-        // foi um prospecto válido pra começo de conversa. Fica de fora da
-        // heurística de "Perdido"/ehColunaPerdido() de propósito — não
-        // pede motivo estruturado (Preço/Horário/etc. não fazem sentido
-        // aqui), só arquiva.
+        { key: 'Alunos', label: 'Alunos', color: '#7c8a96' },
+        // Lead fora do escopo de verdade (mudou de cidade, pediu pra não ser
+        // contatado, é de outra escola) — não pede motivo estruturado como
+        // "Perdido", só arquiva. O automático nunca tira ninguém daqui.
         { key: 'Truncados', label: 'Truncados', color: '#78716c' }
     ];
 }
 
 function carregarColunasLocal() {
+    let salvas = null;
     try {
         const salvo = localStorage.getItem(CHAVE_STORAGE_COLUNAS);
         if (salvo) {
             const parsed = JSON.parse(salvo);
-            if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+            if (Array.isArray(parsed) && parsed.length > 0) salvas = parsed;
         }
     } catch (e) { /* ignora e cai no padrão */ }
-    return colunasPadrao();
+    let versao = null;
+    try { versao = localStorage.getItem(CHAVE_STORAGE_VERSAO_COLUNAS); } catch (e) { /* sem storage */ }
+    if (salvas && versao === VERSAO_COLUNAS_KANBAN) return salvas;
+
+    // Quadro novo ou de antes do Kanban por tarefa: adota as colunas novas e
+    // mantém no fim qualquer coluna criada à mão (sem as antigas Em
+    // Abordagem/RSVP, que o automático já esvaziou).
+    const padrao = colunasPadrao();
+    const chavesPadrao = new Set(padrao.map(c => c.key));
+    const extras = (salvas || []).filter(c => c && c.key && !chavesPadrao.has(c.key) && !COLUNAS_KANBAN_ANTIGAS.includes(c.key));
+    const colunas = [...padrao, ...extras];
+    try {
+        localStorage.setItem(CHAVE_STORAGE_COLUNAS, JSON.stringify(colunas));
+        localStorage.setItem(CHAVE_STORAGE_VERSAO_COLUNAS, VERSAO_COLUNAS_KANBAN);
+    } catch (e) { /* sem storage, segue só em memória */ }
+    return colunas;
+}
+
+// Selo nas colunas "Vai à Palestra" e "Perguntar Como Foi": mostra se a
+// pessoa está inscrita no Ulisses (evento futuro) e se a presença foi
+// registrada lá (evento passado). Vem de evento_leads, sem IA — a inscrição
+// e a presença já chegam do Ulisses pela sincronização da API.
+let statusEventoKanban = new Map();
+async function carregarStatusEventosKanban(filial, versao) {
+    const ids = leadsAtuais.filter(l => ['VaiPalestra', 'ComoFoi'].includes(l.funil_agencia)).map(l => String(l.pessoaIdentificador));
+    const mapa = new Map();
+    const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    try {
+        for (let i = 0; i < ids.length; i += 300) {
+            const { data, error } = await window.supabaseClient.from('evento_leads')
+                .select('"pessoaIdentificador", resposta_convite, origem, compareceu, eventos(nome, data)')
+                .in('pessoaIdentificador', ids.slice(i, i + 300));
+            if (error) throw error;
+            (data || []).forEach(v => {
+                const ev = v.eventos;
+                if (!ev || !ev.data || (v.resposta_convite !== 'confirmado' && v.origem !== 'ulisses')) return;
+                const id = String(v.pessoaIdentificador);
+                const atual = mapa.get(id) || { futuro: null, passado: null };
+                const item = { nome: ev.nome, data: ev.data, inscrito: v.origem === 'ulisses', compareceu: v.compareceu };
+                if (ev.data >= hoje) { if (!atual.futuro || ev.data < atual.futuro.data) atual.futuro = item; }
+                else if (!atual.passado || ev.data > atual.passado.data) atual.passado = item;
+                mapa.set(id, atual);
+            });
+        }
+    } catch (e) { console.warn('[kanban] status de evento indisponível:', e.message || e); return; }
+    if (versao !== versaoCargaLeads || filial !== filialAtual) return;
+    statusEventoKanban = mapa;
+    renderizarCards();
+}
+
+function htmlSeloEventoKanban(lead, coluna) {
+    const st = statusEventoKanban.get(String(lead.pessoaIdentificador));
+    if (!st) return '';
+    const dataCurta = d => String(d).slice(8, 10) + '/' + String(d).slice(5, 7);
+    if (coluna === 'VaiPalestra' && st.futuro) {
+        const e = st.futuro;
+        return e.inscrito
+            ? `<span class="tag tag-ativo" title="${escapeHTML(e.nome)}"><i class="fa-solid fa-circle-check"></i> Inscrito no Ulisses · ${dataCurta(e.data)}</span>`
+            : `<span class="tag tag-warning" title="${escapeHTML(e.nome)}"><i class="fa-solid fa-triangle-exclamation"></i> Confirmou, sem inscrição no Ulisses · ${dataCurta(e.data)}</span>`;
+    }
+    if (coluna === 'ComoFoi' && st.passado) {
+        const e = st.passado;
+        return e.compareceu === true
+            ? `<span class="tag tag-ativo" title="${escapeHTML(e.nome)}"><i class="fa-solid fa-user-check"></i> Presença no Ulisses · ${dataCurta(e.data)}</span>`
+            : `<span class="tag tag-convite-neutro" title="${escapeHTML(e.nome)}"><i class="fa-regular fa-circle-question"></i> Sem presença registrada · ${dataCurta(e.data)}</span>`;
+    }
+    return '';
 }
 
 function carregarColunasRecolhidasLocal() {
@@ -250,6 +326,7 @@ async function carregarLeads(filial, resetar = true) {
         // coluna (o "balde" de leads nunca trabalhados) continua paginada
         // de verdade.
         await carregarColunasSecundariasSemPaginacao(filial);
+        carregarStatusEventosKanban(filial, versao);
         if (versao !== versaoCargaLeads) return;
         await carregarAtivosInativosSemPaginacao(filial);
         if (versao !== versaoCargaLeads) return;
@@ -539,7 +616,7 @@ function renderizarColunas() {
                     <option value="za" ${getOrdenacaoColuna(col.key) === 'za' ? 'selected' : ''}>Nome (Z - A)</option>
                     <option value="nivel_aluno" ${getOrdenacaoColuna(col.key) === 'nivel_aluno' ? 'selected' : ''}>Nível de Aluno</option>
                 </select>
-                ${col.key.toLowerCase().includes('matricul') || col.label.toLowerCase().includes('matricul') ? `
+                ${col.key.toLowerCase().includes('matriculad') || col.label.toLowerCase().includes('matriculad') ? `
                     <span class="col-matricula-info" title="Matrículas novas do Mercúrio já entram sozinhas (todo dia às 5h, ou na hora pelo botão 'Sincronização Automática')" onclick="switchModule('tab-importar', 'Importar Planilhas', 'Ativos, Inativos e Inscrições → CRM')">
                         <i class="fa-solid fa-circle-info"></i> Atualize na aba Importação
                     </span>
@@ -623,7 +700,7 @@ function nomeMesAtualCapitalizado() {
 // app (Dashboard/Relatórios/matricula-importar.js) pra achar a coluna de
 // Matriculados sem depender de uma chave fixa.
 function labelExibicaoColuna(col) {
-    if (col.key.toLowerCase().includes('matricul') || col.label.toLowerCase().includes('matricul')) {
+    if (col.key.toLowerCase().includes('matriculad') || col.label.toLowerCase().includes('matriculad')) {
         return `${col.label} em ${nomeMesAtualCapitalizado()}`;
     }
     return col.label;
@@ -847,7 +924,7 @@ function renderizarCards() {
                 <div class="lead-source">
                     <i class="fa-solid fa-phone"></i> ${escapeHTML(lead.pessoaTelefoneDDD || '')} ${escapeHTML(lead.pessoaTelefoneNumero || 'Sem Tlf')}
                 </div>
-                <div class="lead-tags">${badgesHTML}</div>
+                <div class="lead-tags">${htmlSeloEventoKanban(lead, colunaAlvo)}${badgesHTML}</div>
             </div>
         `;
 
@@ -2656,7 +2733,7 @@ function atualizarDashboard() {
     const foraDeColunasFrias = total - emColunaFria;
     const taxaResposta = total > 0 ? Math.round((foraDeColunasFrias / total) * 1000) / 10 : 0;
 
-    const matriculadosKey = validKeys.find(k => k.toLowerCase().includes('matricul')) || validKeys[validKeys.length - 1];
+    const matriculadosKey = validKeys.find(k => k.toLowerCase().includes('matriculad')) || validKeys[validKeys.length - 1];
     const novasMatriculas = leadsAtuais.filter(l => colunaDoLead(l) === matriculadosKey).length;
 
     // "Resgate": prioriza a tag "Recuperado" (confirmado pela importação:
@@ -2722,7 +2799,7 @@ function renderizarResumoInteresseProximoPasso() {
 // nessa coluna hoje). Se a coluna estiver guardada na gaveta, restaura antes.
 function irParaColunaMatriculados() {
     const validKeys = getColumnKeys();
-    const matriculadosKey = validKeys.find(k => k.toLowerCase().includes('matricul'));
+    const matriculadosKey = validKeys.find(k => k.toLowerCase().includes('matriculad'));
     if (!matriculadosKey) return;
 
     switchModule('tab-crm', 'Prospecção Ativa', 'CRM Modularizado VS Code');
@@ -2967,7 +3044,7 @@ function renderizarFeedAtividades() {
         // Destaque festivo pra dois marcos que merecem comemorar: virou
         // Matriculado (coluna) ou ganhou a tag "Recuperado" (rematrícula
         // confirmada — ver ehTagDeSistema()/importador.js).
-        const ehMatriculado = chaveColuna.toLowerCase().includes('matricul');
+        const ehMatriculado = chaveColuna.toLowerCase().includes('matriculad');
         const ehRecuperado = parseTags(lead.tags).map(t => t.trim()).includes('Recuperado');
         const festiva = ehMatriculado || ehRecuperado;
         const iconeFestivo = ehMatriculado ? 'fa-graduation-cap' : 'fa-medal';
@@ -3033,8 +3110,8 @@ function atualizarRelatorios() {
     const colunaDoLead = (lead) => validKeys.includes(lead.funil_agencia) ? lead.funil_agencia : primeiraColuna;
     const contarColuna = (key) => leadsAtuais.filter(l => colunaDoLead(l) === key).length;
 
-    const matriculadosKey = validKeys.find(k => k.toLowerCase().includes('matricul')) || validKeys[validKeys.length - 1];
-    const rsvpKey = validKeys.find(k => k.toLowerCase().includes('rsvp'));
+    const matriculadosKey = validKeys.find(k => k.toLowerCase().includes('matriculad')) || validKeys[validKeys.length - 1];
+    const rsvpKey = validKeys.find(k => /rsvp|vaipalestra/i.test(k));
 
     // "Sem Whatsapp" também conta como frio (mesmo critério do Dashboard,
     // ver atualizarDashboard()) — senão quem só está lá por falta de
