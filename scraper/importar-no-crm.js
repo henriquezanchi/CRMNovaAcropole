@@ -137,8 +137,19 @@ export async function importarNoCrm(page, filial, { caminhoAtivos, caminhoInativ
     // 'crm'->'ulisses' no meio do caminho, sem erro nenhum), não só depois
     // do upload dos leads — filiais grandes (Jardim América, 2700+ leads)
     // precisam de mais folga.
-    const textoFinal = await esperarTexto(page, '#importProgressLabel', /Concluído!|Erro/, 300000);
+    // A tela pode parar antes de enviar ("Importação interrompida: ...") sem mudar
+    // o rótulo de progresso: espera o fim OU essa mensagem, e devolve o log da
+    // tela no erro (antes só dizia "timeout", sem o motivo — 29/10/2026).
+    let textoFinal = '';
+    for (const fim = Date.now() + 300000; Date.now() < fim;) {
+        textoFinal = (await page.locator('#importProgressLabel').innerText().catch(() => '')) || '';
+        if (/Concluído!|Erro/.test(textoFinal)) break;
+        const log = await page.locator('#importLog').innerText().catch(() => '');
+        if (/Importação interrompida/.test(log)) { textoFinal = 'Erro'; break; }
+        await page.waitForTimeout(3000);
+    }
     const logCompleto = await page.locator('#importLog').innerText().catch(() => '');
+    if (!/Concluído!|Erro/.test(textoFinal)) throw new Error(`Importação no CRM não terminou em 5 min (${filial}): ${logCompleto.slice(-2000)}`);
 
     if (/Erro/.test(textoFinal)) {
         throw new Error(`Importação no CRM falhou (${filial}): ${logCompleto.slice(-2000)}`);
