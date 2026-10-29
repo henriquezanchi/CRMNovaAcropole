@@ -44,6 +44,34 @@ function mapearTipoMeta(tipo: string): string {
     return mapeado && tiposConhecidos.includes(mapeado) ? mapeado : "outro";
 }
 
+// Pedido explícito de não ser contatado (2026-10-29, aprovado pelo usuário):
+// vale para qualquer lead, inclusive aluno ativo — cuja conversa a IA não lê
+// mais. Só frases inequívocas, sem IA; a etiqueta "Não Contatar" bloqueia
+// convites, campanhas e parabéns. Nunca é removida automaticamente.
+const PEDIDO_NAO_CONTATAR = [
+    /n[ãa]o\s+(me\s+)?(mande|envie|mandem|enviem)\s+mais/i,
+    /pa(re|rem)\s+de\s+(me\s+)?(mandar|enviar)/i,
+    /(me\s+)?(tire|tirem|remova|removam|exclua|excluam)\s+(o\s+)?(meu\s+)?(n[uú]mero|contato|nome)?\s*(d[ae]\s+)?(sua\s+|da\s+)?lista/i,
+    /(remover|excluir|tirar)\s+(o\s+)?meu\s+(n[uú]mero|contato|telefone)/i,
+    /n[ãa]o\s+quero\s+(mais\s+)?receber\s+(mais\s+)?(mensage|contato|convite)/i,
+    /n[ãa]o\s+(me\s+)?(contatem|contate|liguem)\s+mais/i,
+];
+async function registrarPedidoNaoContatar(pessoa: string, texto: string) {
+    if (!texto || !PEDIDO_NAO_CONTATAR.some((re) => re.test(texto))) return;
+    try {
+        const { data: lead } = await supabaseAdmin.from(NOME_TABELA_LEADS).select("tags, filial").eq("pessoaIdentificador", pessoa).maybeSingle();
+        if (!lead) return;
+        let tags: string[] = [];
+        try { const p = typeof lead.tags === "string" ? JSON.parse(lead.tags) : lead.tags; tags = Array.isArray(p) ? p : []; } catch { tags = []; }
+        if (tags.includes("Não Contatar")) return;
+        await supabaseAdmin.from(NOME_TABELA_LEADS).update({ tags: JSON.stringify([...tags, "Não Contatar"]) }).eq("pessoaIdentificador", pessoa);
+        await supabaseAdmin.from("log_atividade").insert({
+            filial: lead.filial || "GLOBAL", acao: "pedido_nao_contatar_detectado", autor: "Recebimento do WhatsApp",
+            pessoa_ids: [pessoa], detalhes: { trecho: texto.slice(0, 200) },
+        });
+    } catch (e) { console.warn("Falha ao registrar pedido de não contato:", (e as Error).message); }
+}
+
 function extrairTexto(msg: any): string {
     if (msg.type === "text") return msg.text?.body ?? "";
     if (msg.type === "button") return msg.button?.text ?? "[Botão]";
@@ -390,6 +418,9 @@ Deno.serve(async (req) => {
                 }, { onConflict: "wa_message_id", ignoreDuplicates: true });
 
                 if (error) console.error("Erro ao gravar mensagem recebida:", error);
+                if (!error && match?.pessoaIdentificador && msg.type === "text") {
+                    await registrarPedidoNaoContatar(match.pessoaIdentificador, extrairTexto(msg));
+                }
             }
 
             for (const status of value.statuses ?? []) {
