@@ -22,6 +22,16 @@ function json(body: unknown, status = 200) {
     });
 }
 
+// Inscrição em evento do Ulisses (histórico importado ou vínculo vindo do
+// Ulisses) conta como evidência de contato permitido — ver preferencia-contato.ts.
+async function temInscricaoUlisses(pessoa: string, historico: unknown): Promise<boolean> {
+    let lista: unknown = historico;
+    try { if (typeof lista === 'string') lista = JSON.parse(lista); } catch { lista = null; }
+    if (Array.isArray(lista) && lista.length > 0) return true;
+    const { count } = await supabaseAdmin.from('evento_leads').select('id', { count: 'exact', head: true }).eq('pessoaIdentificador', pessoa).eq('origem', 'ulisses');
+    return (count || 0) > 0;
+}
+
 Deno.serve(async (req) => {
     const cors = handleCors(req);
     if (cors) return cors;
@@ -103,13 +113,15 @@ Deno.serve(async (req) => {
     if (pessoaIdentificador) {
         const { data: lead, error: erroLead } = await supabaseAdmin
             .from(NOME_TABELA_LEADS)
-            .select('pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaNome, filial, acompanhamento, tags')
+            .select('pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaNome, filial, acompanhamento, tags, historico_eventos')
             .eq('pessoaIdentificador', pessoaIdentificador)
             .single();
         if (erroLead || !lead) return json({ ok: false, erro: "lead_nao_encontrado" }, 404);
         const integridade = motivoIntegridadeContato(lead.tags);
         if (integridade) return json({ok:false,erro:'cadastro_em_conferencia',detalhe:{message:integridade}},409);
-        const bloqueioContato = motivoBloqueioContato(lead.acompanhamento, origemEnvio === 'campanha' || tipo === 'template') || (temTagNaoContatar(lead.tags)?'Pedido de não contato registrado.':'');
+        const envioCampanha = origemEnvio === 'campanha' || tipo === 'template';
+        const inscritoUlisses = envioCampanha && lead.acompanhamento?.contato !== 'permitido' ? await temInscricaoUlisses(pessoaIdentificador, lead.historico_eventos) : false;
+        const bloqueioContato = motivoBloqueioContato(lead.acompanhamento, envioCampanha, Date.now(), inscritoUlisses) || (temTagNaoContatar(lead.tags)?'Pedido de não contato registrado.':'');
         if (bloqueioContato && tipo !== 'reacao') return json({ ok: false, erro: 'preferencia_contato', detalhe: { message: bloqueioContato } }, 409);
         if(corpoReq.rascunhoAgente){
             const motivo=await motivoRascunhoAgente(supabaseAdmin,corpoReq.rascunhoAgente,pessoaIdentificador,lead.filial,lead);

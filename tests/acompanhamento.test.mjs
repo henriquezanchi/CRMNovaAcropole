@@ -32,6 +32,20 @@ test('frontend e servidor concordam para campanhas em combinações de intençã
         assert.equal(!motivoBloqueioContato(dado, true, agora), modelo.prioridade({ acompanhamento: dado }, agora).campanha);
     }
 });
+test('inscrição no Ulisses libera campanha só sem preferência registrada pela equipe', () => {
+    assert.equal(motivoBloqueioContato({}, true, agora, true), '');
+    assert.equal(modelo.prioridade({ acompanhamento: {}, inscritoUlisses: true }, agora).campanha, true);
+    assert.ok(motivoBloqueioContato({}, true, agora, false));
+    for (const contato of ['pausado', 'nao_contatar']) assert.ok(motivoBloqueioContato({ contato }, true, agora, true));
+    assert.ok(motivoBloqueioContato({ contato: 'verificar', preferencia_contato_em: '2026-10-10T12:00:00Z' }, true, agora, true));
+    assert.ok(motivoBloqueioContato({ relacao: 'ativo' }, true, agora, true));
+    assert.ok(motivoBloqueioContato({ intencao: 'nao' }, true, agora, true));
+    assert.ok(motivoBloqueioContato({ proxima_em: '2026-10-18T12:00:00Z' }, true, agora, true));
+    for (const contato of Object.keys(modelo.campos.contato)) for (const intencao of Object.keys(modelo.campos.intencao)) for (const inscricao of Object.keys(modelo.campos.inscricao)) {
+        const dado = { ...modelo.normalizar({}), contato, intencao, inscricao };
+        assert.equal(!motivoBloqueioContato(dado, true, agora, true), modelo.prioridade({ acompanhamento: dado, inscritoUlisses: true }, agora).campanha, JSON.stringify(dado));
+    }
+});
 test('próximo passo exige responsável e data; recusa não aceita convite agendado', () => {
     assert.throws(() => modelo.validar({ ...base(), proximo: 'convidar' }), /responsável/);
     assert.throws(() => modelo.validar({ ...base(), proximo: 'convidar', responsavel: 'Equipe', proxima_em: '2026-10-18T12:00:00Z', contato: 'nao_contatar' }), /não contato/);

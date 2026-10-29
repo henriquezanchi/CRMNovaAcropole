@@ -10900,3 +10900,20 @@ JÁ RODADA; cron `kanban-reorganizar` a cada 15 min,
 - Selo nos cards de Vai à Palestra/Como Foi: inscrito ou não no Ulisses e presença
   registrada ou não (`carregarStatusEventosKanban()`), sem IA.
 - Varredura inicial: 1.576 movimentos (lote `09637fd9-b890-4a48-8952-0e03c3021f2d`).
+
+## Inscrição no Ulisses conta como contato permitido (29/10/2026)
+
+Desde 23/10 (`_shared/preferencia-contato.ts`), mensagem por modelo só saía com
+`acompanhamento.contato='permitido'` + intenção conhecer/participar — e os 20.032
+leads estavam com o acompanhamento vazio, então nenhum modelo saía (último envio
+foi 23/10). Decisão do usuário: inscrição em evento no Ulisses
+(`historico_eventos` não vazio ou `evento_leads.origem='ulisses'`) vale como
+evidência de contato permitido, **só quando a equipe não registrou preferência**
+(`semPreferenciaRegistrada`: contato vazio, ou 'verificar' sem
+`preferencia_contato_em`). Continuam bloqueando: Não Contatar, pausa, aluno ativo,
+inscrição em acompanhamento, intenção nao/depois, data combinada, pedido a
+responder. Não se grava "permitido" em ninguém; a regra é que mudou.
+`whatsapp-send` (`temInscricaoUlisses()`) e `js/acompanhamento-modelo.js`
+(`lead.inscritoUlisses`) concordam — teste em `tests/acompanhamento.test.mjs`.
+Primeiro uso: 15 mensagens "como foi" com `contato_ulisses` (modelo aprovado,
+pt_BR) para quem tinha presença confirmada nos eventos de 01–24/10.

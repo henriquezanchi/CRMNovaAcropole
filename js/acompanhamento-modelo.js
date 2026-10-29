@@ -21,14 +21,19 @@
         resultado.revisao = Number.isSafeInteger(dado.revisao) && dado.revisao >= 0 ? dado.revisao : 0;
         return resultado;
     }
-    function impedimento(valor, agora = Date.now()) {
+    // Inscrição no Ulisses conta como contato permitido enquanto a equipe não
+    // registrou preferência (mesma regra de _shared/preferencia-contato.ts).
+    function semPreferenciaRegistrada(dado) {
+        return dado.contato === 'verificar' && !dado.preferencia_contato_em;
+    }
+    function impedimento(valor, agora = Date.now(), inscritoUlisses = false) {
         const dado = normalizar(valor);
         if (dado.contato === 'nao_contatar') return 'Pedido de não contato';
         if (dado.contato === 'pausado') {
             if (!dado.pausa_ate || !Number.isFinite(Date.parse(dado.pausa_ate)) || Date.parse(dado.pausa_ate) > agora) return 'Contato pausado';
             return 'Pausa terminou: confirmar preferência antes de campanha';
         }
-        if (dado.contato !== 'permitido') return 'Preferência de contato ainda não conferida';
+        if (dado.contato !== 'permitido' && !(inscritoUlisses && semPreferenciaRegistrada(dado))) return 'Preferência de contato ainda não conferida';
         if (dado.intencao === 'nao' || dado.intencao === 'depois') return 'Interesse atual não autoriza campanha';
         return '';
     }
@@ -38,8 +43,9 @@
         const dado = normalizar(lead.acompanhamento);
         if (dado.relacao === 'ativo') return { nivel: 9, motivo: 'Aluno ativo: não incluir em captação', campanha: false };
         if (dado.contato === 'pausado' && dado.pausa_ate && Number.isFinite(Date.parse(dado.pausa_ate)) && Date.parse(dado.pausa_ate) <= agora) return { nivel: 0, motivo: 'Pausa terminou: rever preferência individualmente', campanha: false };
-        if (dado.contato === 'permitido' && ['solicitada', 'dados_pendentes', 'aguardando_registro'].includes(dado.inscricao)) return { nivel: 1, motivo: 'Inscrição precisa de acompanhamento', campanha: false };
-        const motivo = impedimento(dado, agora);
+        const porUlisses = lead.inscritoUlisses === true && semPreferenciaRegistrada(dado);
+        if ((dado.contato === 'permitido' || porUlisses) && ['solicitada', 'dados_pendentes', 'aguardando_registro'].includes(dado.inscricao)) return { nivel: 1, motivo: 'Inscrição precisa de acompanhamento', campanha: false };
+        const motivo = impedimento(dado, agora, lead.inscritoUlisses === true);
         if (motivo) return { nivel: 9, motivo, campanha: false };
         const vencido = dado.proxima_em && Number.isFinite(Date.parse(dado.proxima_em)) && Date.parse(dado.proxima_em) <= agora;
         if (vencido) return { nivel: 0, motivo: 'Compromisso de atendimento vencido', campanha: false };
@@ -47,6 +53,7 @@
         if (dado.intencao === 'inscrever' || dado.proximo === 'responder') return { nivel: 1, motivo: 'Pedido de ajuda ou inscrição', campanha: false };
         if (dado.intencao === 'participar') return { nivel: 2, motivo: 'Interesse explícito em participar', campanha: true };
         if (dado.intencao === 'conhecer') return { nivel: 3, motivo: 'Quer conhecer a escola', campanha: true };
+        if (porUlisses) return { nivel: 4, motivo: 'Inscrito em evento no Ulisses', campanha: true };
         return { nivel: 4, motivo: 'Conferir contexto e interesse', campanha: false };
     }
     // Proximidade é evidência registrada, nunca uma probabilidade prevista.
