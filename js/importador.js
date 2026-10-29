@@ -1925,9 +1925,17 @@ async function confirmarEnviarImportacao() {
         existentesGlobais.push(...data);
     }
     const conflitosIds = conflitosIdentidadeImportacao(registrosDedupe, existentesGlobais);
+    // Esses cadastros NÃO são gravados (nunca sobrescreve outra pessoa nem tira
+    // alguém da filial dele), mas o resto da importação segue — antes 7 pessoas
+    // inscritas em Barra do Garças com cadastro em outra filial travavam a filial
+    // inteira desde 19/10 (achado em 29/10/2026). Mesma pessoa em duas filiais é
+    // tratada pela identidade entre filiais, não pela importação.
     if (conflitosIds.length) {
-        logImport(`Importação interrompida antes de gravar: ${conflitosIds.length} ID(s) apontam para outra pessoa ou escola. Reprocesse os cadastros com identificação correta; não reutilize IDs sequenciais.`, 'err');
-        return;
+        const porIdGlobal = new Map(existentesGlobais.map(l => [String(l.pessoaIdentificador), l]));
+        const idsConflito = new Set(conflitosIds.map(l => String(l.pessoaIdentificador)));
+        logImport(`Aviso: ${conflitosIds.length} cadastro(s) NÃO foram gravados porque o ID do Ulisses já pertence a outra pessoa ou a outra filial: ` +
+            conflitosIds.slice(0, 20).map(l => { const a = porIdGlobal.get(String(l.pessoaIdentificador)); return `${l.pessoaNome} (já em ${a ? a.filial : '?'})`; }).join('; '), 'warn');
+        registrosDedupe = registrosDedupe.filter(r => !idsConflito.has(String(r.pessoaIdentificador)));
     }
 
     // ---- Bloqueia reimportação de quem já pediu remoção do cadastro
