@@ -80,7 +80,8 @@ async function chamarApi(path, { method = 'GET', esperado, texto = false, corpo 
             // da infraestrutura cloud sem contornar o desafio do navegador.
             'X-Portal-NA': 'bypass',
             'User-Agent': 'PortalNovaAcropole/1.0 (CRM)',
-            Accept: 'application/json',
+            // csvInscricoes só existe em CSV: pedir JSON nele dá 406 (achado em 29/10/2026).
+            Accept: texto ? 'text/csv, text/plain, */*' : 'application/json',
             ...(corpo ? { 'content-type': 'application/json' } : {}),
         },
         ...(corpo ? { body: JSON.stringify(corpo) } : {}),
