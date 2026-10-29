@@ -7,9 +7,15 @@
 //   2) mercurio_alunos  — 1 linha por aluno, com a COMPETÊNCIA de cobrança
 //      já calculada pela regra combinada com o usuário (ver calcularCompetencia).
 //      Quem some do Mercúrio vira ativo=false e mantém a competência antiga.
-//   3) leads_inscricoes — data_matricula real, tag Recuperado, tag
-//      "Contribuição em Atraso" e contato vazio preenchido (nunca sobrescreve).
+//   3) leads_inscricoes — data_matricula real, tag Recuperado e contato vazio
+//      preenchido (nunca sobrescreve).
 //   4) filiais.membros_mercurio — contagem de N2 a N7.
+//   5) mercurio_pessoas — situação (ATI/INA), data e código de saída de cada
+//      matrícula, ligada ao lead. Ao fim de cada filial chama
+//      crm_requalificar_leads(), que recalcula do zero as etiquetas
+//      "Ativo: <filial>", "Inativo", "Saída: X", faixa de tempo, reaproximação e
+//      temperatura (migracao_requalificacao_mercurio.sql). Esta função NÃO grava
+//      mais "Ativo"/"Inativo" nem "Contribuição em Atraso" (2026-10-29).
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin, NOME_TABELA_LEADS } from "../_shared/supabaseAdmin.ts";
 import { abrirSessaoPhpMyAdmin, dataOuNull } from "../_shared/phpmyadmin.ts";
@@ -20,7 +26,6 @@ const NIVEIS_COMPLEMENTAR = ["CA", "TA", "CO", "JN"];
 const NIVEIS_TURMA_ABERTURA = ["PP", "N1"]; // turma nova de verdade; N2+ é progressão de quem já é aluno
 const JANELA_DIAS = 30;
 const MESES_JANELA_ATRASO = 6;
-const TAG_ATRASO = "Contribuição em Atraso";
 const BASE_ID_SINTETICO_MERCURY = 996000000; // mesma faixa de mercury-sincronizar
 const TAGS_NIVEL = ["Merlin", "CA", "JN", "PP", "N1", "Membro", "TA"];
 const TAGS_STATUS_ATIVO = ["Ativo", "Aluno Ativo"];
@@ -119,6 +124,10 @@ async function sincronizarFilial(pma: any, filial: { id: number; nome: string; u
         `SELECT tur_turma, tur_tipo, tur_nivel, tur_dia, tur_horario, tur_inicio, tur_previsao_formatura FROM turmas WHERE tur_unidade='${U}'`, "turmas");
     const alunosBrutos = await pma.consultar(
         `SELECT cad_matr, cad_nome, cad_nivel, cad_tur_unidade, cad_turma, cad_ingresso, cad_reingresso, cad_recuperado, cad_midia_ingresso, cad_cel_ddd, cad_cel_fone, cad_res_ddd, cad_res_fone, cad_email, cad_nascimento, cad_res_cidade, cad_res_uf FROM cadastro WHERE cad_unidade='${U}' AND cad_situacao='ATI'`, "cadastro");
+    const inativosBrutos = await pma.consultar(
+        `SELECT cad_matr, cad_nome, cad_nivel, cad_baixa, cad_cod_baixa, cad_motivo_baixa, cad_cel_ddd, cad_cel_fone, cad_res_ddd, cad_res_fone, cad_email FROM cadastro WHERE cad_unidade='${U}' AND cad_situacao='INA'`, "cadastro");
+    const motivosBrutos = await pma.consultar("SELECT smb_cod, smb_descricao FROM sig_motivo_baixa", "sig_motivo_baixa");
+    const descricaoMotivo = new Map(motivosBrutos.map((m: any) => [String(m.smb_cod), String(m.smb_descricao || "").trim()]));
     const fichasBrutas = await pma.consultar(
         `SELECT fic_matr, SUM(fic_status='ATR' AND (fic_ano*100+fic_mes) BETWEEN ${iniAtraso} AND ${fimAtraso}) AS atraso, MAX(fic_datapg) AS ultimo FROM fichas WHERE fic_unidade='${U}' AND fic_ano >= ${dIni.getUTCFullYear()} GROUP BY fic_matr`, "fichas");
 
@@ -231,10 +240,9 @@ async function sincronizarFilial(pma: any, filial: { id: number; nome: string; u
             pessoaIdentificador = lead.pessoaIdentificador;
         } else {
             pessoaIdentificador = String(BASE_ID_SINTETICO_MERCURY + Number(filial.id) * 1000000 + Number(matr));
-            const tagsNovas = ["Ativo"];
+            const tagsNovas: string[] = []; // "Ativo: <filial>" vem de crm_requalificar_leads()
             if (nivelTag) tagsNovas.push(nivelTag);
             if (base.recuperado) tagsNovas.push("Recuperado");
-            if (mesesAtraso > 0) tagsNovas.push(TAG_ATRASO);
             if (!telefoneValido) tagsNovas.push("Sem Telefone");
             if (!emailValido) tagsNovas.push("Sem E-mail");
             // Todas as linhas com as mesmas chaves (ver nota do upsert em lote).
@@ -271,17 +279,12 @@ async function sincronizarFilial(pma: any, filial: { id: number; nome: string; u
         const payload: Record<string, unknown> = {};
         if (ligarMatricula) payload.matricula_mercurio = Number(matr);
         const tagsAntigas = parseTags(lead.tags).map((t) => String(t).trim());
-        // O banco só tem alunos ativos: quem está aqui é Ativo, com o nível
-        // atual. Mesma regra de sempre — Ativo não convive com Lead Forte/Jornada.
-        const estavaInativo = tagsAntigas.some((t) => TAGS_STATUS_INATIVO.includes(t));
-        let tags = tagsAntigas.filter((t) =>
-            !TAGS_STATUS_ATIVO.includes(t) && !TAGS_STATUS_INATIVO.includes(t) && !TAGS_NIVEL.includes(t)
-            && !t.startsWith("Lead Forte") && !t.startsWith("Jornada:"));
-        tags.push("Ativo");
+        // Só o nível e o Recuperado são gravados aqui; Ativo/Inativo e as
+        // demais etiquetas de situação vêm de crm_requalificar_leads().
+        const estavaInativo = tagsAntigas.some((t) => TAGS_STATUS_INATIVO.includes(t) || t.startsWith("Saída: "));
+        let tags = tagsAntigas.filter((t) => !TAGS_NIVEL.includes(t));
         if (nivelTag) tags.push(nivelTag);
         if ((base.recuperado || estavaInativo) && !tags.includes("Recuperado")) tags.push("Recuperado");
-        if (mesesAtraso > 0 && !tags.includes(TAG_ATRASO)) tags.push(TAG_ATRASO);
-        if (mesesAtraso === 0) tags = tags.filter((t) => t !== TAG_ATRASO);
 
         if (comp.data_efetiva && comp.data_efetiva !== lead.data_matricula) payload.data_matricula = comp.data_efetiva;
         if (matriculaDoMes && !String(lead.funil_agencia || "").toLowerCase().includes("matricul")) {
@@ -320,14 +323,60 @@ async function sincronizarFilial(pma: any, filial: { id: number; nome: string; u
         .update({ ativo: false, removido_em: inicioRodada }, { count: "exact" })
         .eq("unidade", U).eq("ativo", true).lt("visto_em", inicioRodada);
 
-    // Quem saiu do Mercúrio também perde a tag de atraso.
-    const { data: saidosComLead } = await supabaseAdmin.from("mercurio_alunos")
-        .select("pessoa_identificador").eq("unidade", U).eq("removido_em", inicioRodada).not("pessoa_identificador", "is", null);
-    for (const s of saidosComLead || []) {
-        const { data: l } = await supabaseAdmin.from(NOME_TABELA_LEADS).select("tags").eq("pessoaIdentificador", s.pessoa_identificador).maybeSingle();
-        const tags = parseTags(l?.tags);
-        if (tags.includes(TAG_ATRASO)) atualizacoesLeads.push({ id: s.pessoa_identificador, payload: { tags: JSON.stringify(tags.filter((t) => t !== TAG_ATRASO)) } });
+    // ---------- situação no Mercúrio (ativos + inativos) ----------
+    // Inativo nunca cria lead: só liga a um lead que já existe — por matrícula,
+    // pelo id sintético do Mercury ou pelo nome ÚNICO na filial (e, se os dois
+    // lados têm telefone, ele precisa bater). Sem certeza, fica sem lead.
+    const telChave = (ddd: unknown, numero: unknown) => {
+        const n = soDigitos(numero), d = soDigitos(ddd);
+        return n.length >= 8 && d.length === 2 ? d + n.slice(-8) : null;
+    };
+    const contatoDe = (b: any) => {
+        const tel = telChave(b.cad_cel_ddd, b.cad_cel_fone) || telChave(b.cad_res_ddd, b.cad_res_fone);
+        const email = String(b.cad_email || "").trim().toLowerCase();
+        return { tel, email: email.includes("@") ? email : null };
+    };
+    const linhasPessoas: any[] = [];
+    const idPorMatrAtivo = new Map(linhasAlunos.map((l) => [String(l.matricula), l.pessoa_identificador]));
+    for (const b of alunosBrutos) {
+        const c = contatoDe(b);
+        linhasPessoas.push({ matricula: Number(b.cad_matr), unidade: U, filial: filial.nome, pessoa_identificador: idPorMatrAtivo.get(String(b.cad_matr)) || null,
+            nome: b.cad_nome, situacao: "ATI", nivel: String(b.cad_nivel || "").trim() || null, baixa_em: null, baixa_codigo: null, baixa_motivo: null,
+            email: c.email, tel_chave: c.tel, visto_em: inicioRodada });
     }
+    let inativosLigados = 0;
+    for (const b of inativosBrutos) {
+        const matr = String(b.cad_matr);
+        const c = contatoDe(b);
+        let lead = leadPorMatr.get(matr) || null;
+        if (!lead) {
+            const porId = leadPorId.get(String(BASE_ID_SINTETICO_MERCURY + Number(filial.id) * 1000000 + Number(matr)));
+            if (porId && porId.matricula_mercurio == null) lead = porId;
+        }
+        if (!lead) {
+            const candidatos = (leadsSemMatrPorNome.get(normalizarNomeMercury(b.cad_nome)) || []).filter((l) => l.matricula_mercurio == null);
+            const unico = candidatos.length === 1 ? candidatos[0] : null;
+            const telLead = unico ? telChave(unico.pessoaTelefoneDDD, unico.pessoaTelefoneNumero) : null;
+            if (unico && (!telLead || !c.tel || telLead === c.tel)) lead = unico;
+        }
+        if (lead && lead.matricula_mercurio == null) {
+            lead.matricula_mercurio = Number(matr);
+            leadPorMatr.set(matr, lead);
+            atualizacoesLeads.push({ id: lead.pessoaIdentificador, payload: { matricula_mercurio: Number(matr) } });
+        }
+        if (lead) inativosLigados++;
+        const codigo = b.cad_cod_baixa != null && String(b.cad_cod_baixa).trim() !== "" ? Number(b.cad_cod_baixa) : null;
+        const motivoTexto = String(b.cad_motivo_baixa || "").trim();
+        linhasPessoas.push({ matricula: Number(matr), unidade: U, filial: filial.nome, pessoa_identificador: lead ? lead.pessoaIdentificador : null,
+            nome: b.cad_nome, situacao: "INA", nivel: String(b.cad_nivel || "").trim() || null, baixa_em: dataOuNull(b.cad_baixa),
+            baixa_codigo: codigo, baixa_motivo: motivoTexto || (codigo != null ? descricaoMotivo.get(String(codigo)) || null : null),
+            email: c.email, tel_chave: c.tel, visto_em: inicioRodada });
+    }
+    for (let i = 0; i < linhasPessoas.length; i += 500) {
+        const { error } = await supabaseAdmin.from("mercurio_pessoas").upsert(linhasPessoas.slice(i, i + 500), { onConflict: "matricula,unidade" });
+        if (error) throw new Error(`mercurio_pessoas: ${error.message}`);
+    }
+    await supabaseAdmin.from("mercurio_pessoas").delete().eq("unidade", U).lt("visto_em", inicioRodada);
 
     let falhasLeads = 0;
     await emLotes(atualizacoesLeads, 8, async (u) => {
@@ -337,12 +386,18 @@ async function sincronizarFilial(pma: any, filial: { id: number; nome: string; u
 
     await supabaseAdmin.from("filiais").update({ membros_mercurio: membros }).eq("nome", filial.nome);
 
+    // Etiquetas de situação recalculadas do zero com o Mercúrio desta rodada.
+    const { data: requalificacao, error: erroRequalificacao } = await supabaseAdmin.rpc("crm_requalificar_leads", { p_filial: filial.nome, p_aplicar: true });
+    if (erroRequalificacao) console.warn(`[mercurio-db] requalificação ${filial.nome}:`, erroRequalificacao.message);
+
     const mesAtual = hoje.slice(0, 7);
     return {
         filial: filial.nome, unidade: U, turmas: turmas.length, alunos: alunosBrutos.length,
         vinculados_a_lead: vinculados, ligados_por_nome: vinculadosPorNome, leads_criados: leadsNovos.length, movidos_para_matriculados: movidosMatriculados,
         leads_atualizados: atualizacoesLeads.length - falhasLeads, falhas_leads: falhasLeads,
         saidos_do_mercurio: saidos ?? 0, membros, em_atraso: emAtraso,
+        inativos: inativosBrutos.length, inativos_ligados_a_lead: inativosLigados,
+        requalificacao: erroRequalificacao ? { erro: erroRequalificacao.message } : requalificacao,
         matriculas_mes_atual: linhasAlunos.filter((l) => l.competencia === mesAtual && l.conta_remuneracao).length,
         investigar_mes_atual: linhasAlunos.filter((l) => l.investigar_competencia === mesAtual).length,
     };
