@@ -482,7 +482,8 @@ async function verificarNotificacoesJanelaFechando() {
     const { data, error } = await window.supabaseClient
         .from('vw_wpp_conversas')
         .select('"pessoaIdentificador", ultima_mensagem_em, filial')
-        .eq('ultima_direcao', 'entrada');
+        .eq('ultima_direcao', 'entrada')
+        .eq('eh_ativo', false); // aluno ativo não gera alerta de janela fechando
     if (error || !data) return;
 
     const agora = Date.now();

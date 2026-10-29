@@ -154,8 +154,17 @@
         return dado;
     }
     function textoBusca(valor) { return String(valor || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim(); }
+    // Aluno ativo (etiqueta "Ativo: <filial>", relação ativo) não entra em
+    // nenhuma fila de atendimento: só divulgação de evento e aniversário.
+    function ehAlunoAtivo(lead) {
+        let tags = [];
+        try { tags = Array.isArray(lead.tags) ? lead.tags : JSON.parse(lead.tags || '[]'); } catch (_) {}
+        if (!Array.isArray(tags)) tags = [];
+        return normalizar(lead.acompanhamento).relacao === 'ativo' || tags.some(t => ['Ativo', 'Aluno Ativo'].includes(t) || String(t).startsWith('Ativo: '));
+    }
     function selecionarFila(leads, opcoes = {}, agora = Date.now()) {
         const filtro = opcoes.filtro || 'todos';
+        leads = leads.filter(lead => !ehAlunoAtivo(lead));
         const busca = textoBusca(opcoes.busca);
         const responsavel = textoBusca(opcoes.responsavel);
         return leads.map(lead => ({ lead, prioridade: prioridade(lead, agora) })).filter(item => {
@@ -176,6 +185,7 @@
         }).sort((a, b) => (filtro.startsWith('dia:') ? atendimentoDiario(a.lead, agora).ordem - atendimentoDiario(b.lead, agora).ordem : 0) || (filtro === 'proximos' || filtro.startsWith('sinal:') ? proximidade(a.lead, agora).ordem - proximidade(b.lead, agora).ordem : 0) || a.prioridade.nivel - b.prioridade.nivel || (a.lead.acompanhamento?.proxima_em || '9999').localeCompare(b.lead.acompanhamento?.proxima_em || '9999') || String(a.lead.pessoaIdentificador).localeCompare(String(b.lead.pessoaIdentificador)));
     }
     function resumir(leads, agora = Date.now()) {
+        leads = leads.filter(lead => !ehAlunoAtivo(lead));
         const resultado = { total: leads.length, atencao: 0, inscricoes: 0, semResponsavel: 0, preferenciaPendente: 0, cadastrosConferidos: 0 };
         leads.forEach(lead => {
             const dado = normalizar(lead.acompanhamento);

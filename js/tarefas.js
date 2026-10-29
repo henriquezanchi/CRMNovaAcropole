@@ -578,7 +578,9 @@ async function _obterCandidatosContatoIA(filial) {
         l._diasAbertura = _diasParaAberturaTurmaTarefaIA(l);
         const acompanhamento = normalizarAcompanhamentoContatoIA(l.acompanhamento);
         const tags = (typeof parseTags === 'function' ? parseTags(l.tags) : []).map(tag => String(tag).trim().toLocaleLowerCase('pt-BR'));
-        l._naoContatar = acompanhamento.contato === 'nao_contatar' || acompanhamento.contato === 'pausado' || tags.includes('não contatar');
+        // Aluno ativo também fica fora das recomendações de contato (só divulgação e aniversário).
+        const alunoAtivo = tags.some(tag => tag === 'ativo' || tag === 'aluno ativo' || tag.startsWith('ativo: '));
+        l._naoContatar = acompanhamento.contato === 'nao_contatar' || acompanhamento.contato === 'pausado' || tags.includes('não contatar') || alunoAtivo;
         l._retornoEm = null;
         l._retornoMotivo = '';
 

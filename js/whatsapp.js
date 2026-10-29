@@ -3045,6 +3045,11 @@ async function filtrarExclusaoInteligenteWpp(ids, { excluir30Dias = true, exclui
             excluidos.push({ id, nome: r.pessoaNome || id, motivo: 'Preferência registrada: não contatar' });
             continue;
         }
+        const ativoEm = tags.find(t => t.startsWith('Ativo: ')) || (tags.some(t => t === 'Ativo' || t === 'Aluno Ativo') ? 'Ativo' : null);
+        if (ativoEm) {
+            excluidos.push({ id, nome: r.pessoaNome || id, motivo: `Aluno ativo (${ativoEm.replace('Ativo: ', '')}) — só divulgação e aniversário` });
+            continue;
+        }
         if (conversasAtivas.has(id)) {
             const ultima = new Date(conversasAtivas.get(id)).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
             excluidos.push({ id, nome: r.pessoaNome || id, motivo: `Conversa em andamento (última mensagem em ${ultima})` });
@@ -5702,6 +5707,7 @@ async function renderizarContatosWpp(filtro = '') {
         // autorizar); depois janela fechando (urgência real de prazo);
         // depois não lida.
         const pontuar = ({ conversa, lead }) => {
+            if (conversa.eh_ativo) return -1; // aluno ativo: responder quando der, sem disputar a fila de vendas
             let pontos = 0;
             if (idsComSugestaoPendente.has(String(lead.pessoaIdentificador))) pontos += 1000;
             const restante = horasRestantesJanelaWpp(conversa);

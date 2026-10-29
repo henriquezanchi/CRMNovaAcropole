@@ -2811,8 +2811,10 @@ function atualizarDashboard() {
     const colunasFrias = new Set([primeiraColuna, COLUNA_SEM_WHATSAPP].filter(k => validKeys.includes(k)));
     const ehColunaFria = (lead) => colunasFrias.has(colunaDoLead(lead));
 
-    const total = leadsAtuais.length;
-    const emColunaFria = leadsAtuais.filter(ehColunaFria).length;
+    // Aluno ativo fica fora da base de trabalho (2026-10-29): só divulgação e aniversário.
+    const leadsTrabalho = leadsAtuais.filter(l => !ehLeadAtivo(l));
+    const total = leadsTrabalho.length;
+    const emColunaFria = leadsTrabalho.filter(ehColunaFria).length;
     const foraDeColunasFrias = total - emColunaFria;
     const taxaResposta = total > 0 ? Math.round((foraDeColunasFrias / total) * 1000) / 10 : 0;
 
@@ -3191,7 +3193,8 @@ function atualizarRelatorios() {
     if (validKeys.length === 0) return;
     const primeiraColuna = validKeys[0];
     const colunaDoLead = (lead) => validKeys.includes(lead.funil_agencia) ? lead.funil_agencia : primeiraColuna;
-    const contarColuna = (key) => leadsAtuais.filter(l => colunaDoLead(l) === key).length;
+    const leadsTrabalho = leadsAtuais.filter(l => !ehLeadAtivo(l)); // aluno ativo fora do funil
+    const contarColuna = (key) => leadsTrabalho.filter(l => colunaDoLead(l) === key).length;
 
     const matriculadosKey = validKeys.find(k => k.toLowerCase().includes('matriculad')) || validKeys[validKeys.length - 1];
     const rsvpKey = validKeys.find(k => /rsvp|vaipalestra/i.test(k));

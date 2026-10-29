@@ -423,7 +423,8 @@ async function filtrarNaoContatarAgendaGeral(leads) {
         const atual = mapa.get(chaveLead(lead));
         const tags = typeof parseTags === 'function' ? parseTags(atual.tags).map(tag => String(tag).trim().toLocaleLowerCase('pt-BR')) : [];
         const pediuNaoContato = atual.acompanhamento?.contato === 'nao_contatar' || tags.includes('não contatar');
-        if (pediuNaoContato) { ocultos++; return; }
+        const alunoAtivo = tags.some(tag => tag === 'ativo' || tag === 'aluno ativo' || tag.startsWith('ativo: '));
+        if (pediuNaoContato || alunoAtivo) { ocultos++; return; }
         resultado.push(lead);
     });
     return { leads: resultado, ocultos, erro: false };
