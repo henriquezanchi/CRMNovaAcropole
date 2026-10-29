@@ -64,8 +64,8 @@ Calculada na hora, sem estado guardado, para nunca ficar desatualizada:
 
 Quem usa a trava:
 
-- **`whatsapp-send`:** para um lead travado, recusa qualquer envio exceto reação, com `erro: 'conversa_em_outra_filial'` e uma mensagem com filial, atendente e data de liberação.
-- **Disparos em massa** (`filtrarExclusaoInteligenteWpp`): exclui os travados, com o motivo "Em conversa pela filial X".
+- **Disparos em massa, na montagem da lista** (`filtrarExclusaoInteligenteWpp`, usada por Convidar Link/API, Janela Aberta e Disparo Inteligente): a trava é conferida **antes** de a lista aparecer na tela, numa única chamada em lote (`crm_travas_identidade(p_pessoas text[])`, não uma por lead). Os travados saem da lista e aparecem entre os excluídos com o motivo "Em conversa pela filial X, com Fulano, até DD/MM". O SDR vê a lista final já limpa e nenhum envio da lista volta com erro de trava.
+- **`whatsapp-send`:** é só a rede de segurança. Para um lead travado (por exemplo, se a trava começou entre montar a lista e enviar), recusa qualquer envio exceto reação, com `erro: 'conversa_em_outra_filial'` e uma mensagem com filial, atendente e data de liberação.
 - **Gaveta do lead e chat:** uma faixa "Em conversa pela filial X, com Fulano, até DD/MM", com a caixa de texto desabilitada.
 - **Card no Kanban:** as tags "Também em: <filial>" e, quando travado, o selo "Em conversa por X".
 
@@ -104,6 +104,7 @@ Isso tira essas pessoas de "Não Identificados". Candidatos de identidades difer
   - nome incompatível vira caso;
   - caso descartado não é reaberto.
 - **Trava:**
+  - a versão em lote devolve o mesmo resultado que a individual;
   - mensagem em A há 3 dias trava B;
   - mensagem há 16 dias libera;
   - mensagem do próprio membro não trava ele mesmo.
