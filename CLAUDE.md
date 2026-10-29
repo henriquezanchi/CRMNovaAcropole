@@ -10997,3 +10997,18 @@ Especificação: `docs/superpowers/specs/2026-10-29-requalificacao-leads-design.
   mesmo ID real + mesmo primeiro nome não é conflito (sobrenome oficial do Mercúrio após mesclagem) e quem tem
   matrícula mantém o nome do Mercúrio; `crm_reorganizar_kanban` não protege quem está em Frios (cadastro novo nascia
   "movido à mão"); `scraper/importar-no-crm.js` devolve o log da tela quando o envio é interrompido.
+
+## Incidente de recursos + remoção do Corretor Pro (29/10/2026, ~17h)
+
+- O projeto Supabase ficou "low on resources" (REST e banco UNHEALTHY, PGRST002) depois de um dia de carga pesada
+  (requalificação de toda a base, ~800 mesclagens, importação atrasada do Ulisses em 10 filiais). O usuário reiniciou
+  o projeto pelo painel; voltou às 17:34. `crm_eh_ativo()` ficou barata (`migracao_eh_ativo_barato.sql`: só procura
+  "Ativo: " no texto das etiquetas, sem `crm_tags_lista`, que tem bloco de exceção = subtransação por linha) porque
+  roda nas filas da IA a cada 1-2 min. Rodadas pesadas em lote devem ir para a madrugada.
+- **Corretor Pro removido deste banco** (migrou para outro projeto, confirmado pelo usuário): `corretorpro` saiu dos
+  esquemas publicados pela API (db_schema = public,graphql_public) ANTES do drop; esquemas `corretorpro` e
+  `cp_private` apagados (`migracao_remover_corretorpro.sql`). Cópia local dos dados (69 tabelas, 507 linhas, sem
+  tabelas de segredos/tokens) ficou na pasta temporária da sessão. `trade_lab` mantido.
+- Pendentes (dependem de autorização do usuário): pastas de arquivos `corretorpro-media` (112 arquivos),
+  `corretorpro-docs` e `corretorpro-negocios` (vazias); 6 usuários de login do Corretor Pro/demonstração em
+  `auth.users`; contas henrique.zanchi@gmail.com e henriquecarr@gmail.com mantidas (podem ser do Trade Lab).
