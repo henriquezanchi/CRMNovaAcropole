@@ -10956,3 +10956,22 @@ evento confirmado, pesquisa de no-show e reengajamento, que precisam falar com c
 - Pendente (aguardando decisão do usuário): revisão completa da qualificação (4 perguntas: relação com a escola,
   pode contatar, momento, histórico) e a exclusão dos Ativos nas telas (Visão Geral, Atendimento, WhatsApp, Tarefas,
   relatórios). As etiquetas Ativo/Inativo/"Interesse a confirmar" seguem desatualizadas até lá.
+
+## Requalificação dos leads pelo Mercúrio (29/10/2026)
+
+Especificação: `docs/superpowers/specs/2026-10-29-requalificacao-leads-design.md`. Resumo:
+- **Fonte única de Ativo/Inativo = banco do Mercúrio** (VIEW `cadastro` traz ATI e INA, com `cad_baixa`,
+  `cad_cod_baixa`, `cad_motivo_baixa`; códigos em `sig_motivo_baixa`). `mercurio-db-sincronizar` grava
+  `mercurio_pessoas` e chama `crm_requalificar_leads(filial)` (`migracao_requalificacao_mercurio.sql`); nova rodada
+  às 06:30 (`migracao_agendamento_requalificacao.sql`). Backup das etiquetas de antes:
+  `backup_tags_requalificacao_20261029`.
+- Etiquetas recalculadas do zero (nunca somadas): "Ativo: <filial>", "Inativo", "Saída: <categoria>", faixa
+  ("Saída recente"/"Janela de resgate"/"Saída antiga"), "Inativo reaproximando", "Temperatura: Quente/Morna/Fria".
+  Apagadas: "Ativo"/"Inativo" antigos, Contribuição em Atraso, Interesse a confirmar/declarado, Jornada, Lead Forte,
+  Retorno: Só 1 Evento, Conversa:/Convite: (exceto Mudou de Cidade, Não Pode Ir, Sem Interesse).
+- `crm_eh_ativo()` lê "Ativo: <filial>" (`migracao_ativo_pela_etiqueta.sql`); JS usa `ehTagAtivo()`/`ehLeadAtivo()`
+  (`js/app.js`). Aluno ativo fica fora de filas, indicadores, disparos, alertas, Tarefas e IA — só divulgação
+  individual e aniversário. A importação não altera essas etiquetas (`ehTagQualificacaoMercurio`, `js/importador.js`).
+- Pedido explícito de "não me contate" (frases fixas, sem IA) vira "Não Contatar" no `whatsapp-webhook`.
+- Primeira rodada: Jardim América 326 ativos (310 no banco + 16 de outra filial) e 2.461 inativos; 10 filiais
+  requalificadas; Kanban reorganizado no lote `29a8aaea-06d1-4b8f-8442-92627c252b25`.

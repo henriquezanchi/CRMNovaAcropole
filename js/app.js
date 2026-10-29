@@ -886,10 +886,9 @@ function renderizarCards() {
             const sinal = AcompanhamentoModelo.proximidade(lead);
             if (['inscricao', 'decididos', 'visita'].includes(sinal.grupo)) badgesHTML += `<span class="tag sinal-matricula sinal-${sinal.grupo}" title="${escapeHTML(sinal.motivo)}">${escapeHTML(sinal.rotulo)}</span>`;
         }
-        if (!tagsLimpo.some(tag => ehTagAtivo(tag) || ['Inativo','Ex-Aluno (Inativo)'].includes(tag))) {
-            const statusRede = typeof buscarStatusRedeAtivosInativos === 'function' ? buscarStatusRedeAtivosInativos(lead) : null;
-            if (statusRede && statusRede.filial !== lead.filial) badgesHTML += `<span class="tag tag-info" title="Situação em outra unidade">${escapeHTML(statusRede.status)} · ${escapeHTML(statusRede.filial)}</span>`;
-        }
+        // O selo antigo "Ativo/Inativo · <outra filial>" (pessoas_ativas_rede)
+        // saiu em 2026-10-29: era alimentado pela API do Mercury, pausada. A
+        // etiqueta "Ativo: <filial>" da requalificação já cobre outras filiais.
 
         const identificador = lead.pessoaIdentificador;
         const tagsAttr = escapeHTML(tagsArray.map(t => t.trim()).filter(t => Boolean(t) && !ehTagHeuristicaLegada(t)).join('|'));

@@ -3067,13 +3067,8 @@ async function filtrarExclusaoInteligenteWpp(ids, { excluir30Dias = true, exclui
             excluidos.push({ id, nome: r.pessoaNome, motivo: 'Já matriculado' });
             continue;
         }
-        if (r && typeof buscarStatusRedeAtivosInativos === 'function') {
-            const statusRede = buscarStatusRedeAtivosInativos(r);
-            if (statusRede && statusRede.status === 'Ativo' && statusRede.filial && statusRede.filial !== r.filial) {
-                excluidos.push({ id, nome: r.pessoaNome, motivo: `Ativo em outra unidade (${statusRede.filial})` });
-                continue;
-            }
-        }
+        // Ativo em outra unidade já vem na etiqueta "Ativo: <filial>" (tratada
+        // acima); a lista antiga da rede, da API do Mercury pausada, não é mais usada.
         validos.push(id);
     }
     return { validos, excluidos };
