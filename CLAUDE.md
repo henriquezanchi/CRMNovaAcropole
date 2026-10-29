@@ -10900,6 +10900,11 @@ JÁ RODADA; cron `kanban-reorganizar` a cada 15 min,
 - Selo nos cards de Vai à Palestra/Como Foi: inscrito ou não no Ulisses e presença
   registrada ou não (`carregarStatusEventosKanban()`), sem IA.
 - Varredura inicial: 1.576 movimentos (lote `09637fd9-b890-4a48-8952-0e03c3021f2d`).
+- **Ativos só em Alunos (29/10, `migracao_kanban_ativos.sql`, JÁ RODADA):** pedido do usuário — "Vai à Palestra
+  não deve conter ativos, mesmo inscritos; eles já foram alcançados pelo objetivo". Todo ativo (tag Ativo/Aluno Ativo
+  ou ativo no Mercúrio) vai pra Alunos, mesmo sem conversa, e entra na varredura mesmo sem mensagem/evento.
+  Matrícula do mês (Matriculados) e Não Contatar (Truncados) continuam vindo antes. Aplicado: 1.318 movimentos
+  (lote `fdd890e6-1b7a-4b15-8b2e-9010d1c767fc`).
 - **Bug real (29/10, mesmo dia): CRM parou de carregar pra quem já tinha colunas salvas.** As constantes
   `VERSAO_COLUNAS_KANBAN`/`CHAVE_STORAGE_VERSAO_COLUNAS`/`COLUNAS_KANBAN_ANTIGAS` foram declaradas no meio do
   `js/app.js`, mas `let columnsConfig = carregarColunasLocal()` roda no topo do arquivo → "Cannot access before
