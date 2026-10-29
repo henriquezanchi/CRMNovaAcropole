@@ -2390,6 +2390,7 @@ async function removerColuna(key) {
 let filiaisModalCache = []; // todas (ativas + inativas), carregadas ao abrir o modal
 
 async function abrirGerenciarFiliais() {
+    filiaisAbertasModal = new Set();
     await renderizarListaFiliaisModal();
     document.getElementById('modalFiliais').classList.add('open');
     document.getElementById('overlayModalFiliais').classList.add('active');
@@ -2418,30 +2419,83 @@ async function renderizarListaFiliaisModal() {
     }
 
     filiaisModalCache = data || [];
-    container.innerHTML = filiaisModalCache.map((f, i) => `
-        <div class="coluna-row" data-idx="${i}" draggable="true" ondragstart="iniciarArrastoLista(event, '${f.id}')" ondragend="this.style.opacity='1'" ondragover="event.preventDefault()" ondrop="soltarNaLista(event, 'filiais', '${f.id}')" style="flex-direction:column; align-items:stretch; gap:8px;">
-            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                <i class="fa-solid fa-grip-vertical" style="color:var(--text-muted); cursor:grab;" title="Arraste pra reordenar"></i>
-                <input type="text" value="${escapeHTML(f.nome)}" onchange="atualizarNomeFilial(${f.id}, this.value)" style="flex:1; min-width:160px;">
-                <label class="col-tag-option" style="white-space:nowrap;">
-                    <input type="checkbox" ${f.ativo ? 'checked' : ''} onchange="atualizarAtivoFilial(${f.id}, this.checked)"> Ativa
-                </label>
-                <label class="col-tag-option" style="white-space:nowrap;" title="Padrão pra esta filial no WhatsApp Unificado — pode ser desligado individualmente por conversa">
-                    <input type="checkbox" ${f.ia_sugestao_resposta_habilitada !== false ? 'checked' : ''} onchange="atualizarIaSugestaoFilial(${f.id}, this.checked)"> Sugestão de IA
-                </label>
-                <label class="col-tag-option" style="white-space:nowrap;" title="Desligado = filial em fase de teste/trabalho que ainda não entra na cobrança oficial (ex: Barra do Garças/MT) — continua aparecendo no relatório pra visibilidade, só sai do TOTAL a cobrar">
-                    <input type="checkbox" ${f.modulo2_contratado !== false ? 'checked' : ''} onchange="atualizarModulo2ContratadoFilial(${f.id}, this.checked)"> Módulo 2 (SDR)
-                </label>
+    container.innerHTML = filiaisModalCache.map(f => {
+        const campo = (rotulo, ajuda, controle, largo = false) => `
+            <label class="filial-campo${largo ? ' largo' : ''}">
+                <span class="filial-campo-rotulo">${rotulo}</span>
+                ${controle}
+                ${ajuda ? `<span class="filial-campo-ajuda">${ajuda}</span>` : ''}
+            </label>`;
+        const membrosMercurio = f.membros_mercurio != null ? `Em branco, usa o Mercúrio (hoje: ${f.membros_mercurio}).` : 'Em branco, usa a contagem do Mercúrio.';
+        return `
+        <details class="filial-bloco" data-filial-id="${f.id}" ${filiaisAbertasModal.has(String(f.id)) ? 'open' : ''}
+            ontoggle="alternarFilialAbertaModal(this)" ondragover="event.preventDefault()" ondrop="soltarNaLista(event, 'filiais', '${f.id}')">
+            <summary class="filial-cabecalho" draggable="true" ondragstart="iniciarArrastoLista(event, '${f.id}')" ondragend="this.style.opacity='1'">
+                <i class="fa-solid fa-grip-vertical filial-alca" title="Arraste para reordenar" aria-hidden="true"></i>
+                <span class="filial-nome">${escapeHTML(f.nome)}</span>
+                <span class="filial-resumo">${resumoFilialModal(f)}</span>
+                <i class="fa-solid fa-chevron-down filial-seta" aria-hidden="true"></i>
+            </summary>
+            <div class="filial-corpo">
+                <div class="filial-opcoes">
+                    <label class="filial-opcao"><input type="checkbox" data-campo="ativo" ${f.ativo ? 'checked' : ''} onchange="atualizarAtivoFilial(${f.id}, this.checked); atualizarResumoFilialModal(this)"> Ativa</label>
+                    <label class="filial-opcao" title="Padrão desta filial no WhatsApp Unificado. Cada conversa pode desligar individualmente."><input type="checkbox" ${f.ia_sugestao_resposta_habilitada !== false ? 'checked' : ''} onchange="atualizarIaSugestaoFilial(${f.id}, this.checked)"> Sugestão de IA</label>
+                    <label class="filial-opcao" title="Desligado: a filial continua no relatório, mas sai do total a cobrar (ex: Barra do Garças/MT)."><input type="checkbox" data-campo="modulo2" ${f.modulo2_contratado !== false ? 'checked' : ''} onchange="atualizarModulo2ContratadoFilial(${f.id}, this.checked); atualizarResumoFilialModal(this)"> Módulo 2 (SDR) cobrado</label>
+                </div>
+                <h4 class="filial-grupo">Identificação</h4>
+                <div class="filial-grade">
+                    ${campo('Nome', '', `<input type="text" data-campo="nome" value="${escapeHTML(f.nome)}" onchange="atualizarNomeFilial(${f.id}, this.value); atualizarResumoFilialModal(this)">`)}
+                    ${campo('Nome na frase', 'Usado nas mensagens: "da Nova Acrópole do Jardim América".', `<input type="text" value="${escapeHTML(f.nome_com_preposicao || '')}" placeholder="do Jardim América" onchange="atualizarPreposicaoFilial(${f.id}, this.value)">`)}
+                    ${campo('Endereço', 'Aparece na ficha de todo lead desta filial.', `<input type="text" value="${escapeHTML(f.endereco || '')}" onchange="atualizarEnderecoFilial(${f.id}, this.value)">`, true)}
+                    ${campo('WhatsApp do chefe da filial', 'Só números, com 55 e DDD. Recebe aviso de aniversário e resumo de lead.', `<input type="text" inputmode="numeric" value="${escapeHTML(f.whatsapp_chefe_numero || '')}" placeholder="5562991234567" onchange="atualizarWhatsappChefeFilial(${f.id}, this.value)">`, true)}
+                </div>
+                <h4 class="filial-grupo">Mercúrio e cobrança</h4>
+                <div class="filial-grade">
+                    ${campo('Código no Mercúrio', 'Liga a sincronização diária com o banco do Mercúrio.', `<input type="text" data-campo="unidade" maxlength="3" value="${escapeHTML(f.mercurio_unidade || '')}" placeholder="JAM" onchange="atualizarMercurioUnidadeFilial(${f.id}, this.value); atualizarResumoFilialModal(this)">`)}
+                    ${campo('Mensalidade do aluno (R$)', 'Base da comissão de 30%.', `<input type="number" step="0.01" min="0" value="${f.valor_mensalidade != null ? f.valor_mensalidade : ''}" onchange="atualizarValorMensalidadeFilial(${f.id}, this.value)">`)}
+                    ${campo('Membros', `${membrosMercurio} Fixo: R$ 4,96 por membro/mês.`, `<input type="number" step="1" min="0" data-campo="membros" data-membros-mercurio="${f.membros_mercurio ?? ''}" value="${f.membros != null ? f.membros : ''}" onchange="atualizarMembrosFilial(${f.id}, this.value); atualizarResumoFilialModal(this)">`)}
+                    ${campo('Valor fixo manual (R$)', 'Se preenchido, substitui membros × R$ 4,96.', `<input type="number" step="0.01" min="0" value="${f.valor_fixo_mensal_agencia != null ? f.valor_fixo_mensal_agencia : ''}" onchange="atualizarValorFixoFilial(${f.id}, this.value)">`)}
+                </div>
             </div>
-            <input type="text" value="${escapeHTML(f.nome_com_preposicao || '')}" placeholder="Como falar dela naturalmente (ex: do Jardim América, de Barra do Garças)" onchange="atualizarPreposicaoFilial(${f.id}, this.value)">
-            <input type="text" value="${escapeHTML(f.whatsapp_chefe_numero || '')}" placeholder="WhatsApp do chefe de filial (E.164, ex: 5562991234567) — aviso de aniversário e resumo de lead" onchange="atualizarWhatsappChefeFilial(${f.id}, this.value)">
-            <input type="number" step="0.01" min="0" value="${f.valor_mensalidade != null ? f.valor_mensalidade : ''}" placeholder="Valor da mensalidade do ALUNO (R$) — base do cálculo de comissão de 30%" onchange="atualizarValorMensalidadeFilial(${f.id}, this.value)">
-            <input type="number" step="1" min="0" value="${f.membros != null ? f.membros : ''}" placeholder="Quantidade de MEMBROS — em branco usa o Mercúrio${f.membros_mercurio != null ? ` (hoje: ${f.membros_mercurio})` : ''} — Fixo: R$4,96 por membro/mês" onchange="atualizarMembrosFilial(${f.id}, this.value)">
-            <input type="text" maxlength="3" value="${escapeHTML(f.mercurio_unidade || '')}" placeholder="Código da unidade no Mercúrio (ex: JAM, GAR) — liga a sincronização diária do banco do Mercúrio" onchange="atualizarMercurioUnidadeFilial(${f.id}, this.value)">
-            <input type="number" step="0.01" min="0" value="${f.valor_fixo_mensal_agencia != null ? f.valor_fixo_mensal_agencia : ''}" placeholder="Ajuste manual do Valor Fixo (R$) — se preenchido, substitui membros × R$4,96" onchange="atualizarValorFixoFilial(${f.id}, this.value)">
-            <input type="text" value="${escapeHTML(f.endereco || '')}" placeholder="Endereço completo — aparece na gaveta de qualquer lead desta filial" onchange="atualizarEnderecoFilial(${f.id}, this.value)">
-        </div>
-    `).join('');
+        </details>`;
+    }).join('');
+}
+
+// Cada filial abre e fecha; todas começam fechadas ao abrir o modal. O Set
+// só guarda quais o usuário abriu, pra reordenar (que redesenha a lista)
+// não fechar o que ele estava editando.
+let filiaisAbertasModal = new Set();
+function alternarFilialAbertaModal(details) {
+    const id = details.dataset.filialId;
+    if (details.open) filiaisAbertasModal.add(id); else filiaisAbertasModal.delete(id);
+}
+
+// Resumo do cabeçalho fechado: o que mais se confere sem abrir a filial.
+function resumoFilialModal({ ativo, modulo2_contratado, mercurio_unidade, membros, membros_mercurio }) {
+    const chips = [];
+    if (!ativo) chips.push('<span class="filial-chip filial-chip-alerta">Inativa</span>');
+    chips.push(modulo2_contratado !== false
+        ? '<span class="filial-chip filial-chip-ok">Módulo 2</span>'
+        : '<span class="filial-chip">Sem cobrança</span>');
+    if (mercurio_unidade) chips.push(`<span class="filial-chip">${escapeHTML(mercurio_unidade)}</span>`);
+    const qtd = membros != null ? membros : membros_mercurio;
+    if (qtd != null) chips.push(`<span class="filial-chip">${qtd} membros</span>`);
+    return chips.join('');
+}
+function atualizarResumoFilialModal(el) {
+    const bloco = el.closest('.filial-bloco');
+    if (!bloco) return;
+    const ler = campo => bloco.querySelector(`[data-campo="${campo}"]`);
+    const membros = ler('membros');
+    const valorMembros = membros.value.trim();
+    bloco.querySelector('.filial-nome').textContent = ler('nome').value.trim();
+    bloco.querySelector('.filial-resumo').innerHTML = resumoFilialModal({
+        ativo: ler('ativo').checked,
+        modulo2_contratado: ler('modulo2').checked,
+        mercurio_unidade: ler('unidade').value.trim().toUpperCase(),
+        membros: valorMembros === '' ? null : Number(valorMembros),
+        membros_mercurio: membros.dataset.membrosMercurio === '' ? null : Number(membros.dataset.membrosMercurio),
+    });
 }
 REORDENADORES_LISTA['filiais'] = (idOrigem, idDestino) =>
     reordenarESalvarOrdem(NOME_TABELA_FILIAIS, filiaisModalCache, idOrigem, idDestino, renderizarListaFiliaisModal);
