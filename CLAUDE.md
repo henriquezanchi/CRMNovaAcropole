@@ -10983,3 +10983,12 @@ Especificação: `docs/superpowers/specs/2026-10-29-requalificacao-leads-design.
   `crm_reorganizar_kanban`: a proteção de 3 dias (card movido à mão) não vale quando o destino é Alunos, Matriculados
   ou Truncados. "Ativo em outra filial" exige o mesmo primeiro nome também quando o e-mail bate (família divide
   e-mail: 583 casos de e-mail igual com primeiro nome diferente).
+- **Mesclagem automática pelo Mercúrio (29/10, `migracao_mesclagem_pelo_mercurio.sql`, cron 03:45 Brasília):**
+  `crm_mesclar_pelo_mercurio(p_aplicar, p_limite)` mescla, na mesma filial, um cadastro sem matrícula no cadastro
+  ligado à ficha do Mercúrio quando têm o mesmo e-mail OU telefone E o mesmo primeiro nome (família divide contato —
+  primeiro nome diferente nunca mescla; cadastro que bate com 2+ fichas fica de fora). Fica sempre o cadastro do
+  Mercúrio. 1ª rodada: 390 pessoas, 405 cadastros removidos, 0 falhas.
+- **Ulisses parado desde 19/10:** última importação de Inscrições de Barra do Garças em 19/10; tentativas de 22/10
+  barradas pelo Cloudflare (403); cron `ulisses-api-diario` inativo (depende de PONTE_URL/PONTE_CHAVE no GitHub).
+  Leitura direta da API a partir do computador funciona (Dia Mundial da Filosofia, Barra: 8 inscritos no Ulisses,
+  3 ainda inexistentes no CRM).
