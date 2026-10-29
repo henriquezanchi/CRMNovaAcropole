@@ -2380,7 +2380,7 @@ async function enviarConviteAberturaTurmaFilial() {
 // da gaveta).
 function montarTextoConviteEvento(lead, evento, templateCustom, semApresentacao) {
     const tagsLead = (typeof parseTags === 'function' ? parseTags(lead.tags) : []).map(t => t.trim()).filter(Boolean);
-    const ehAtivo = tagsLead.includes('Ativo') || tagsLead.includes('Aluno Ativo');
+    const ehAtivo = tagsLead.some(ehTagAtivo);
     const primeiroNome = nomeParaChamar(lead);
     const atendente = obterNomeAtendente();
 
@@ -3086,7 +3086,7 @@ function htmlAvisoExclusaoInteligenteWpp(excluidos) {
 function popularTagsConviteApiSegmento() {
     const select = document.getElementById('conviteApiTagSelect');
     if (!select) return;
-    const tagsSistema = ['Ativo', 'Inativo'];
+    const tagsSistema = ['Inativo', 'Inativo reaproximando', 'Janela de resgate', 'Temperatura: Quente', 'Temperatura: Morna'];
     const catalogo = typeof TAGS_SUGERIDAS !== 'undefined'
         ? TAGS_SUGERIDAS.filter(tag => !(typeof ehTagHeuristicaLegada === 'function' && ehTagHeuristicaLegada(tag)))
         : [];

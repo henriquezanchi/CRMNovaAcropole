@@ -20,7 +20,6 @@ async function atualizarAgendaGeral() {
     carregarAgendaGeralRespostasConvite();
     carregarAgendaGeralEventosRecentes();
     carregarAgendaGeralCalendarioEventos();
-    if (typeof carregarAgendaGeralAtrasoContribuicao === 'function') carregarAgendaGeralAtrasoContribuicao();
 }
 
 // ---------------------------------------------------------

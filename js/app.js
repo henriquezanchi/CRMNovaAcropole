@@ -779,13 +779,36 @@ function rankNivelAluno(lead) {
     return indices.length > 0 ? Math.min(...indices) : 99;
 }
 
+// "É aluno ativo?" pela etiqueta: "Ativo: <filial>" vem da requalificação
+// pelo Mercúrio (crm_requalificar_leads, 2026-10-29); "Ativo"/"Aluno Ativo"
+// só sobram em filial sem código do Mercúrio.
+function ehTagAtivo(tag) {
+    const t = String(tag || '').trim();
+    return t === 'Ativo' || t === 'Aluno Ativo' || t.startsWith('Ativo: ');
+}
+function ehLeadAtivo(lead) {
+    return parseTags(lead && lead.tags).some(ehTagAtivo);
+}
+
 function organizarTagsDoCartao(tags) {
     const aliases = { 'Aluno Ativo':'Ativo', 'Ex-Aluno (Inativo)':'Inativo' };
     const unicas = [...new Set(tags.map(tag => String(tag).trim()).filter(tag => Boolean(tag) && !ehTagHeuristicaLegada(tag)).map(tag => Object.hasOwn(aliases, tag) ? aliases[tag] : tag))];
-    const prioridades = ['Não Contatar','Perdido','Ativo','Inativo','Recuperado'];
-    const destaque = unicas.filter(tag => prioridades.includes(tag)).sort((a,b) => prioridades.indexOf(a)-prioridades.indexOf(b));
+    // Ordem de destaque no card: bloqueio, situação no Mercúrio, momento.
+    const prioridade = tag => {
+        if (tag === 'Não Contatar') return 0;
+        if (tag === 'Perdido') return 1;
+        if (ehTagAtivo(tag)) return 2;
+        if (tag === 'Inativo') return 3;
+        if (tag === 'Inativo reaproximando') return 4;
+        if (tag.startsWith('Saída: ')) return 5;
+        if (['Saída recente', 'Janela de resgate', 'Saída antiga'].includes(tag)) return 6;
+        if (tag.startsWith('Temperatura: ')) return 7;
+        if (tag === 'Recuperado') return 8;
+        return -1;
+    };
+    const destaque = unicas.filter(tag => prioridade(tag) >= 0).sort((a,b) => prioridade(a)-prioridade(b));
     const operacionais = unicas.filter(tag => !destaque.includes(tag) && !/^(CRM$|Trilha:|Jornada:|Retorno:|Contato Recente:)/i.test(tag));
-    const principais = [...destaque, ...operacionais].slice(0,3);
+    const principais = [...destaque, ...operacionais].slice(0,4);
     return { principais, outras: unicas.filter(tag => !principais.includes(tag)) };
 }
 function montarTagsDoCartao(tags) {
@@ -863,7 +886,7 @@ function renderizarCards() {
             const sinal = AcompanhamentoModelo.proximidade(lead);
             if (['inscricao', 'decididos', 'visita'].includes(sinal.grupo)) badgesHTML += `<span class="tag sinal-matricula sinal-${sinal.grupo}" title="${escapeHTML(sinal.motivo)}">${escapeHTML(sinal.rotulo)}</span>`;
         }
-        if (!tagsLimpo.some(tag => ['Ativo','Aluno Ativo','Inativo','Ex-Aluno (Inativo)'].includes(tag))) {
+        if (!tagsLimpo.some(tag => ehTagAtivo(tag) || ['Inativo','Ex-Aluno (Inativo)'].includes(tag))) {
             const statusRede = typeof buscarStatusRedeAtivosInativos === 'function' ? buscarStatusRedeAtivosInativos(lead) : null;
             if (statusRede && statusRede.filial !== lead.filial) badgesHTML += `<span class="tag tag-info" title="Situação em outra unidade">${escapeHTML(statusRede.status)} · ${escapeHTML(statusRede.filial)}</span>`;
         }
@@ -1268,7 +1291,7 @@ function registrarUsoFiltroTag(tag) {
 // Enquanto o uso real ainda não preenche as 5 vagas, completa com esse
 // ponto de partida — assim que o time realmente usar 5 tags diferentes em
 // filtros, essas sugestões somem sozinhas, substituídas pelo uso de verdade.
-const FILTROS_RAPIDOS_PADRAO = ['Ativo', 'Inativo', 'Não Contatar', 'Indicação de Aluno', 'Convite: Pediu Informação'];
+const FILTROS_RAPIDOS_PADRAO = ['Temperatura: Quente', 'Inativo reaproximando', 'Janela de resgate', 'Não Contatar', 'Indicação de Aluno'];
 
 function renderizarFiltrosRapidos() {
     const container = document.getElementById('filtrosRapidosContainer');
@@ -4013,7 +4036,8 @@ async function carregarTagsSugeridas() {
 // adicionar uma tag manualmente: a importação casa por nome/telefone
 // normalizado, então às vezes deixa passar batido alguém que É Ativo ou
 // Inativo de verdade — isso dá um jeito rápido de corrigir na mão.
-const TAGS_SISTEMA_SUGERIDAS_MANUALMENTE = ['Ativo', 'Inativo', 'Não Contatar'];
+// Ativo/Inativo vêm só do Mercúrio (requalificação noturna) — não são mais sugeridas à mão.
+const TAGS_SISTEMA_SUGERIDAS_MANUALMENTE = ['Não Contatar'];
 
 function montarDatalistTagsSugeridas() {
     const datalist = document.getElementById('tagsSugeridasList');
@@ -4151,9 +4175,9 @@ const FAMILIAS_TAG = [
         // um lead cadastrado manualmente (abrirNovoLeadManual()) — nunca
         // veio de Mercúrio/Ulisses, e a tag é PERMANENTE (só some se o lead
         // inteiro for apagado, ver bloqueio em removerTag()).
-        testar: t => t === 'Ativo' || t === 'Aluno Ativo' || t === 'Inativo' || t === 'Ex-Aluno (Inativo)' || t === 'Recuperado' || t === 'Perdido' || t === TAG_LEAD_MANUAL,
+        testar: t => ehTagAtivo(t) || t === 'Inativo' || t === 'Ex-Aluno (Inativo)' || t === 'Recuperado' || t === 'Perdido' || t === TAG_LEAD_MANUAL,
         classe: t => {
-            if (t === 'Ativo' || t === 'Aluno Ativo') return 'tag-ativo';
+            if (ehTagAtivo(t)) return 'tag-ativo';
             if (t === 'Inativo' || t === 'Ex-Aluno (Inativo)') return 'tag-exaluno';
             if (t === 'Recuperado') return 'tag-recuperado';
             if (t === 'Perdido') return 'tag-perdido';
@@ -4168,7 +4192,22 @@ const FAMILIAS_TAG = [
     { label: 'Inscrição em Turma', testar: t => t === 'Inscrito: Abertura de Turma', classe: () => 'tag-inscrito-turma' },
     // Aplicada/removida todo dia por mercurio-db-sincronizar (fichas do Mercúrio,
     // últimos 6 meses) — aluno ativo com contribuição em atraso, alvo de retenção.
-    { label: 'Financeiro', testar: t => t === 'Contribuição em Atraso', classe: () => 'tag-warning' },
+    // Inativo pelo Mercúrio: motivo agrupado, faixa de tempo desde a saída e
+    // reaproximação (evento depois de sair, nos últimos 6 meses).
+    {
+        label: 'Saída',
+        testar: t => /^Saída: /.test(t) || ['Saída recente', 'Janela de resgate', 'Saída antiga', 'Inativo reaproximando'].includes(t),
+        classe: t => {
+            if (t === 'Inativo reaproximando' || t === 'Janela de resgate' || t === 'Saída: Pretende voltar') return 'tag-convite-confirmou';
+            if (t === 'Saída: Não contatar' || t === 'Saída: Mudou de cidade' || t === 'Saída recente') return 'tag-convite-negativo';
+            return 'tag-convite-neutro';
+        },
+    },
+    {
+        label: 'Temperatura',
+        testar: t => /^Temperatura: /.test(t),
+        classe: t => (/Quente$/.test(t) ? 'tag-convite-confirmou' : (/Morna$/.test(t) ? 'tag-convite-info' : 'tag-convite-neutro')),
+    },
     // TA (Merlin/Távola, infantil), JN (Janos, adolescentes), PP (1º mês),
     // N1 (nível de entrada, mantido separado) e "Membro" (N2-N7 unificados).
     // N[2-7] direto no regex é só pra CLASSIFICAR tags antigas (de antes do
@@ -4505,7 +4544,7 @@ function abrirGaveta(id, opcoes = {}) {
     const btnAberturaTurma = document.getElementById('btnConviteAberturaTurma');
     if (btnAberturaTurma) {
         const tagsLeadAtivo = parseTags(lead.tags).map(t => t.trim());
-        const ehAtivoParaConvite = tagsLeadAtivo.includes('Ativo') || tagsLeadAtivo.includes('Aluno Ativo');
+        const ehAtivoParaConvite = tagsLeadAtivo.some(ehTagAtivo);
         btnAberturaTurma.style.display = ehAtivoParaConvite ? 'inline-flex' : 'none';
     }
 

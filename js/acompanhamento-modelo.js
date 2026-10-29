@@ -65,7 +65,7 @@
         const resultado = (grupo, ordem, rotulo, motivo, acao) => ({ grupo, ordem, rotulo, motivo, acao });
         if (dado.inscricao === 'conferida' && dado.fonte_registro !== 'desconhecida' && dado.referencia_registro.trim() && Number.isFinite(Date.parse(dado.conferido_em)))
             return resultado('conferidos', 9, 'Cadastro conferido', 'Há fonte, referência e data de conferência.', 'Acompanhar o acolhimento como aluno; cadastro não comprova pagamento.');
-        if (dado.relacao === 'ativo' || tags.some(t => ['Ativo', 'Aluno Ativo'].includes(t)) || lead.funil_agencia === 'Matriculados')
+        if (dado.relacao === 'ativo' || tags.some(t => ['Ativo', 'Aluno Ativo'].includes(t) || String(t).startsWith('Ativo: ')) || lead.funil_agencia === 'Matriculados')
             return resultado('fora', 9, 'Já indicado como aluno', 'Relação, tag ou coluna informa que já é aluno.', 'Conferir o cadastro na fonte oficial, sem nova abordagem de captação.');
         if (dado.contato === 'nao_contatar' || tags.includes('Não Contatar'))
             return resultado('momento', 8, 'Não contatar', 'Há um pedido de não contato registrado.', 'Respeitar a preferência; verificar pendências apenas internamente.');

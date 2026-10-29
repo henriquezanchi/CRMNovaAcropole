@@ -169,6 +169,17 @@ function classificarNivel(nivelBruto) {
     return null;
 }
 
+// Mesma lista de crm_tag_qualificacao_mercurio() (migracao_requalificacao_mercurio.sql):
+// etiquetas controladas pela requalificação noturna, que a importação nunca altera.
+const TAGS_QUALIFICACAO_MERCURIO = ['Ativo', 'Aluno Ativo', 'Inativo', 'Ex-Aluno (Inativo)', 'Saída recente', 'Janela de resgate', 'Saída antiga',
+    'Inativo reaproximando', 'Interesse a confirmar', 'Interesse declarado', 'Interesse declarado: não', 'Retorno: Só 1 Evento', 'Contribuição em Atraso'];
+function ehTagQualificacaoMercurio(tag) {
+    const t = String(tag || '').trim();
+    return TAGS_QUALIFICACAO_MERCURIO.includes(t) || /^(Ativo: |Saída: |Temperatura: |Jornada:|Lead Forte)/.test(t)
+        || (t.startsWith('Conversa: ') && t !== 'Conversa: Mudou de Cidade')
+        || (t.startsWith('Convite: ') && !['Convite: Não Pode Ir', 'Convite: Sem Interesse'].includes(t));
+}
+
 // Resumo de conversa com origem rastreável. Campo vazio/sem autor/data não
 // vira declaração: a avaliação mantém o estado desconhecido.
 const TAGS_ESTADO_CONVERSA = ['Interesse declarado', 'Interesse declarado: não', 'Interesse a confirmar'];
@@ -2001,6 +2012,21 @@ async function confirmarEnviarImportacao() {
         if (erroLiberarMatricula) {
             logImport('Erro ao liberar matrícula(s) do lado antigo — a importação pode travar no lote com esse conflito: ' + erroLiberarMatricula.message, 'err');
         }
+    }
+
+    // Requalificação pelo Mercúrio (2026-10-29): em filial com código do
+    // Mercúrio, as etiquetas de situação (Ativo/Inativo, saída, temperatura,
+    // interesse, jornada...) são recalculadas toda madrugada por
+    // crm_requalificar_leads(). A importação não mexe nelas: descarta as que a
+    // planilha/Ulisses produziu e mantém exatamente as que o lead já tinha.
+    const filialComMercurio = (filiaisDisponiveis || []).some(f => f.nome === resultadoImportacao.filial && String(f.mercurio_unidade || '').trim());
+    if (filialComMercurio) {
+        registrosDedupe.forEach(r => {
+            const novas = parseTags(r.tags).filter(t => !ehTagQualificacaoMercurio(t));
+            const antigo = existentes.get(String(r.pessoaIdentificador));
+            const mantidas = antigo ? parseTags(antigo.tags).filter(ehTagQualificacaoMercurio) : [];
+            r.tags = JSON.stringify([...new Set([...novas, ...mantidas])]);
+        });
     }
 
     logImport(`Enviando ${registrosDedupe.length} leads ao Supabase, em lotes de 500...`);

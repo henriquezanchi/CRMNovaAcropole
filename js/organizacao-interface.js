@@ -14,7 +14,7 @@ function organizarInterfaceCrm() {
         const diagnostico = document.getElementById('diagnosticoIaCard'); if (diagnostico) { const grupo = envolver(diagnostico, 'Saúde dos dados e sincronizações'); dashboard.append(grupo); }
         const grade = dashboard.querySelector('.agenda-geral-grid');
         if (grade) {
-            const idsExtras = ['agendaGeralAniversariantes','agendaGeralInstagram','agendaGeralAtraso','agendaGeralCalendario'];
+            const idsExtras = ['agendaGeralAniversariantes','agendaGeralInstagram','agendaGeralCalendario'];
             const extras = document.createElement('details'); extras.className = 'secao-organizada rotinas-extras';
             const resumo = document.createElement('summary'); resumo.textContent = 'Calendário e outras rotinas'; extras.append(resumo);
             idsExtras.forEach(id => { const bloco = document.getElementById(id)?.closest('.activity-card'); if (bloco) extras.append(bloco); }); grade.append(extras);

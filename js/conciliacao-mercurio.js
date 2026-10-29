@@ -189,31 +189,6 @@ async function sincronizarMercurioDbAgora(botao) {
 }
 
 // ---------------------------------------------------------
-// Contribuição em atraso — lista de retenção (Agenda do Dia)
-// ---------------------------------------------------------
-async function carregarAgendaGeralAtrasoContribuicao() {
-    const el = document.getElementById('agendaGeralAtraso');
-    if (!el) return;
-    const { data, error } = await window.supabaseClient.from('mercurio_alunos')
-        .select('nome, filial, nivel, meses_em_atraso, ultimo_pagamento, pessoa_identificador')
-        .eq('ativo', true).gt('meses_em_atraso', 0)
-        .order('meses_em_atraso', { ascending: false }).order('ultimo_pagamento', { ascending: true, nullsFirst: true }).limit(500);
-    if (error) { el.innerHTML = `<div style="font-size:12px; color:#dc2626;">Erro: ${escapeHTML(error.message)}</div>`; return; }
-    if (!data || data.length === 0) { el.innerHTML = '<div style="font-size:12px; color:var(--text-muted); padding:4px;">Nenhum aluno com contribuição em atraso nos últimos 6 meses.</div>'; return; }
-    const porFilial = {};
-    data.forEach(a => { porFilial[a.filial] = (porFilial[a.filial] || 0) + 1; });
-    el.innerHTML = `
-        <div class="conc-aluno-meta" style="padding:4px 4px 8px;">${Object.entries(porFilial).map(([f, n]) => `${escapeHTML(f)}: <strong>${n}</strong>`).join(' · ')}</div>
-        ${data.map(a => `
-            <div class="activity-item" ${a.pessoa_identificador ? `onclick="abrirResultadoBuscaGlobal('${escapeHTML(a.pessoa_identificador)}')" style="cursor:pointer;"` : 'title="Ainda sem lead vinculado no CRM"'}>
-                <div class="activity-content">
-                    <div class="activity-text"><strong>${escapeHTML(a.nome || '')}</strong> <span class="tag ${a.meses_em_atraso >= 3 ? 'tag-error' : 'tag-warning'}" style="font-size:10px;">${a.meses_em_atraso} ${a.meses_em_atraso === 1 ? 'mês' : 'meses'} em atraso</span></div>
-                    <div class="activity-time">${escapeHTML(a.filial || '')} · ${escapeHTML(a.nivel || '')} · último pagamento: ${dataBRConc(a.ultimo_pagamento)}</div>
-                </div>
-            </div>`).join('')}`;
-}
-
-// ---------------------------------------------------------
 // Matrículas por canal de origem ("como conheceu a escola")
 // ---------------------------------------------------------
 async function renderizarCanalOrigemMercurio() {
