@@ -2068,7 +2068,7 @@ async function enviarAniversarioRapido(leadId, nomeLead, filialLead, botaoEl) {
         const preview = montarPreviewTemplate(tpl, params);
 
         const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
-            body: { pessoaIdentificador: leadId, tipo: 'template', templateNome: tpl.nome, templateIdioma: tpl.idioma || 'pt_BR', templateParams: params, templatePreview: preview, atendenteNome: atendente }
+            body: { pessoaIdentificador: leadId, tipo: 'template', templateNome: tpl.nome, templateIdioma: tpl.idioma || 'pt_BR', templateParams: params, templatePreview: preview, atendenteNome: atendente, origemEnvio: 'aniversario' }
         });
         if (error || !data || data.ok === false) {
             alert('Não foi possível enviar: ' + mensagemErroWpp(data || { erro: error?.message }));

@@ -83,7 +83,10 @@ Deno.serve(async (req) => {
         // Omitido/'manual' = resposta de verdade de um atendente (1:1,
         // inclusive sugestão de IA revisada e enviada) — grava o nome
         // real de quem está logado.
-        origemEnvio?: "manual" | "campanha";
+        // "aniversario" = parabéns automático (parabenizar-aniversariantes):
+        // só vale com o modelo `aniversario`, e aí não é campanha — só quem
+        // pediu para não ser contatado bloqueia.
+        origemEnvio?: "manual" | "campanha" | "aniversario";
         rascunhoAgente?: {tipo:"geral"|"convite";id:number};
     };
     try {
@@ -119,7 +122,8 @@ Deno.serve(async (req) => {
         if (erroLead || !lead) return json({ ok: false, erro: "lead_nao_encontrado" }, 404);
         const integridade = motivoIntegridadeContato(lead.tags);
         if (integridade) return json({ok:false,erro:'cadastro_em_conferencia',detalhe:{message:integridade}},409);
-        const envioCampanha = origemEnvio === 'campanha' || tipo === 'template';
+        const parabens = origemEnvio === 'aniversario' && tipo === 'template' && templateNome === 'aniversario';
+        const envioCampanha = !parabens && (origemEnvio === 'campanha' || tipo === 'template');
         const inscritoUlisses = envioCampanha && lead.acompanhamento?.contato !== 'permitido' ? await temInscricaoUlisses(pessoaIdentificador, lead.historico_eventos) : false;
         const bloqueioContato = motivoBloqueioContato(lead.acompanhamento, envioCampanha, Date.now(), inscritoUlisses) || (temTagNaoContatar(lead.tags)?'Pedido de não contato registrado.':'');
         if (bloqueioContato && tipo !== 'reacao') return json({ ok: false, erro: 'preferencia_contato', detalhe: { message: bloqueioContato } }, 409);
@@ -324,7 +328,7 @@ Deno.serve(async (req) => {
     // Best-effort: nunca falha o envio (que já aconteceu de verdade) por
     // causa disso.
     if (pessoaIdentificador) {
-        const responsavel = origemEnvio === "campanha" ? "API" : (atendenteNome || null);
+        const responsavel = origemEnvio === "campanha" || origemEnvio === "aniversario" ? "API" : (atendenteNome || null);
         // "Contato Recente: 7/30 dias" (pedido do usuário, 2026-10-06:
         // "evitamos enviar mensagem de novo") — adicionadas JÁ AQUI, na
         // hora do envio (não espera o cron do dia seguinte rodar) — quem
