@@ -424,7 +424,6 @@ async function renderizarStatusSincronizacaoScraper(mensagemExtraMercurio, mostr
 
     const linhas = data || [];
     const ultimoMercurioDb = linhas.find(l => l.sistema === 'mercurio_db');
-    const ultimoMercuryApi = linhas.find(l => l.sistema === 'mercury_api');
     const ultimoUlisses = linhas.find(l => l.sistema === 'ulisses');
 
     const formatarLinha = (label, row) => {
@@ -448,7 +447,7 @@ async function renderizarStatusSincronizacaoScraper(mensagemExtraMercurio, mostr
             ${mostrarCancelar ? ` — <a href="#" onclick="event.preventDefault(); cancelarAcompanhamentoMercurio();" style="color:inherit; text-decoration:underline;">Cancelei no GitHub, parar de acompanhar</a>` : ''}
         </p>` : ''}
         ${formatarLinha('Banco do Mercúrio — ativos, turmas, matrículas (última rodada)', ultimoMercurioDb)}
-        ${formatarLinha('API do Mercury — inativos (última filial sincronizada)', ultimoMercuryApi)}
+        <div class="coluna-row" style="justify-content:space-between;"><strong style="font-size:12px;">API do Mercury — inativos</strong><span style="font-size:11px; color:var(--text-muted);">Pausada desde 29/10/2026</span></div>
     `;
     containerUlisses.innerHTML = `
         ${mensagemExtraUlisses ? `<p style="font-size:12px; color:var(--na-green-dark); margin-bottom:10px;"><i class="fa-solid fa-circle-notch fa-spin"></i> ${escapeHTML(mensagemExtraUlisses)}</p>` : ''}
@@ -525,14 +524,10 @@ async function dispararMercurioAgora(filial = null) {
         await renderizarStatusSincronizacaoScraper('Lendo o banco do Mercúrio (ativos, turmas, matrículas)...');
         const { data: dDb, error: eDb } = await window.supabaseClient.functions.invoke('mercurio-db-sincronizar', { body: filial ? { filial } : {} });
         if (eDb || !dDb || !dDb.ok) problemas.push('Banco do Mercúrio: ' + ((dDb && (dDb.erro || (dDb.resultados || []).filter(r => r.erro).map(r => `${r.filial}: ${r.erro}`).join('; '))) || (eDb && eDb.message) || 'falhou'));
-
-        const alvos = (filiaisDisponiveis || []).filter(f => f.mercurio_unidade && (!filial || f.nome === filial)).map(f => f.nome);
-        for (let i = 0; i < alvos.length; i++) {
-            await renderizarStatusSincronizacaoScraper(`Atualizando inativos pela API do Mercury — ${alvos[i]} (${i + 1}/${alvos.length})...`);
-            const { data: dApi, error: eApi } = await window.supabaseClient.functions.invoke('mercury-sincronizar', { body: { filial: alvos[i] } });
-            const falhaApi = (dApi && (dApi.resultados || []).find(r => r.ok === false)) || null;
-            if (eApi || !dApi || falhaApi) problemas.push(`Mercury (${alvos[i]}): ` + ((falhaApi && falhaApi.erro) || (eApi && eApi.message) || 'falhou'));
-        }
+        // A API do Mercury (mercury-sincronizar) está PAUSADA desde 2026-10-29,
+        // a pedido do usuário: ela marcava como "Ativo" gente que o banco do
+        // Mercúrio já não considera ativa. Os agendamentos dela também estão
+        // pausados (migracao_pausar_mercury_api.sql). Só o banco é lido aqui.
     } catch (e) {
         problemas.push(e.message || String(e));
     } finally {

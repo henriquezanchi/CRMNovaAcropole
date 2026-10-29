@@ -10939,3 +10939,20 @@ A tag "Contato Recente: 7 dias" só cobria o que NÓS mandamos. Se a consulta fa
 Exceção: "Convidar (Janela Aberta)" passa `excluirConversaAtiva: false`, porque existe justamente pra quem
 acabou de escrever. Sem trava no `whatsapp-send`: lá `origemEnvio='campanha'` também é usado por lembrete de
 evento confirmado, pesquisa de no-show e reengajamento, que precisam falar com conversas em andamento.
+
+## API do Mercury pausada + aluno ativo pelo banco do Mercúrio (29/10/2026)
+
+- **`mercury-sincronizar` PAUSADA** a pedido do usuário (`migracao_pausar_mercury_api.sql`, 12 agendamentos com
+  `active=false`, nenhum apagado — religar = mesmo bloco com `active := true`). O botão "Rodar Mercúrio Agora" só lê o
+  banco. Sino, Diagnóstico de Saúde e Resumo Diário não vigiam mais `mercury_api` (senão acusariam "travada").
+  Motivo: o campo `active` da API marcava como ativos 411 leads que o banco do Mercúrio não considera ativos.
+  Sem ela, motivo/data de saída e `pessoas_ativas_rede` deixam de ser atualizados.
+- **`crm_eh_ativo(filial, pessoa, tags)`** (`migracao_ativo_pelo_mercurio.sql`): regra única de "é aluno ativo" —
+  filial com `mercurio_unidade` → `mercurio_alunos.ativo`; sem código → etiqueta Ativo/Aluno Ativo. Usada pelo Kanban
+  (`crm_kanban_alvos`) e pelas filas da IA (`migracao_ativos_fora_atencao.sql`: sugestão, convite, reengajamento,
+  qualificação, análise de funil, áudios, painel de especialistas; colunas `eh_ativo` em `vw_wpp_conversas` e
+  `crm_fila_especialistas`).
+- O lote `fdd890e6` (Ativos → Alunos) levou 411 não-ativos; desfeito no lote `0dd890e6-0000-4000-8000-000000000411`.
+- Pendente (aguardando decisão do usuário): revisão completa da qualificação (4 perguntas: relação com a escola,
+  pode contatar, momento, histórico) e a exclusão dos Ativos nas telas (Visão Geral, Atendimento, WhatsApp, Tarefas,
+  relatórios). As etiquetas Ativo/Inativo/"Interesse a confirmar" seguem desatualizadas até lá.

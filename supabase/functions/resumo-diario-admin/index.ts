@@ -71,7 +71,7 @@ async function buscarStatusSincronizacao(): Promise<{ linhaMercurio: string; lin
     // banco de consulta (ativos, turmas) e pela API do Mercury (inativos).
     return {
         linhaMercurio: `${montarLinha("Mercúrio (banco)", "mercurio_db")}
-${montarLinha("Mercury (inativos)", "mercury_api")}`,
+Mercury (inativos): pausada desde 29/10`,
         linhaUlisses: montarLinha("Ulisses", "ulisses"),
     };
 }

@@ -417,7 +417,7 @@ async function verificarNotificacoesSincronizacao() {
         .in('filial', [filialAtual, 'GLOBAL'])
         // 'mercurio' (scraper antigo) foi desligado — o último registro dele
         // ia envelhecer e virar um falso "travada".
-        .in('sistema', ['ulisses', 'mercurio_db', 'mercury_api'])
+        .in('sistema', ['ulisses', 'mercurio_db']) // mercury_api pausada desde 2026-10-29
         .order('executado_em', { ascending: false })
         .limit(20);
 
