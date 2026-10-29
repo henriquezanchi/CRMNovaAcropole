@@ -10872,3 +10872,31 @@ ficava "a qualificar").
 - Testes: `tests/agentes-crm-memoria.test.mjs`. Os testes que transpilam
   TypeScript aceitam `TYPESCRIPT_MODULE` (caminho do typescript.js) e removem
   imports com CRLF.
+
+## Kanban por tarefa (29/10/2026)
+
+Pedido do usuário: as colunas dizem o que fazer, e o CRM move os cards sozinho
+(avança ou volta). Chaves (`colunasPadrao()`, `js/app.js`) e regra no banco
+(`crm_kanban_alvos()`/`crm_reorganizar_kanban()`, `migracao_kanban_tarefas.sql`,
+JÁ RODADA; cron `kanban-reorganizar` a cada 15 min,
+`migracao_agendamento_kanban_tarefas.sql`, JÁ RODADA) precisam bater:
+- `Frios` (rótulo "Convidar p/ Palestra"): quem nunca respondeu. Só receber
+  mensagem nossa não conta como conversa.
+- `VaiPalestra`: confirmou (`evento_leads.resposta_convite='confirmado'`) ou está
+  inscrito no Ulisses (`origem='ulisses'`) num evento futuro, mesmo sem conversa.
+- `ComoFoi`: evento dos últimos 30 dias e nenhuma mensagem dele desde o dia do evento.
+- `FalarCurso`: respondeu e não cai em outra regra (inclui quem conversou depois do evento).
+- `QuerEntrar` (rótulo "Matricular"): etapa `matricula` confirmada pela IA. A chave
+  não tem "matricul" de propósito; as heurísticas de Matriculados agora procuram
+  "matriculad".
+- `Matriculados`: matrícula do mês no Mercúrio. `Alunos`: aluno ativo que respondeu.
+  `Truncados`: Não Contatar.
+- Nunca tira ninguém de Matriculados/Truncados. O cron não mexe em card movido à mão
+  nos últimos 3 dias (`funil_auto_em` marca o que foi movido pelo automático).
+- Cada movimento fica em `crm_kanban_movimentos` (lote, de, para, motivo) — dá
+  pra desfazer um lote inteiro voltando `de`.
+- Navegador antigo adota as colunas novas sozinho (`crm_na_colunas_versao`),
+  mantendo colunas criadas à mão; Em Abordagem e RSVP saíram.
+- Selo nos cards de Vai à Palestra/Como Foi: inscrito ou não no Ulisses e presença
+  registrada ou não (`carregarStatusEventosKanban()`), sem IA.
+- Varredura inicial: 1.576 movimentos (lote `09637fd9-b890-4a48-8952-0e03c3021f2d`).
