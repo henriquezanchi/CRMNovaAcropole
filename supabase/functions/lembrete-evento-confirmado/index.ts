@@ -14,19 +14,15 @@
 // de manhã (10h Brasília) — dá um dia inteiro de antecedência mesmo pra
 // evento à noite.
 //
-// LIMITAÇÃO CONHECIDA, documentada (mesmo caso já visto em
-// lembrete-scraper): manda como texto LIVRE, que só entrega se o
-// destinatário tiver mandado mensagem nas últimas 24h — sem template
-// aprovado dedicado, quem confirmou presença há muitos dias e não
-// voltou a falar com a gente pode não receber o lembrete de verdade
-// (erro 131047, best-effort, nunca trava o resto do lote). Se a taxa de
-// entrega real se mostrar baixa, o próximo passo é criar um template
-// aprovado só pra isso.
+// Texto LIVRE só entrega dentro da janela de 24h. Desde 30/10/2026 o
+// lembrete só sai para quem nos escreveu nas últimas 24h
+// (_shared/janela-wpp.ts); os demais ficam sem lembrete até existir um
+// modelo aprovado próprio para isso.
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
+import { leadsComJanelaAberta, PAUSA_ENTRE_ENVIOS_MS } from "../_shared/janela-wpp.ts";
 import { linkMapsDaFilial } from "../_shared/filiaisInfo.ts";
 
-const TAMANHO_LOTE = 5;
 
 function json(body: unknown, status = 200) {
     return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -75,10 +71,17 @@ Deno.serve(async (req) => {
     const urlWhatsappSend = `${Deno.env.get("SUPABASE_URL")}/functions/v1/whatsapp-send`;
     const authServiceRole = `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`;
 
-    let enviados = 0, falharam = 0, semLead = 0;
-    for (let i = 0; i < candidatos.length; i += TAMANHO_LOTE) {
-        const lote = candidatos.slice(i, i + TAMANHO_LOTE);
-        await Promise.all(lote.map(async (c: any) => {
+    // Texto livre só sai para quem nos escreveu nas últimas 24h (ver
+    // _shared/janela-wpp.ts). Quem está fora da janela fica sem envio e sem
+    // marcação. Envios um por vez, com pausa: rajada já rendeu aviso da Meta.
+    const janelaAberta = await leadsComJanelaAberta(idsLead.map(String));
+    let enviados = 0, falharam = 0, semLead = 0, foraDaJanela = 0;
+    let primeiro = true;
+    for (const c of candidatos as any[]) {
+        if (!janelaAberta.has(String(c.pessoaIdentificador))) { foraDaJanela++; continue; }
+        await (async () => {
+            if (!primeiro) await new Promise((r) => setTimeout(r, PAUSA_ENTRE_ENVIOS_MS));
+            primeiro = false;
             const lead = mapaLeads.get(String(c.pessoaIdentificador));
             const evento = mapaEventos.get(c.evento_id);
             if (!lead || !evento) { semLead++; return; }
@@ -112,9 +115,8 @@ Deno.serve(async (req) => {
             } catch {
                 falharam++;
             }
-        }));
-        if (i + TAMANHO_LOTE < candidatos.length) await new Promise((r) => setTimeout(r, 400));
+        })();
     }
 
-    return json({ ok: true, processados: candidatos.length, enviados, falharam, sem_lead_ou_evento: semLead });
+    return json({ ok: true, processados: candidatos.length, enviados, falharam, sem_lead_ou_evento: semLead, fora_da_janela: foraDaJanela });
 });

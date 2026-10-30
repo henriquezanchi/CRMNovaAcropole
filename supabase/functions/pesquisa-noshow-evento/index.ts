@@ -34,8 +34,8 @@
 // Chamada por pg_cron 1x/dia (migracao_agendamento_pesquisa_noshow.sql).
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
+import { leadsComJanelaAberta, PAUSA_ENTRE_ENVIOS_MS } from "../_shared/janela-wpp.ts";
 
-const TAMANHO_LOTE = 5;
 // Só considera eventos dos últimos N dias — sem isso, a 1ª execução
 // depois de rodar a migração encontraria TODO o histórico de no-shows
 // antigos de uma vez (milhares de mensagens de uma pergunta que já não
@@ -85,10 +85,17 @@ Deno.serve(async (req) => {
     const urlWhatsappSend = `${Deno.env.get("SUPABASE_URL")}/functions/v1/whatsapp-send`;
     const authServiceRole = `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`;
 
-    let enviados = 0, falharam = 0, pulados = 0;
-    for (let i = 0; i < candidatos.length; i += TAMANHO_LOTE) {
-        const lote = candidatos.slice(i, i + TAMANHO_LOTE);
-        await Promise.all(lote.map(async (c: any) => {
+    // Texto livre só sai para quem nos escreveu nas últimas 24h (ver
+    // _shared/janela-wpp.ts). Quem está fora da janela fica sem envio e sem
+    // marcação. Envios um por vez, com pausa: rajada já rendeu aviso da Meta.
+    const janelaAberta = await leadsComJanelaAberta(idsLead.map(String));
+    let enviados = 0, falharam = 0, pulados = 0, foraDaJanela = 0;
+    let primeiro = true;
+    for (const c of candidatos as any[]) {
+        if (!janelaAberta.has(String(c.pessoaIdentificador))) { foraDaJanela++; continue; }
+        await (async () => {
+            if (!primeiro) await new Promise((r) => setTimeout(r, PAUSA_ENTRE_ENVIOS_MS));
+            primeiro = false;
             const lead = mapaLeads.get(String(c.pessoaIdentificador));
             const evento = mapaEventos.get(c.evento_id);
             if (!lead || !evento) { pulados++; return; }
@@ -120,9 +127,8 @@ Deno.serve(async (req) => {
             } catch {
                 falharam++;
             }
-        }));
-        if (i + TAMANHO_LOTE < candidatos.length) await new Promise((r) => setTimeout(r, 400));
+        })();
     }
 
-    return json({ ok: true, processados: candidatos.length, enviados, falharam, pulados });
+    return json({ ok: true, processados: candidatos.length, enviados, falharam, pulados, fora_da_janela: foraDaJanela });
 });

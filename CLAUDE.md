@@ -11056,3 +11056,20 @@ A API do Ulisses traz `publicar` em cada evento de `listarTodosEventos`. Evento 
 ex: "Recepção de Novos Membros") não é importado por `sincronizarEventosUlissesApi()` (`scraper/importar-ulisses-api.js`);
 evento interno FUTURO que já estava no CRM vira `ativo=false` (nada é apagado; eventos passados não são tocados).
 A regra segue a marcação da escola no Ulisses: palestra aberta sem "publicar no site" também fica de fora.
+
+## WhatsApp banido pela Meta + envios automáticos pausados (30/10/2026)
+
+A Meta baniu as duas contas do WhatsApp Business do portfólio "Aletheia Arquitetura Educacional": Nova Acrópole
+(+55 62 3190-0742, conta 4141029446188721) e Semperia (+55 11 5196-8732), as duas com qualidade "Alta" — indica
+ação sobre o portfólio, não sobre o comportamento de envio. Motivo informado: "violação dos termos de uso aceitável
+dos serviços comerciais". Hipótese (não confirmada): número com nome de outra organização dentro do portfólio da
+agência. Análise pedida/a pedir em business.facebook.com/business-support-home; plano B é a Nova Acrópole ter
+portfólio próprio verificado com a Aletheia como parceira (troca só número/token nos segredos).
+- Sem a conta, nada entra nem sai pelo CRM (última mensagem recebida: 30/10 12h29).
+- `migracao_pausar_envios_whatsapp.sql` (JÁ RODADA): pausa (`active=false`, sem apagar) reengajar-janela-fechando,
+  whatsapp-reenviar-falhas, parabens-aniversario-diario, avisar-aniversario-ativos-diario,
+  lembrete-evento-confirmado-diario, pesquisa-noshow-evento-diaria, resumo-diario-admin,
+  resumo-semanal-chefe-todas-filiais. Religar = mesmo bloco com `active := true`, só depois da conta voltar.
+- Lembrete de evento e pesquisa de no-show mandavam texto livre para todos, com a janela fechada (9 erros 131047 numa
+  manhã). Agora só enviam para quem escreveu nas últimas 23h (`_shared/janela-wpp.ts`), um por vez com pausa de
+  1,5s; o resto fica sem envio e sem marcação (`fora_da_janela` no retorno).
