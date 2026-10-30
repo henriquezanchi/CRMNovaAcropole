@@ -49,6 +49,7 @@ import { buscarListaFiliais, linkMapsDaFilial } from "../_shared/filiaisInfo.ts"
 import { montarTabelaDiasSemana, adicionarMeses } from "../_shared/calendario.ts";
 import { buscarPersonaAtendente } from "../_shared/persona.ts";
 import { chamarClaude } from "../_shared/anthropic.ts";
+import { montarHistoricoWpp } from "../_shared/historico-wpp.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const MODELO = "claude-haiku-4-5-20251001";
@@ -148,7 +149,7 @@ async function aplicarLembreteAutomatico(pessoaIdentificador: string, data: stri
 
 type Candidata = { mensagem_id: number; pessoaIdentificador: string; filial: string | null };
 
-async function montarContextoCompleto(pessoaIdentificador: string): Promise<string> {
+async function montarContextoCompleto(pessoaIdentificador: string): Promise<{ texto: string; ultimaDoLeadIlegivel: boolean }> {
     const { count } = await supabaseAdmin
         .from("mensagens_whatsapp")
         .select("id", { count: "exact", head: true })
@@ -156,17 +157,19 @@ async function montarContextoCompleto(pessoaIdentificador: string): Promise<stri
 
     const { data } = await supabaseAdmin
         .from("mensagens_whatsapp")
-        .select("direcao, corpo_texto, tipo")
+        .select("id, direcao, corpo_texto, tipo")
         .eq("pessoaIdentificador", pessoaIdentificador)
         .order("criado_em", { ascending: false })
         .limit(LIMITE_HISTORICO_COMPLETO);
-    const msgs = (data || []).reverse();
-    const texto = msgs.map((m: any) => `${m.direcao === "entrada" ? "Lead" : "Escola"}: ${m.tipo === "texto" ? m.corpo_texto : `[${m.tipo}]`}`).join("\n");
+    const { texto, ultimaDoLeadIlegivel } = await montarHistoricoWpp((data || []).reverse());
 
     const truncado = typeof count === "number" && count > LIMITE_HISTORICO_COMPLETO;
-    return truncado
-        ? `(conversa tem ${count} mensagens no total — abaixo só as ${LIMITE_HISTORICO_COMPLETO} mais recentes, mais que suficiente pra entender o fio atual)\n${texto}`
-        : texto;
+    return {
+        texto: truncado
+            ? `(conversa tem ${count} mensagens no total — abaixo só as ${LIMITE_HISTORICO_COMPLETO} mais recentes, mais que suficiente pra entender o fio atual)\n${texto}`
+            : texto,
+        ultimaDoLeadIlegivel,
+    };
 }
 
 // Idêntica a montarContextoCRM() de sugerir-resposta-whatsapp — mesma
@@ -254,6 +257,9 @@ async function montarContextoCRM(pessoaIdentificador: string, filial: string | n
 const EXEMPLOS_RETOMADA = `
 Exemplos de boa retomada depois de um tempo sem resposta nossa (situações comuns, não são do lead atual — nunca copie o dado concreto, só o tom e a estrutura):
 
+Conversa parou em: o lead escreveu "Pedi um salgado e esqueci de pagar, me passa o pix?" (ou fala de entrega, cobrança, consulta, produto — algo que não tem nada a ver com a escola)
+Boa retomada: NÃO tratar como interesse nem perguntar "o que você gostaria de saber". Só um esclarecimento curto e gentil, sem convite. Ex: "Oi, [nome]! Acho que essa mensagem veio para o número errado: aqui é a Nova Acrópole, escola de filosofia. Se um dia quiser conhecer nossas atividades, é só chamar!"
+
 Conversa parou em: lead perguntou o valor da mensalidade, nunca respondemos
 Boa retomada: entregar o dado real diretamente, sem se desculpar de forma exagerada pela demora. Ex: "Oi, [nome]! Vendo aqui, o valor na unidade [filial] é R$ [valor]. Fico à disposição pra qualquer outra dúvida :)"
 
@@ -338,6 +344,8 @@ Escreva um rascunho de resposta em português, curto (1-5 frases), caloroso, nat
 - Resposta curta e positiva a uma PERGUNTA NOSSA ("o que achou?" -> "Adorei", "Muito bom", "Gostei sim") NÃO é agradecimento nem conversa encerrada: é o lead respondendo e esperando a gente. Continue: acolha e faça uma pergunta aberta curta (ex: o que mais marcou). Nunca devolva null nesse caso.
 - Se a última mensagem do lead já era só um agradecimento/"ok" sem nenhuma pergunta pendente, não force uma continuação artificial — "sugestao": null é a resposta certa, melhor não mandar nada do que mandar algo sem propósito real (nunca incomodar o lead só pra "manter a conversa viva").
 - Se a CONVERSA COMO UM TODO já soa concluída/encerrada — a pessoa se despediu ("tchau", "até mais", "falou"), o assunto chegou a um fim natural, ou simplesmente não há mais nada pendente de verdade a tratar — "sugestao": null, mesmo que a última mensagem tecnicamente seja do lead. Reabrir uma conversa que já tinha terminado naturalmente é pior do que deixá-la fechada.
+- Se a mensagem do lead claramente NÃO é para a escola (pede pix ou cobrança, fala de pedido de comida ou produto, entrega, consulta, ou parece endereçada a outra empresa ou pessoa), não trate como interesse e nunca responda com "me conta o que você gostaria de saber". Responda só um esclarecimento curto e gentil: a mensagem parece ter vindo para o número errado, aqui é a Nova Acrópole (escola de filosofia), e fica à disposição. Sem convite, sem evento.
+- Se o histórico mostrar "[áudio ainda sem transcrição — conteúdo desconhecido]" ou mídia sem legenda como algo importante que o lead disse, você não sabe o conteúdo: "sugestao": null.
 - Se o lead já pediu claramente pra não ser mais contatado, ou a conversa mostra sinal claro de desinteresse, "sugestao": null também — nunca insista.
 - Se os dados do lead tiverem um bloco "Persona configurada por...", siga o tom E as observações dali À RISCA (tem prioridade sobre o estilo padrão, mas nunca sobre as regras de segurança acima).
 - Se o lead mencionar uma unidade/filial DIFERENTE da "filial de cadastro" (ver lista de unidades nos dados do lead, se houver), responda com os dados REAIS daquela unidade — nunca confunda com a filial de cadastro.
@@ -418,7 +426,7 @@ Deno.serve(async (req) => {
     if (modoDebug) {
         const resultadosDebug = [];
         for (const item of candidatas as Candidata[]) {
-            const contextoConversa = await montarContextoCompleto(item.pessoaIdentificador);
+            const { texto: contextoConversa } = await montarContextoCompleto(item.pessoaIdentificador);
             const contextoCRM = await montarContextoCRM(item.pessoaIdentificador, item.filial, contextoConversa, hojeISO);
             const resultadoDebug = await retomarUma(contextoCRM, contextoConversa, exemplos, hojeISO);
             resultadosDebug.push({ pessoaIdentificador: item.pessoaIdentificador, contextoCRM, ...resultadoDebug });
@@ -428,8 +436,12 @@ Deno.serve(async (req) => {
 
     let processadas = 0;
     for (const item of candidatas as Candidata[]) {
-        const contextoConversa = await montarContextoCompleto(item.pessoaIdentificador);
-        const contextoCRM = await montarContextoCRM(item.pessoaIdentificador, item.filial, contextoConversa);
+        const { texto: contextoConversa, ultimaDoLeadIlegivel } = await montarContextoCompleto(item.pessoaIdentificador);
+        // Áudio ainda não transcrito (ou foto sem legenda) na última mensagem do
+        // lead: o robô não sabe o que a pessoa disse. Não responde às cegas;
+        // tenta de novo na próxima rodada (a transcrição roda a cada 2 min).
+        if (ultimaDoLeadIlegivel) continue;
+        const contextoCRM = await montarContextoCRM(item.pessoaIdentificador, item.filial, contextoConversa, hojeISO);
         const resultado = await retomarUma(contextoCRM, contextoConversa, exemplos, hojeISO);
 
         // Falha TÉCNICA (rede, rate limit, JSON malformado) — nunca marca

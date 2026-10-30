@@ -321,6 +321,20 @@ Deno.serve(async (req) => {
         atendente_nome: atendenteNome || null,
     });
 
+    // Respostas atravessadas (bug real, 30/10/2026): uma sugestão da IA que
+    // ficou pendente continuava válida depois que a equipe já tinha respondido,
+    // e o comando "SIM" mandava a resposta velha por cima. Qualquer envio nosso
+    // torna as sugestões pendentes deste lead desatualizadas. Quem envia a
+    // própria sugestão marca 'enviada' por id em seguida, então não é afetado.
+    if (pessoaIdentificador) {
+        await supabaseAdmin.from("sugestoes_resposta_wpp").update({ status: "descartada" })
+            .eq("pessoaIdentificador", pessoaIdentificador).eq("status", "pendente")
+            .then(() => {}, () => {});
+        await supabaseAdmin.from("classificacoes_resposta_convite").update({ status: "descartada" })
+            .eq("pessoaIdentificador", pessoaIdentificador).eq("status", "pendente")
+            .then(() => {}, () => {});
+    }
+
     // "Último contato" (pedido do usuário, 2026-09-30) — carimbado
     // automaticamente aqui, ÚNICO ponto por onde todo envio real de
     // WhatsApp passa (individual, template, convite em massa, aniversário

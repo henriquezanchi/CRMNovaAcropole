@@ -32,6 +32,7 @@ import { buscarPersonaAtendente } from "../_shared/persona.ts";
 import { contextoOficialCRM } from "../_shared/contexto-oficial-crm.ts";
 import { prepararAgente } from "../_shared/agentes-crm.ts";
 import { chamarClaude } from "../_shared/anthropic.ts";
+import { montarHistoricoWpp } from "../_shared/historico-wpp.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const MODELO = "claude-haiku-4-5-20251001";
@@ -108,12 +109,11 @@ type Candidata = { mensagem_id: number; pessoaIdentificador: string; corpo_texto
 async function montarContexto(pessoaIdentificador: string): Promise<string> {
     const { data } = await supabaseAdmin
         .from("mensagens_whatsapp")
-        .select("direcao, corpo_texto, tipo")
+        .select("id, direcao, corpo_texto, tipo")
         .eq("pessoaIdentificador", pessoaIdentificador)
         .order("criado_em", { ascending: false })
         .limit(LIMITE_HISTORICO);
-    const msgs = (data || []).reverse();
-    return msgs.map((m: any) => `${m.direcao === "entrada" ? "Lead" : "Escola"}: ${m.tipo === "texto" ? m.corpo_texto : `[${m.tipo}]`}`).join("\n");
+    return (await montarHistoricoWpp((data || []).reverse())).texto;
 }
 
 // Pedido do usuário (2026-09-29): "quero criar um bot... já com uma
@@ -344,6 +344,7 @@ Escreva um rascunho de resposta em português, curto (1-5 frases), caloroso, nat
 - Se o lead disser que QUER IR a um evento que já tem um convite PENDENTE nos dados do lead (data/horário já FIXOS, já comunicados antes), NUNCA pergunte "qual dia você pode" como se houvesse escolha — é só repetir a data/horário que já convidamos e, se fizer sentido, o endereço/link. NUNCA use frases que pareçam uma decisão ADMINISTRATIVA já fechada por nós — tipo "confirmo você", "está confirmada a sua vaga" — isso pode soar opressivo/constrangedor; prefira um tom de convite caloroso ("Que bom que você vai poder vir!"/"Show! Então a gente se vê...").
 - Se o lead mencionar ou perguntar sobre uma unidade/filial DIFERENTE da "filial de cadastro" (ver lista de unidades nos dados do lead, se houver), responda com os dados REAIS daquela unidade que ele mencionou — nunca confunda com a filial de cadastro dele.
 - Se o histórico tiver uma promessa vaga de dia da semana feita pela ESCOLA (ex: "teremos outra oportunidade na próxima quinta", "pode ser semana que vem?") e o lead só confirmou agora ("sim", "pode ser"), use a tabela de calendário acima pra achar a DATA EXATA daquele dia da semana — nunca escreva uma data sem conferir na tabela.
+- Se a mensagem do lead claramente NÃO é para a escola (pede pix ou cobrança, fala de pedido de comida ou produto, entrega, consulta, ou parece endereçada a outra empresa ou pessoa), não trate como interesse nem pergunte "o que você gostaria de saber": sugira só um esclarecimento curto e gentil (a mensagem parece ter vindo para o número errado, aqui é a Nova Acrópole, escola de filosofia, à disposição), sem convite.
 - Se não der pra saber o que responder com confiança (mensagem ambígua, fora de contexto, ou perigosa de responder sem saber mais), devolva "sugestao": null — não force um texto.
 - ATENÇÃO a datas abreviadas no formato "NN/NN" (ex: "01/27", "depois de 03/28"): o formato brasileiro é DIA/MÊS, então o SEGUNDO número só pode ser mês válido se for de 1 a 12. Se o SEGUNDO número for MAIOR que 12 (como em "01/27", onde 27 não é mês nenhum), não é dia/mês — é quase certamente MÊS/ANO abreviado: "01/27" = janeiro de 2027, NUNCA "27 de janeiro". Se for usar essa data na resposta, escreva por extenso COM O ANO (ex: "em janeiro de 2027"), nunca deixe o ano implícito quando o lead mencionou um.
 

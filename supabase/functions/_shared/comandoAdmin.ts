@@ -85,6 +85,21 @@ async function reivindicarSugestao(id: number): Promise<boolean> {
     return !!(data && data.length > 0);
 }
 
+// Respostas atravessadas (bug real, 30/10/2026): o "SIM" mandou uma sugestão
+// feita para uma mensagem antiga, depois que a equipe já tinha respondido.
+// A sugestão só vale se a mensagem que a originou ainda for a última da
+// conversa (envio nosso que falhou não conta, o lead nunca recebeu).
+async function sugestaoDesatualizada(s: any): Promise<boolean> {
+    if (!s.mensagem_origem_id) return false;
+    const { data } = await supabaseAdmin
+        .from("mensagens_whatsapp")
+        .select("id, direcao, wa_status")
+        .eq("pessoaIdentificador", s.pessoaIdentificador)
+        .gt("id", s.mensagem_origem_id)
+        .limit(20);
+    return (data || []).some((m: any) => !(m.direcao === "saida" && m.wa_status === "falhou"));
+}
+
 export async function tratarComandoAdmin(msg: any): Promise<void> {
     if (msg?.type !== "text") return; // comando só por texto, de propósito — nunca interpreta áudio/imagem/etc.
     const texto = String(msg.text?.body || "").trim().toLowerCase();
@@ -96,7 +111,7 @@ export async function tratarComandoAdmin(msg: any): Promise<void> {
 
     const { data: pendentes, error } = await supabaseAdmin
         .from("sugestoes_resposta_wpp")
-        .select('id, "pessoaIdentificador", sugestao_resposta')
+        .select('id, "pessoaIdentificador", sugestao_resposta, mensagem_origem_id')
         .eq("status", "pendente")
         .not("sugestao_resposta", "is", null)
         .order("id", { ascending: true })
@@ -107,7 +122,13 @@ export async function tratarComandoAdmin(msg: any): Promise<void> {
     let enviados = 0;
     let falharam = 0;
     let jaProcessadasPorOutraExecucao = 0;
+    let desatualizadas = 0;
     for (const s of pendentes as any[]) {
+        if (await sugestaoDesatualizada(s)) {
+            await supabaseAdmin.from("sugestoes_resposta_wpp").update({ status: "descartada" }).eq("id", s.id).eq("status", "pendente");
+            desatualizadas++;
+            continue;
+        }
         const ganhou = await reivindicarSugestao(s.id);
         if (!ganhou) { jaProcessadasPorOutraExecucao++; continue; } // outra execução (reentrega da Meta) já cuidou dessa
 
@@ -125,7 +146,7 @@ export async function tratarComandoAdmin(msg: any): Promise<void> {
         await pausa(PAUSA_ENTRE_ENVIOS_MS);
     }
 
-    if (jaProcessadasPorOutraExecucao === pendentes.length) return; // reentrega da Meta pro MESMO comando — já foi tudo tratado, nem responde de novo
+    if (jaProcessadasPorOutraExecucao > 0 && jaProcessadasPorOutraExecucao + desatualizadas === pendentes.length) return; // reentrega da Meta pro MESMO comando — já foi tudo tratado, nem responde de novo
 
     const { count: restantes } = await supabaseAdmin
         .from("sugestoes_resposta_wpp")
@@ -135,6 +156,7 @@ export async function tratarComandoAdmin(msg: any): Promise<void> {
 
     const partes = [`✅ Enviei ${enviados} sugestão(ões) de resposta.`];
     if (falharam > 0) partes.push(`${falharam} falharam e voltaram pra pendente.`);
+    if (desatualizadas > 0) partes.push(`${desatualizadas} não foram enviadas porque a conversa já tinha andado.`);
     if (restantes && restantes > 0) partes.push(`Ainda restam ${restantes} — responda *SIM* de novo pra continuar.`);
     await enviarParaAdmin(partes.join(" "));
 }

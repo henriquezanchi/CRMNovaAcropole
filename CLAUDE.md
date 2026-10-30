@@ -11033,3 +11033,19 @@ WhatsApp Unificado ganhou o filtro **"🤖 Só respondidas pela IA (avaliar)"** 
 sugestão aprovada no CRM) ou mensagem de atendente "Bot", ordenado pela resposta da IA mais recente. Cada card
 mostra "🤖 IA dd/mm" e, no chat, o balão escrito pela IA ganha o selo "🤖 IA" (atendente "Bot" ou texto idêntico a
 uma sugestão enviada — se o SDR editou a sugestão antes de mandar, o balão não é marcado).
+
+## IA respondendo às cegas e respostas atravessadas (30/10/2026)
+
+Dois casos reais (08–09/10), achados pelo filtro "respondidas pela IA":
+- **Diego:** pediu o pix de uma lanchonete (texto + áudio) e o robô de reengajamento respondeu "me conta o que
+  você gostaria de saber". O histórico mostrava áudio só como "[audio]", mesmo transcrito. Agora
+  `_shared/historico-wpp.ts` (`montarHistoricoWpp`) põe a transcrição (`crm_audio_transcricoes`,
+  estado 'concluido') no histórico de `sugerir-resposta-whatsapp` e `reengajar-janela-fechando`; o robô
+  pula a rodada se a última mensagem do lead ainda for áudio sem transcrição ou mídia sem legenda. Regra nova
+  nos dois prompts: mensagem claramente para outra empresa (pix, pedido, cobrança) recebe só um esclarecimento
+  gentil de número errado, sem convite. O loop de produção do reengajamento também não passava `hojeISO` para
+  `montarContextoCRM()` (corrigido).
+- **Gislene:** o comando "SIM" mandou uma sugestão feita para uma mensagem antiga, depois que a equipe já
+  tinha respondido. Agora `whatsapp-send` descarta as sugestões pendentes (e classificações de convite
+  pendentes) do lead a cada envio nosso, e `tratarComandoAdmin()` confere, antes de enviar, se a mensagem que
+  originou a sugestão ainda é a última da conversa (envio nosso que falhou não conta).
