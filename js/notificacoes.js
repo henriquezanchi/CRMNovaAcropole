@@ -652,6 +652,47 @@ async function verificarNotificacoesMencoes() {
 }
 
 // ==========================================
+// GATILHO 11: Conta do WhatsApp com problema na Meta (30/10/2026). Depois do
+// banimento revertido, o usuário pediu para saber pelo CRM, não pelo e-mail.
+// Lê a verificação mais recente de cada número em whatsapp_saude_conta
+// (gravada a cada 30 min pela Edge Function whatsapp-saude-conta). Dedup em
+// localStorage pela situação (número + problema): avisa de novo só se o
+// problema mudar, ou se voltar depois de normalizar.
+// ==========================================
+const CHAVE_LS_SAUDE_WPP_NOTIFICADA = 'crm_na_saude_wpp_notificada';
+
+async function verificarNotificacoesSaudeContaWpp() {
+    if (typeof window.supabaseClient === 'undefined') return;
+    const { data, error } = await window.supabaseClient
+        .from('whatsapp_saude_conta')
+        .select('phone_number_id, numero, nome, ok, problema, verificado_em')
+        .order('verificado_em', { ascending: false })
+        .limit(20);
+    if (error || !data) return;
+
+    const maisRecente = new Map();
+    data.forEach(l => { if (!maisRecente.has(l.phone_number_id)) maisRecente.set(l.phone_number_id, l); });
+
+    let jaNotificadas = {};
+    try { jaNotificadas = JSON.parse(localStorage.getItem(CHAVE_LS_SAUDE_WPP_NOTIFICADA) || '{}') || {}; } catch { jaNotificadas = {}; }
+
+    maisRecente.forEach(l => {
+        if (l.ok) { delete jaNotificadas[l.phone_number_id]; return; }
+        if (jaNotificadas[l.phone_number_id] === l.problema) return;
+        jaNotificadas[l.phone_number_id] = l.problema;
+        const rotulo = l.numero ? `${l.nome || 'WhatsApp'} (${l.numero})` : 'O número do WhatsApp';
+        adicionarNotificacao({
+            icone: 'fa-solid fa-triangle-exclamation',
+            titulo: 'WhatsApp do CRM com problema na Meta',
+            mensagem: `${rotulo}: ${l.problema}. Os envios podem estar falhando; confira no Suporte para Empresas da Meta.`,
+            chave: `saude-wpp-${l.phone_number_id}`,
+            aoClicar: () => window.open('https://business.facebook.com/business-support-home', '_blank'),
+        });
+    });
+    try { localStorage.setItem(CHAVE_LS_SAUDE_WPP_NOTIFICADA, JSON.stringify(jaNotificadas)); } catch { /* ignora */ }
+}
+
+// ==========================================
 // TROCA DE FILIAL — reseta os gatilhos que dependem de qual filial está
 // ativa (eventos já notificados, canal do WhatsApp).
 // Chamada de dentro de carregarLeads() (js/app.js) sempre que resetar=true
@@ -691,3 +732,7 @@ setInterval(() => { if (typeof verificarNotificacoesFalhasPagamento === 'functio
 // logado) + 1 checagem imediata ao carregar.
 verificarNotificacoesMencoes();
 setInterval(() => { if (typeof verificarNotificacoesMencoes === 'function') verificarNotificacoesMencoes(); }, 3 * 60 * 1000);
+// Conta do WhatsApp na Meta — a verificação roda a cada 30 min no servidor;
+// poll de 10 min aqui + 1 checagem imediata ao carregar.
+verificarNotificacoesSaudeContaWpp();
+setInterval(() => { if (typeof verificarNotificacoesSaudeContaWpp === 'function') verificarNotificacoesSaudeContaWpp(); }, 10 * 60 * 1000);

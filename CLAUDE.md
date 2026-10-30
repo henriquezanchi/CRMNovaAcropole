@@ -11073,3 +11073,10 @@ portfólio próprio verificado com a Aletheia como parceira (troca só número/t
 - Lembrete de evento e pesquisa de no-show mandavam texto livre para todos, com a janela fechada (9 erros 131047 numa
   manhã). Agora só enviam para quem escreveu nas últimas 23h (`_shared/janela-wpp.ts`), um por vez com pausa de
   1,5s; o resto fica sem envio e sem marcação (`fora_da_janela` no retorno).
+- **Monitor da conta (pedido do usuário, mesmo dia, depois da reversão em ~1h):** Edge Function
+  `whatsapp-saude-conta` (cron a cada 30 min, `migracao_whatsapp_saude_conta.sql`, JÁ RODADA) consulta na Graph API
+  `status`/`quality_rating`/`messaging_limit_tier` de cada número usado pelo CRM (secret padrão + `filiais.whatsapp_phone_number_id`)
+  e grava em `whatsapp_saude_conta` (30 dias). Problema = status diferente de CONNECTED, qualidade média/baixa ou a
+  Meta recusar a consulta. Quando a situação muda, avisa o admin pelo `lembrete-scraper` (se a conta estiver banida
+  pode não chegar). Sino: gatilho 11 (`verificarNotificacoesSaudeContaWpp()`, poll 10 min, dedup por número+problema
+  em localStorage). Resumo Diário ganhou a linha "Conta do WhatsApp". Só monitora os números do CRM, não a Semperia.

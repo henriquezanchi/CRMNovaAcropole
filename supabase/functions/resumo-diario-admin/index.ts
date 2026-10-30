@@ -109,6 +109,25 @@ async function buscarJanelasFechando(): Promise<{ total: number; nomes: string[]
     return { total: fechando.length, nomes };
 }
 
+// Situação da conta do WhatsApp na Meta (gravada a cada 30 min por
+// whatsapp-saude-conta).
+async function buscarSaudeContaWpp(): Promise<string> {
+    const { data } = await supabaseAdmin
+        .from("whatsapp_saude_conta")
+        .select("phone_number_id, numero, nome, ok, problema, quality_rating, verificado_em")
+        .order("verificado_em", { ascending: false })
+        .limit(20);
+    if (!data || data.length === 0) return "❔ Conta do WhatsApp: ainda sem verificação.";
+    const maisRecente = new Map<string, any>();
+    data.forEach((l: any) => { if (!maisRecente.has(l.phone_number_id)) maisRecente.set(l.phone_number_id, l); });
+    const qualidades: Record<string, string> = { GREEN: "alta", YELLOW: "média", RED: "baixa" };
+    return [...maisRecente.values()].map((l: any) => {
+        const rotulo = l.numero || l.nome || "número";
+        if (!l.ok) return `🚨 Conta do WhatsApp ${rotulo}: ${l.problema}`;
+        return `✅ Conta do WhatsApp ${rotulo}: conectada, qualidade ${qualidades[l.quality_rating] || "sem avaliação"}`;
+    }).join("\n");
+}
+
 async function contarSugestoesPendentes(): Promise<number> {
     const { count } = await supabaseAdmin.from("sugestoes_resposta_wpp").select("id", { count: "exact", head: true }).eq("status", "pendente");
     return count || 0;
@@ -145,7 +164,7 @@ async function buscarNaoPodeEsperarHoje(): Promise<string[]> {
     return linhas;
 }
 
-function montarTexto(dadosSync: { linhaMercurio: string; linhaUlisses: string }, mensagensNovas: number, janelas: { total: number; nomes: string[] }, sugestoesPendentes: number, naoPodeEsperar: string[]): string {
+function montarTexto(dadosSync: { linhaMercurio: string; linhaUlisses: string }, saudeConta: string, mensagensNovas: number, janelas: { total: number; nomes: string[] }, sugestoesPendentes: number, naoPodeEsperar: string[]): string {
     const dataFmt = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" }).format(new Date());
 
     const linhaJanela = janelas.total === 0
@@ -162,7 +181,7 @@ function montarTexto(dadosSync: { linhaMercurio: string; linhaUlisses: string },
 
     return `📋 *Resumo do dia — ${dataFmt}*\n\n` +
         `🔄 *Sincronização*\n${dadosSync.linhaMercurio}\n${dadosSync.linhaUlisses}\n\n` +
-        `💬 *WhatsApp*\n📩 ${mensagensNovas} mensagem(ns) nova(s) nas últimas 24h\n${linhaJanela}\n🤖 ${sugestoesPendentes} sugestão(ões) de resposta da IA aguardando aprovação\n\n` +
+        `💬 *WhatsApp*\n${saudeConta}\n📩 ${mensagensNovas} mensagem(ns) nova(s) nas últimas 24h\n${linhaJanela}\n🤖 ${sugestoesPendentes} sugestão(ões) de resposta da IA aguardando aprovação\n\n` +
         `📌 *Hoje não pode esperar*\n${blocoNaoPodeEsperar}` +
         blocoComando;
 }
@@ -190,17 +209,18 @@ Deno.serve(async (req) => {
     }
 
     try {
-        const [dadosSync, mensagensNovas, janelas, sugestoesPendentes, naoPodeEsperar] = await Promise.all([
+        const [dadosSync, saudeConta, mensagensNovas, janelas, sugestoesPendentes, naoPodeEsperar] = await Promise.all([
             buscarStatusSincronizacao(),
+            buscarSaudeContaWpp(),
             contarMensagensNovas(),
             buscarJanelasFechando(),
             contarSugestoesPendentes(),
             buscarNaoPodeEsperarHoje(),
         ]);
-        const texto = montarTexto(dadosSync, mensagensNovas, janelas, sugestoesPendentes, naoPodeEsperar);
+        const texto = montarTexto(dadosSync, saudeConta, mensagensNovas, janelas, sugestoesPendentes, naoPodeEsperar);
 
         if (corpoReq.modoPreview) {
-            return json({ ok: true, texto, dados: { dadosSync, mensagensNovas, janelas, sugestoesPendentes, naoPodeEsperar } });
+            return json({ ok: true, texto, dados: { dadosSync, saudeConta, mensagensNovas, janelas, sugestoesPendentes, naoPodeEsperar } });
         }
 
         const resultadoEnvio = await enviarParaAdmin(texto);
