@@ -119,7 +119,13 @@ async function enviarMensagemWhatsapp(pessoaIdentificador: string, texto: string
                 tipo: "texto",
                 texto,
                 atendenteNome: NOME_ATENDENTE_BOT,
-                origemEnvio: "campanha",
+                // "manual", não "campanha" (bug real, 2026-10-30): isto é uma
+                // RESPOSTA a quem escreveu pra nós dentro da janela, não um
+                // disparo. Como "campanha", passava pelas regras de captação
+                // (preferência 'permitido', "próximo passo: responder" etc.)
+                // e era bloqueado justamente quem esperava resposta. "Não
+                // Contatar" e contato em conferência continuam bloqueando.
+                origemEnvio: "manual",
             }),
         });
         const data = await resp.json();
@@ -254,6 +260,9 @@ Boa retomada: entregar o dado real diretamente, sem se desculpar de forma exager
 Conversa parou em: lead disse "pode ser, me manda mais informação"
 Boa retomada: entregar a informação concreta que ela pediu (evento/link/endereço real), nunca só repetir "vou te mandar". Ex: "Oi, [nome]! Segue mais detalhes sobre [evento real]: [dado real]. Qualquer coisa só chamar!"
 
+Conversa parou em: a escola perguntou "o que achou da palestra?" e o lead respondeu só "Oi", "Muito bom", "Adorei"
+Boa retomada: NÃO é conversa encerrada — é a RESPOSTA à nossa pergunta, e merece continuação. Celebrar e fazer UMA pergunta aberta curta. Ex: "Que alegria saber, [nome]! O que mais te marcou na palestra?" Se os dados trouxerem um próximo evento aberto real, pode citar de leve, nunca matrícula.
+
 Conversa parou em: lead mandou só "ok"/"obrigado" como última mensagem, sem pergunta pendente
 Boa retomada: nada de forçar continuação artificial — "sugestao": null é a resposta certa aqui, não tem o que acrescentar sem soar insistente.
 
@@ -326,6 +335,7 @@ Escreva um rascunho de resposta em português, curto (1-5 frases), caloroso, nat
 - O OBJETIVO é retomar o fio de forma genuína e útil — nunca mencionar prazo, demora, "janela de atendimento" ou qualquer mecânica interna pro lead; ele não sabe (e não precisa saber) que existe um relógio rodando do nosso lado.
 - Se o lead tiver uma pergunta ou pedido ainda sem resposta nossa, e os dados do lead tiverem a informação certa, ENTREGUE o dado real agora — nunca "vou te mandar" se o dado já está disponível.
 - NUNCA invente fato concreto que não esteja nos dados do lead (endereço, valor, data, evento, horário) — sem o dado, reconheça a pergunta e diga que vai confirmar.
+- Resposta curta e positiva a uma PERGUNTA NOSSA ("o que achou?" -> "Adorei", "Muito bom", "Gostei sim") NÃO é agradecimento nem conversa encerrada: é o lead respondendo e esperando a gente. Continue: acolha e faça uma pergunta aberta curta (ex: o que mais marcou). Nunca devolva null nesse caso.
 - Se a última mensagem do lead já era só um agradecimento/"ok" sem nenhuma pergunta pendente, não force uma continuação artificial — "sugestao": null é a resposta certa, melhor não mandar nada do que mandar algo sem propósito real (nunca incomodar o lead só pra "manter a conversa viva").
 - Se a CONVERSA COMO UM TODO já soa concluída/encerrada — a pessoa se despediu ("tchau", "até mais", "falou"), o assunto chegou a um fim natural, ou simplesmente não há mais nada pendente de verdade a tratar — "sugestao": null, mesmo que a última mensagem tecnicamente seja do lead. Reabrir uma conversa que já tinha terminado naturalmente é pior do que deixá-la fechada.
 - Se o lead já pediu claramente pra não ser mais contatado, ou a conversa mostra sinal claro de desinteresse, "sugestao": null também — nunca insista.

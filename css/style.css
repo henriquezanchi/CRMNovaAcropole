@@ -786,6 +786,8 @@ select:hover { border-color: #94a3b8; }
 .msg-falhou::before { border-right-color: #fef2f2; border-left-color: #fef2f2; }
 .msg-time { font-size: 9px; color: #94a3b8; margin-top: 4px; text-align: right; }
 .msg-atendente { font-size: 9px; color: #16a34a; font-weight: 600; text-align: right; margin-top: 2px; }
+.msg-ia-badge { display: inline-block; padding: 0 5px; border-radius: 8px; background: #ede9fe; color: #5b21b6; font-weight: 700; }
+.wpp-ia-chip { font-size: 9px; padding: 0 6px; border-radius: 8px; background: #ede9fe; color: #5b21b6; font-weight: 600; }
 
 /* Reações com emoji (pedido do usuário, 2026-09-28) — botão só aparece no
    hover do balão (mesmo espírito do menu "..." do WhatsApp real), badge

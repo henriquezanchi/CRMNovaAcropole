@@ -11012,3 +11012,24 @@ Especificação: `docs/superpowers/specs/2026-10-29-requalificacao-leads-design.
 - Pendentes (dependem de autorização do usuário): pastas de arquivos `corretorpro-media` (112 arquivos),
   `corretorpro-docs` e `corretorpro-negocios` (vazias); 6 usuários de login do Corretor Pro/demonstração em
   `auth.users`; contas henrique.zanchi@gmail.com e henriquecarr@gmail.com mantidas (podem ser do Trade Lab).
+
+## Robô de reengajamento: 3 falhas corrigidas + filtro "respondidas pela IA" (30/10/2026)
+
+Investigação (10 dias): o cron roda a cada 15 min normalmente, mas só 8 conversas viraram candidatas e 2 foram
+respondidas. Causas reais, todas corrigidas:
+- `reengajar-janela-fechando` enviava com `origemEnvio: "campanha"` — passava pelas regras de captação de
+  `motivoBloqueioContato()` (preferência 'permitido', `proximo='responder'`) e bloqueava justamente quem esperava
+  resposta (caso real: Sergio, "já foram quantas aulas?", sugestão pronta que nunca saiu). Agora `"manual"`:
+  "Não Contatar" e contato em conferência continuam bloqueando.
+- O prompt tratava resposta curta e positiva a uma pergunta nossa ("Oi / Muito bom / Adorei" depois de "o que
+  achou?") como agradecimento/conversa encerrada e devolvia null (caso real: Sinara). Nova regra + exemplo no banco
+  de exemplos cacheável: isso é resposta, continuar com uma pergunta aberta curta.
+- `mensagens_candidatas_reengajamento_janela()` (`migracao_reengajamento_ignora_falha.sql`) contava um envio nosso
+  que FALHOU como "última mensagem", tirando o lead da fila. Agora ignora `wa_status='falhou'`.
+- Aluno ativo continua fora do robô (decisão de 29/10).
+
+WhatsApp Unificado ganhou o filtro **"🤖 Só respondidas pela IA (avaliar)"** (`wppFiltroRespondidasIa`,
+`carregarRespostasIaWpp()` em `js/whatsapp.js`): lista quem tem sugestão com `status='enviada'` (robô, comando SIM,
+sugestão aprovada no CRM) ou mensagem de atendente "Bot", ordenado pela resposta da IA mais recente. Cada card
+mostra "🤖 IA dd/mm" e, no chat, o balão escrito pela IA ganha o selo "🤖 IA" (atendente "Bot" ou texto idêntico a
+uma sugestão enviada — se o SDR editou a sugestão antes de mandar, o balão não é marcado).

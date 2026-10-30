@@ -536,7 +536,7 @@ function htmlMensagemWpp(m, quotedInfo, termoBusca, ativoBusca) {
     // migração migracao_whatsapp_atendente.sql; mensagens antigas/de
     // entrada não têm.
     const atendenteHTML = (m.direcao === 'saida' && m.atendente_nome)
-        ? `<div class="msg-atendente">${escapeHTML(m.atendente_nome)}</div>`
+        ? `<div class="msg-atendente">${mensagemEscritaPelaIaWpp(m) ? '<span class="msg-ia-badge" title="Texto escrito pela IA (robô de reengajamento, comando SIM ou sugestão aprovada)">🤖 IA</span> ' : ''}${escapeHTML(m.atendente_nome)}</div>`
         : '';
     return `
         <div class="msg ${classeDirecao} ${classeExtra} ${classeReacao}" data-msg-db-id="${m.id}">
@@ -4616,6 +4616,47 @@ async function enviarTodosGruposPrioridadeInteligente() {
 // (`#wppFiltroFilialSelect`) pra restringir a 1 quando fizer sentido.
 let wppFiltroFilial = '';
 
+// Conversas conduzidas pela IA (pedido do usuário, 2026-10-30: "um relatório
+// visível das últimas conversas conduzidas pela IA, pra eu avaliar e dar
+// sugestões de melhoria"). Fonte: sugestões de resposta com status 'enviada'
+// (robô de reengajamento, comando SIM e sugestões aprovadas no CRM) + mensagens
+// enviadas por um atendente "Bot". `textos` marca no chat qual balão saiu da IA.
+let wppRespostasIa = { porLead: new Map(), textos: new Set() };
+
+function normalizarTextoIaWpp(t) {
+    return String(t || '').replace(/\s+/g, ' ').trim();
+}
+
+function mensagemEscritaPelaIaWpp(m) {
+    if (!m || m.direcao !== 'saida') return false;
+    if (/\bbot\b/i.test(m.atendente_nome || '')) return true;
+    return wppRespostasIa.textos.has(normalizarTextoIaWpp(m.corpo_texto));
+}
+
+async function carregarRespostasIaWpp() {
+    const porLead = new Map();
+    const textos = new Set();
+    const marcar = (pid, quando) => {
+        const atual = porLead.get(String(pid));
+        if (!atual || new Date(quando) > new Date(atual)) porLead.set(String(pid), quando);
+    };
+    const [sug, bots] = await Promise.all([
+        window.supabaseClient.from('sugestoes_resposta_wpp')
+            .select('"pessoaIdentificador", sugestao_resposta, criado_em, reengajamento_em')
+            .eq('status', 'enviada').limit(2000),
+        window.supabaseClient.from('mensagens_whatsapp')
+            .select('"pessoaIdentificador", criado_em')
+            .eq('direcao', 'saida').ilike('atendente_nome', '%bot%')
+            .not('pessoaIdentificador', 'is', null).limit(2000),
+    ]);
+    (sug.data || []).forEach(r => {
+        if (r.sugestao_resposta) textos.add(normalizarTextoIaWpp(r.sugestao_resposta));
+        marcar(r.pessoaIdentificador, r.reengajamento_em || r.criado_em);
+    });
+    (bots.data || []).forEach(r => marcar(r.pessoaIdentificador, r.criado_em));
+    wppRespostasIa = { porLead, textos };
+}
+
 function iniciarEscutaGlobalWpp() {
     if (canalListaWpp) return;
     canalListaWpp = window.supabaseClient
@@ -4719,6 +4760,7 @@ function htmlContatoWpp(lead, conversa, temSugestaoIa) {
                 <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
                     ${lead.filial ? `<div style="font-size:9px; color:var(--text-muted);"><i class="fa-solid fa-building"></i> ${escapeHTML(lead.filial)}</div>` : ''}
                     ${htmlBadgeAtendenteWpp(lead)}
+                    ${wppRespostasIa.porLead.has(String(id)) ? `<div class="wpp-ia-chip" title="A IA já respondeu nesta conversa">🤖 IA ${escapeHTML(new Date(wppRespostasIa.porLead.get(String(id))).toLocaleDateString('pt-BR', {day:'2-digit',month:'2-digit'}))}</div>` : ''}
                 </div>
                 ${htmlTimerJanelaWpp(conversa)}
             </div>
@@ -5619,6 +5661,9 @@ async function renderizarContatosWpp(filtro = '') {
 
     const termo = (filtro || '').trim().toLowerCase();
 
+    await carregarRespostasIaWpp().catch(e => console.warn('Não carregou as respostas da IA:', e.message));
+    if (versao !== versaoListaWpp) return;
+
     const conversasValidas = [];
     for (let inicio = 0; ; inicio += 500) {
         let query = window.supabaseClient.from('vw_wpp_conversas').select('*')
@@ -5734,6 +5779,16 @@ async function renderizarContatosWpp(filtro = '') {
         });
     }
     // 'recentes' — mantém a ordem já vinda da query (ultima_mensagem_em desc).
+
+    // "Só respondidas pela IA": filtra e ordena pela resposta da IA mais recente,
+    // independente do modo escolhido acima — é uma lista de avaliação.
+    const selectSoIa = document.getElementById('wppFiltroRespondidasIa');
+    if (selectSoIa && selectSoIa.checked) {
+        const quandoIa = c => new Date(wppRespostasIa.porLead.get(String(c.lead.pessoaIdentificador)));
+        contatosExistentes = contatosExistentes
+            .filter(c => wppRespostasIa.porLead.has(String(c.lead.pessoaIdentificador)))
+            .sort((a, b) => quandoIa(b) - quandoIa(a));
+    }
 
     // Fixada sempre sobe pro topo, INDEPENDENTE do modo de ordenação
     // escolhido acima (pedido do usuário, 2026-09-30: "igual no whatsapp
