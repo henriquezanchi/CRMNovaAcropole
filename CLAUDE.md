@@ -11049,3 +11049,10 @@ Dois casos reais (08–09/10), achados pelo filtro "respondidas pela IA":
   tinha respondido. Agora `whatsapp-send` descarta as sugestões pendentes (e classificações de convite
   pendentes) do lead a cada envio nosso, e `tratarComandoAdmin()` confere, antes de enviar, se a mensagem que
   originou a sugestão ainda é a última da conversa (envio nosso que falhou não conta).
+
+## Eventos internos (não publicados no site) fora da Agenda (30/10/2026)
+
+A API do Ulisses traz `publicar` em cada evento de `listarTodosEventos`. Evento com `publicar: false` (interno,
+ex: "Recepção de Novos Membros") não é importado por `sincronizarEventosUlissesApi()` (`scraper/importar-ulisses-api.js`);
+evento interno FUTURO que já estava no CRM vira `ativo=false` (nada é apagado; eventos passados não são tocados).
+A regra segue a marcação da escola no Ulisses: palestra aberta sem "publicar no site" também fica de fora.

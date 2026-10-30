@@ -180,11 +180,16 @@ export async function sincronizarEventosUlissesApi() {
 
     const agora = Date.now();
     const eventoIdsRelevantes = new Set();
+    // Evento interno (só para membros, ex: "Recepção de Novos Membros") vem com
+    // `publicar: false` — não aparece no site e não deve virar evento de
+    // convite no CRM (pedido do usuário, 30/10/2026).
+    const eventoIdsNaoPublicados = new Set();
     const avisosListagem = [];
     for (const filialId of idsParaListar) {
         try {
             const eventos = await ulissesApi.listarTodosEventos(filialId);
             for (const ev of eventos) {
+                if (ev.publicar === false) { eventoIdsNaoPublicados.add(ev.id); continue; }
                 // Sem `maiorDataProduto`, inclui por segurança (evento sem
                 // "produto" com preço, comum em evento gratuito — melhor
                 // processar 1 evento a mais do que perder um relevante).
@@ -342,7 +347,20 @@ export async function sincronizarEventosUlissesApi() {
         }
     }
 
+    // Evento interno FUTURO já importado antes desta regra: sai da Agenda
+    // (ativo=false, nada é apagado). Eventos que já aconteceram ficam como estão,
+    // para não mexer em histórico, presença e relatórios.
+    let internosDesativados = 0;
+    if (eventoIdsNaoPublicados.size > 0) {
+        const hojeISO = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+        const { data: desativados } = await supabaseAdmin.from('eventos').update({ ativo: false })
+            .in('evento_id_ulisses', [...eventoIdsNaoPublicados]).eq('ativo', true).gte('data', hojeISO).select('id');
+        internosDesativados = desativados?.length || 0;
+    }
+
     return `${criados} evento(s) criado(s), ${atualizados} atualizado(s), de ${eventoIdsRelevantes.size} evento(s) únicos verificados`
+        + (eventoIdsNaoPublicados.size ? `, ${eventoIdsNaoPublicados.size} evento(s) interno(s) (não publicados no site) ignorado(s)` : '')
+        + (internosDesativados ? `, ${internosDesativados} tirado(s) da Agenda` : '')
         + (semDataParaFilial ? `, ${semDataParaFilial} ignorado(s) por filial sem data` : '')
         + (semMatch.length ? `. Filial(is) do CRM sem correspondência no Ulisses: ${semMatch.join(', ')}` : '')
         + (avisosListagem.length ? `. Aviso(s): ${avisosListagem.join(' | ')}` : '') + '.';
