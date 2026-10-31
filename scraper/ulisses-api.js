@@ -69,7 +69,27 @@ function urlDaApi(path) {
     return process.env.PONTE_URL && process.env.PONTE_CHAVE ? `${process.env.PONTE_URL}/?url=${encodeURIComponent(destino)}` : destino;
 }
 
-async function chamarApi(path, { method = 'GET', esperado, texto = false, corpo } = {}) {
+// O Cloudflare da Acrópole às vezes desafia uma chamada isolada mesmo pela ponte (31/10/2026: 05:00 recusada,
+// minutos depois a mesma chamada passou). Uma recusa assim, ou instabilidade do servidor, não pode derrubar a
+// rodada inteira: tenta de novo depois de 20s e de 60s antes de desistir.
+const ESPERAS_NOVA_TENTATIVA_MS = [20000, 60000];
+const ehDesafioCloudflare = (status, corpo) => status === 403 && /just a moment|cf-chl|challenge-platform/i.test(corpo || '');
+
+async function chamarApi(path, opcoes = {}) {
+    for (let tentativa = 0; ; tentativa++) {
+        try {
+            return await chamarApiUmaVez(path, opcoes);
+        } catch (erro) {
+            const temporario = erro.desafioCloudflare || [429, 502, 503, 504].includes(erro.status);
+            if (!temporario || tentativa >= ESPERAS_NOVA_TENTATIVA_MS.length) throw erro;
+            const espera = ESPERAS_NOVA_TENTATIVA_MS[tentativa];
+            console.warn(`[ulisses-api] ${path}: ${erro.desafioCloudflare ? 'desafio do Cloudflare' : `HTTP ${erro.status}`}, nova tentativa em ${espera / 1000}s.`);
+            await new Promise((r) => setTimeout(r, espera));
+        }
+    }
+}
+
+async function chamarApiUmaVez(path, { method = 'GET', esperado, texto = false, corpo } = {}) {
     const token = await obterTokenUlissesApi();
     const resp = await fetch(urlDaApi(path), {
         method,
@@ -88,8 +108,14 @@ async function chamarApi(path, { method = 'GET', esperado, texto = false, corpo 
     });
     if (!resp.ok) {
         const corpo = await resp.text().catch(() => '');
-        const erro = new Error(`${method} ${path} -> ${resp.status}${esperado ? ` (esperado: ${esperado})` : ''}${corpo ? ` — ${corpo.slice(0, 300)}` : ''}`);
+        // Desafio do Cloudflare devolve uma página HTML inteira: no aviso, só o motivo em português.
+        const desafio = ehDesafioCloudflare(resp.status, corpo);
+        const detalhe = desafio
+            ? ' — o Cloudflare da Acrópole Brasil bloqueou a chamada (desafio anti-robô), mesmo depois de novas tentativas'
+            : `${esperado ? ` (esperado: ${esperado})` : ''}${corpo ? ` — ${corpo.slice(0, 300)}` : ''}`;
+        const erro = new Error(`${method} ${path} -> ${resp.status}${detalhe}`);
         erro.status = resp.status;
+        erro.desafioCloudflare = desafio;
         throw erro;
     }
     return texto ? resp.text() : resp.json();
