@@ -23,7 +23,7 @@ begin
     select command into cmd from cron.job where jobname = 'ulisses-api-diario';
     if cmd is null then raise exception 'Agendamento ulisses-api-diario ausente (rodar migracao_ulisses_api_diario.sql antes)'; end if;
     -- Dentro de um bloco PL/pgSQL, "select net.http_post(...)" precisa virar "perform".
-    chamada := regexp_replace(rtrim(trim(cmd), ';'), '^select', 'perform');
+    chamada := regexp_replace(regexp_replace(cmd, '[\s;]+$', ''), '^\s*select', 'perform');
 
     perform cron.schedule('ulisses-api-semana-evento', '0 1,7,13,19 * * *',
         'do $j$ begin if exists (select 1 from public.eventos where ativo and data between ' || hoje || ' and ' || hoje || ' + 7) then '
