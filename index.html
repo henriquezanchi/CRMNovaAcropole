@@ -6,6 +6,9 @@
     <title>Conversão em Matrículas — Nova Acrópole</title>
     <link rel="icon" type="image/png" href="img/logo-nova-acropole.png">
     <!-- Importando fontes e ícones -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- ⚠️ AQUI ESTÁ A MÁGICA: Conectando o seu arquivo CSS externo -->
@@ -52,7 +55,7 @@
             <div style="display:flex; align-items:center; gap:14px;">
                 <img src="img/logo-nova-acropole.png" alt="Nova Acrópole" class="topbar-logo" onerror="this.style.display='none'">
                 <div>
-                    <h2 style="font-size: 18px; color: var(--na-green-dark); margin: 0;">
+                    <h2 style="font-size: 16px; font-weight: 600; color: var(--na-green-dark); margin: 0;">
                         <i id="topbar-icon" class="fa-solid fa-users-viewfinder"></i>
                         <span id="topbar-title-text">Atendimento</span>
                     </h2>
@@ -666,6 +669,11 @@
     <!-- Gaveta Lateral (Offcanvas) — Ficha/IA/Tags à esquerda + Chat WhatsApp do lead à direita -->
     <div class="overlay" id="overlay" onclick="fecharGaveta()"></div>
     <div class="drawer" id="leadDrawer">
+        <div class="drawer-abas" role="tablist" aria-label="Ficha ou conversa do lead">
+            <button type="button" role="tab" class="drawer-aba ativa" data-painel="ficha" onclick="mostrarPainelGaveta('ficha')">Ficha</button>
+            <button type="button" role="tab" class="drawer-aba" data-painel="chat" onclick="mostrarPainelGaveta('chat')">Conversa</button>
+            <button type="button" class="drawer-aba-fechar" aria-label="Fechar" onclick="fecharGaveta()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
         <!-- Coluna da Ficha e IA -->
         <div class="drawer-info">
             <div class="drawer-header">
@@ -1748,13 +1756,8 @@
 
     <!-- ⚠️ AQUI ESTÁ A SEGUNDA MÁGICA: Conectando os scripts (O Cérebro) -->
     <!-- 1. Importa a biblioteca do Supabase da internet -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <!-- 1b. Papa Parse: leitura robusta de CSV (campos com vírgula/aspas, encoding, etc.) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
-    <!-- 1c. JSZip: lê o .zip exportado do WhatsApp direto no navegador (Importação em Lote de Conversas) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <!-- 1d. SheetJS (XLSX): gera o Excel de cobrança (Comissão do SDR) direto no navegador, sem servidor -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0"></script>
+    <!-- Papa Parse, JSZip e SheetJS (Excel) são carregados só quando usados: garantirBiblioteca(), js/app.js -->
 
     <!-- 2. Faz a conexão segura com a sua conta -->
     <script>

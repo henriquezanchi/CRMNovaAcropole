@@ -138,6 +138,7 @@ function contextoCobrancaComMock(cobrancas) {
         document: { getElementById: () => null },
         localStorage: { getItem: () => null },
         alert: (mensagem) => alertas.push(mensagem),
+        avisar: (mensagem) => alertas.push(mensagem),
         confirm: () => { confirmacoes++; return true; },
         __cobrancas: cobrancas,
     });

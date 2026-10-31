@@ -85,7 +85,7 @@ Deno.serve(async (req) => {
     // "as N falhas mais antigas" quase nunca pegava as retriáveis de
     // verdade (podiam estar todas fora da 1ª página). Ver
     // migracao_rpc_falhas_retriaveis.sql.
-    const { data: candidatas, error } = await supabaseAdmin.rpc("mensagens_falhas_retriaveis", { p_limite: 500 });
+    const { data: candidatas, error } = await supabaseAdmin.rpc("mensagens_falhas_retriaveis", { p_limite: 60 });
     if (error) return json({ ok: false, erro: "falha_buscar_falhas", detalhe: error.message }, 500);
 
     const candidatasRetriaveis = candidatas as Falha[] || [];
@@ -95,7 +95,12 @@ Deno.serve(async (req) => {
     const authServiceRole = `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`;
 
     let reenviadas = 0, falharamDeNovo = 0, semDadoSuficiente = 0;
+    // Orçamento de tempo: a function morre perto de 150s. Com até 500
+    // candidatas e 1,5s de pausa, a rodada antiga morria no meio, depois de
+    // já ter contado a tentativa. O que sobrar fica para a próxima rodada.
+    const prazoRodada = Date.now() + 110_000;
     for (let i = 0; i < candidatasRetriaveis.length; i += TAMANHO_LOTE) {
+        if (Date.now() > prazoRodada) break;
         const lote = candidatasRetriaveis.slice(i, i + TAMANHO_LOTE);
         await Promise.all(lote.map(async (f) => {
             // Conta a tentativa JÁ, antes de saber o resultado — evita

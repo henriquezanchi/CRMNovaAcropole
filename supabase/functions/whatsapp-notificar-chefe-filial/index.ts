@@ -18,7 +18,8 @@
 // scraper (SERVICE_ROLE_KEY) quanto o navegador (chave publishable) já
 // mandam um Bearer válido.
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
-import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
+import { ehChamadaDeServidor } from "../_shared/autorizacao.ts";
+import { supabaseAdmin, NOME_TABELA_LEADS } from "../_shared/supabaseAdmin.ts";
 
 const GRAPH_VERSION = Deno.env.get("WHATSAPP_GRAPH_API_VERSION") ?? "v21.0";
 const TOKEN = Deno.env.get("WHATSAPP_TOKEN")!;
@@ -37,14 +38,33 @@ Deno.serve(async (req) => {
 
     if (req.method !== "POST") return json({ ok: false, erro: "method_not_allowed" }, 405);
 
-    let corpoReq: { filial?: string; texto?: string };
+    let corpoReq: { filial?: string; texto?: string; pessoaIdentificador?: string; enviadoPor?: string };
     try {
         corpoReq = await req.json();
     } catch {
         return json({ ok: false, erro: "json_invalido" }, 400);
     }
 
-    const { filial, texto } = corpoReq;
+    // Texto livre só de chamadas internas (aniversário, resumo semanal). Do
+    // navegador, só "mandar o resumo deste lead": o texto é montado aqui a
+    // partir do resumo gravado no banco, nunca vem pronto de fora.
+    let filial: string | undefined;
+    let texto: string | undefined;
+    if (ehChamadaDeServidor(req)) {
+        ({ filial, texto } = corpoReq);
+    } else {
+        if (!corpoReq.pessoaIdentificador) return json({ ok: false, erro: "parametros_faltando" }, 400);
+        const { data: lead } = await supabaseAdmin.from(NOME_TABELA_LEADS)
+            .select("pessoaNome, filial, resumo_ia").eq("pessoaIdentificador", String(corpoReq.pessoaIdentificador)).maybeSingle();
+        const resumo = String(lead?.resumo_ia || "").trim();
+        if (!lead || !resumo) return json({ ok: false, erro: "sem_resumo" }, 422);
+        const enviadoPor = String(corpoReq.enviadoPor || "").trim().slice(0, 60);
+        filial = lead.filial;
+        texto = `📋 *Resumo de acompanhamento* — ${lead.pessoaNome}
+${enviadoPor ? `Enviado por: ${enviadoPor}
+` : ""}
+${resumo}`;
+    }
     if (!filial || !texto?.trim()) return json({ ok: false, erro: "parametros_faltando" }, 400);
 
     const { data: filialRow, error: erroFilial } = await supabaseAdmin

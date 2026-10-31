@@ -22,6 +22,7 @@
 // pra isso. Até lá, esta function tenta texto livre e loga o erro se a
 // janela estiver fechada, mas não tem como "forçar" a entrega.
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
+import { ehChamadaDeServidor } from "../_shared/autorizacao.ts";
 
 const GRAPH_VERSION = Deno.env.get("WHATSAPP_GRAPH_API_VERSION") ?? "v21.0";
 const TOKEN = Deno.env.get("WHATSAPP_TOKEN")!;
@@ -40,6 +41,9 @@ Deno.serve(async (req) => {
     if (cors) return cors;
 
     if (req.method !== "POST") return json({ ok: false, erro: "method_not_allowed" }, 405);
+    // Só chamadas internas (outras functions, cron, scraper). Com a chave
+    // pública, qualquer um mandava texto livre para o WhatsApp do admin.
+    if (!ehChamadaDeServidor(req)) return json({ ok: false, erro: "acesso_negado" }, 403);
     if (!NUMERO_ADMIN) return json({ ok: false, erro: "WHATSAPP_NUMERO_ADMIN não configurado (supabase secrets set)" }, 500);
 
     let corpoReq: { texto?: string };

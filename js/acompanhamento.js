@@ -233,7 +233,7 @@ async function abrirAcompanhamentoDaFila(id) {
     const filial = filialAtual;
     const { data, error } = await window.supabaseClient.from(NOME_TABELA).select('*').eq('pessoaIdentificador', id).eq('filial', filial).maybeSingle();
     if (filial !== filialAtual) return;
-    if (error || !data) { alert('Não foi possível abrir esse atendimento. Atualize a lista.'); return; }
+    if (error || !data) { avisar('Não foi possível abrir esse atendimento. Atualize a lista.'); return; }
     const indice = leadsAtuais.findIndex(lead => String(lead.pessoaIdentificador) === String(id));
     if (indice < 0) leadsAtuais.push(data); else leadsAtuais[indice] = data;
     abrirGaveta(id);

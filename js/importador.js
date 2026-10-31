@@ -294,6 +294,10 @@ async function renderizarCredenciaisScraper() {
 
     container.innerHTML = `
         ${error ? `<p style="font-size:12px; color:#dc2626;">Aviso: não consegui ler o status atual (${escapeHTML(error.message)}). Rode migracao_credenciais_scraper.sql se ainda não rodou — mesmo assim, dá pra tentar salvar novas senhas abaixo.</p>` : ''}
+        <div class="coluna-row" style="margin-bottom:12px;">
+            <label for="credSenhaAdminConfirmacao" style="font-size:12px; font-weight:600; align-self:center;">Sua senha de administrador</label>
+            <input type="password" id="credSenhaAdminConfirmacao" placeholder="Obrigatória para salvar qualquer senha abaixo" autocomplete="current-password" style="flex:1;">
+        </div>
         <div class="tag-filter-grupo-titulo">CRM Publicado — login do portão de acesso (js/acesso.js), pro scraper conseguir subir as planilhas sozinho na tela de Importar. Desde que o login passou a ser nominal (nome + senha), precisa de uma conta própria pro scraper em "Gerenciar Usuários" (ex: "Scraper Automatico", com o módulo "Importar Planilhas" liberado) — informe o NOME dessa conta aqui.</div>
         <div class="coluna-row">
             <input type="text" id="credUsuarioCrmAcesso" placeholder="Nome da conta (ex: Scraper Automatico)" style="flex:1;">
@@ -347,19 +351,23 @@ async function salvarCredencialScraper(sistema) {
     const inputUsuario = ids && ids.usuario ? document.getElementById(ids.usuario) : null;
     const senha = inputSenha ? inputSenha.value : '';
     const usuario = inputUsuario ? inputUsuario.value : '';
-    if (!senha || senha.trim() === '') { alert('Digite a senha antes de salvar.'); return; }
+    if (!senha || senha.trim() === '') { avisar('Digite a senha antes de salvar.'); return; }
+
+    const adminSenha = document.getElementById('credSenhaAdminConfirmacao')?.value || '';
+    const adminNome = (typeof usuarioLogado === 'function' && usuarioLogado()?.nome) || '';
+    if (!adminSenha) { avisar('Digite sua senha de administrador no topo desta tela antes de salvar.'); return; }
 
     const { data, error } = await window.supabaseClient.functions.invoke('gerenciar-credenciais', {
-        body: { sistema, filial: null, usuario: usuario || null, senha }
+        body: { sistema, filial: null, usuario: usuario || null, senha, adminNome, adminSenha }
     });
 
     if (error || (data && data.ok === false)) {
-        alert('Erro ao salvar: ' + ((data && data.erro) || (error && error.message) || 'erro desconhecido'));
+        avisar('Erro ao salvar: ' + ((data && data.erro) || (error && error.message) || 'erro desconhecido'));
         return;
     }
     if (inputSenha) inputSenha.value = '';
     if (inputUsuario) inputUsuario.value = '';
-    alert('Senha salva com sucesso! (cifrada — o CRM não guarda nem mostra o valor em texto puro)');
+    avisar('Senha salva com sucesso! (cifrada — o CRM não guarda nem mostra o valor em texto puro)');
     renderizarCredenciaisScraper();
 }
 
@@ -528,7 +536,7 @@ function limparAcompanhamentoMercurioLocal() {
 // Sem poll: as duas respondem na própria chamada.
 async function dispararMercurioAgora(filial = null) {
     if (disparoMercurioEmAndamento || disparoUlissesApiEmAndamento) {
-        alert('Já tem uma sincronização em andamento — aguarde terminar antes de iniciar outra.');
+        avisar('Já tem uma sincronização em andamento — aguarde terminar antes de iniciar outra.');
         return;
     }
     disparoMercurioEmAndamento = true;
@@ -538,7 +546,9 @@ async function dispararMercurioAgora(filial = null) {
     const problemas = [];
     try {
         await renderizarStatusSincronizacaoScraper('Lendo o banco do Mercúrio (ativos, turmas, matrículas)...');
-        const { data: dDb, error: eDb } = await window.supabaseClient.functions.invoke('mercurio-db-sincronizar', { body: filial ? { filial } : {} });
+        const eDb = null;
+        const dDb = await sincronizarMercurioPorFilial(filial || null, (nome, i, total) =>
+            renderizarStatusSincronizacaoScraper(`Lendo o banco do Mercúrio (${i}/${total}: ${nome})...`));
         if (eDb || !dDb || !dDb.ok) problemas.push('Banco do Mercúrio: ' + ((dDb && (dDb.erro || (dDb.resultados || []).filter(r => r.erro).map(r => `${r.filial}: ${r.erro}`).join('; '))) || (eDb && eDb.message) || 'falhou'));
         // A API do Mercury (mercury-sincronizar) está PAUSADA desde 2026-10-29,
         // a pedido do usuário: ela marcava como "Ativo" gente que o banco do
@@ -550,7 +560,7 @@ async function dispararMercurioAgora(filial = null) {
         disparoMercurioEmAndamento = false;
         atualizarBotoesDispararMercurio(false, '<i class="fa-solid fa-play"></i> Rodar Mercúrio Agora');
         await renderizarStatusSincronizacaoScraper();
-        if (problemas.length) alert('A sincronização terminou com problema:\n' + problemas.join('\n'));
+        if (problemas.length) avisar('A sincronização terminou com problema:\n' + problemas.join('\n'));
         if (typeof renderizarConciliacaoMercurio === 'function') renderizarConciliacaoMercurio();
     }
 }
@@ -633,7 +643,7 @@ function abrirUlissesApiNesteComputador(filial) {
 
 async function abrirProtocoloUlissesApi(filial) {
     if (disparoMercurioEmAndamento || disparoUlissesApiEmAndamento) {
-        alert('Já tem uma sincronização em andamento — aguarde terminar antes de iniciar outra.');
+        avisar('Já tem uma sincronização em andamento — aguarde terminar antes de iniciar outra.');
         return;
     }
     disparoUlissesApiEmAndamento = true;
@@ -694,7 +704,7 @@ async function abrirProtocoloUlissesApi(filial) {
         disparoUlissesApiEmAndamento = false;
         atualizarBotaoDispararUlisses(false, '<i class="fa-solid fa-cloud-arrow-down"></i> Sincronizar via API do Ulisses agora');
         await renderizarStatusSincronizacaoScraper(null, false, `Falha ao disparar: ${e.message || String(e)}`);
-        alert('Falha ao disparar a sincronização do Ulisses: ' + (e.message || String(e)));
+        avisar('Falha ao disparar a sincronização do Ulisses: ' + (e.message || String(e)));
     }
 }
 
@@ -914,6 +924,7 @@ function aplicarTemasNosEventos(pessoasInscricoes, mapaTemas) {
 // PROCESSAMENTO PRINCIPAL (100% no navegador — nada é enviado ainda)
 // ==========================================
 async function processarPlanilhas() {
+    try { await garantirBiblioteca('papa'); } catch (e) { avisar(e.message); return; }
     const logEl = document.getElementById('importLog');
     if (logEl) { logEl.innerHTML = ''; logEl.style.display = 'block'; }
     const previewEl = document.getElementById('importPreview');
@@ -1364,7 +1375,7 @@ function resgatarLinhaAuditoria(indice) {
 
     resultadoImportacao.leads.push(novoLead);
     resultadoImportacao.resumo.total++;
-    if (tags.includes('Ativo')) resultadoImportacao.resumo.alunoAtivo++;
+    if (tags.some(ehTagAtivo)) resultadoImportacao.resumo.alunoAtivo++;
     if (tags.includes('Inativo')) resultadoImportacao.resumo.exAluno++;
 
     linha.resgatada = true;
@@ -1694,8 +1705,8 @@ async function confirmarEnviarImportacao() {
     if (!modo.temUlisses) {
         // Só Mercúrio: só é razoável cobrar ausência de quem já era Ativo/Inativo.
         candidatosSumidos = candidatosSumidos.filter(e => {
-            let t = []; try { t = JSON.parse(e.tags || '[]'); } catch (_) { t = []; }
-            return t.includes('Ativo') || t.includes('Inativo') || t.includes('Aluno Ativo') || t.includes('Ex-Aluno (Inativo)');
+            const t = parseTags(e.tags);
+            return t.some(ehTagAtivo) || t.includes('Inativo') || t.includes('Ex-Aluno (Inativo)');
         });
     } else if (!modo.temMercurio) {
         // Só Ulisses: ignora quem só existe por causa do Mercúrio (IDs
@@ -1779,7 +1790,7 @@ async function confirmarEnviarImportacao() {
 
         if (existente) {
             let tagsAntigas = [];
-            try { tagsAntigas = JSON.parse(existente.tags || '[]'); } catch (e) { tagsAntigas = []; }
+            tagsAntigas = parseTags(existente.tags);
 
             // Importação PARCIAL sem Mercúrio (só Ulisses desta vez): não dá
             // pra saber se a pessoa continua Ativa/Inativa ou em que nível;
@@ -1840,7 +1851,8 @@ async function confirmarEnviarImportacao() {
             }
 
             const estavaInativo = tagsAntigas.includes('Inativo') || tagsAntigas.includes('Ex-Aluno (Inativo)');
-            const agoraAtivo = tagsFinais.includes('Ativo');
+            // ehTagAtivo() reconhece 'Ativo', 'Aluno Ativo' e o formato atual 'Ativo: <filial>'.
+            const agoraAtivo = tagsFinais.some(ehTagAtivo);
             if (estavaInativo && agoraAtivo && !tagsFinais.includes(TAG_RECUPERADO)) {
                 tagsFinais = [...tagsFinais, TAG_RECUPERADO];
                 contRecuperados++;
@@ -1862,10 +1874,10 @@ async function confirmarEnviarImportacao() {
             // agora ganha `data_matricula = hoje`, SÓ se ainda não tiver
             // nenhuma data gravada (nunca sobrescreve uma data mais
             // precisa já capturada pelo fluxo manual/print).
-            const estavaAtivo = tagsAntigas.includes('Ativo') || tagsAntigas.includes('Aluno Ativo');
+            const estavaAtivo = tagsAntigas.some(ehTagAtivo);
             let dataMatriculaFinal = existente.data_matricula || null;
             if (!estavaAtivo && agoraAtivo && !dataMatriculaFinal) {
-                dataMatriculaFinal = new Date().toISOString().slice(0, 10);
+                dataMatriculaFinal = hojeISOBrasilia();
                 contNovasMatriculasDetectadas++;
             }
 

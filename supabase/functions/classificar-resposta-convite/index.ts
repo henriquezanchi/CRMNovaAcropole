@@ -23,6 +23,7 @@
 // Dia, js/visao-geral.js).
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin, NOME_TABELA_LEADS } from "../_shared/supabaseAdmin.ts";
+import { alterarTags } from "../_shared/tags.ts";
 import { buscarExemplosEstilo } from "../_shared/exemplosEstilo.ts";
 import { buscarListaFiliais, linkMapsDaFilial } from "../_shared/filiaisInfo.ts";
 import { montarTabelaDiasSemana, adicionarMeses } from "../_shared/calendario.ts";
@@ -349,16 +350,7 @@ async function buscarPersonaDoLead(pessoaIdentificador: string): Promise<string>
 }
 
 async function aplicarTagConvite(pessoaIdentificador: string, tagNova: string) {
-    const { data: lead } = await supabaseAdmin.from(NOME_TABELA_LEADS).select("tags").eq("pessoaIdentificador", pessoaIdentificador).maybeSingle();
-    if (!lead) return;
-    let tags: string[] = [];
-    try {
-        const parsed = JSON.parse(lead.tags || "[]");
-        if (Array.isArray(parsed)) tags = parsed;
-    } catch { /* tags malformada — trata como vazia, nunca trava */ }
-    tags = tags.filter((t) => !String(t).startsWith("Convite: "));
-    tags.push(tagNova);
-    await supabaseAdmin.from(NOME_TABELA_LEADS).update({ tags: JSON.stringify(tags) }).eq("pessoaIdentificador", pessoaIdentificador);
+    await alterarTags(pessoaIdentificador, { removerPrefixos: ["Convite: "], adicionar: [tagNova] });
 }
 
 Deno.serve(async (req) => {

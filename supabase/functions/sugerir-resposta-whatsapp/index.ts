@@ -25,6 +25,7 @@
 // Chamada por pg_cron a cada 15 min (migracao_agendamento_sugestao_resposta.sql).
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin, NOME_TABELA_LEADS } from "../_shared/supabaseAdmin.ts";
+import { alterarTags } from "../_shared/tags.ts";
 import { buscarExemplosEstilo } from "../_shared/exemplosEstilo.ts";
 import { buscarListaFiliais, linkMapsDaFilial } from "../_shared/filiaisInfo.ts";
 import { montarTabelaDiasSemana, adicionarMeses } from "../_shared/calendario.ts";
@@ -66,16 +67,7 @@ const ROTULO_TAG_CONVERSA: Record<string, string> = {
 // se a pessoa mudar de ideia numa conversa longa). NUNCA usada pra
 // "pediu_remocao" — ver aplicarTagNaoContatar() logo abaixo, motivo.
 async function aplicarTagConversa(pessoaIdentificador: string, tagNova: string) {
-    const { data: lead } = await supabaseAdmin.from(NOME_TABELA_LEADS).select("tags").eq("pessoaIdentificador", pessoaIdentificador).maybeSingle();
-    if (!lead) return;
-    let tags: string[] = [];
-    try {
-        const parsed = JSON.parse(lead.tags || "[]");
-        if (Array.isArray(parsed)) tags = parsed;
-    } catch { /* tags malformada — trata como vazia, nunca trava */ }
-    tags = tags.filter((t) => !String(t).startsWith("Conversa: "));
-    tags.push(tagNova);
-    await supabaseAdmin.from(NOME_TABELA_LEADS).update({ tags: JSON.stringify(tags) }).eq("pessoaIdentificador", pessoaIdentificador);
+    await alterarTags(pessoaIdentificador, { removerPrefixos: ["Conversa: "], adicionar: [tagNova] });
 }
 
 // "Não Contatar" é a tag de bloqueio TOTAL já usada em todo o projeto
@@ -88,16 +80,7 @@ async function aplicarTagConversa(pessoaIdentificador: string, tagNova: string) 
 // pra qualquer `tag_sugerida` — o custo de parar de mandar mensagem a
 // alguém à toa é muito menor que o de insistir com quem pediu pra parar.
 async function aplicarTagNaoContatar(pessoaIdentificador: string) {
-    const { data: lead } = await supabaseAdmin.from(NOME_TABELA_LEADS).select("tags").eq("pessoaIdentificador", pessoaIdentificador).maybeSingle();
-    if (!lead) return;
-    let tags: string[] = [];
-    try {
-        const parsed = JSON.parse(lead.tags || "[]");
-        if (Array.isArray(parsed)) tags = parsed;
-    } catch { /* tags malformada — trata como vazia, nunca trava */ }
-    if (tags.includes("Não Contatar")) return;
-    tags.push("Não Contatar");
-    await supabaseAdmin.from(NOME_TABELA_LEADS).update({ tags: JSON.stringify(tags) }).eq("pessoaIdentificador", pessoaIdentificador);
+    await alterarTags(pessoaIdentificador, { adicionar: ["Não Contatar"] });
 }
 
 function json(body: unknown, status = 200) {

@@ -300,6 +300,7 @@ function trocarFilial(novaFilial) {
 // ==========================================
 // 1. CARREGAMENTO DO BANCO (Busca os dados)
 // ==========================================
+let preCargasIniciais = null;
 async function carregarLeads(filial, resetar = true) {
     if (resetar && typeof limparEspecialistas === 'function') limparEspecialistas();
     if (resetar && typeof acompanhamentoFila !== 'undefined') { acompanhamentoFila = []; acompanhamentoConsulta++; const lista = document.getElementById('acompanhamentoLista'); if (lista) lista.textContent = 'Atualize para consultar a escola selecionada.'; ['acompanhamentoResumo','acompanhamentoContagem','sinaisMatricula','acompanhamentoDia'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = ''; }); }
@@ -331,11 +332,13 @@ async function carregarLeads(filial, resetar = true) {
         // então buscar TODAS elas inteiras de uma vez é seguro. Só a 1ª
         // coluna (o "balde" de leads nunca trabalhados) continua paginada
         // de verdade.
-        await carregarColunasSecundariasSemPaginacao(filial);
+        // As pré-cargas rodam EM PARALELO com a 1ª página (abaixo); antes
+        // eram em fila e o 1º card só aparecia depois de todas.
+        preCargasIniciais = Promise.all([
+            carregarColunasSecundariasSemPaginacao(filial),
+            carregarAtivosInativosSemPaginacao(filial),
+        ]);
         carregarStatusEventosKanban(filial, versao);
-        if (versao !== versaoCargaLeads) return;
-        await carregarAtivosInativosSemPaginacao(filial);
-        if (versao !== versaoCargaLeads) return;
         atualizarContagemLixeira();
     }
 
@@ -357,10 +360,11 @@ async function carregarLeads(filial, resetar = true) {
         .order('pessoaIdentificador', { ascending: true })
         .range(inicioLote, fimLote);
 
+    if (resetar && preCargasIniciais) await preCargasIniciais;
     if (versao !== versaoCargaLeads) return;
     if (error) {
         console.error("Erro ao carregar dados:", error);
-        alert("Erro de conexão com o Supabase. Veja o console (F12) para detalhes.");
+        avisar("Erro de conexão com o Supabase. Veja o console (F12) para detalhes.");
         if (btnAntigo) btnAntigo.remove();
         return;
     }
@@ -395,26 +399,26 @@ async function carregarColunasSecundariasSemPaginacao(filial) {
     const validKeys = typeof getColumnKeys === 'function' ? getColumnKeys() : columnsConfig.map(c => c.key);
     if (validKeys.length < 2) return; // só existe a 1ª coluna — nada "secundário" pra pré-carregar
 
+    // Uma busca só para todas as colunas secundárias (antes era uma por
+    // coluna, em fila, o que somava várias idas ao banco antes do 1º card).
     const TAMANHO_PAGINA = 1000;
-    for (const key of validKeys.slice(1)) {
-        for (let de = 0; ; de += TAMANHO_PAGINA) {
-            const { data, error } = await window.supabaseClient
-                .from(NOME_TABELA)
-                .select('*')
-                .eq('filial', filial)
-                .eq('funil_agencia', key)
-                .is('lixeira_em', null)
-                .order('pessoaIdentificador', { ascending: true })
-                .range(de, de + TAMANHO_PAGINA - 1);
-            if (versao !== versaoCargaLeads || filial !== filialAtual) return;
-            if (error) { console.error(`Erro ao pré-carregar a coluna "${key}":`, error); break; }
-            const idsJaCarregados = new Set(leadsAtuais.map(l => l.pessoaIdentificador));
-            const novos = (data || []).filter(l => !idsJaCarregados.has(l.pessoaIdentificador));
-            leadsAtuais = [...leadsAtuais, ...novos];
-            if (!data || data.length < TAMANHO_PAGINA) break;
-        }
-        // A completude para filtros é validada pela consulta integral da escola, não por esta pré-carga.
+    for (let de = 0; ; de += TAMANHO_PAGINA) {
+        const { data, error } = await window.supabaseClient
+            .from(NOME_TABELA)
+            .select('*')
+            .eq('filial', filial)
+            .in('funil_agencia', validKeys.slice(1))
+            .is('lixeira_em', null)
+            .order('pessoaIdentificador', { ascending: true })
+            .range(de, de + TAMANHO_PAGINA - 1);
+        if (versao !== versaoCargaLeads || filial !== filialAtual) return;
+        if (error) { console.error('Erro ao pré-carregar as colunas secundárias:', error); return; }
+        const idsJaCarregados = new Set(leadsAtuais.map(l => l.pessoaIdentificador));
+        const novos = (data || []).filter(l => !idsJaCarregados.has(l.pessoaIdentificador));
+        leadsAtuais = [...leadsAtuais, ...novos];
+        if (!data || data.length < TAMANHO_PAGINA) break;
     }
+    // A completude para filtros é validada pela consulta integral da escola, não por esta pré-carga.
 }
 
 // Bug real relatado pelo usuário (2026-10-05): "quando coloco um filtro,
@@ -478,7 +482,9 @@ function mostrarEstadoFiltroCompleto(key, texto, ocultar) {
 async function aplicarFiltrosEmTodaBase(chaves) {
     const versao = versaoCargaLeads;
     const filial = filialAtual;
-    chaves.forEach(key => mostrarEstadoFiltroCompleto(key, baseFiltravelCompleta ? '' : 'Consultando todos os contatos da escola…', !baseFiltravelCompleta));
+    // A coluna continua visível enquanto carrega (antes sumia por vários
+    // segundos nas escolas grandes); só aparece o aviso de consulta.
+    chaves.forEach(key => mostrarEstadoFiltroCompleto(key, baseFiltravelCompleta ? '' : 'Consultando todos os contatos da escola…', false));
     try {
         const trouxe = await garantirColunaFiltravelCompleta(chaves[0]);
         if (versao !== versaoCargaLeads || filial !== filialAtual) return;
@@ -566,7 +572,8 @@ async function carregarRedeAtivosInativos() {
             if(!chave)continue;if(!mapa.has(chave))mapa.set(chave,[]);mapa.get(chave).push(r);
         }
     });
-    renderizarCards();
+    // Sem redesenhar o quadro: o selo de rede saiu dos cards; estes mapas só
+    // servem ao filtro de disparos (filtrarExclusaoInteligenteWpp).
 }
 
 // Devolve {status, filial} se este lead bate (por telefone/e-mail) com
@@ -718,7 +725,7 @@ function labelExibicaoColuna(col) {
 function recolherColuna(key) {
     const visiveisRestantes = columnsConfig.filter(c => !colunasRecolhidas.has(c.key) && c.key !== key);
     if (visiveisRestantes.length === 0) {
-        alert('É preciso manter pelo menos uma coluna visível no board.');
+        avisar('É preciso manter pelo menos uma coluna visível no board.');
         return;
     }
     colunasRecolhidas.add(key);
@@ -907,7 +914,7 @@ function renderizarCards() {
         // prioridade máxima ("Ligar Hoje", sobe pro topo da coluna); no
         // FUTURO, o card fica em soneca (não aparece na coluna até o dia
         // marcado) — ver salvarLembreteLead().
-        const hojeISO = new Date().toISOString().slice(0, 10);
+        const hojeISO = hojeISOBrasilia();
         const lembreteVencido = lead.lembrete_em && String(lead.lembrete_em) <= hojeISO;
         const lembreteFuturo = lead.lembrete_em && String(lead.lembrete_em) > hojeISO;
         const lembreteIconHTML = lembreteVencido
@@ -985,7 +992,7 @@ function renderizarCards() {
     // 5. Botão "carregar mais" (na primeira coluna)
     if (podeCarregarMais && primeiraColuna) {
         const btnHTML = `
-            <button id="btn-carregar-mais" onclick="carregarLeads('${filialAtual}', false)"
+            <button id="btn-carregar-mais" onclick="carregarLeads(filialAtual, false)"
             style="width: 100%; padding: 12px; margin-top: 10px; background: #e2e8f0; border: 1px dashed #cbd5e1; border-radius: 8px; cursor: pointer; color: var(--text-dark); font-weight: 600; font-size: 12px; transition: 0.2s;">
                 <i class="fa-solid fa-angles-down"></i> Carregar Mais 500 Leads
             </button>`;
@@ -1011,8 +1018,14 @@ function renderizarCards() {
 function sincronizarAbaAtiva() {
     const abaAtiva = document.querySelector('.tab-pane.active');
     if (!abaAtiva) return;
-    if (abaAtiva.id === 'tab-dashboard') atualizarDashboard();
-    if (abaAtiva.id === 'tab-relatorios') atualizarRelatorios();
+    // Só o que é calculado em memória. Os painéis que consultam o banco
+    // (Relatórios inteiros, lembretes/aniversariantes/eventos do Dashboard)
+    // só recarregam ao abrir a aba ou no botão Atualizar: refazê-los a cada
+    // card movido e a cada 3 min apagava o que a pessoa estava digitando
+    // (simulador de acertos, ciclos, "informado pela escola") e fazia as
+    // listas piscarem.
+    if (abaAtiva.id === 'tab-dashboard') atualizarDashboard({ completo: false });
+    if (abaAtiva.id === 'tab-relatorios') atualizarRelatorios({ completo: false });
     // Sem fetch aqui — só re-renderiza com o que já está em eventosAtuais,
     // pra manter "Confirmados" em dia conforme leadsAtuais muda, sem bater
     // no banco a cada re-render (que acontece com muita frequência).
@@ -1160,6 +1173,9 @@ async function toggleFiltroColunaChip(key, campo, valor) {
 
     const opcoes = opcoesFiltroColuna[key] || { tags: [] };
     montarChipsTagsAgrupados(`tagsChips-${key}`, opcoes.tags, filtro.tags, (v) => toggleFiltroColunaChip(key, 'tags', v));
+    // Reaplica a busca digitada no dropdown (os chips foram refeitos do zero).
+    const buscaTags = document.querySelector(`#filterDropdown-${CSS.escape(key)} .busca-tags`);
+    if (buscaTags && buscaTags.value) buscarTagsDoFiltro(buscaTags);
 
     atualizarBadgeFiltroColuna(key);
     // Garante o conteúdo COMPLETO da coluna antes de filtrar (ver bug real
@@ -1335,6 +1351,8 @@ function limparFiltros() {
         const da = document.getElementById(`filtroDataAte-${col.key}`); if (da) da.value = '';
         const tt = document.getElementById(`filtroTemTelefone-${col.key}`); if (tt) tt.checked = false;
         const te = document.getElementById(`filtroTemEmail-${col.key}`); if (te) te.checked = false;
+        const tr = document.getElementById(`filtroTemResumo-${col.key}`); if (tr) tr.checked = false;
+        const rt = document.getElementById(`filtroResumoTexto-${col.key}`); if (rt) rt.value = '';
     });
     renderizarCards();
 }
@@ -1382,7 +1400,10 @@ const LIMITE_BUSCA_BANCO = 300;
 // qualquer momento.
 async function processarBuscaColuna(key) {
     // A busca também participa dos filtros, sem limite silencioso de 300
-    // resultados nem exceção para nomes com um caractere.
+    // resultados nem exceção para nomes com um caractere. Campo vazio não
+    // precisa buscar a escola inteira: só reaplica o que já está na tela.
+    const inputTexto = document.querySelector(`.column-search[data-col="col-${key}"]`);
+    if (!baseFiltravelCompleta && !(inputTexto && inputTexto.value.trim())) { aplicarFiltroVisualColuna(key); return; }
     await aplicarFiltrosEmTodaBase([key]);
 }
 
@@ -1494,7 +1515,7 @@ async function abrirResultadoBuscaGlobal(id, templateWhatsapp) {
             .select('*')
             .eq('pessoaIdentificador', id)
             .single();
-        if (error || !data) { alert('Não foi possível abrir esse lead — veja o console (F12).'); console.error(error); return; }
+        if (error || !data) { avisar('Não foi possível abrir esse lead — veja o console (F12).'); console.error(error); return; }
         leadsAtuais = [...leadsAtuais, data];
         renderizarCards();
     }
@@ -1553,7 +1574,7 @@ function csvEscapeCampo(valor) {
 
 function exportarLeadsCSV() {
     if (leadsAtuais.length === 0) {
-        alert('Nenhum lead carregado para exportar. Abra a aba CRM e deixe os leads carregarem primeiro.');
+        avisar('Nenhum lead carregado para exportar. Abra a aba CRM e deixe os leads carregarem primeiro.');
         return;
     }
 
@@ -1582,7 +1603,7 @@ function exportarLeadsCSV() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `leads_${(filialAtual || 'filial').replace(/[^a-zA-Z0-9]+/g, '_')}_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `leads_${(filialAtual || 'filial').replace(/[^a-zA-Z0-9]+/g, '_')}_${hojeISOBrasilia()}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1637,9 +1658,14 @@ async function soltar(event, novaColuna) {
     // seleção inteira vai junto — arrastar 1 card já move todos, sem
     // precisar clicar em nada. Arrastar um card que NÃO está selecionado
     // move só ele, mesmo com outros selecionados (não mexe na seleção).
-    const idsParaMover = (cardsSelecionados.has(String(leadId)) && cardsSelecionados.size > 1)
+    const idsSelecionados = (cardsSelecionados.has(String(leadId)) && cardsSelecionados.size > 1)
         ? Array.from(cardsSelecionados)
         : [String(leadId)];
+    // Soltar o card na própria coluna não é movimento: antes zerava o prazo
+    // da coluna fria, gravava um movimento falso no log e mostrava "Desfazer".
+    const colunaAtualDe = (id) => { const l = leadsAtuais.find(x => String(x.pessoaIdentificador) === String(id)); return l ? l.funil_agencia : null; };
+    const idsParaMover = idsSelecionados.filter(id => colunaAtualDe(id) !== novaColuna);
+    if (idsParaMover.length === 0) return;
 
     if (idsParaMover.length > 1) limparSelecao();
     await moverLeadsParaColuna(idsParaMover, novaColuna);
@@ -1752,7 +1778,7 @@ function fecharNovoLeadManual() {
 
 async function confirmarNovoLeadManual() {
     const nome = document.getElementById('novoLeadManualNome').value.trim();
-    if (!nome) { alert('Informe o nome do lead.'); return; }
+    if (!nome) { avisar('Informe o nome do lead.'); return; }
     const ddd = document.getElementById('novoLeadManualDDD').value.trim();
     const telefone = document.getElementById('novoLeadManualTelefone').value.trim();
     const email = document.getElementById('novoLeadManualEmail').value.trim();
@@ -1783,7 +1809,7 @@ async function confirmarNovoLeadManual() {
     };
 
     const { error } = await window.supabaseClient.from(NOME_TABELA).insert(registro);
-    if (error) { alert('Erro ao criar o lead: ' + error.message); return; }
+    if (error) { avisar('Erro ao criar o lead: ' + error.message); return; }
 
     fecharNovoLeadManual();
     registrarLogAtividade('criar_lead_manual', { pessoaIds: [novoId], detalhes: { nome } });
@@ -1817,7 +1843,7 @@ async function moverParaLixeira(ids) {
         .from(NOME_TABELA)
         .update({ lixeira_em: new Date().toISOString() })
         .in('pessoaIdentificador', ids);
-    if (error) { alert('Erro ao mover pra lixeira: ' + error.message); return; }
+    if (error) { avisar('Erro ao mover pra lixeira: ' + error.message); return; }
 
     leadsAtuais = leadsAtuais.filter(l => !ids.includes(String(l.pessoaIdentificador)));
     limparSelecao();
@@ -1878,7 +1904,7 @@ async function abrirLixeira() {
                 </div>
                 <div style="display:flex; gap:6px; flex-shrink:0;">
                     <button class="btn-secondary" onclick="restaurarDaLixeira('${l.pessoaIdentificador}')"><i class="fa-solid fa-rotate-left"></i> Restaurar</button>
-                    <button class="btn-add-tag" onclick="excluirDefinitivoDaLixeira('${l.pessoaIdentificador}', '${escapeHTML(l.pessoaNome || 'Sem nome').replace(/'/g, "\\'")}')"><i class="fa-solid fa-trash"></i> Excluir Agora</button>
+                    <button class="btn-add-tag" onclick="excluirDefinitivoDaLixeira('${l.pessoaIdentificador}', ${argJs(l.pessoaNome || 'Sem nome')})"><i class="fa-solid fa-trash"></i> Excluir Agora</button>
                 </div>
             </div>`;
     }).join('');
@@ -1889,7 +1915,7 @@ function fecharLixeira() {
 }
 async function restaurarDaLixeira(id) {
     const { error } = await window.supabaseClient.from(NOME_TABELA).update({ lixeira_em: null }).eq('pessoaIdentificador', id);
-    if (error) { alert('Erro ao restaurar: ' + error.message); return; }
+    if (error) { avisar('Erro ao restaurar: ' + error.message); return; }
     registrarLogAtividade('restaurar_lixeira', { pessoaIds: [String(id)] });
     await abrirLixeira();
     await atualizarContagemLixeira();
@@ -1898,7 +1924,7 @@ async function restaurarDaLixeira(id) {
 async function excluirDefinitivoDaLixeira(id, nome) {
     if (!confirm(`Excluir "${nome}" DEFINITIVAMENTE? Não tem volta.`)) return;
     const { error } = await window.supabaseClient.from(NOME_TABELA).delete().eq('pessoaIdentificador', id);
-    if (error) { alert('Erro ao excluir: ' + error.message); return; }
+    if (error) { avisar('Erro ao excluir: ' + error.message); return; }
     registrarLogAtividade('excluir_lixeira_definitivo', { pessoaIds: [String(id)], detalhes: { nome } });
     await abrirLixeira();
     await atualizarContagemLixeira();
@@ -1952,7 +1978,7 @@ async function abrirRemoverLeadLgpd() {
         removido_por: atendente,
     });
     if (erroSupressao) {
-        alert('Erro ao registrar a remoção (rode migracao_lgpd_remocao_contato.sql se ainda não rodou): ' + erroSupressao.message);
+        avisar('Erro ao registrar a remoção (rode migracao_lgpd_remocao_contato.sql se ainda não rodou): ' + erroSupressao.message);
         return;
     }
 
@@ -1976,13 +2002,13 @@ async function abrirRemoverLeadLgpd() {
     fecharGaveta();
     const { error: erroDelete } = await window.supabaseClient.from(NOME_TABELA).delete().eq('pessoaIdentificador', idParaApagar);
     if (erroDelete) {
-        alert('O registro de remoção/fila foi salvo, mas apagar o lead do CRM falhou: ' + erroDelete.message + ' — tente excluir manualmente pela Lixeira.');
+        avisar('O registro de remoção/fila foi salvo, mas apagar o lead do CRM falhou: ' + erroDelete.message + ' — tente excluir manualmente pela Lixeira.');
         return;
     }
 
     leadsAtuais = leadsAtuais.filter(l => String(l.pessoaIdentificador) !== String(idParaApagar));
     renderizarCards();
-    alert(`"${nomeParaApagar}" removido(a) do CRM. A desativação no Ulisses acontece sozinha na próxima importação semanal (ou rode "npm run ulisses-local" antes, se for urgente).`);
+    avisar(`"${nomeParaApagar}" removido(a) do CRM. A desativação no Ulisses acontece sozinha na próxima importação semanal (ou rode "npm run ulisses-local" antes, se for urgente).`);
 }
 
 // ==========================================
@@ -1996,7 +2022,7 @@ async function aplicarTagEmMassa(modo) {
     const input = document.getElementById('bulkActionTagInput');
     if (!input || cardsSelecionados.size === 0) return;
     const tag = input.value.trim();
-    if (!tag) { alert('Digite o nome da tag antes de aplicar.'); return; }
+    if (!tag) { avisar('Digite o nome da tag antes de aplicar.'); return; }
 
     const ids = Array.from(cardsSelecionados);
     const atualizacoes = [];
@@ -2015,7 +2041,7 @@ async function aplicarTagEmMassa(modo) {
     });
 
     if (atualizacoes.length === 0) {
-        alert(modo === 'add' ? 'Todos os selecionados já tinham essa tag.' : 'Nenhum dos selecionados tinha essa tag.');
+        avisar(modo === 'add' ? 'Todos os selecionados já tinham essa tag.' : 'Nenhum dos selecionados tinha essa tag.');
         return;
     }
 
@@ -2028,7 +2054,7 @@ async function aplicarTagEmMassa(modo) {
     const comErro = resultados.filter(r => r.error);
     if (comErro.length > 0) {
         console.error('Erros ao aplicar tag em massa:', comErro.map(r => r.error));
-        alert(`Erro ao salvar a tag em ${comErro.length} lead(s) — recarregue a página e confira. Veja o console (F12) para detalhes.`);
+        avisar(`Erro ao salvar a tag em ${comErro.length} lead(s) — recarregue a página e confira. Veja o console (F12) para detalhes.`);
     } else {
         registrarLogAtividade('tag_massa', { pessoaIds: atualizacoes.map(a => a.pessoaIdentificador), detalhes: { modo, tag } });
         limparSelecao();
@@ -2088,7 +2114,7 @@ async function executarMovimentoParaColuna(ids, novaColuna) {
 
     if (error) {
         console.error('Erro ao mover leads:', error);
-        alert('Erro ao salvar no servidor — desfazendo a movimentação local.');
+        avisar('Erro ao salvar no servidor — desfazendo a movimentação local.');
         anteriores.forEach(({ id, funilAnterior, atualizadoAnterior }) => {
             const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(id));
             if (lead) { lead.funil_agencia = funilAnterior; lead.funil_agencia_atualizado_em = atualizadoAnterior; }
@@ -2169,7 +2195,7 @@ async function confirmarMotivoPerda() {
 // por lead (Promise.all), já que `tags` difere de lead pra lead (mesmo
 // padrão de aplicarTagEmMassa() acima).
 async function registrarMotivoPerda(ids, motivo) {
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
     const atualizacoes = ids.map(id => {
         const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(id));
         if (!lead) return null;
@@ -2191,7 +2217,7 @@ async function registrarMotivoPerda(ids, motivo) {
     const erro = resultados.find(r => r.error);
     if (erro) {
         console.error('Erro ao salvar motivo de perda:', erro.error);
-        alert('O lead foi movido, mas houve um erro ao salvar o motivo — confira manualmente na ficha. Veja o console (F12) para detalhes.');
+        avisar('O lead foi movido, mas houve um erro ao salvar o motivo — confira manualmente na ficha. Veja o console (F12) para detalhes.');
         return;
     }
 
@@ -2240,6 +2266,7 @@ async function desfazerUltimoMovimento() {
     // (não vale a complexidade pra uma janela de desfazer de 5s) — grava
     // "agora" de novo, mesmo espírito de "acabou de entrar" na coluna.
     const agora = new Date().toISOString();
+    const falhasDesfazer = [];
     const porColunaOrigem = new Map();
     anteriores.forEach(({ id, funilAnterior }) => {
         if (!porColunaOrigem.has(funilAnterior)) porColunaOrigem.set(funilAnterior, []);
@@ -2251,10 +2278,12 @@ async function desfazerUltimoMovimento() {
             const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(id));
             if (lead) { lead.funil_agencia = coluna; lead.funil_agencia_atualizado_em = agora; }
         });
-        await window.supabaseClient.from(NOME_TABELA).update({ funil_agencia: coluna, funil_agencia_atualizado_em: agora }).in('pessoaIdentificador', ids);
+        const { error } = await window.supabaseClient.from(NOME_TABELA).update({ funil_agencia: coluna, funil_agencia_atualizado_em: agora }).in('pessoaIdentificador', ids);
+        if (error) falhasDesfazer.push(error.message);
     }
 
     renderizarCards();
+    if (falhasDesfazer.length) avisar('Não foi possível desfazer no banco: ' + falhasDesfazer[0] + '\nRecarregue a página para ver a coluna real.', 'erro');
 }
 
 // ==========================================
@@ -2300,7 +2329,7 @@ async function reordenarESalvarOrdem(tabela, cache, idOrigem, idDestino, aoTermi
         cache.map((item, i) => window.supabaseClient.from(tabela).update({ ordem: i }).eq('id', item.id))
     );
     const erro = resultados.find(r => r.error);
-    if (erro) { alert('Erro ao reordenar: ' + erro.error.message); return; }
+    if (erro) { avisar('Erro ao reordenar: ' + erro.error.message); return; }
     if (aoTerminar) aoTerminar();
 }
 
@@ -2374,7 +2403,7 @@ function adicionarColuna() {
 
 async function removerColuna(key) {
     if (columnsConfig.length <= 1) {
-        alert('É preciso manter pelo menos uma coluna no funil.');
+        avisar('É preciso manter pelo menos uma coluna no funil.');
         return;
     }
     const colunaAlvo = columnsConfig.find(c => c.key === key);
@@ -2526,12 +2555,12 @@ async function atualizarNomeFilial(id, novoNome) {
     novoNome = novoNome.trim();
     if (!novoNome) return;
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ nome: novoNome }).eq('id', id);
-    if (error) alert('Erro ao salvar nome: ' + error.message);
+    if (error) avisar('Erro ao salvar nome: ' + error.message);
 }
 
 async function atualizarAtivoFilial(id, ativo) {
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ ativo }).eq('id', id);
-    if (error) alert('Erro ao salvar: ' + error.message);
+    if (error) avisar('Erro ao salvar: ' + error.message);
 }
 
 // Pedido do usuário (2026-09-29): "permita habilitar ou desabilitar essa
@@ -2542,7 +2571,7 @@ async function atualizarAtivoFilial(id, ativo) {
 // js/whatsapp.js e a RPC mensagens_candidatas_sugestao_resposta()).
 async function atualizarIaSugestaoFilial(id, habilitada) {
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ ia_sugestao_resposta_habilitada: habilitada }).eq('id', id);
-    if (error) alert('Erro ao salvar: ' + error.message);
+    if (error) avisar('Erro ao salvar: ' + error.message);
 }
 
 // "do Jardim América" / "de Barra do Garças" — usado pra pré-preencher a
@@ -2553,7 +2582,7 @@ async function atualizarIaSugestaoFilial(id, habilitada) {
 async function atualizarPreposicaoFilial(id, novoValor) {
     novoValor = novoValor.trim();
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ nome_com_preposicao: novoValor || null }).eq('id', id);
-    if (error) alert('Erro ao salvar: ' + error.message);
+    if (error) avisar('Erro ao salvar: ' + error.message);
 }
 
 // Número de WhatsApp do chefe de filial/professor responsável — só
@@ -2563,7 +2592,7 @@ async function atualizarPreposicaoFilial(id, novoValor) {
 async function atualizarWhatsappChefeFilial(id, novoValor) {
     novoValor = novoValor.replace(/\D/g, '');
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ whatsapp_chefe_numero: novoValor || null }).eq('id', id);
-    if (error) alert('Erro ao salvar: ' + error.message);
+    if (error) avisar('Erro ao salvar: ' + error.message);
 }
 
 // Valor da mensalidade/contribuição da filial — base do cálculo de
@@ -2572,7 +2601,7 @@ async function atualizarWhatsappChefeFilial(id, novoValor) {
 async function atualizarValorMensalidadeFilial(id, novoValor) {
     const numero = novoValor.trim() === '' ? null : parseFloat(novoValor.replace(',', '.'));
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ valor_mensalidade: (numero === null || isNaN(numero)) ? null : numero }).eq('id', id);
-    if (error) alert('Erro ao salvar: ' + error.message);
+    if (error) avisar('Erro ao salvar: ' + error.message);
 }
 
 // Taxa FIXA mensal que a agência cobra da escola (independente de
@@ -2582,7 +2611,7 @@ async function atualizarValorMensalidadeFilial(id, novoValor) {
 async function atualizarValorFixoFilial(id, novoValor) {
     const numero = novoValor.trim() === '' ? null : parseFloat(novoValor.replace(',', '.'));
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ valor_fixo_mensal_agencia: (numero === null || isNaN(numero)) ? null : numero }).eq('id', id);
-    if (error) alert('Erro ao salvar: ' + error.message);
+    if (error) avisar('Erro ao salvar: ' + error.message);
 }
 
 // Módulo 2 (Máquina/SDR) contratado? — filial em teste/trabalho que
@@ -2592,7 +2621,7 @@ async function atualizarValorFixoFilial(id, novoValor) {
 // Ver migracao_filial_pricing_proposta.sql (renomeado de cobra_comissao).
 async function atualizarModulo2ContratadoFilial(id, contratado) {
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ modulo2_contratado: contratado }).eq('id', id);
-    if (error) alert('Erro ao salvar: ' + error.message);
+    if (error) avisar('Erro ao salvar: ' + error.message);
 }
 
 // Quantidade de MEMBROS — categoria própria do Mercúrio (menu "Membros",
@@ -2601,7 +2630,7 @@ async function atualizarModulo2ContratadoFilial(id, contratado) {
 async function atualizarMercurioUnidadeFilial(id, novoValor) {
     const codigo = String(novoValor || '').trim().toUpperCase() || null;
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ mercurio_unidade: codigo }).eq('id', id);
-    if (error) { alert('Erro ao salvar o código do Mercúrio: ' + error.message); return; }
+    if (error) { avisar('Erro ao salvar o código do Mercúrio: ' + error.message); return; }
     const f = (filiaisDisponiveis || []).find(x => x.id === id);
     if (f) f.mercurio_unidade = codigo;
 }
@@ -2609,11 +2638,11 @@ async function atualizarMercurioUnidadeFilial(id, novoValor) {
 async function atualizarMembrosFilial(id, novoValor) {
     const numero = novoValor.trim() === '' ? null : Number(novoValor);
     if (numero !== null && (!Number.isSafeInteger(numero) || numero < 0)) {
-        alert('A quantidade de membros precisa ser um número inteiro igual ou maior que zero.');
+        avisar('A quantidade de membros precisa ser um número inteiro igual ou maior que zero.');
         return;
     }
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ membros: numero }).eq('id', id);
-    if (error) alert('Erro ao salvar: ' + error.message);
+    if (error) avisar('Erro ao salvar: ' + error.message);
 }
 
 // Endereço completo da filial — só pra exibição na gaveta do lead (bloco
@@ -2622,7 +2651,7 @@ async function atualizarMembrosFilial(id, novoValor) {
 async function atualizarEnderecoFilial(id, novoValor) {
     novoValor = novoValor.trim();
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ endereco: novoValor || null }).eq('id', id);
-    if (error) alert('Erro ao salvar: ' + error.message);
+    if (error) avisar('Erro ao salvar: ' + error.message);
 }
 
 
@@ -2638,7 +2667,7 @@ async function adicionarFilial() {
         .from(NOME_TABELA_FILIAIS)
         .insert({ nome: nome.trim(), ativo: true, ordem: proximaOrdem });
 
-    if (error) { alert('Erro ao criar filial: ' + error.message); return; }
+    if (error) { avisar('Erro ao criar filial: ' + error.message); return; }
     renderizarListaFiliaisModal();
 }
 
@@ -2767,7 +2796,7 @@ async function excluirLeadsDaFilial() {
     if (botao) botao.innerHTML = '<i class="fa-solid fa-trash-can"></i> Apagar todos os leads desta filial';
 
     if (error) {
-        alert('Erro ao apagar leads: ' + error.message);
+        avisar('Erro ao apagar leads: ' + error.message);
         verificarTextoConfirmacaoExclusao();
         return;
     }
@@ -2781,7 +2810,7 @@ async function excluirLeadsDaFilial() {
     if (filial === filialAtual) {
         carregarLeads(filialAtual, true);
     }
-    alert(`Leads da filial "${filial}" apagados com sucesso.`);
+    avisar(`Leads da filial "${filial}" apagados com sucesso.`);
 }
 
 // ==========================================
@@ -2791,7 +2820,8 @@ async function excluirLeadsDaFilial() {
 // carregados no navegador (respeitando a paginação de 500 em 500).
 // Não são uma contagem exata de todo o histórico no banco — servem
 // como leitura rápida do que está em tela agora.
-function atualizarDashboard() {
+let ultimaCargaPaineisDashboard = 0;
+function atualizarDashboard({ completo = true } = {}) {
     const kpiEl = document.getElementById('kpiLeadsMinerados');
     if (!kpiEl) return; // aba ainda não está no DOM (não deveria acontecer, mas por segurança)
 
@@ -2841,9 +2871,14 @@ function atualizarDashboard() {
 
     renderizarResumoInteresseProximoPasso();
     renderizarFeedAtividades();
-    atualizarLembretesPendentes();
-    atualizarAniversariantes();
-    atualizarFollowupEventos();
+    // Painéis com consulta ao banco: na carga completa sempre; nas
+    // atualizações automáticas, no máximo a cada 5 minutos.
+    if (completo || Date.now() - ultimaCargaPaineisDashboard > 5 * 60 * 1000) {
+        ultimaCargaPaineisDashboard = Date.now();
+        atualizarLembretesPendentes();
+        atualizarAniversariantes();
+        atualizarFollowupEventos();
+    }
 }
 
 // O painel resume apenas declarações explícitas registradas no CRM. Sem
@@ -2911,7 +2946,7 @@ async function atualizarLembretesPendentes() {
     const feed = document.getElementById('lembretesFeed');
     if (!feed || !filialAtual) return;
 
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
     const { data, error } = await window.supabaseClient
         .from(NOME_TABELA)
         .select('pessoaIdentificador, pessoaNome, lembrete_em, lembrete_nota')
@@ -3001,7 +3036,7 @@ async function atualizarAniversariantes() {
         // precisar abrir a gaveta primeiro. `enviarAniversarioRapido()`
         // mora em js/whatsapp.js (carregado antes deste arquivo).
         const botaoEnviar = ehHoje && typeof enviarAniversarioRapido === 'function'
-            ? `<button class="btn-toggle" style="flex-shrink:0; font-size:11px; padding:4px 8px;" onclick="event.stopPropagation(); enviarAniversarioRapido('${l.pessoaIdentificador}', '${escapeHTML(nomeParaChamar(l)).replace(/'/g, "\\'")}', '${filialAtual.replace(/'/g, "\\'")}', this)" title="Manda o template de Feliz Aniversário agora, sem abrir a ficha"><i class="fa-brands fa-whatsapp"></i> Enviar</button>`
+            ? `<button class="btn-toggle" style="flex-shrink:0; font-size:11px; padding:4px 8px;" onclick="event.stopPropagation(); enviarAniversarioRapido('${l.pessoaIdentificador}', ${argJs(nomeParaChamar(l))}, '${filialAtual.replace(/'/g, "\\'")}', this)" title="Manda o template de Feliz Aniversário agora, sem abrir a ficha"><i class="fa-brands fa-whatsapp"></i> Enviar</button>`
             : '';
         const badgeStatus = typeof htmlBadgeStatusWpp === 'function' ? htmlBadgeStatusWpp(statusPorLeadAniversario.get(String(l.pessoaIdentificador))) : '';
         return `
@@ -3031,7 +3066,7 @@ async function atualizarFollowupEventos() {
     const container = document.getElementById('followupEventosFeed');
     if (!container || !filialAtual) return;
 
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
 
     const { data: eventosFuturos, error: erroEventos } = await window.supabaseClient
         .from('eventos')
@@ -3183,7 +3218,7 @@ function calcularLargurasFunil(valores, { minimo = 26, quedaMinima = 14 } = {}) 
     });
 }
 
-function atualizarRelatorios() {
+function atualizarRelatorios({ completo = true } = {}) {
     if (typeof iniciarFunilInteracoes === 'function') iniciarFunilInteracoes();
     const container = document.getElementById('funnelChart');
     if (!container) return;
@@ -3255,6 +3290,8 @@ function atualizarRelatorios() {
     }).join('') + `</div>`;
 
     renderizarRelatorioTemasEvento();
+    renderizarRelatorioMotivosPerda();
+    if (!completo) return; // abaixo: relatórios que consultam o banco
     renderizarRelatorioMatriculasPorMes();
     if (typeof renderizarCobrancaMensal === 'function') renderizarCobrancaMensal();
     if (typeof renderizarCiclosTurma === 'function') renderizarCiclosTurma();
@@ -3266,7 +3303,6 @@ function atualizarRelatorios() {
     renderizarRelatorioComparacaoFiliais();
     if (typeof carregarRelatoriosWhatsApp === 'function') carregarRelatoriosWhatsApp();
     if (typeof carregarResumoTrabalho === 'function') carregarResumoTrabalho();
-    renderizarRelatorioMotivosPerda();
 }
 
 // Proxy sobre leadsAtuais, mesmo espírito dos outros relatórios acima —
@@ -3760,7 +3796,7 @@ async function renderizarComissaoSdrTodasFiliais() {
 
 function exportarComissaoSdrCSV() {
     if (!ultimoResultadoComissaoSdr) {
-        alert('Aguarde o relatório de Comissão do SDR carregar antes de exportar.');
+        avisar('Aguarde o relatório de Comissão do SDR carregar antes de exportar.');
         return;
     }
     const { rotulo, resultados, totalQtd, totalReceita, totalComissao, totalValorFixo, totalACobrar } = ultimoResultadoComissaoSdr;
@@ -3816,12 +3852,13 @@ function exportarComissaoSdrCSV() {
 // funciona normalmente, mas só deve ser usado pra fechar cobrança de
 // verdade depois de confirmar que os números batem com o Mercúrio.
 async function exportarComissaoSdrExcel() {
+    try { await garantirBiblioteca('xlsx'); } catch (e) { avisar(e.message); return; }
     if (typeof XLSX === 'undefined') {
-        alert('Biblioteca de geração de Excel (SheetJS) ainda não carregou — recarregue a página e tente de novo.');
+        avisar('Biblioteca de geração de Excel (SheetJS) ainda não carregou — recarregue a página e tente de novo.');
         return;
     }
     if (!ultimoResultadoComissaoSdr) {
-        alert('Aguarde o relatório de Comissão do SDR carregar antes de gerar o Excel.');
+        avisar('Aguarde o relatório de Comissão do SDR carregar antes de gerar o Excel.');
         return;
     }
 
@@ -3932,7 +3969,7 @@ async function exportarComissaoSdrExcel() {
 
         XLSX.writeFile(wb, `Comissao_SDR_${rotulo.replace('/', '_')}.xlsx`);
     } catch (e) {
-        alert('Erro ao gerar o Excel: ' + e.message);
+        avisar('Erro ao gerar o Excel: ' + e.message);
     } finally {
         if (btn) { btn.disabled = false; btn.innerHTML = textoOriginalBtn; }
     }
@@ -4125,13 +4162,13 @@ async function atualizarNomeTagSugerida(id, novoNome) {
     novoNome = novoNome.trim();
     if (!novoNome) return;
     const { error } = await window.supabaseClient.from('tags_sugeridas').update({ tag: novoNome }).eq('id', id);
-    if (error) { alert('Erro ao renomear tag: ' + error.message); return; }
+    if (error) { avisar('Erro ao renomear tag: ' + error.message); return; }
     renderizarListaTagsModal();
 }
 
 async function atualizarFamiliaTagSugerida(id, novaFamilia) {
     const { error } = await window.supabaseClient.from('tags_sugeridas').update({ familia: novaFamilia }).eq('id', id);
-    if (error) { alert('Erro ao mover tag: ' + error.message); return; }
+    if (error) { avisar('Erro ao mover tag: ' + error.message); return; }
     renderizarListaTagsModal();
 }
 
@@ -4147,14 +4184,14 @@ async function adicionarTagSugerida() {
         .from('tags_sugeridas')
         .insert({ tag, familia: selectFamilia ? selectFamilia.value : null, ordem: proximaOrdem });
 
-    if (error) { alert('Erro ao adicionar tag: ' + error.message); return; }
+    if (error) { avisar('Erro ao adicionar tag: ' + error.message); return; }
     inputTexto.value = '';
     renderizarListaTagsModal();
 }
 
 async function removerTagSugerida(id) {
     const { error } = await window.supabaseClient.from('tags_sugeridas').delete().eq('id', id);
-    if (error) { alert('Erro ao remover tag: ' + error.message); return; }
+    if (error) { avisar('Erro ao remover tag: ' + error.message); return; }
     renderizarListaTagsModal();
 }
 
@@ -4314,6 +4351,92 @@ function escapeHTML(str) {
     return String(str ?? '').replace(/[&<>"']/g, c => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
     }[c]));
+}
+
+// Aviso discreto no rodapé da tela, no lugar da janela nativa do navegador (que trava a
+// página e exige clique a cada mensagem). Some sozinho; erros ficam mais
+// tempo. Passar o mouse por cima pausa, e o texto pode ser selecionado e
+// copiado. Confirmações continuam com confirm(), porque precisam bloquear.
+function avisar(mensagem, tipo, opcoes) {
+    const texto = String(mensagem ?? '');
+    const ehErro = tipo === 'erro' || (!tipo && /^(erro|falha|não foi possível|nao foi possivel)|erro ao|falhou/i.test(texto));
+    let pilha = document.getElementById('avisosCrm');
+    if (!pilha) {
+        pilha = document.createElement('div');
+        pilha.id = 'avisosCrm';
+        pilha.className = 'avisos-crm';
+        pilha.setAttribute('aria-live', 'polite');
+        document.body.appendChild(pilha);
+    }
+    while (pilha.children.length >= 4) pilha.firstElementChild.remove();
+    const aviso = document.createElement('div');
+    aviso.className = 'aviso-crm' + (ehErro ? ' aviso-crm-erro' : '');
+    aviso.setAttribute('role', ehErro ? 'alert' : 'status');
+    const corpo = document.createElement('div');
+    corpo.className = 'aviso-crm-texto';
+    corpo.textContent = texto;
+    const fechar = document.createElement('button');
+    fechar.type = 'button';
+    fechar.className = 'aviso-crm-fechar';
+    fechar.setAttribute('aria-label', 'Fechar aviso');
+    fechar.textContent = '×';
+    aviso.append(corpo);
+    if (opcoes && opcoes.acao && typeof opcoes.acao.executar === 'function') {
+        const botaoAcao = document.createElement('button');
+        botaoAcao.type = 'button';
+        botaoAcao.className = 'aviso-crm-acao';
+        botaoAcao.textContent = opcoes.acao.rotulo || 'Desfazer';
+        botaoAcao.addEventListener('click', () => { aviso.remove(); opcoes.acao.executar(); });
+        aviso.append(botaoAcao);
+    }
+    aviso.append(fechar);
+    pilha.appendChild(aviso);
+    const duracao = Math.min(30000, (ehErro ? 9000 : 5000) + texto.length * 50);
+    let timer = setTimeout(() => aviso.remove(), duracao);
+    fechar.addEventListener('click', () => { clearTimeout(timer); aviso.remove(); });
+    aviso.addEventListener('mouseenter', () => clearTimeout(timer));
+    aviso.addEventListener('mouseleave', () => { clearTimeout(timer); timer = setTimeout(() => aviso.remove(), 4000); });
+}
+
+// Bibliotecas pesadas carregadas só quando usadas (antes vinham em toda
+// abertura do CRM: ~230 KB comprimidos e quase 1 MB de JS para interpretar,
+// mesmo para quem nunca exporta Excel nem importa planilha).
+const BIBLIOTECAS_SOB_DEMANDA = {
+    xlsx: { global: 'XLSX', url: 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js' },
+    papa: { global: 'Papa', url: 'https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js' },
+    jszip: { global: 'JSZip', url: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js' },
+};
+const _carregandoBiblioteca = {};
+function garantirBiblioteca(nome) {
+    const lib = BIBLIOTECAS_SOB_DEMANDA[nome];
+    if (!lib) return Promise.reject(new Error('Biblioteca desconhecida: ' + nome));
+    if (window[lib.global]) return Promise.resolve(window[lib.global]);
+    if (!_carregandoBiblioteca[nome]) {
+        _carregandoBiblioteca[nome] = new Promise((resolve, reject) => {
+            const el = document.createElement('script');
+            el.src = lib.url;
+            el.onload = () => resolve(window[lib.global]);
+            el.onerror = () => { delete _carregandoBiblioteca[nome]; reject(new Error('Não foi possível carregar ' + nome + '. Confira a internet e tente de novo.')); };
+            document.head.appendChild(el);
+        });
+    }
+    return _carregandoBiblioteca[nome];
+}
+
+// Data de hoje (AAAA-MM-DD) no fuso de Brasília. toISOString() usa o horário
+// de Londres: depois das 21h já seria "amanhã" (lembrete virando "Ligar Hoje"
+// na véspera, matrícula das 22h do dia 31 caindo no mês seguinte).
+function hojeISOBrasilia() {
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+}
+
+// Argumento de texto seguro para um handler inline (onclick="fn(${argJs(x)})").
+// Use SEM aspas em volta. escapeHTML sozinho não basta dentro de onclick: o
+// navegador desfaz &#39; em ' antes de rodar o JS, e um nome como
+// x');avisar(1);// executaria código. Aqui o valor vira uma string JSON
+// (aspas duplas) e só depois é escapado para o atributo.
+function argJs(valor) {
+    return escapeHTML(JSON.stringify(String(valor ?? '')));
 }
 
 // Normaliza texto que vem cru da planilha (tudo maiúsculo, tudo minúsculo,
@@ -4561,6 +4684,7 @@ function abrirGaveta(id, opcoes = {}) {
 }
 function fecharGaveta() {
     currentLeadId = null;
+    if (typeof mostrarPainelGaveta === 'function') mostrarPainelGaveta('ficha');
     limparDestaqueCard();
     if (typeof fecharFormConvidarEventoNaGaveta === 'function') fecharFormConvidarEventoNaGaveta();
     if (typeof chatDrawer !== 'undefined') chatDrawer.fechar();
@@ -4663,7 +4787,7 @@ async function vincularLeadFamiliar(idAlvo) {
 
     const { data: alvo, error: erroAlvo } = await window.supabaseClient
         .from(NOME_TABELA).select('grupo_familiar_id, pessoaNome').eq('pessoaIdentificador', idAlvo).single();
-    if (erroAlvo) { alert('Erro ao buscar lead: ' + erroAlvo.message); return; }
+    if (erroAlvo) { avisar('Erro ao buscar lead: ' + erroAlvo.message); return; }
 
     let grupoId = leadAtual.grupo_familiar_id;
     if (alvo.grupo_familiar_id && alvo.grupo_familiar_id !== leadAtual.grupo_familiar_id) {
@@ -4680,7 +4804,7 @@ async function vincularLeadFamiliar(idAlvo) {
 
     const { error } = await window.supabaseClient
         .from(NOME_TABELA).update({ grupo_familiar_id: grupoId }).in('pessoaIdentificador', [String(currentLeadId), String(idAlvo)]);
-    if (error) { alert('Erro ao vincular: ' + error.message); return; }
+    if (error) { avisar('Erro ao vincular: ' + error.message); return; }
 
     leadAtual.grupo_familiar_id = grupoId;
     fecharBuscaVinculoFamiliar();
@@ -4691,7 +4815,7 @@ async function removerDoGrupoFamiliar(idMembro) {
     if (!confirm('Remover essa pessoa do vínculo familiar?')) return;
     const { error } = await window.supabaseClient
         .from(NOME_TABELA).update({ grupo_familiar_id: null }).eq('pessoaIdentificador', idMembro);
-    if (error) { alert('Erro ao remover: ' + error.message); return; }
+    if (error) { avisar('Erro ao remover: ' + error.message); return; }
 
     const membro = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(idMembro));
     if (membro) membro.grupo_familiar_id = null;
@@ -4763,6 +4887,8 @@ async function salvarResumoIA() {
     const newText = document.getElementById('ai-summary-input').value;
     const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(currentLeadId));
     const textoAntigo = leadsAtuais[leadIndex].resumo_ia || '';
+    const atualizadoAntes = leadsAtuais[leadIndex].resumo_ia_atualizado_em;
+    const pessoaId = String(currentLeadId);
     const agora = new Date().toISOString();
     leadsAtuais[leadIndex].resumo_ia = newText;
     leadsAtuais[leadIndex].resumo_ia_atualizado_em = agora;
@@ -4772,12 +4898,24 @@ async function salvarResumoIA() {
     // Inteligente" (ver js/whatsapp.js): um resumo mais novo que a última
     // mensagem da conversa é considerado "fresco", economizando 1 leitura
     // por IA na hora de montar a fila de prioridade.
-    await window.supabaseClient
+    const { error } = await window.supabaseClient
         .from(NOME_TABELA)
         .update({ resumo_ia: newText, resumo_ia_atualizado_em: agora })
-        .eq('pessoaIdentificador', currentLeadId);
+        .eq('pessoaIdentificador', pessoaId);
+    if (error) {
+        // Antes a tela mostrava o texto como salvo mesmo quando o banco
+        // recusava, e ele sumia na próxima recarga.
+        const l = leadsAtuais.find(x => String(x.pessoaIdentificador) === pessoaId);
+        if (l) { l.resumo_ia = textoAntigo; l.resumo_ia_atualizado_em = atualizadoAntes; }
+        if (String(currentLeadId) === pessoaId) {
+            renderAISummary();
+            if (typeof editarResumoIA === 'function') { editarResumoIA(); const campo = document.getElementById('ai-summary-input'); if (campo) campo.value = newText; }
+        }
+        avisar('Não foi possível salvar o resumo: ' + error.message + '\nO texto continua no campo para você tentar de novo.', 'erro');
+        return;
+    }
 
-    registrarMencoesResumo(currentLeadId, leadsAtuais[leadIndex].pessoaNome, textoAntigo, newText)
+    registrarMencoesResumo(pessoaId, leadsAtuais[leadIndex].pessoaNome, textoAntigo, newText)
         .catch(e => console.warn('Erro ao registrar menções:', e.message));
 }
 
@@ -4858,7 +4996,7 @@ async function registrarContatoManual() {
         .from(NOME_TABELA)
         .update({ ultimo_contato_em: agora })
         .eq('pessoaIdentificador', currentLeadId);
-    if (error) { alert('Erro ao registrar: ' + error.message); return; }
+    if (error) { avisar('Erro ao registrar: ' + error.message); return; }
     lead.ultimo_contato_em = agora;
     renderUltimoContato();
     gavetaLeadAberta.ultimoContato = true;
@@ -4880,24 +5018,24 @@ async function enviarResumoParaChefeFilial() {
     const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(currentLeadId));
     if (!lead) return;
     const resumo = (lead.resumo_ia || '').trim();
-    if (!resumo) { alert('Este lead ainda não tem um Resumo da Conversa (IA) preenchido — escreva algo em "Editar" antes de enviar.'); return; }
+    if (!resumo) { avisar('Este lead ainda não tem um Resumo da Conversa (IA) preenchido — escreva algo em "Editar" antes de enviar.'); return; }
     if (!confirm(`Enviar o resumo de "${lead.pessoaNome}" pro WhatsApp do chefe da filial "${lead.filial}"?`)) return;
 
     const nomeAtendente = typeof obterNomeAtendente === 'function' ? obterNomeAtendente() : '';
-    const texto = `📋 *Resumo de acompanhamento* — ${lead.pessoaNome}\n${nomeAtendente ? `Enviado por: ${nomeAtendente}\n` : ''}\n${resumo}`;
-
+    // O servidor monta o texto a partir do resumo gravado (não aceita texto
+    // livre vindo do navegador). Salve o resumo antes de enviar.
     const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-notificar-chefe-filial', {
-        body: { filial: lead.filial, texto }
+        body: { pessoaIdentificador: String(lead.pessoaIdentificador), enviadoPor: nomeAtendente || '' }
     });
 
     if (error || (data && data.ok === false)) {
         const motivo = (data && data.erro === 'chefe_sem_numero')
             ? 'Essa filial ainda não tem o WhatsApp do chefe cadastrado (botão de engrenagem > Gerenciar Filiais).'
             : ((data && data.detalhe && data.detalhe.message) || (error && error.message) || 'erro desconhecido');
-        alert('Não consegui enviar: ' + motivo);
+        avisar('Não consegui enviar: ' + motivo);
         return;
     }
-    alert('Resumo enviado pro chefe da filial!');
+    avisar('Resumo enviado pro chefe da filial!');
 }
 
 // Resumo SEMANAL (agregado) pro chefe de filial — pedido do usuário pra
@@ -4914,18 +5052,18 @@ async function enviarResumoSemanalChefe() {
         body: { filial: filialAtual }
     });
 
-    if (error) { alert('Erro ao enviar: ' + error.message); return; }
+    if (error) { avisar('Erro ao enviar: ' + error.message); return; }
     const resultado = data && data.resultados && data.resultados[filialAtual];
-    if (!resultado) { alert('Não obtive resposta clara — veja o console.'); console.error(data); return; }
-    if (resultado.semAtividade) { alert('Nenhum lead foi tocado (mover/tag/mesclar) nesta filial nos últimos 7 dias — nada pra resumir.'); return; }
+    if (!resultado) { avisar('Não obtive resposta clara — veja o console.'); console.error(data); return; }
+    if (resultado.semAtividade) { avisar('Nenhum lead foi tocado (mover/tag/mesclar) nesta filial nos últimos 7 dias — nada pra resumir.'); return; }
     if (resultado.ok === false) {
         const motivo = resultado.erro === 'chefe_sem_numero'
             ? 'Essa filial ainda não tem o WhatsApp do chefe cadastrado (botão de engrenagem > Gerenciar Filiais).'
             : (resultado.detalhe?.message || resultado.erro || 'erro desconhecido');
-        alert('Não consegui enviar: ' + motivo);
+        avisar('Não consegui enviar: ' + motivo);
         return;
     }
-    alert('Resumo semanal enviado pro chefe da filial!');
+    avisar('Resumo semanal enviado pro chefe da filial!');
 }
 
 // "Como Abordar" — mesmo padrão de edição do Resumo da Conversa (IA) acima,
@@ -4978,11 +5116,11 @@ async function salvarTelefoneLead() {
     // Validação de formato — só quando o campo tem algo preenchido; campo
     // vazio continua válido (é o estado normal de "sem telefone").
     if (ddd && !/^\d{2}$/.test(ddd)) {
-        alert('DDD parece inválido — precisa ter exatamente 2 dígitos numéricos.');
+        avisar('DDD parece inválido — precisa ter exatamente 2 dígitos numéricos.');
         return;
     }
     if (numero && !/^\d{8,9}$/.test(numero.replace(/\D/g, ''))) {
-        alert('Telefone parece inválido — precisa ter 8 ou 9 dígitos numéricos.');
+        avisar('Telefone parece inválido — precisa ter 8 ou 9 dígitos numéricos.');
         return;
     }
 
@@ -5007,7 +5145,7 @@ async function salvarTelefoneLead() {
         .update({ pessoaTelefoneDDD: ddd, pessoaTelefoneNumero: numero, tags: leadsAtuais[leadIndex].tags })
         .eq('pessoaIdentificador', currentLeadId);
 
-    if (error) alert('Erro ao salvar telefone: ' + error.message);
+    if (error) avisar('Erro ao salvar telefone: ' + error.message);
 }
 
 // Descoberto numa conversa (ex: WhatsApp devolveu erro, número não existe
@@ -5017,7 +5155,7 @@ async function salvarTelefoneLead() {
 // duplicar a lógica de sincronizar a tag "Sem Telefone" e persistir.
 async function marcarTelefoneInvalido() {
     const numeroAtual = document.getElementById('drawer-tel-numero').value.trim();
-    if (!numeroAtual) { alert('Não há telefone cadastrado pra marcar como inválido.'); return; }
+    if (!numeroAtual) { avisar('Não há telefone cadastrado pra marcar como inválido.'); return; }
     if (!confirm('Marcar telefone como inválido? O número atual será removido do cadastro (fica registrada a tag "Telefone Inválido" pra explicar por quê).')) return;
 
     document.getElementById('drawer-tel-ddd').value = '';
@@ -5086,7 +5224,7 @@ async function salvarEmailLead() {
     const inputEmail = document.getElementById('drawer-email');
     let email = inputEmail.value.trim();
     if (email && !email.includes('@')) {
-        alert('E-mail parece inválido — confira antes de salvar.');
+        avisar('E-mail parece inválido — confira antes de salvar.');
         return;
     }
 
@@ -5094,7 +5232,7 @@ async function salvarEmailLead() {
     // antes de salvar, em vez de deixar o dado errado ir pro banco.
     const correcao = email ? sugerirCorrecaoEmail(email) : null;
     if (correcao) {
-        alert(`O provedor de e-mail parece estar digitado errado ("${email}") — vou corrigir automaticamente para "${correcao}".`);
+        avisar(`O provedor de e-mail parece estar digitado errado ("${email}") — vou corrigir automaticamente para "${correcao}".`);
         email = correcao;
         inputEmail.value = correcao;
     }
@@ -5119,7 +5257,7 @@ async function salvarEmailLead() {
         .update({ pessoaEmail: email, tags: leadsAtuais[leadIndex].tags })
         .eq('pessoaIdentificador', currentLeadId);
 
-    if (error) alert('Erro ao salvar e-mail: ' + error.message);
+    if (error) avisar('Erro ao salvar e-mail: ' + error.message);
 }
 
 // Data de Nascimento — nenhuma das 3 planilhas traz esse dado hoje, então
@@ -5142,7 +5280,7 @@ async function salvarComoPrefereSerChamadoLead() {
         .update({ como_prefere_ser_chamado: valor })
         .eq('pessoaIdentificador', currentLeadId);
 
-    if (error) alert('Erro ao salvar "como prefere ser chamado" (rode migracao_como_prefere_ser_chamado.sql se ainda não rodou): ' + error.message);
+    if (error) avisar('Erro ao salvar "como prefere ser chamado" (rode migracao_como_prefere_ser_chamado.sql se ainda não rodou): ' + error.message);
 }
 
 async function salvarDataNascimentoLead() {
@@ -5157,13 +5295,13 @@ async function salvarDataNascimentoLead() {
         .update({ data_nascimento: dataNascimento })
         .eq('pessoaIdentificador', currentLeadId);
 
-    if (error) alert('Erro ao salvar data de nascimento: ' + error.message);
+    if (error) avisar('Erro ao salvar data de nascimento: ' + error.message);
 }
 
 // Mesma ideia de marcarTelefoneInvalido() acima, pro e-mail.
 async function marcarEmailInvalido() {
     const emailAtual = document.getElementById('drawer-email').value.trim();
-    if (!emailAtual) { alert('Não há e-mail cadastrado pra marcar como inválido.'); return; }
+    if (!emailAtual) { avisar('Não há e-mail cadastrado pra marcar como inválido.'); return; }
     if (!confirm('Marcar e-mail como inválido? O e-mail atual será removido do cadastro (fica registrada a tag "E-mail Inválido" pra explicar por quê).')) return;
 
     document.getElementById('drawer-email').value = '';
@@ -5204,7 +5342,7 @@ async function salvarLembreteLead() {
 
     if (error) {
         console.warn('Não foi possível salvar o lembrete — rode migracao_lembrete_lead.sql se ainda não rodou.', error);
-        alert('Erro ao salvar lembrete: ' + error.message);
+        avisar('Erro ao salvar lembrete: ' + error.message);
     }
 }
 
@@ -5253,7 +5391,7 @@ async function confirmarNovaTag() {
     let tagsArray = parseTags(leadsAtuais[leadIndex].tags).map(t => t.trim()).filter(Boolean);
 
     if (tagsArray.includes(novaTagText)) {
-        alert('Esse lead já tem essa tag.');
+        avisar('Esse lead já tem essa tag.');
         fecharFormNovaTag();
         return;
     }
@@ -5262,7 +5400,7 @@ async function confirmarNovaTag() {
     // é como o CRM sabe que aquele lead nunca veio de Mercúrio/Ulisses;
     // deixar adicionar à mão em qualquer lead esvaziaria esse sinal.
     if (novaTagText === TAG_LEAD_MANUAL) {
-        alert('A tag "CRM" só é aplicada automaticamente ao criar um lead pelo botão "Novo Lead" — não dá pra adicionar à mão.');
+        avisar('A tag "CRM" só é aplicada automaticamente ao criar um lead pelo botão "Novo Lead" — não dá pra adicionar à mão.');
         fecharFormNovaTag();
         return;
     }
@@ -5278,17 +5416,27 @@ async function confirmarNovaTag() {
     }
 
     tagsArray.push(novaTagText);
+    const pessoaIdTag = String(currentLeadId);
+    const tagsAntesNova = leadsAtuais[leadIndex].tags;
     leadsAtuais[leadIndex].tags = JSON.stringify(tagsArray);
     fecharFormNovaTag();
     renderDrawerTags();
     renderizarCards(); // atualiza badge do card + opções de filtro na hora
 
-    await window.supabaseClient
+    const { error: erroTag } = await window.supabaseClient
         .from(NOME_TABELA)
         .update({ tags: JSON.stringify(tagsArray) })
-        .eq('pessoaIdentificador', currentLeadId);
+        .eq('pessoaIdentificador', pessoaIdTag);
+    if (erroTag) {
+        const l = leadsAtuais.find(x => String(x.pessoaIdentificador) === pessoaIdTag);
+        if (l) l.tags = tagsAntesNova;
+        if (String(currentLeadId) === pessoaIdTag) renderDrawerTags();
+        renderizarCards();
+        avisar('Erro ao adicionar a etiqueta: ' + erroTag.message, 'erro');
+        return;
+    }
 
-    registrarLogAtividade('tag_adicionar', { pessoaIds: [String(currentLeadId)], detalhes: { tag: novaTagText } });
+    registrarLogAtividade('tag_adicionar', { pessoaIds: [pessoaIdTag], detalhes: { tag: novaTagText } });
 }
 
 // Refresca o Kanban de tempos em tempos só pra atualizar a borda de SLA
@@ -5296,6 +5444,11 @@ async function confirmarNovaTag() {
 // de nenhuma interação (mover lead, trocar de aba...) que já disparasse
 // renderizarCards() de qualquer jeito.
 setInterval(() => {
+    // Só com o quadro visível e sem nada aberto: antes rodava com a aba
+    // escondida e fechava filtros, buscas e detalhes que a pessoa tinha aberto.
+    if (document.visibilityState !== 'visible') return;
+    if (!document.getElementById('tab-crm')?.classList.contains('active')) return;
+    if (document.querySelector('.col-filter-dropdown.open, .kanban-col details[open], .lead-card.dragging')) return;
     if (typeof leadsAtuais !== 'undefined' && leadsAtuais.length > 0) renderizarCards();
 }, 3 * 60 * 1000);
 
@@ -5308,21 +5461,47 @@ async function removerTag(index) {
     // PERMANENTE de propósito — só some se o lead inteiro for apagado
     // (Lixeira ou Zona de Perigo), nunca por um "x" avulso na tag.
     if (tagRemovida === TAG_LEAD_MANUAL) {
-        alert('A tag "CRM" é permanente — marca que este lead foi cadastrado direto no CRM. Só some se o lead inteiro for apagado.');
+        avisar('A tag "CRM" é permanente — marca que este lead foi cadastrado direto no CRM. Só some se o lead inteiro for apagado.');
         return;
     }
 
+    const pessoaId = String(currentLeadId);
+    const tagsAntes = leadsAtuais[leadIndex].tags;
     tagsArray.splice(index, 1);
     leadsAtuais[leadIndex].tags = JSON.stringify(tagsArray);
     renderDrawerTags();
     renderizarCards(); // atualiza badge do card + opções de filtro na hora
 
-    await window.supabaseClient
+    const { error } = await window.supabaseClient
         .from(NOME_TABELA)
         .update({ tags: JSON.stringify(tagsArray) })
-        .eq('pessoaIdentificador', currentLeadId);
+        .eq('pessoaIdentificador', pessoaId);
+    if (error) {
+        // Antes a tela mostrava a etiqueta removida mesmo quando o banco recusava.
+        const l = leadsAtuais.find(x => String(x.pessoaIdentificador) === pessoaId);
+        if (l) l.tags = tagsAntes;
+        if (String(currentLeadId) === pessoaId) renderDrawerTags();
+        renderizarCards();
+        avisar('Erro ao remover a etiqueta: ' + error.message, 'erro');
+        return;
+    }
 
-    registrarLogAtividade('tag_remover', { pessoaIds: [String(currentLeadId)], detalhes: { tag: tagRemovida } });
+    registrarLogAtividade('tag_remover', { pessoaIds: [pessoaId], detalhes: { tag: tagRemovida } });
+    avisar(`Etiqueta "${tagRemovida}" removida.`, 'info', { acao: { rotulo: 'Desfazer', executar: () => desfazerRemocaoTag(pessoaId, tagRemovida, index) } });
+}
+
+async function desfazerRemocaoTag(pessoaId, tag, index) {
+    const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(pessoaId));
+    if (!lead) return;
+    const tags = parseTags(lead.tags);
+    if (tags.includes(tag)) return;
+    tags.splice(Math.min(index, tags.length), 0, tag);
+    const { error } = await window.supabaseClient.from(NOME_TABELA).update({ tags: JSON.stringify(tags) }).eq('pessoaIdentificador', pessoaId);
+    if (error) { avisar('Não foi possível desfazer: ' + error.message, 'erro'); return; }
+    lead.tags = JSON.stringify(tags);
+    if (String(currentLeadId) === String(pessoaId)) renderDrawerTags();
+    renderizarCards();
+    registrarLogAtividade('tag_adicionar', { pessoaIds: [String(pessoaId)], detalhes: { tag, origem: 'desfazer' } });
 }
 
 function buscarTagsDoFiltro(input) {
@@ -5336,3 +5515,52 @@ function buscarTagsDoFiltro(input) {
     });
 }
 document.addEventListener('input', evento => { if (evento.target.matches('.busca-tags')) buscarTagsDoFiltro(evento.target); });
+
+// Acessibilidade e atalhos dos modais: cada modal vira um diálogo para leitores
+// de tela, o "x" do cabeçalho ganha nome, e Esc fecha o modal de cima (ou a
+// gaveta do lead) usando o próprio botão de fechar — assim cada modal mantém a
+// sua rotina de fechamento.
+function prepararAcessibilidadeModais() {
+    document.querySelectorAll('.modal').forEach(modal => {
+        modal.setAttribute('role', 'dialog');
+        modal.setAttribute('aria-modal', 'true');
+        const titulo = modal.querySelector('.modal-header h3');
+        if (titulo) {
+            if (!titulo.id) titulo.id = modal.id + '-titulo';
+            modal.setAttribute('aria-labelledby', titulo.id);
+        }
+        const fechar = modal.querySelector('.modal-header button');
+        if (fechar && !fechar.getAttribute('aria-label')) fechar.setAttribute('aria-label', 'Fechar');
+    });
+}
+document.addEventListener('DOMContentLoaded', prepararAcessibilidadeModais);
+
+document.addEventListener('keydown', evento => {
+    if (evento.key !== 'Escape' || evento.defaultPrevented) return;
+    // Esc dentro de um campo com tratamento próprio (ex.: nova etiqueta no WhatsApp) não fecha nada maior.
+    if (evento.target && evento.target.getAttribute && /Escape/.test(evento.target.getAttribute('onkeydown') || '')) return;
+    const abertos = [...document.querySelectorAll('.modal.open')];
+    if (abertos.length) {
+        const deCima = abertos[abertos.length - 1];
+        const fechar = deCima.querySelector('.modal-header button');
+        if (fechar) { evento.preventDefault(); fechar.click(); }
+        return;
+    }
+    const gaveta = document.getElementById('leadDrawer');
+    if (gaveta && gaveta.classList.contains('open') && typeof fecharGaveta === 'function') {
+        evento.preventDefault();
+        fecharGaveta();
+    }
+});
+
+// Telas estreitas: alterna entre a ficha e a conversa da gaveta do lead.
+function mostrarPainelGaveta(painel) {
+    const gaveta = document.getElementById('leadDrawer');
+    if (!gaveta) return;
+    gaveta.classList.toggle('mostrar-chat', painel === 'chat');
+    gaveta.querySelectorAll('.drawer-aba').forEach(aba => {
+        const ativa = aba.dataset.painel === painel;
+        aba.classList.toggle('ativa', ativa);
+        aba.setAttribute('aria-selected', ativa ? 'true' : 'false');
+    });
+}

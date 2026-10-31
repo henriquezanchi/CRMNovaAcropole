@@ -64,6 +64,7 @@ function parseTextoConversaWhatsApp(textoColado) {
 // depois de confirmar com uma amostra real (mesmo princípio de nunca
 // adivinhar formato de sistema externo usado no resto do projeto).
 async function extrairTextoDoZip(file) {
+    await garantirBiblioteca('jszip');
     const zip = await JSZip.loadAsync(file);
     const nomeArquivoTxt = Object.keys(zip.files).find(nome => nome.toLowerCase().endsWith('.txt') && !zip.files[nome].dir);
     if (!nomeArquivoTxt) throw new Error('Não encontrei nenhum .txt dentro do .zip — confirme que é um export de conversa do WhatsApp.');
@@ -206,7 +207,7 @@ async function confirmarImportarConversaWpp() {
     btn.innerHTML = '<i class="fa-solid fa-check"></i> Confirmar Importação';
 
     if (error || !data || !data.ok) {
-        alert('Erro ao importar a conversa: ' + (error?.message || data?.detalhe || data?.erro || 'erro desconhecido'));
+        avisar('Erro ao importar a conversa: ' + (error?.message || data?.detalhe || data?.erro || 'erro desconhecido'));
         return;
     }
 
@@ -216,7 +217,7 @@ async function confirmarImportarConversaWpp() {
     });
 
     fecharImportarConversaWpp();
-    alert(`${data.importadas} mensagem(ns) importada(s) com sucesso — já aparecem no chat da gaveta.`);
+    avisar(`${data.importadas} mensagem(ns) importada(s) com sucesso — já aparecem no chat da gaveta.`);
 }
 
 // ==========================================================
@@ -289,8 +290,8 @@ async function processarLoteConversasWpp() {
     const arquivos = [...document.getElementById('loteConversasArquivos').files];
     const resultadoEl = document.getElementById('loteConversasResultado');
 
-    if (!meuNome) { alert('Preencha "Seu nome nas conversas" — é como o CRM identifica qual dos 2 remetentes é você (o atendente), não o lead.'); return; }
-    if (arquivos.length === 0) { alert('Escolha 1 ou mais arquivos .zip.'); return; }
+    if (!meuNome) { avisar('Preencha "Seu nome nas conversas" — é como o CRM identifica qual dos 2 remetentes é você (o atendente), não o lead.'); return; }
+    if (arquivos.length === 0) { avisar('Escolha 1 ou mais arquivos .zip.'); return; }
 
     resultadoEl.innerHTML = `<p><i class="fa-solid fa-circle-notch fa-spin"></i> Carregando leads de todas as filiais...</p>`;
     let leads;
@@ -425,7 +426,7 @@ async function carregarConversasImportadasATratar() {
                 ${g.telefone_whatsapp ? ` <span style="color:var(--text-muted); font-size:11px;">(${escapeHTML(g.telefone_whatsapp)})</span>` : ''}
                 <div style="font-size:11px; color:var(--text-muted);">${g.qtd} mensagem(ns) — última: "${escapeHTML((g.ultimoTexto || '').slice(0, 60))}"</div>
             </div>
-            <button class="btn-mini btn-secondary-mini" onclick="abrirVincularConversaImportada('${g.lote_importacao_id}', '${escapeHTML(g.nome_bruto_importado || '').replace(/'/g, "\\'")}')"><i class="fa-solid fa-link"></i> Vincular</button>
+            <button class="btn-mini btn-secondary-mini" onclick="abrirVincularConversaImportada('${g.lote_importacao_id}', ${argJs(g.nome_bruto_importado || '')})"><i class="fa-solid fa-link"></i> Vincular</button>
         </div>
     `).join('');
 }
@@ -467,7 +468,7 @@ function buscarLeadParaVincularConversa() {
         if (!data || data.length === 0) { resultados.innerHTML = '<p style="font-size:11px; color:var(--text-muted);">Nenhum lead encontrado.</p>'; return; }
 
         resultados.innerHTML = data.map(r => `
-            <div class="info-box" style="cursor:pointer; margin-bottom:4px;" onclick="vincularConversaImportada('${r.pessoaIdentificador}', '${escapeHTML(r.filial || '').replace(/'/g, "\\'")}')">
+            <div class="info-box" style="cursor:pointer; margin-bottom:4px;" onclick="vincularConversaImportada('${r.pessoaIdentificador}', ${argJs(r.filial || '')})">
                 <i class="fa-solid fa-user-plus"></i> ${escapeHTML(r.pessoaNome)} <span style="color:var(--text-muted); font-size:11px;">(${escapeHTML(r.pessoaTelefoneDDD || '')} ${escapeHTML(r.pessoaTelefoneNumero || 'sem tel.')} — ${escapeHTML(r.filial || '?')})</span>
             </div>
         `).join('');
@@ -487,7 +488,7 @@ async function vincularConversaImportada(idLead, filialLead) {
         .update({ pessoaIdentificador: idLead, filial: filialLead || null })
         .eq('lote_importacao_id', loteImportacaoIdEmVinculacao)
         .is('pessoaIdentificador', null);
-    if (error) { alert('Erro ao vincular: ' + error.message); return; }
+    if (error) { avisar('Erro ao vincular: ' + error.message); return; }
 
     fecharVincularConversaImportada();
     carregarConversasImportadasATratar();

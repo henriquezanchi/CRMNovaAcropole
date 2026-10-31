@@ -20,7 +20,10 @@ test('filtro rápido percorre todas as páginas e encontra registros tardios em 
  assert.equal(vm.runInContext('podeCarregarMais',ctx),false);
 });
 test('busca por coluna também considera base inteira sem limite de 300 resultados',async()=>{
- const {ctx}=ambiente();await ctx.processarBuscaColuna('Frios');assert.equal(vm.runInContext('leadsAtuais.length',ctx),2507);
+ const {ctx}=ambiente();ctx.document.querySelector=(sel)=>sel.includes('column-search')?{value:'Alvo'}:null;await ctx.processarBuscaColuna('Frios');assert.equal(vm.runInContext('leadsAtuais.length',ctx),2507);
+});
+test('busca vazia só reaplica o filtro na tela, sem consultar a escola inteira',async()=>{
+ const {ctx,chamadas}=ambiente();ctx.CSS={escape:s=>s};await ctx.processarBuscaColuna('Frios');assert.equal(chamadas.length,0);
 });
 test('aplicações simultâneas compartilham consulta e não duplicam registros',async()=>{
  const {ctx,chamadas}=ambiente();await Promise.all([ctx.garantirColunaFiltravelCompleta('Frios'),ctx.garantirColunaFiltravelCompleta('Abordagem')]);

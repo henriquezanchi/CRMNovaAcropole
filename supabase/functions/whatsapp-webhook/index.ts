@@ -6,6 +6,7 @@
 // e `supabase functions deploy whatsapp-webhook --no-verify-jwt`) — a Meta não
 // manda Authorization: Bearer, só X-Hub-Signature-256, que é validado abaixo.
 import { supabaseAdmin, NOME_TABELA_LEADS, NOME_TABELA_MENSAGENS } from "../_shared/supabaseAdmin.ts";
+import { alterarTags } from "../_shared/tags.ts";
 import { candidatosNumeroBR, numeroBateComAdmin, separarFromMeta } from "../_shared/telefone.ts";
 import { aplicarReacao } from "../_shared/reacoes.ts";
 import { baixarEArmazenarMidiaRecebida } from "../_shared/midia.ts";
@@ -64,7 +65,7 @@ async function registrarPedidoNaoContatar(pessoa: string, texto: string) {
         let tags: string[] = [];
         try { const p = typeof lead.tags === "string" ? JSON.parse(lead.tags) : lead.tags; tags = Array.isArray(p) ? p : []; } catch { tags = []; }
         if (tags.includes("Não Contatar")) return;
-        await supabaseAdmin.from(NOME_TABELA_LEADS).update({ tags: JSON.stringify([...tags, "Não Contatar"]) }).eq("pessoaIdentificador", pessoa);
+        await alterarTags(pessoa, { adicionar: ["Não Contatar"] });
         await supabaseAdmin.from("log_atividade").insert({
             filial: lead.filial || "GLOBAL", acao: "pedido_nao_contatar_detectado", autor: "Recebimento do WhatsApp",
             pessoa_ids: [pessoa], detalhes: { trecho: texto.slice(0, 200) },
@@ -138,24 +139,20 @@ async function recomputarContatoRecente(pessoaIdentificador: string) {
         .limit(1)
         .maybeSingle();
 
-    const { data: lead } = await supabaseAdmin.from(NOME_TABELA_LEADS)
-        .select("tags").eq("pessoaIdentificador", pessoaIdentificador).maybeSingle();
-    let tags: string[] = [];
-    try {
-        const parsed = JSON.parse(lead?.tags || "[]");
-        if (Array.isArray(parsed)) tags = parsed;
-    } catch { /* tags malformada — trata como vazia */ }
-    tags = tags.filter((t) => t !== "Contato Recente: 7 dias" && t !== "Contato Recente: 30 dias");
-
     const novoUltimoContato = ultimaOk?.criado_em ?? null;
+    const adicionar: string[] = [];
     if (novoUltimoContato) {
         const horas = (Date.now() - new Date(novoUltimoContato).getTime()) / 36e5;
-        if (horas <= 24 * 7) tags.push("Contato Recente: 7 dias");
-        else if (horas <= 24 * 30) tags.push("Contato Recente: 30 dias");
+        if (horas <= 24 * 7) adicionar.push("Contato Recente: 7 dias");
+        else if (horas <= 24 * 30) adicionar.push("Contato Recente: 30 dias");
     }
+    await alterarTags(pessoaIdentificador, {
+        remover: ["Contato Recente: 7 dias", "Contato Recente: 30 dias"],
+        adicionar,
+    });
 
     await supabaseAdmin.from(NOME_TABELA_LEADS)
-        .update({ ultimo_contato_em: novoUltimoContato, tags: JSON.stringify(tags) })
+        .update({ ultimo_contato_em: novoUltimoContato })
         .eq("pessoaIdentificador", pessoaIdentificador);
 }
 
@@ -425,6 +422,15 @@ Deno.serve(async (req) => {
 
             for (const status of value.statuses ?? []) {
                 const statusMapeado = mapearStatusMeta(status.status);
+                // A Meta não garante a ordem dos avisos de status: um
+                // "delivered" atrasado não pode rebaixar "lido", e um "sent"
+                // atrasado não pode apagar um "falhou". Só avança.
+                const STATUS_ANTERIORES_PERMITIDOS: Record<string, string[]> = {
+                    enviado: ["enviando", "enviado"],
+                    entregue: ["enviando", "enviado", "entregue"],
+                    lido: ["enviando", "enviado", "entregue", "lido"],
+                    falhou: ["enviando", "enviado", "entregue", "falhou"],
+                };
                 const { data: msgAtualizada, error } = await supabaseAdmin
                     .from(NOME_TABELA_MENSAGENS)
                     .update({
@@ -433,6 +439,7 @@ Deno.serve(async (req) => {
                         atualizado_em: new Date().toISOString(),
                     })
                     .eq("wa_message_id", status.id)
+                    .in("wa_status", STATUS_ANTERIORES_PERMITIDOS[statusMapeado] ?? ["enviando", "enviado"])
                     .select("pessoaIdentificador")
                     .maybeSingle();
                 if (error) console.error("Erro ao atualizar status:", error);

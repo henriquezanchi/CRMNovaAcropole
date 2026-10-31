@@ -134,7 +134,7 @@ async function carregarAgendaGeralCalendarioEventos() {
     if (!container) return;
     container.innerHTML = '<div style="font-size:12px; color:var(--text-muted);">Carregando...</div>';
 
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
     const { data, error } = await window.supabaseClient
         .from('eventos')
         .select('id, nome, data, hora, tipo, filial, capacidade')
@@ -229,7 +229,7 @@ async function carregarAgendaGeralAniversariantes() {
                 <div><strong>${escapeHTML(l.pessoaNome || 'Lead sem nome')}</strong> 🎂 <strong>hoje!</strong> ${htmlBadgeStatusWpp(statusPorLead.get(String(l.pessoaIdentificador)))}</div>
                 <div class="activity-time">${escapeHTML(l.filial || '')}</div>
             </div>
-            <button class="btn-toggle" style="flex-shrink:0; font-size:11px; padding:4px 8px;" onclick="event.stopPropagation(); enviarAniversarioRapido('${l.pessoaIdentificador}', '${escapeHTML(nomeParaChamar(l)).replace(/'/g, "\\'")}', '${escapeHTML(l.filial || '').replace(/'/g, "\\'")}', this)" title="Manda o template de Feliz Aniversário agora, sem abrir a ficha">
+            <button class="btn-toggle" style="flex-shrink:0; font-size:11px; padding:4px 8px;" onclick="event.stopPropagation(); enviarAniversarioRapido('${l.pessoaIdentificador}', ${argJs(nomeParaChamar(l))}, ${argJs(l.filial || '')}, this)" title="Manda o template de Feliz Aniversário agora, sem abrir a ficha">
                 <i class="fa-brands fa-whatsapp"></i> Enviar
             </button>
         </div>`).join('');
@@ -319,7 +319,7 @@ async function carregarAgendaGeralRespostasConvite() {
                         <div style="margin-top:6px; padding:6px 8px; background:#fffbeb; border:1px solid #fde68a; border-radius:6px;" onclick="event.stopPropagation()">
                             <div style="font-size:10.5px; font-weight:600; color:#92400e;"><i class="fa-solid fa-clock"></i> IA detectou data de retorno: <strong>${formatarDataBRAgendaGeral(c.lembrete_sugerido_data)}</strong></div>
                             <div style="font-size:10.5px; color:#78350f; margin:2px 0 4px;">${escapeHTML(c.lembrete_sugerido_motivo || '')}</div>
-                            <button class="btn-toggle" style="font-size:10.5px; padding:3px 7px;" onclick="aplicarLembreteSugeridoConvite(${c.id}, '${c.pessoaIdentificador}', '${c.lembrete_sugerido_data}', '${escapeHTML(c.lembrete_sugerido_motivo || '').replace(/'/g, "\\'")}', this)"><i class="fa-solid fa-check"></i> Criar Lembrete</button>
+                            <button class="btn-toggle" style="font-size:10.5px; padding:3px 7px;" onclick="aplicarLembreteSugeridoConvite(${c.id}, '${c.pessoaIdentificador}', ${argJs(c.lembrete_sugerido_data)}, ${argJs(c.lembrete_sugerido_motivo || '')}, this)"><i class="fa-solid fa-check"></i> Criar Lembrete</button>
                         </div>` : ''}
                 </div>
             </div>`;
@@ -358,7 +358,7 @@ async function aplicarLembreteSugeridoConvite(classificacaoId, pessoaIdentificad
 async function enviarSugestaoRespostaConvite(classificacaoId, pessoaIdentificador, botaoEl) {
     const textarea = document.getElementById(`convitesRespostaTexto-${classificacaoId}`);
     const texto = textarea ? textarea.value.trim() : '';
-    if (!texto) { alert('O texto está vazio.'); return; }
+    if (!texto) { avisar('O texto está vazio.'); return; }
     if (typeof permitirEnvioManualWpp !== 'function' || !(await permitirEnvioManualWpp(pessoaIdentificador))) return;
 
     const item = botaoEl.closest('.activity-item');
@@ -368,7 +368,7 @@ async function enviarSugestaoRespostaConvite(classificacaoId, pessoaIdentificado
         body: { pessoaIdentificador, tipo: 'texto', texto, atendenteNome: typeof obterNomeAtendente === 'function' ? obterNomeAtendente() : '', rascunhoAgente: {tipo: 'convite', id: classificacaoId} }
     });
     if (error || !data || data.ok === false) {
-        alert('Não foi possível enviar: ' + (typeof mensagemErroWpp === 'function' ? mensagemErroWpp(data || { erro: error?.message }) : (error?.message || data?.erro)));
+        avisar('Não foi possível enviar: ' + (typeof mensagemErroWpp === 'function' ? mensagemErroWpp(data || { erro: error?.message }) : (error?.message || data?.erro)));
         if (botaoEl) { botaoEl.disabled = false; botaoEl.innerHTML = '<i class="fa-brands fa-whatsapp"></i> Enviar'; }
         return;
     }
@@ -447,7 +447,7 @@ async function carregarAgendaGeralLeadsPrioritarios() {
     }
 
     // Não repetir no mesmo dia um contato que já foi registrado pela equipe.
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
     let candidatos = (data || [])
         .filter(l => !/matricul/i.test(l.funil_agencia || ''))
         .filter(l => !l.ultimo_contato_em || l.ultimo_contato_em.slice(0, 10) !== hojeISO);

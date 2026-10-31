@@ -8,6 +8,33 @@
 // investigar; complementar conta pela data individual). Aqui é só leitura,
 // mais o campo "informado pela escola", que é manual.
 
+// Sincroniza o banco do Mercúrio UMA FILIAL POR CHAMADA. Pedir todas numa
+// chamada só (12 filiais, cada uma com relatórios) passava perto do limite
+// de 150s da Edge Function e podia morrer no meio sem gravar o status.
+async function sincronizarMercurioPorFilial(filialUnica, aoProgredir) {
+    let nomes = [];
+    if (filialUnica) nomes = [filialUnica];
+    else {
+        const { data, error } = await window.supabaseClient.from('filiais')
+            .select('nome').eq('ativo', true).not('mercurio_unidade', 'is', null).order('ordem', { ascending: true });
+        if (error) throw error;
+        nomes = (data || []).map(f => f.nome);
+    }
+    const resultados = [];
+    for (let i = 0; i < nomes.length; i++) {
+        if (typeof aoProgredir === 'function') aoProgredir(nomes[i], i + 1, nomes.length);
+        try {
+            const { data, error } = await window.supabaseClient.functions.invoke('mercurio-db-sincronizar', { body: { filial: nomes[i] } });
+            if (error) resultados.push({ filial: nomes[i], erro: error.message || String(error) });
+            else if (!data || !data.ok) resultados.push({ filial: nomes[i], erro: (data && (data.erro || (data.resultados || []).filter(r => r.erro).map(r => r.erro).join('; '))) || 'falhou' });
+            else resultados.push(...(data.resultados || [{ filial: nomes[i] }]));
+        } catch (e) {
+            resultados.push({ filial: nomes[i], erro: e.message || String(e) });
+        }
+    }
+    return { ok: resultados.every(r => !r.erro), resultados };
+}
+
 const NOMES_MES_CONC = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 const rotuloMesConc = (m) => { const [a, mm] = String(m).split('-'); return `${NOMES_MES_CONC[Number(mm) - 1]}/${a}`; };
 const dataBRConc = (iso) => { if (!iso) return '—'; const [a, m, d] = String(iso).slice(0, 10).split('-'); return `${d}/${m}/${a}`; };
@@ -65,14 +92,14 @@ async function salvarInformadoConciliacao(filial, mes, valor) {
     const texto = String(valor ?? '').trim();
     if (texto === '') {
         const { error } = await window.supabaseClient.from('conciliacao_matriculas_informado').delete().eq('filial', filial).eq('mes', mes);
-        if (error) { alert('Erro ao limpar: ' + error.message); return; }
+        if (error) { avisar('Erro ao limpar: ' + error.message); return; }
     } else {
         const quantidade = parseInt(texto, 10);
-        if (isNaN(quantidade) || quantidade < 0) { alert('Informe um número inteiro.'); return; }
+        if (isNaN(quantidade) || quantidade < 0) { avisar('Informe um número inteiro.'); return; }
         const autor = (typeof usuarioLogado === 'function' && usuarioLogado()?.nome) || localStorage.getItem('crm_na_nome_atendente') || null;
         const { error } = await window.supabaseClient.from('conciliacao_matriculas_informado')
             .upsert({ filial, mes, quantidade, atualizado_por: autor, atualizado_em: new Date().toISOString() }, { onConflict: 'filial,mes' });
-        if (error) { alert('Erro ao salvar: ' + error.message); return; }
+        if (error) { avisar('Erro ao salvar: ' + error.message); return; }
     }
     if (typeof registrarLogAtividade === 'function') registrarLogAtividade('conciliacao_informado', { filial, detalhes: { mes, quantidade: texto } });
     renderizarConciliacaoMercurio();
@@ -88,7 +115,7 @@ function htmlDiferencaConciliacao(noMercurio, informado) {
 }
 
 function htmlAlunoConciliacao(a, comMotivo) {
-    const clicavel = a.pessoa_identificador ? `onclick="abrirResultadoBuscaGlobal('${escapeHTML(a.pessoa_identificador)}')" style="cursor:pointer;"` : 'title="Ainda sem lead vinculado no CRM"';
+    const clicavel = a.pessoa_identificador ? `onclick="abrirResultadoBuscaGlobal(${argJs(a.pessoa_identificador)})" style="cursor:pointer;"` : 'title="Ainda sem lead vinculado no CRM"';
     const reingresso = a.recuperado && a.reingresso ? ` <span class="tag tag-recuperado" style="font-size:9px;">Reingresso ${dataBRConc(a.reingresso)}</span>` : '';
     const saiu = a.ativo === false ? ' <span class="tag tag-exaluno" style="font-size:9px;" title="Não aparece mais como ativo no Mercúrio">Saiu</span>' : '';
     return `
@@ -151,7 +178,7 @@ async function renderizarConciliacaoMercurio() {
                         <td>${c.turmasAbertas.length ? c.turmasAbertas.map(t => `${escapeHTML(t.turma)} <span class="conc-aluno-meta">(${escapeHTML(t.nivel || '')}, ${dataBRConc(t.inicio)})</span>`).join('<br>') : '<span style="color:var(--text-muted);">nenhuma</span>'}</td>
                         <td><strong>${c.contam.length}</strong></td>
                         <td>${c.investigar.length ? `<span class="tag tag-warning" style="font-size:10px;">${c.investigar.length}</span>` : '0'}</td>
-                        <td><input type="number" min="0" step="1" value="${informado != null ? informado : ''}" placeholder="—" style="width:70px; padding:4px 6px; border:1px solid #cbd5e1; border-radius:4px;" onchange="salvarInformadoConciliacao('${escapeHTML(f.nome)}', '${mesSelecionadoConciliacao}', this.value)"></td>
+                        <td><input type="number" min="0" step="1" value="${informado != null ? informado : ''}" placeholder="—" style="width:70px; padding:4px 6px; border:1px solid #cbd5e1; border-radius:4px;" onchange="salvarInformadoConciliacao(${argJs(f.nome)}, '${mesSelecionadoConciliacao}', this.value)"></td>
                         <td>${htmlDiferencaConciliacao(c.contam.length, informado)}</td>
                     </tr>`).join('')}
             </tbody>
@@ -172,14 +199,15 @@ async function sincronizarMercurioDbAgora(botao) {
     const original = botao ? botao.innerHTML : '';
     if (botao) { botao.disabled = true; botao.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Sincronizando...'; }
     try {
-        const { data, error } = await window.supabaseClient.functions.invoke('mercurio-db-sincronizar', { body: {} });
-        if (error) throw error;
+        const data = await sincronizarMercurioPorFilial(null, (nome, i, total) => {
+            if (botao) botao.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> ${i}/${total}: ${escapeHTML(nome)}`;
+        });
         if (!data || !data.ok) {
             const falhas = (data && data.resultados || []).filter(r => r.erro).map(r => `${r.filial}: ${r.erro}`).join('\n');
-            alert('A sincronização terminou com problema:\n' + (data && data.erro ? data.erro : falhas));
+            avisar('A sincronização terminou com problema:\n' + (data && data.erro ? data.erro : falhas));
         }
     } catch (e) {
-        alert('Erro ao sincronizar: ' + (e.message || e));
+        avisar('Erro ao sincronizar: ' + (e.message || e));
     } finally {
         if (botao) { botao.disabled = false; botao.innerHTML = original; }
         renderizarConciliacaoMercurio();
@@ -241,5 +269,5 @@ async function renderizarCanalOrigemMercurio() {
 async function salvarDescricaoCanalMercurio(codigo, valor) {
     const { error } = await window.supabaseClient.from('mercurio_midia_ingresso')
         .upsert({ codigo, descricao: String(valor || '').trim() || null, ordem: codigo }, { onConflict: 'codigo' });
-    if (error) alert('Erro ao salvar: ' + error.message);
+    if (error) avisar('Erro ao salvar: ' + error.message);
 }

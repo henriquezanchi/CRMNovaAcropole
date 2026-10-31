@@ -12,6 +12,13 @@
 // Mantém verificação de JWT padrão — chamada pelo navegador com a chave
 // publishable, igual o resto do app.
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
+import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
+
+// Intervalo mínimo entre dois disparos do mesmo modo. Esta function aceita a
+// chave pública (o botão do CRM e o cron usam ela), então sem um freio
+// qualquer um podia disparar o workflow em sequência, gastando minutos do
+// Actions e martelando o Ulisses/Mercúrio.
+const MINUTOS_ENTRE_DISPAROS = 5;
 
 const GITHUB_TOKEN = Deno.env.get("GITHUB_TOKEN_DISPATCH")!;
 const GITHUB_REPO = Deno.env.get("GITHUB_REPO") ?? "henriquezanchi/CRMNovaAcropole";
@@ -52,6 +59,14 @@ Deno.serve(async (req) => {
         }
     } catch { /* corpo vazio ({}) é o caso normal (todas as filiais) */ }
 
+    const desde = new Date(Date.now() - MINUTOS_ENTRE_DISPAROS * 60 * 1000).toISOString();
+    const { data: recentes } = await supabaseAdmin.from("log_atividade")
+        .select("criado_em").eq("acao", "scraper_disparado").eq("detalhes->>modo", modo)
+        .gte("criado_em", desde).limit(1);
+    if (recentes && recentes.length > 0) {
+        return json({ ok: false, erro: `Já houve um disparo de "${modo}" nos últimos ${MINUTOS_ENTRE_DISPAROS} minutos. Aguarde um pouco.` }, 200);
+    }
+
     try {
         const resp = await fetch(
             `https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${GITHUB_WORKFLOW}/dispatches`,
@@ -72,6 +87,10 @@ Deno.serve(async (req) => {
             return json({ ok: false, erro: "github_erro", status: resp.status, detalhe }, 502);
         }
 
+        await supabaseAdmin.from("log_atividade").insert({
+            filial: filial || "GLOBAL", acao: "scraper_disparado", autor: "scraper-disparar",
+            pessoa_ids: [], detalhes: { modo, filial: filial || null },
+        });
         return json({ ok: true, disparado_em: new Date().toISOString() });
     } catch (e) {
         return json({ ok: false, erro: "falha_rede_github", detalhe: String(e) }, 502);

@@ -64,7 +64,7 @@ let usuariosCrmCache = [];
 
 async function abrirGerenciarUsuarios() {
     const usuario = usuarioLogado();
-    if (!usuario || !usuario.ehAdmin) { alert('Só administradores gerenciam usuários.'); return; }
+    if (!usuario || !usuario.ehAdmin) { avisar('Só administradores gerenciam usuários.'); return; }
     document.getElementById('modalGerenciarUsuarios').classList.add('open');
     await carregarUsuariosCrm();
 }
@@ -77,7 +77,7 @@ async function carregarUsuariosCrm() {
         .from('usuarios_crm')
         .select('id, nome, modulos, eh_admin, ativo, criado_em, equipe_id, persona_tom, persona_notas')
         .order('criado_em');
-    if (error) { alert('Erro ao carregar usuários: ' + error.message); return; }
+    if (error) { avisar('Erro ao carregar usuários: ' + error.message); return; }
     usuariosCrmCache = data || [];
     // Equipes (migracao_equipes.sql) — pra popular o <select> de cada
     // usuário. Carregado sempre que a tela de Usuários abre, mesmo cache
@@ -138,7 +138,7 @@ async function salvarModulosUsuarioCrm(idUsuario) {
     const checks = document.querySelectorAll(`input[data-usuario="${idUsuario}"]`);
     const modulos = [...checks].filter(c => c.checked).map(c => c.getAttribute('data-modulo'));
     const { error } = await window.supabaseClient.from('usuarios_crm').update({ modulos }).eq('id', idUsuario);
-    if (error) alert('Erro ao salvar módulos: ' + error.message);
+    if (error) avisar('Erro ao salvar módulos: ' + error.message);
     else {
         const u = usuariosCrmCache.find(u => u.id === idUsuario);
         if (u) u.modulos = modulos;
@@ -161,26 +161,26 @@ async function salvarModulosUsuarioCrm(idUsuario) {
 // salvarEquipeUsuarioCrm().
 async function salvarPersonaUsuarioCrm(idUsuario, campo, valor) {
     const { error } = await window.supabaseClient.from('usuarios_crm').update({ [campo]: valor }).eq('id', idUsuario);
-    if (error) { alert('Erro ao salvar persona: ' + error.message); return; }
+    if (error) { avisar('Erro ao salvar persona: ' + error.message); return; }
     const u = usuariosCrmCache.find(u => u.id === idUsuario);
     if (u) u[campo] = valor;
 }
 
 async function salvarEquipeUsuarioCrm(idUsuario, equipeId) {
     const { error } = await window.supabaseClient.from('usuarios_crm').update({ equipe_id: equipeId || null }).eq('id', idUsuario);
-    if (error) { alert('Erro ao salvar equipe: ' + error.message); return; }
+    if (error) { avisar('Erro ao salvar equipe: ' + error.message); return; }
     const u = usuariosCrmCache.find(u => u.id === idUsuario);
     if (u) u.equipe_id = equipeId || null;
 }
 
 async function alternarAdminUsuarioCrm(idUsuario, valor) {
     const { error } = await window.supabaseClient.from('usuarios_crm').update({ eh_admin: valor }).eq('id', idUsuario);
-    if (error) { alert('Erro: ' + error.message); return; }
+    if (error) { avisar('Erro: ' + error.message); return; }
     await carregarUsuariosCrm();
 }
 async function alternarAtivoUsuarioCrm(idUsuario, valor) {
     const { error } = await window.supabaseClient.from('usuarios_crm').update({ ativo: valor }).eq('id', idUsuario);
-    if (error) { alert('Erro: ' + error.message); return; }
+    if (error) { avisar('Erro: ' + error.message); return; }
     await carregarUsuariosCrm();
 }
 
@@ -189,8 +189,8 @@ async function resetarSenhaUsuarioCrm(idUsuario) {
     if (!nova || !nova.trim()) return;
     const hash = await calcularHashSenha(nova.trim());
     const { error } = await window.supabaseClient.from('usuarios_crm').update({ senha_hash: hash }).eq('id', idUsuario);
-    if (error) alert('Erro ao trocar senha: ' + error.message);
-    else alert('Senha atualizada.');
+    if (error) avisar('Erro ao trocar senha: ' + error.message);
+    else avisar('Senha atualizada.');
 }
 
 async function excluirUsuarioCrm(idUsuario) {
@@ -198,7 +198,7 @@ async function excluirUsuarioCrm(idUsuario) {
     if (!u) return;
     if (!confirm(`Excluir o usuário "${u.nome}"? Ele perde o acesso imediatamente.`)) return;
     const { error } = await window.supabaseClient.from('usuarios_crm').delete().eq('id', idUsuario);
-    if (error) alert('Erro ao excluir: ' + error.message);
+    if (error) avisar('Erro ao excluir: ' + error.message);
     else await carregarUsuariosCrm();
 }
 
@@ -207,13 +207,13 @@ async function criarUsuarioCrm() {
     const senhaInput = document.getElementById('novoUsuarioSenha');
     const nome = nomeInput.value.trim();
     const senha = senhaInput.value.trim();
-    if (!nome || !senha) { alert('Preencha nome e senha.'); return; }
+    if (!nome || !senha) { avisar('Preencha nome e senha.'); return; }
 
     const hash = await calcularHashSenha(senha);
     const { error } = await window.supabaseClient.from('usuarios_crm').insert({
         nome, senha_hash: hash, modulos: ['tab-crm', 'tab-whatsapp'], eh_admin: false, ativo: true,
     });
-    if (error) { alert('Erro ao criar usuário: ' + error.message); return; }
+    if (error) { avisar('Erro ao criar usuário: ' + error.message); return; }
     nomeInput.value = '';
     senhaInput.value = '';
     await carregarUsuariosCrm();

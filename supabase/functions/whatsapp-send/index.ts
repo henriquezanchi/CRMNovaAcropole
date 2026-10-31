@@ -6,6 +6,7 @@
 // como Bearer automaticamente) — ver supabase/config.toml.
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin, NOME_TABELA_LEADS, NOME_TABELA_MENSAGENS } from "../_shared/supabaseAdmin.ts";
+import { alterarTags } from "../_shared/tags.ts";
 import { montarNumeroE164 } from "../_shared/telefone.ts";
 import { motivoBloqueioContato, motivoIntegridadeContato, temTagNaoContatar } from "../_shared/preferencia-contato.ts";
 import { motivoRascunhoAgente } from "../_shared/rascunho-agente.mjs";
@@ -137,6 +138,15 @@ Deno.serve(async (req) => {
     } else {
         numeroE164 = (telefoneWhatsapp || "").replace(/\D/g, "") || null;
         if (!numeroE164) return json({ ok: false, erro: "telefone_invalido" }, 422);
+        // Número avulso só serve para RESPONDER quem escreveu para nós nas
+        // últimas 24h (conversa "não identificada"). Sem esta checagem,
+        // qualquer um com a chave pública mandava texto do número da escola
+        // para qualquer telefone, por fora das travas de "Não Contatar".
+        const desde = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+        const { count: recebidas } = await supabaseAdmin.from(NOME_TABELA_MENSAGENS)
+            .select("id", { count: "exact", head: true })
+            .eq("telefone_whatsapp", numeroE164).eq("direcao", "entrada").gte("criado_em", desde);
+        if (!recebidas) return json({ ok: false, erro: "janela_fechada", detalhe: { message: "Só é possível responder números que escreveram nas últimas 24h." } }, 403);
     }
 
     // Resolve o número da Meta que envia: da filial do lead, com fallback pro padrão.
@@ -349,23 +359,17 @@ Deno.serve(async (req) => {
         // remove essas tags depois que o prazo vence é só o cron diário
         // `sincronizar_tags_contato_recente()` (migracao_tags_contato_recente.sql,
         // já que nenhum EVENTO dispara a remoção, só o tempo passando).
-        const { data: leadAtual } = await supabaseAdmin.from(NOME_TABELA_LEADS)
-            .select("tags").eq("pessoaIdentificador", pessoaIdentificador).maybeSingle();
-        let tags: string[] = [];
-        try {
-            const parsed = JSON.parse(leadAtual?.tags || "[]");
-            if (Array.isArray(parsed)) tags = parsed;
-        } catch { /* tags malformada — trata como vazia, nunca trava o envio */ }
         // Mutuamente exclusivas (pedido do usuário, 2026-10-06): um envio
         // agora sempre cai dentro de "7 dias" — a de "30 dias", se
-        // existia, vira redundante e é removida.
-        tags = tags.filter((t) => t !== "Contato Recente: 7 dias" && t !== "Contato Recente: 30 dias");
-        tags.push("Contato Recente: 7 dias");
+        // existia, vira redundante e é removida. Alteração atômica no banco.
+        await alterarTags(pessoaIdentificador, {
+            remover: ["Contato Recente: 7 dias", "Contato Recente: 30 dias"],
+            adicionar: ["Contato Recente: 7 dias"],
+        });
 
         await supabaseAdmin.from(NOME_TABELA_LEADS)
             .update({
                 ultimo_contato_em: new Date().toISOString(),
-                tags: JSON.stringify(tags),
                 // Pedido do usuário (2026-10-01) — ver comentário no tipo
                 // `origemEnvio` acima. Só atualiza quando há um valor real
                 // pra gravar (nunca apaga um responsável já existente só

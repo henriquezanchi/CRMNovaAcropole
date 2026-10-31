@@ -514,11 +514,27 @@ async function carregarLeadsATratar() {
     if (!container || !filialAtual) return;
     container.innerHTML = '<div class="agenda-vazio"><i class="fa-solid fa-circle-notch fa-spin"></i> Carregando...</div>';
 
-    const { data, error } = await window.supabaseClient
-        .from(NOME_TABELA_LEADS_A_TRATAR)
-        .select('*')
-        .eq('filial', filialAtual)
-        .order('criterio', { ascending: true });
+    // O PostgREST corta em 1000 linhas sem avisar, e a tabela tem 1 linha por
+    // membro de grupo: pagina com ordem estável (critério, grupo, pessoa).
+    // A filial é guardada no início: se o usuário trocar de filial no meio,
+    // a resposta antiga é descartada em vez de desenhar por cima da nova.
+    const filialPedida = filialAtual;
+    const data = [];
+    let error = null;
+    for (let inicio = 0; ; inicio += 1000) {
+        const resp = await window.supabaseClient
+            .from(NOME_TABELA_LEADS_A_TRATAR)
+            .select('*')
+            .eq('filial', filialPedida)
+            .order('criterio', { ascending: true })
+            .order('grupo', { ascending: true })
+            .order('pessoa_id', { ascending: true })
+            .range(inicio, inicio + 999);
+        if (resp.error) { error = resp.error; break; }
+        data.push(...(resp.data || []));
+        if (!resp.data || resp.data.length < 1000) break;
+    }
+    if (filialPedida !== filialAtual) return;
 
     if (error) {
         console.warn('Não foi possível carregar "leads_a_tratar" (rode migracao_leads_a_tratar.sql se ainda não rodou).', error);
@@ -587,7 +603,7 @@ function htmlTagsMembroLeadsATratar(m) {
 function renderizarCardGrupoLeadsATratar(g) {
     const info = CRITERIOS_LEADS_A_TRATAR[g.criterio] || { classe: 'tag-info', icone: 'fa-circle-question' };
     const rotulo = rotuloGrupoLeadsATratar(g);
-    const grupoEscapado = g.grupo.replace(/'/g, "\\'");
+    const grupoArg = argJs(g.grupo);
     // "Mesclar" só faz sentido pra grupos de fato duplicados (telefone/e-mail/nome)
     // — "sem telefone" é sempre 1 lead sozinho, não um cluster.
     const ehGrupoDuplicata = g.criterio === 'telefone' || g.criterio === 'email' || g.criterio === 'nome';
@@ -599,8 +615,8 @@ function renderizarCardGrupoLeadsATratar(g) {
             <div class="duplicado-grupo-header">
                 <span class="tag ${info.classe}"><i class="fa-solid ${info.icone}"></i> ${escapeHTML(rotulo)}</span>
                 <div style="display:flex; gap:6px;">
-                    ${ehGrupoDuplicata ? `<button class="btn-mini btn-primary-mini" onclick="abrirModalMesclar('${grupoEscapado}')"><i class="fa-solid fa-code-merge"></i> Mesclar</button>` : ''}
-                    <button class="btn-mini btn-secondary-mini" onclick="ignorarGrupoLeadsATratar('${grupoEscapado}')"><i class="fa-solid fa-xmark"></i> Ignorar</button>
+                    ${ehGrupoDuplicata ? `<button class="btn-mini btn-primary-mini" onclick="abrirModalMesclar(${grupoArg})"><i class="fa-solid fa-code-merge"></i> Mesclar</button>` : ''}
+                    <button class="btn-mini btn-secondary-mini" onclick="ignorarGrupoLeadsATratar(${grupoArg})"><i class="fa-solid fa-xmark"></i> Ignorar</button>
                 </div>
             </div>
             <div class="duplicado-grupo-membros">
@@ -614,7 +630,7 @@ function renderizarCardGrupoLeadsATratar(g) {
                             </span>
                             ${htmlTagsMembroLeadsATratar(m)}
                         </div>
-                        ${permiteExclusaoIndividual ? `<button class="icon-btn danger" title="Este não é duplicado — remover só ele deste grupo" onclick="removerMembroDoGrupo('${grupoEscapado}', '${m.pessoa_id}')"><i class="fa-solid fa-user-xmark"></i></button>` : ''}
+                        ${permiteExclusaoIndividual ? `<button class="icon-btn danger" title="Este não é duplicado — remover só ele deste grupo" onclick="removerMembroDoGrupo(${grupoArg}, '${m.pessoa_id}')"><i class="fa-solid fa-user-xmark"></i></button>` : ''}
                     </div>
                 `).join('')}
             </div>
@@ -712,7 +728,7 @@ async function ignorarGrupoLeadsATratar(grupo) {
     const g = gruposLeadsATratarAtuais.find(x => x.grupo === grupo);
 
     const { error } = await window.supabaseClient.from(NOME_TABELA_LEADS_A_TRATAR).delete().eq('filial', filialAtual).eq('grupo', grupo);
-    if (error) { alert('Erro ao ignorar: ' + error.message); return; }
+    if (error) { avisar('Erro ao ignorar: ' + error.message); return; }
 
     // Guarda a decisão de ignorar PERMANENTEMENTE (sobrevive à próxima
     // varredura, que apaga e recria leads_a_tratar do zero) — ver
@@ -755,7 +771,7 @@ function toggleSecaoIgnoradosLeadsATratar() {
 // ainda for uma correspondência válida (a base pode ter mudado desde então).
 async function reconsiderarGrupoIgnorado(id) {
     const { error } = await window.supabaseClient.from(NOME_TABELA_LEADS_A_TRATAR_IGNORADOS).delete().eq('id', id);
-    if (error) { alert('Erro ao reconsiderar: ' + error.message); return; }
+    if (error) { avisar('Erro ao reconsiderar: ' + error.message); return; }
     ignoradosLeadsATratarAtuais = ignoradosLeadsATratarAtuais.filter(g => g.id !== id);
     renderizarListaLeadsATratar();
 }
@@ -770,7 +786,7 @@ async function removerMembroDoGrupo(grupo, pessoaId) {
         .eq('filial', filialAtual)
         .eq('grupo', grupo)
         .eq('pessoa_id', pessoaId);
-    if (error) { alert('Erro ao remover do grupo: ' + error.message); return; }
+    if (error) { avisar('Erro ao remover do grupo: ' + error.message); return; }
 
     const g = gruposLeadsATratarAtuais.find(x => x.grupo === grupo);
     if (!g) return;
@@ -914,7 +930,7 @@ function htmlCardDuplicadoEntreFiliais(g) {
 }
 
 async function abrirModalMesclarManual(pessoaIds) {
-    if (!pessoaIds || pessoaIds.length < 2) { alert('Selecione pelo menos 2 leads (marque o checkbox de cada card) pra mesclar.'); return; }
+    if (!pessoaIds || pessoaIds.length < 2) { avisar('Selecione pelo menos 2 leads (marque o checkbox de cada card) pra mesclar.'); return; }
     grupoEmMesclagem = null;
 
     const container = document.getElementById('mesclarOpcoes');
@@ -942,7 +958,7 @@ async function abrirModalMesclarManual(pessoaIds) {
 // existente pra mover/marcar tags em lote.
 function iniciarMesclagemManual() {
     if (typeof cardsSelecionados === 'undefined' || cardsSelecionados.size < 2) {
-        alert('Selecione pelo menos 2 leads (marque o checkbox de cada card, em qualquer coluna) pra mesclar.');
+        avisar('Selecione pelo menos 2 leads (marque o checkbox de cada card, em qualquer coluna) pra mesclar.');
         return;
     }
     abrirModalMesclarManual(Array.from(cardsSelecionados));
@@ -1162,7 +1178,7 @@ async function confirmarMesclagem() {
         },
         p_autor:(typeof usuarioLogado === 'function' ? usuarioLogado()?.nome : '') || 'Equipe CRM'
     });
-    if (erroUpdate) { alert('Não foi possível mesclar. Nenhum vínculo foi apagado: '+erroUpdate.message); return; }
+    if (erroUpdate) { avisar('Não foi possível mesclar. Nenhum vínculo foi apagado: '+erroUpdate.message); return; }
 
     registrarLogAtividade('mesclagem_interface', {
         pessoaIds: [String(idPrincipal), ...idsOutros],

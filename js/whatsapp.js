@@ -230,11 +230,11 @@ async function consultarEstadoContatoManualWpp(pessoaIdentificador) {
 async function permitirEnvioManualWpp(pessoaIdentificador) {
     const estado = await consultarEstadoContatoManualWpp(pessoaIdentificador);
     if (!estado.ok) {
-        alert('Não foi possível confirmar a preferência de contato. O envio está bloqueado até a confirmação.');
+        avisar('Não foi possível confirmar a preferência de contato. O envio está bloqueado até a confirmação.');
         return false;
     }
     if (estado.bloqueado) {
-        alert('Este lead pediu para não ser contatado. O envio foi bloqueado.');
+        avisar('Este lead pediu para não ser contatado. O envio foi bloqueado.');
         return false;
     }
     return true;
@@ -504,8 +504,8 @@ function htmlMensagemWpp(m, quotedInfo, termoBusca, ativoBusca) {
                     <div style="font-weight:600; font-size:12px;">${escapeHTML(nome)}</div>
                     <div style="font-size:11px; color:#64748b;">${escapeHTML(telefoneDigits || 'sem telefone')}</div>
                     ${telefoneDigits ? `<div style="display:flex; gap:6px; margin-top:4px; flex-wrap:wrap;">
-                        <button class="btn-primary" style="font-size:10.5px; padding:3px 7px;" onclick="cadastrarContatoWppEConvidar('${escapeHTML(nome).replace(/'/g, "\\'")}', '${telefoneDigits}', '${escapeHTML(m.filial || '').replace(/'/g, "\\'")}', this)"><i class="fa-solid fa-paper-plane"></i> Cadastrar e Convidar</button>
-                        <button class="btn-toggle" style="font-size:10.5px; padding:3px 7px;" onclick="salvarContatoWppComoLead('${escapeHTML(nome).replace(/'/g, "\\'")}', '${telefoneDigits}')"><i class="fa-solid fa-user-plus"></i> Salvar como Lead</button>
+                        <button class="btn-primary" style="font-size:10.5px; padding:3px 7px;" onclick="cadastrarContatoWppEConvidar(${argJs(nome)}, '${telefoneDigits}', ${argJs(m.filial || '')}, this)"><i class="fa-solid fa-paper-plane"></i> Cadastrar e Convidar</button>
+                        <button class="btn-toggle" style="font-size:10.5px; padding:3px 7px;" onclick="salvarContatoWppComoLead(${argJs(nome)}, '${telefoneDigits}')"><i class="fa-solid fa-user-plus"></i> Salvar como Lead</button>
                         <button class="btn-secondary" style="font-size:10.5px; padding:3px 7px;" onclick="abrirChatNaoIdentificado('${telefoneDigits}')"><i class="fa-brands fa-whatsapp"></i> Abrir Conversa</button>
                     </div>` : ''}
                 </div>
@@ -567,9 +567,9 @@ async function exportarConversaWppTxt(leadId, nomeLead) {
         .select('direcao, corpo_texto, criado_em, tipo, oculta_em, atendente_nome')
         .eq('pessoaIdentificador', leadId)
         .order('criado_em', { ascending: true });
-    if (error) { alert('Erro ao exportar: ' + error.message); return; }
+    if (error) { avisar('Erro ao exportar: ' + error.message); return; }
     const mensagens = (data || []).filter(m => !m.oculta_em);
-    if (mensagens.length === 0) { alert('Esta conversa não tem mensagens pra exportar.'); return; }
+    if (mensagens.length === 0) { avisar('Esta conversa não tem mensagens pra exportar.'); return; }
 
     const linhas = mensagens.map(m => {
         const data = new Date(m.criado_em);
@@ -729,7 +729,7 @@ async function tentarEnviarRespostaRapidaComFoto(resposta, leadId) {
     const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
     if (!lead || !lead.filial) return false;
 
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
     const { data: candidatosEvento } = await window.supabaseClient
         .from('eventos')
         .select('id, nome, data, data_limite_inscricao, imagem_url')
@@ -752,13 +752,13 @@ async function tentarEnviarRespostaRapidaComFoto(resposta, leadId) {
     const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
         body: { pessoaIdentificador: leadId, tipo: 'imagem', imagemUrl: evento.imagem_url, caption, atendenteNome: (typeof obterNomeAtendente === 'function') ? obterNomeAtendente() : '' }
     });
-    if (error) { alert('Erro ao enviar: ' + error.message); return true; }
+    if (error) { avisar('Erro ao enviar: ' + error.message); return true; }
     if (!data.ok) {
         if (data.erro === 'janela_fechada') {
-            alert('Essa conversa está fora da janela de 24h — não dá pra enviar uma foto agora. Aqui está o texto, pra mandar de outra forma:\n\n' + caption);
+            avisar('Essa conversa está fora da janela de 24h — não dá pra enviar uma foto agora. Aqui está o texto, pra mandar de outra forma:\n\n' + caption);
         } else {
             console.error('Erro ao enviar resposta rápida com foto:', data.detalhe || data.erro);
-            alert('Não foi possível enviar: ' + (typeof mensagemErroWpp === 'function' ? mensagemErroWpp(data) : (data.erro || 'erro desconhecido')));
+            avisar('Não foi possível enviar: ' + (typeof mensagemErroWpp === 'function' ? mensagemErroWpp(data) : (data.erro || 'erro desconhecido')));
         }
         return true;
     }
@@ -945,23 +945,23 @@ async function salvarRespostaRapidaWpp(id) {
     const texto = document.querySelector(`.resposta-rapida-texto[data-id="${id}"]`).value.trim();
     const tipoEventoEl = document.querySelector(`.resposta-rapida-tipo-evento[data-id="${id}"]`);
     const tipoEvento = tipoEventoEl ? (tipoEventoEl.value || null) : null;
-    if (!atalho || !texto) { alert('Preencha o atalho e o texto.'); return; }
+    if (!atalho || !texto) { avisar('Preencha o atalho e o texto.'); return; }
     const { error } = await window.supabaseClient.from('respostas_rapidas_whatsapp').update({ atalho, texto, tipo_evento: tipoEvento }).eq('id', id);
-    if (error) { alert('Erro ao salvar: ' + error.message); return; }
+    if (error) { avisar('Erro ao salvar: ' + error.message); return; }
     const r = respostasRapidasCache.find(x => String(x.id) === String(id));
     if (r) { r.atalho = atalho; r.texto = texto; r.tipo_evento = tipoEvento; }
 }
 async function removerRespostaRapidaWpp(id) {
     if (!confirm('Remover esta resposta rápida?')) return;
     const { error } = await window.supabaseClient.from('respostas_rapidas_whatsapp').delete().eq('id', id);
-    if (error) { alert('Erro: ' + error.message); return; }
+    if (error) { avisar('Erro: ' + error.message); return; }
     respostasRapidasCache = respostasRapidasCache.filter(x => String(x.id) !== String(id));
     renderizarListaRespostasRapidasWpp();
 }
 async function adicionarRespostaRapidaWpp() {
     const ordem = respostasRapidasCache.length;
     const { data, error } = await window.supabaseClient.from('respostas_rapidas_whatsapp').insert({ atalho: 'Nova resposta', texto: '', ordem }).select().single();
-    if (error) { alert('Erro: ' + error.message); return; }
+    if (error) { avisar('Erro: ' + error.message); return; }
     respostasRapidasCache.push(data);
     renderizarListaRespostasRapidasWpp();
 }
@@ -1069,7 +1069,7 @@ async function confirmarEncaminharWpp(msg, leadIdDestino, nomeDestino) {
 
     const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', { body });
     if (error || !data || data.ok === false) {
-        alert('Não foi possível encaminhar: ' + (error ? error.message : mensagemErroWpp(data)));
+        avisar('Não foi possível encaminhar: ' + (error ? error.message : mensagemErroWpp(data)));
         return;
     }
     moverParaAbordagemAposEnvio(leadIdDestino).catch(e => console.warn('Erro ao mover lead pra Abordagem após envio:', e.message));
@@ -1082,7 +1082,7 @@ async function enviarReacaoWpp(leadId, mensagemAlvoId, emoji) {
         body: { pessoaIdentificador: leadId, tipo: 'reacao', mensagemAlvoId, emoji, atendenteNome: obterNomeAtendente() }
     });
     if (error || !data || data.ok === false) {
-        alert('Não foi possível reagir: ' + mensagemErroWpp(data || { erro: error?.message }));
+        avisar('Não foi possível reagir: ' + mensagemErroWpp(data || { erro: error?.message }));
     }
 }
 
@@ -1173,6 +1173,9 @@ function criarChatController({ messagesId, inputAreaId }) {
     let bloqueioNaoContatar = true;
     let bloqueioVisualAplicado = false;
     let estadoPreferenciaContato = { ok: false, erro: true, bloqueado: true };
+    let estadoPreferenciaContatoEm = 0;
+    let estadoPreferenciaContatoLead = '';
+    let estadoPreferenciaContatoUltimo = null;
     let verificandoPreferenciaContato = false;
     // Busca dentro da conversa aberta — pedido do usuário (2026-09-29:
     // "implemente tudo que for possível"; refinado 2026-09-30: "busca com
@@ -1264,7 +1267,7 @@ function criarChatController({ messagesId, inputAreaId }) {
         if (!confirm('Ocultar esta mensagem só na nossa tela?\n\nO WhatsApp da Meta não permite apagar ou editar uma mensagem já enviada — o lead continua vendo ela normalmente no celular dele. Isso só limpa a nossa visualização no CRM.')) return;
         const agora = new Date().toISOString();
         const { error } = await window.supabaseClient.from('mensagens_whatsapp').update({ oculta_em: agora }).eq('id', msgId);
-        if (error) { alert('Erro ao ocultar: ' + error.message); return; }
+        if (error) { avisar('Erro ao ocultar: ' + error.message); return; }
         const idx = mensagens.findIndex(m => m.id === msgId);
         if (idx >= 0) mensagens[idx] = { ...mensagens[idx], oculta_em: agora };
         renderizarMensagens(true);
@@ -1341,6 +1344,11 @@ function criarChatController({ messagesId, inputAreaId }) {
     function atualizarAvisoNaoContatar(estado) {
         estadoPreferenciaContato = estado || { ok: false, erro: true, bloqueado: true };
         bloqueioNaoContatar = !estadoPreferenciaContato.ok || Boolean(estadoPreferenciaContato.bloqueado);
+        if (estado && estado.ok && estado !== estadoPreferenciaContatoUltimo) {
+            estadoPreferenciaContatoEm = Date.now();
+            estadoPreferenciaContatoLead = String(leadId || '');
+            estadoPreferenciaContatoUltimo = estado;
+        }
         const container = el(inputAreaId);
         if (!container) return;
         const avisoAntigo = container.querySelector('.wpp-nao-contatar-bar');
@@ -1358,18 +1366,24 @@ function criarChatController({ messagesId, inputAreaId }) {
     async function confirmarPreferenciaAntesDeEnviar() {
         const leadConsultado = String(leadId || '');
         if (!leadConsultado || verificandoPreferenciaContato) return false;
+        // Consulta recente (até 2 min) e liberada: não precisa ir ao banco de
+        // novo a cada Enter. O servidor confere "Não Contatar" em todo envio.
+        if (estadoPreferenciaContato.ok && !estadoPreferenciaContato.bloqueado
+            && estadoPreferenciaContatoLead === leadConsultado
+            && Date.now() - estadoPreferenciaContatoEm < 2 * 60 * 1000) return true;
         verificandoPreferenciaContato = true;
-        atualizarAvisoNaoContatar({ ok: false, erro: true, bloqueado: true });
+        // Sem trocar a faixa para "bloqueado" enquanto confere: isso piscava
+        // um aviso vermelho a cada mensagem e parecia erro.
         try {
             const estado = await consultarEstadoContatoManualWpp(leadConsultado);
             if (String(leadId || '') !== leadConsultado) return false;
             atualizarAvisoNaoContatar(estado);
             if (!estado.ok) {
-                alert('Não foi possível confirmar a preferência de contato. O envio está bloqueado até a confirmação.');
+                avisar('Não foi possível confirmar a preferência de contato. O envio está bloqueado até a confirmação.');
                 return false;
             }
             if (estado.bloqueado) {
-                alert('Este lead pediu para não ser contatado. O envio foi bloqueado.');
+                avisar('Este lead pediu para não ser contatado. O envio foi bloqueado.');
                 return false;
             }
             return true;
@@ -1568,7 +1582,7 @@ function criarChatController({ messagesId, inputAreaId }) {
             if (!(await confirmarPreferenciaAntesDeEnviar())) return;
             const tpl = TEMPLATES_WHATSAPP[Number(select.value)];
             const params = [...varsEl.querySelectorAll('.wpp-template-var')].map(i => i.value.trim());
-            if (tpl.variaveis?.length && params.some(p => !p)) { alert('Preencha todas as variáveis do modelo.'); return; }
+            if (tpl.variaveis?.length && params.some(p => !p)) { avisar('Preencha todas as variáveis do modelo.'); return; }
 
             const preview = montarPreviewTemplate(tpl, params);
             const contexto = respondendoA;
@@ -1584,10 +1598,10 @@ function criarChatController({ messagesId, inputAreaId }) {
             });
             botao.disabled = false;
 
-            if (error) { alert('Erro ao enviar modelo: ' + error.message); return; }
+            if (error) { avisar('Erro ao enviar modelo: ' + error.message); return; }
             if (!data.ok) {
                 console.error('Erro ao enviar modelo (WhatsApp):', data.detalhe || data.erro);
-                alert('Não foi possível enviar o modelo: ' + mensagemErroWpp(data));
+                avisar('Não foi possível enviar o modelo: ' + mensagemErroWpp(data));
                 return;
             }
             await recarregarHistorico();
@@ -1695,13 +1709,13 @@ function criarChatController({ messagesId, inputAreaId }) {
     async function alternarGravacaoAudioWpp() {
         if (mediaRecorder && mediaRecorder.state === 'recording') { pararGravacaoSeAtiva(false); return; }
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            alert('Este navegador não permite gravar áudio (getUserMedia indisponível).');
+            avisar('Este navegador não permite gravar áudio (getUserMedia indisponível).');
             return;
         }
         try {
             mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         } catch (e) {
-            alert('Não foi possível acessar o microfone: ' + (e.message || e));
+            avisar('Não foi possível acessar o microfone: ' + (e.message || e));
             return;
         }
         const mimeType = mimeTypeSuportadoAudioWpp();
@@ -1844,34 +1858,42 @@ function criarChatController({ messagesId, inputAreaId }) {
         let data, error;
         try { ({ data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
             body: {
-                pessoaIdentificador: leadId, tipo: 'texto', texto, atendenteNome: obterNomeAtendente(),
+                pessoaIdentificador: destinoEnvio, tipo: 'texto', texto, atendenteNome: obterNomeAtendente(),
                 ...(contexto ? { contextoMessageId: contexto.waId, contextoPreview: contexto.preview, contextoRemetente: contexto.remetente } : {}),
             }
         })); } catch (falha) { error = falha; }
         if (error || !data?.ok) rascunhos.set(String(destinoEnvio), texto);
-        else rascunhos.delete(String(destinoEnvio));
+        else {
+            rascunhos.delete(String(destinoEnvio));
+            // Move quem RECEBEU a mensagem, mesmo que a pessoa já tenha
+            // aberto outra conversa enquanto o envio terminava.
+            moverParaAbordagemAposEnvio(destinoEnvio).catch(e => console.warn('Erro ao mover lead pra Abordagem após envio:', e.message));
+        }
         if (leadId !== destinoEnvio || !input.isConnected) return;
         input.disabled = bloqueioNaoContatar;
         input.focus();
         if (error || !data?.ok) { input.value = texto; ajustarAlturaTextareaWpp(input); }
 
-        if (error) { alert('Erro ao enviar mensagem: ' + error.message); input.value = texto; return; }
+        if (error) { avisar('Erro ao enviar mensagem: ' + error.message); input.value = texto; return; }
         if (!data?.ok) {
             if (data?.erro === 'janela_fechada') {
-                alert('Essa conversa está fora da janela de 24h — escolha um modelo aprovado pra reabrir o contato.');
+                avisar('Essa conversa está fora da janela de 24h — escolha um modelo aprovado pra reabrir o contato.');
                 renderizarAreaInputTemplate();
             } else {
                 console.error('Erro ao enviar mensagem (WhatsApp):', data?.detalhe || data?.erro);
-                alert('Não foi possível enviar: ' + mensagemErroWpp(data || {}));
+                avisar('Não foi possível enviar: ' + mensagemErroWpp(data || {}));
             }
             return;
         }
         await recarregarHistorico();
-        moverParaAbordagemAposEnvio(leadId).catch(e => console.warn('Erro ao mover lead pra Abordagem após envio:', e.message));
     }
 
     async function enviarComAnexo(input) {
         if (!leadId || !anexoPendente) return;
+        // Destino capturado ANTES de qualquer espera: se a pessoa abrir outra
+        // conversa enquanto o arquivo sobe, o anexo continua indo para quem
+        // estava aberto quando ela clicou em enviar.
+        const destino = leadId;
         const anexo = anexoPendente;
         const legenda = input.value.trim();
         const contexto = respondendoA;
@@ -1882,50 +1904,59 @@ function criarChatController({ messagesId, inputAreaId }) {
         anexoPendente = null;
         atualizarPreviewAnexo();
 
+        const aindaNaMesmaConversa = () => leadId === destino && input.isConnected;
+        // Em qualquer falha, devolve o arquivo e a legenda (se a conversa
+        // ainda for a mesma), para não obrigar a gravar/escolher de novo.
+        const devolverAnexo = (mensagem) => {
+            if (aindaNaMesmaConversa()) {
+                anexoPendente = anexo;
+                atualizarPreviewAnexo();
+                input.value = legenda;
+                input.disabled = bloqueioNaoContatar;
+                input.focus();
+            }
+            avisar(mensagem);
+        };
+
         try {
             const nomeSeguro = anexo.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-            const caminho = `${leadId}/${Date.now()}-${nomeSeguro}`;
+            const caminho = `${destino}/${Date.now()}-${nomeSeguro}`;
             const { error: erroUpload } = await window.supabaseClient.storage
                 .from('whatsapp-midia')
                 .upload(caminho, anexo.file, { contentType: anexo.file.type || 'application/octet-stream' });
-            if (erroUpload) { alert('Erro ao subir o arquivo: ' + erroUpload.message); input.disabled = false; input.focus(); return; }
+            if (erroUpload) { devolverAnexo('Erro ao subir o arquivo: ' + erroUpload.message); return; }
 
             const { data: urlData } = window.supabaseClient.storage.from('whatsapp-midia').getPublicUrl(caminho);
             const url = urlData.publicUrl;
 
             const contextoBody = contexto ? { contextoMessageId: contexto.waId, contextoPreview: contexto.preview, contextoRemetente: contexto.remetente } : {};
-            // Áudio (gravado no navegador, ver alternarGravacaoAudioWpp()) —
-            // a Graph API não aceita legenda em mensagem de áudio, então
-            // `legenda` (o que a pessoa digitou por engano na caixa
-            // enquanto o player de preview aparecia) é simplesmente
-            // ignorada aqui, igual o WhatsApp real (voice note não tem
-            // legenda).
+            // Áudio: a Graph API não aceita legenda em mensagem de áudio, então
+            // o que foi digitado na caixa é ignorado (igual ao WhatsApp real).
             const body = anexo.tipo === 'imagem'
-                ? { pessoaIdentificador: leadId, tipo: 'imagem', imagemUrl: url, caption: legenda || undefined, atendenteNome: obterNomeAtendente(), ...contextoBody }
+                ? { pessoaIdentificador: destino, tipo: 'imagem', imagemUrl: url, caption: legenda || undefined, atendenteNome: obterNomeAtendente(), ...contextoBody }
                 : anexo.tipo === 'audio'
-                ? { pessoaIdentificador: leadId, tipo: 'audio', audioUrl: url, atendenteNome: obterNomeAtendente(), ...contextoBody }
-                : { pessoaIdentificador: leadId, tipo: 'documento', documentoUrl: url, nomeArquivo: anexo.file.name, caption: legenda || undefined, atendenteNome: obterNomeAtendente(), ...contextoBody };
+                ? { pessoaIdentificador: destino, tipo: 'audio', audioUrl: url, atendenteNome: obterNomeAtendente(), ...contextoBody }
+                : { pessoaIdentificador: destino, tipo: 'documento', documentoUrl: url, nomeArquivo: anexo.file.name, caption: legenda || undefined, atendenteNome: obterNomeAtendente(), ...contextoBody };
 
             const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', { body });
-            input.disabled = false;
-            input.focus();
-            if (error) { alert('Erro ao enviar anexo: ' + error.message); return; }
+            if (error) { devolverAnexo('Erro ao enviar anexo: ' + error.message); return; }
             if (!data.ok) {
                 if (data.erro === 'janela_fechada') {
-                    alert('Essa conversa está fora da janela de 24h — anexo só funciona dentro da janela, igual texto livre.');
-                    renderizarAreaInputTemplate();
+                    devolverAnexo('Essa conversa está fora da janela de 24h — anexo só funciona dentro da janela, igual texto livre.');
+                    if (aindaNaMesmaConversa()) renderizarAreaInputTemplate();
                 } else {
                     console.error('Erro ao enviar anexo (WhatsApp):', data.detalhe || data.erro);
-                    alert('Não foi possível enviar: ' + mensagemErroWpp(data));
+                    devolverAnexo('Não foi possível enviar: ' + mensagemErroWpp(data));
                 }
                 return;
             }
-            await recarregarHistorico();
-            moverParaAbordagemAposEnvio(leadId).catch(e => console.warn('Erro ao mover lead pra Abordagem após envio:', e.message));
-        } catch (e) {
-            input.disabled = false;
+            moverParaAbordagemAposEnvio(destino).catch(e => console.warn('Erro ao mover lead pra Abordagem após envio:', e.message));
+            if (!aindaNaMesmaConversa()) return;
+            input.disabled = bloqueioNaoContatar;
             input.focus();
-            alert('Erro inesperado ao enviar anexo: ' + (e.message || e));
+            await recarregarHistorico();
+        } catch (e) {
+            devolverAnexo('Erro inesperado ao enviar anexo: ' + (e.message || e));
         }
     }
 
@@ -2006,7 +2037,23 @@ function criarChatController({ messagesId, inputAreaId }) {
             })
             .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'mensagens_whatsapp', filter: `pessoaIdentificador=eq.${leadId}` }, (payload) => {
                 const idx = mensagens.findIndex(m => m.id === payload.new.id);
+                const anterior = idx >= 0 ? mensagens[idx] : null;
                 if (idx >= 0) mensagens[idx] = payload.new;
+                // Mudança só de status (enviado > entregue > lido): troca apenas
+                // aquele balão. Redesenhar a conversa inteira a cada aviso da Meta
+                // recriava fotos e vídeos e interrompia o áudio que estava tocando.
+                const soStatus = anterior && !!anterior.oculta_em === !!payload.new.oculta_em
+                    && JSON.stringify(anterior.reacoes || null) === JSON.stringify(payload.new.reacoes || null)
+                    && anterior.corpo_texto === payload.new.corpo_texto;
+                const caixa = el(messagesId);
+                const balao = caixa ? caixa.querySelector(`[data-msg-db-id="${payload.new.id}"]`) : null;
+                if (soStatus && balao && !termoBusca) {
+                    const mapaPorWaId = new Map(mensagens.filter(x => x.wa_message_id).map(x => [x.wa_message_id, x]));
+                    const tmp = document.createElement('div');
+                    tmp.innerHTML = htmlMensagemWpp(payload.new, resolverCitacaoWpp(payload.new, mapaPorWaId), '', false);
+                    const novoBalao = tmp.querySelector(`[data-msg-db-id="${payload.new.id}"]`);
+                    if (novoBalao) { balao.replaceWith(novoBalao); return; }
+                }
                 renderizarMensagens(true);
             })
             .subscribe();
@@ -2054,7 +2101,7 @@ const chatDrawer = criarChatController({ messagesId: 'drawer-messages', inputAre
 // lista inteira.
 async function enviarAniversarioRapido(leadId, nomeLead, filialLead, botaoEl) {
     const tpl = TEMPLATES_WHATSAPP.find(t => t.nome === 'aniversario');
-    if (!tpl) { alert('Template "aniversario" ainda não está configurado em TEMPLATES_WHATSAPP (js/whatsapp.js).'); return; }
+    if (!tpl) { avisar('Template "aniversario" ainda não está configurado em TEMPLATES_WHATSAPP (js/whatsapp.js).'); return; }
 
     const nome = nomeLead || 'esse lead';
     if (!confirm(`Mandar "Feliz Aniversário" pra ${nome} agora?`)) return;
@@ -2071,14 +2118,14 @@ async function enviarAniversarioRapido(leadId, nomeLead, filialLead, botaoEl) {
             body: { pessoaIdentificador: leadId, tipo: 'template', templateNome: tpl.nome, templateIdioma: tpl.idioma || 'pt_BR', templateParams: params, templatePreview: preview, atendenteNome: atendente, origemEnvio: 'aniversario' }
         });
         if (error || !data || data.ok === false) {
-            alert('Não foi possível enviar: ' + mensagemErroWpp(data || { erro: error?.message }));
+            avisar('Não foi possível enviar: ' + mensagemErroWpp(data || { erro: error?.message }));
             if (botaoEl) { botaoEl.disabled = false; botaoEl.innerHTML = '<i class="fa-brands fa-whatsapp"></i> Enviar'; }
             return;
         }
         if (botaoEl) botaoEl.innerHTML = '<i class="fa-solid fa-check"></i> Enviado';
         moverParaAbordagemAposEnvio(leadId).catch(e => console.warn('Erro ao mover lead pra Abordagem após envio:', e.message));
     } catch (e) {
-        alert('Erro inesperado ao enviar: ' + (e.message || e));
+        avisar('Erro inesperado ao enviar: ' + (e.message || e));
         if (botaoEl) { botaoEl.disabled = false; botaoEl.innerHTML = '<i class="fa-brands fa-whatsapp"></i> Enviar'; }
     }
 }
@@ -2219,14 +2266,14 @@ async function abrirSeletorConviteEvento() {
 
     if (typeof carregarEventos === 'function') await carregarEventos();
 
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
     const lista = (typeof eventosAtuais !== 'undefined' ? eventosAtuais : [])
         .filter(ev => (typeof dataEfetivaLimite === 'function' ? dataEfetivaLimite(ev) : ev.data) >= hojeISO)
         .slice()
         .sort((a, b) => (a.data + (a.hora || '')).localeCompare(b.data + (b.hora || '')));
 
     if (lista.length === 0) {
-        alert('Nenhum evento futuro cadastrado pra esta filial ainda — cadastre um na aba Agenda antes de convidar.');
+        avisar('Nenhum evento futuro cadastrado pra esta filial ainda — cadastre um na aba Agenda antes de convidar.');
         return;
     }
 
@@ -2287,13 +2334,13 @@ async function confirmarConviteComFoto() {
     const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
         body: { pessoaIdentificador: currentLeadId, tipo: 'imagem', imagemUrl: evento.imagem_url, caption, atendenteNome: obterNomeAtendente() }
     });
-    if (error) { alert('Erro ao enviar: ' + error.message); return; }
+    if (error) { avisar('Erro ao enviar: ' + error.message); return; }
     if (!data.ok) {
         if (data.erro === 'janela_fechada') {
-            alert('Essa conversa está fora da janela de 24h — não dá pra enviar uma foto agora fora da janela (só template aprovado funciona fora dela, e templates não têm imagem configurada ainda). Espere a pessoa mandar mensagem pra reabrir a janela.');
+            avisar('Essa conversa está fora da janela de 24h — não dá pra enviar uma foto agora fora da janela (só template aprovado funciona fora dela, e templates não têm imagem configurada ainda). Espere a pessoa mandar mensagem pra reabrir a janela.');
         } else {
             console.error('Erro ao enviar convite com foto:', data.detalhe || data.erro);
-            alert('Não foi possível enviar: ' + mensagemErroWpp(data));
+            avisar('Não foi possível enviar: ' + mensagemErroWpp(data));
         }
         return;
     }
@@ -2322,14 +2369,14 @@ async function enviarConviteAberturaTurmaFilial() {
     if (!lead) return;
 
     if (typeof carregarEventos === 'function') await carregarEventos();
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
     const evento = (typeof eventosAtuais !== 'undefined' ? eventosAtuais : [])
         .filter(ev => ev.tipo === 'Abertura de Turma')
         .filter(ev => (typeof dataEfetivaLimite === 'function' ? dataEfetivaLimite(ev) : ev.data) >= hojeISO)
         .sort((a, b) => a.data.localeCompare(b.data))[0];
 
     if (!evento) {
-        alert('Nenhuma Abertura de Turma futura cadastrada pra esta filial ainda — a sincronização automática do Ulisses (5h da manhã) ou o cadastro manual na Agenda resolvem isso.');
+        avisar('Nenhuma Abertura de Turma futura cadastrada pra esta filial ainda — a sincronização automática do Ulisses (5h da manhã) ou o cadastro manual na Agenda resolvem isso.');
         return;
     }
 
@@ -2343,7 +2390,7 @@ async function enviarConviteAberturaTurmaFilial() {
     // só preenche a caixa, não envia sozinho.
     if (!evento.imagem_url) {
         const preencheu = chatDrawer.preencherTexto(caption);
-        if (!preencheu) alert('Essa conversa está fora da janela de 24h, então não dá pra preencher o campo de texto livre. Aqui está o texto pra copiar manualmente:\n\n' + caption);
+        if (!preencheu) avisar('Essa conversa está fora da janela de 24h, então não dá pra preencher o campo de texto livre. Aqui está o texto pra copiar manualmente:\n\n' + caption);
         return;
     }
 
@@ -2353,13 +2400,13 @@ async function enviarConviteAberturaTurmaFilial() {
     const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-send', {
         body: { pessoaIdentificador: currentLeadId, tipo: 'imagem', imagemUrl: evento.imagem_url, caption, atendenteNome: obterNomeAtendente() }
     });
-    if (error) { alert('Erro ao enviar: ' + error.message); return; }
+    if (error) { avisar('Erro ao enviar: ' + error.message); return; }
     if (!data.ok) {
         if (data.erro === 'janela_fechada') {
-            alert('Essa conversa está fora da janela de 24h — não dá pra enviar uma foto agora (só template aprovado funciona fora dela). Aqui está o texto, pra mandar de outra forma:\n\n' + caption);
+            avisar('Essa conversa está fora da janela de 24h — não dá pra enviar uma foto agora (só template aprovado funciona fora dela). Aqui está o texto, pra mandar de outra forma:\n\n' + caption);
         } else {
             console.error('Erro ao enviar convite de Abertura de Turma:', data.detalhe || data.erro);
-            alert('Não foi possível enviar: ' + mensagemErroWpp(data));
+            avisar('Não foi possível enviar: ' + mensagemErroWpp(data));
         }
         return;
     }
@@ -2394,7 +2441,7 @@ function montarTextoConviteEvento(lead, evento, templateCustom, semApresentacao)
     const fraseInteresses = interesses.length > 0 ? ` Vi aqui que você já demonstrou interesse em: ${interesses.join(', ')}.` : '';
 
     const horaFormatada = evento.hora && typeof formatarHoraEvento === 'function' ? formatarHoraEvento(evento.hora) : '';
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
 
     let quando;
     if (evento.data < hojeISO) {
@@ -2438,7 +2485,7 @@ function enviarConviteEvento(evento) {
     const texto = montarTextoConviteEvento(lead, evento);
     const preencheu = chatDrawer.preencherTexto(texto);
     if (!preencheu) {
-        alert('Essa conversa está fora da janela de 24h, então não dá pra preencher o campo de texto livre (precisa de um template aprovado). Aqui está o texto do convite pra copiar manualmente:\n\n' + texto);
+        avisar('Essa conversa está fora da janela de 24h, então não dá pra preencher o campo de texto livre (precisa de um template aprovado). Aqui está o texto do convite pra copiar manualmente:\n\n' + texto);
     }
 }
 
@@ -2469,7 +2516,7 @@ function enviarConviteEvento(evento) {
 // ter sido cadastrado 1 evento novo agora mesmo, em outra aba).
 async function iniciarConvitesWhatsAppEmMassa() {
     if (typeof cardsSelecionados === 'undefined' || cardsSelecionados.size === 0) {
-        alert('Selecione 1 ou mais leads no Kanban antes (checkbox no canto de cada card).');
+        avisar('Selecione 1 ou mais leads no Kanban antes (checkbox no canto de cada card).');
         return;
     }
 
@@ -2492,14 +2539,14 @@ async function iniciarConvitesWhatsAppEmMassa() {
 
     if (typeof carregarEventos === 'function') await carregarEventos();
 
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
     const lista = (typeof eventosAtuais !== 'undefined' ? eventosAtuais : [])
         .filter(ev => (typeof dataEfetivaLimite === 'function' ? dataEfetivaLimite(ev) : ev.data) >= hojeISO)
         .slice()
         .sort((a, b) => (a.data + (a.hora || '')).localeCompare(b.data + (b.hora || '')));
 
     if (lista.length === 0) {
-        alert('Nenhum evento futuro cadastrado pra esta filial ainda — cadastre um na aba Agenda antes de convidar.');
+        avisar('Nenhum evento futuro cadastrado pra esta filial ainda — cadastre um na aba Agenda antes de convidar.');
         return;
     }
 
@@ -2616,9 +2663,9 @@ function renderizarListaModelosMensagem() {
 async function salvarModeloMensagem(id) {
     const nome = document.getElementById(`modeloMensagemNome-${id}`).value.trim();
     const texto = document.getElementById(`modeloMensagemTexto-${id}`).value;
-    if (!nome || !texto.trim()) { alert('Nome e texto não podem ficar vazios.'); return; }
+    if (!nome || !texto.trim()) { avisar('Nome e texto não podem ficar vazios.'); return; }
     const { error } = await window.supabaseClient.from('modelos_mensagem_whatsapp').update({ nome, texto }).eq('id', id);
-    if (error) { alert('Erro ao salvar: ' + error.message); return; }
+    if (error) { avisar('Erro ao salvar: ' + error.message); return; }
     await carregarModelosMensagemWpp();
     renderizarListaModelosMensagem();
 }
@@ -2626,7 +2673,7 @@ async function salvarModeloMensagem(id) {
 async function removerModeloMensagem(id) {
     if (!confirm('Remover este modelo de mensagem? Não afeta convites já enviados.')) return;
     const { error } = await window.supabaseClient.from('modelos_mensagem_whatsapp').delete().eq('id', id);
-    if (error) { alert('Erro ao remover: ' + error.message); return; }
+    if (error) { avisar('Erro ao remover: ' + error.message); return; }
     await carregarModelosMensagemWpp();
     renderizarListaModelosMensagem();
 }
@@ -2640,7 +2687,7 @@ async function adicionarModeloMensagem() {
         texto: 'Olá, {nome}!\n\nAqui é {atendente}, da Nova Acrópole {filial}, tudo bem?\n\nVai rolar {evento}{quando}!',
         ordem: maiorOrdem + 1,
     });
-    if (error) { alert('Erro ao criar modelo: ' + error.message); return; }
+    if (error) { avisar('Erro ao criar modelo: ' + error.message); return; }
     await carregarModelosMensagemWpp();
     renderizarListaModelosMensagem();
 }
@@ -2791,7 +2838,7 @@ async function gerarLinksConviteLote() {
     document.getElementById('conviteLoteResultado').style.display = 'block';
 
     if (linhas.length === 0) {
-        alert('Nenhum lead selecionado tem telefone cadastrado — não há link pra gerar.');
+        avisar('Nenhum lead selecionado tem telefone cadastrado — não há link pra gerar.');
     }
 }
 
@@ -2853,7 +2900,7 @@ async function marcarTelefoneParaVerificarLote(pessoaId) {
         .from(NOME_TABELA)
         .update({ tags: lead.tags })
         .eq('pessoaIdentificador', pessoaId);
-    if (error) { alert('Erro ao salvar: ' + error.message); return; }
+    if (error) { avisar('Erro ao salvar: ' + error.message); return; }
 
     // Mesmo motivo de sempre: telefone suspeito também significa que a
     // gente NEM CHEGOU a entrar em contato de verdade — o vínculo
@@ -2874,7 +2921,7 @@ async function marcarTelefoneParaVerificarLote(pessoaId) {
     if (colunaVerificar) {
         await moverLeadsParaColuna([pessoaId], colunaVerificar);
     } else {
-        alert(`Tag "${TAG_CONFERIR_TELEFONE}" aplicada, mas não encontrei nenhuma coluna com "Verificar"/"Conferir" no nome pra mover o lead automaticamente — crie uma em "Gerenciar Colunas" (o lead continua na coluna atual por enquanto).`);
+        avisar(`Tag "${TAG_CONFERIR_TELEFONE}" aplicada, mas não encontrei nenhuma coluna com "Verificar"/"Conferir" no nome pra mover o lead automaticamente — crie uma em "Gerenciar Colunas" (o lead continua na coluna atual por enquanto).`);
     }
 
     // O link wa.me já gerado não faz mais sentido nesta lista (o objetivo
@@ -3146,7 +3193,7 @@ async function iniciarConviteApiEmMassa() {
 
     if (typeof carregarEventos === 'function') await carregarEventos();
 
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
     const lista = (typeof eventosAtuais !== 'undefined' ? eventosAtuais : [])
         .filter(ev => (typeof dataEfetivaLimite === 'function' ? dataEfetivaLimite(ev) : ev.data) >= hojeISO)
         .slice()
@@ -3401,7 +3448,34 @@ function calcularPausaEnvioMassa(totalMensagens) {
 // (#wppPopupContainer, _containerPopupWpp() em js/notificacoes.js) já
 // usado pelo popup de "mensagem recebida" — canto inferior direito,
 // nunca bloqueia o meio da tela.
-function atualizarProgressoEnvioMassa(idOperacao, { titulo, atual, total, concluido }) {
+// Um disparo em massa por vez, com botão de parar. Antes não havia trava:
+// fechar o modal e confirmar de novo rodava dois laços juntos (rajada que já
+// gerou aviso da Meta, e mensagem dupla para quem ainda não tinha recebido),
+// e um disparo de até 1h não tinha como ser interrompido.
+const controleEnvioMassaWpp = { ativo: false, cancelar: false };
+function iniciarEnvioMassaWpp() {
+    if (controleEnvioMassaWpp.ativo) {
+        avisar('Já existe um disparo em massa em andamento. Espere terminar ou clique em "Parar" no aviso de progresso.');
+        return false;
+    }
+    controleEnvioMassaWpp.ativo = true;
+    controleEnvioMassaWpp.cancelar = false;
+    return true;
+}
+function finalizarEnvioMassaWpp() { controleEnvioMassaWpp.ativo = false; controleEnvioMassaWpp.cancelar = false; }
+function envioMassaCancelado() { return controleEnvioMassaWpp.cancelar; }
+function pararEnvioMassaWpp() {
+    if (!controleEnvioMassaWpp.ativo) return;
+    if (!confirm('Parar o disparo agora? Quem já recebeu continua registrado; os demais não recebem.')) return;
+    controleEnvioMassaWpp.cancelar = true;
+}
+// Pausa entre envios que acorda logo se alguém clicar em "Parar".
+async function pausarWppCancelavel(ms) {
+    const fim = Date.now() + ms;
+    while (Date.now() < fim && !envioMassaCancelado()) await pausarWpp(Math.min(500, fim - Date.now()));
+}
+
+function atualizarProgressoEnvioMassa(idOperacao, { titulo, atual, total, concluido, parado }) {
     const container = typeof _containerPopupWpp === 'function' ? _containerPopupWpp() : document.body;
     let el = document.getElementById(`progressoEnvioWpp-${idOperacao}`);
     if (!el) {
@@ -3414,7 +3488,8 @@ function atualizarProgressoEnvioMassa(idOperacao, { titulo, atual, total, conclu
     el.innerHTML = `
         <div class="wpp-progresso-toast-topo"><i class="fa-solid fa-paper-plane"></i> ${escapeHTML(titulo || 'Enviando mensagens')}</div>
         <div class="wpp-progresso-toast-barra"><div class="wpp-progresso-toast-barra-fill" style="width:${pct}%"></div></div>
-        <div class="wpp-progresso-toast-texto">${concluido ? 'Concluído' : 'Enviando'}... (${atual}/${total})</div>
+        <div class="wpp-progresso-toast-texto">${parado ? 'Parado' : concluido ? 'Concluído' : 'Enviando'}... (${atual}/${total})</div>
+        ${concluido ? '' : `<button type="button" class="btn-toggle" style="margin-top:6px; font-size:11px; padding:3px 10px;" onclick="pararEnvioMassaWpp()"><i class="fa-solid fa-stop"></i> Parar</button>`}
     `;
     if (concluido) setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 6000);
 }
@@ -3438,7 +3513,22 @@ function pausarWpp(ms) { return new Promise((resolve) => setTimeout(resolve, ms)
 async function enviarTemplateApiLote(tpl, linhas, { idProgresso, titulo, eventoAtual, onProgresso, pausaMs } = {}) {
     const pausa = typeof pausaMs === 'number' ? pausaMs : calcularPausaEnvioMassa(linhas.length);
     const resultados = [];
+    // Registro POR LEAD logo após cada envio (vínculo com o evento e saída
+    // da coluna fria). Antes era só no fim do laço: recarregar a página no
+    // meio deixava quem já recebeu sem vínculo e sem mudar de coluna.
+    const registrarEnvioOk = async (r) => {
+        const eventoId = eventoAtual ? eventoAtual.id : r.eventoId;
+        try {
+            if (eventoId) {
+                await window.supabaseClient
+                    .from(typeof NOME_TABELA_EVENTO_LEADS !== 'undefined' ? NOME_TABELA_EVENTO_LEADS : 'evento_leads')
+                    .upsert([{ evento_id: eventoId, pessoaIdentificador: r.pessoaIdentificador, origem: 'crm' }], { onConflict: 'evento_id,pessoaIdentificador', ignoreDuplicates: true });
+            }
+            await moverParaAbordagemAposEnvio(r.pessoaIdentificador);
+        } catch (e) { console.warn('Envio saiu, mas não registrou vínculo/coluna:', e.message || e); }
+    };
     for (let i = 0; i < linhas.length; i += 1) {
+        if (envioMassaCancelado()) break;
         const lote = linhas.slice(i, i + 1);
         const respostas = await Promise.all(lote.map(async (l) => {
             try {
@@ -3464,46 +3554,26 @@ async function enviarTemplateApiLote(tpl, linhas, { idProgresso, titulo, eventoA
             }
         }));
         resultados.push(...respostas);
+        for (const r of respostas) if (r.ok) await registrarEnvioOk(r);
         if (idProgresso) atualizarProgressoEnvioMassa(idProgresso, { titulo, atual: resultados.length, total: linhas.length });
         if (typeof onProgresso === 'function') onProgresso(resultados.length, linhas.length);
-        if (i + 1 < linhas.length) await pausarWpp(pausa);
+        if (i + 1 < linhas.length) await pausarWppCancelavel(pausa);
     }
-    if (idProgresso) atualizarProgressoEnvioMassa(idProgresso, { titulo, atual: resultados.length, total: linhas.length, concluido: true });
+    const parado = envioMassaCancelado() && resultados.length < linhas.length;
+    if (idProgresso) atualizarProgressoEnvioMassa(idProgresso, { titulo, atual: resultados.length, total: linhas.length, concluido: true, parado });
 
     const sucesso = resultados.filter(r => r.ok);
     const falha = resultados.filter(r => !r.ok);
-
-    // Vincula evento_leads só pra quem o envio de fato saiu (nunca cria
-    // um "convidado" fantasma pra quem a Meta rejeitou). 2 modos: UM
-    // evento só pra TODO o lote (`eventoAtual`, fluxo normal de
-    // "Convidar API" — 1 evento escolhido vale pra todo mundo) OU 1
-    // evento POR LEAD (`l.eventoId`, usado pelo "Disparo Inteligente do
-    // Dia" quando o mesmo motivo/bucket junta filiais com datas/eventos
-    // diferentes — ver enviarGrupoPrioridadeInteligente()).
-    if (sucesso.length > 0) {
-        const vinculos = sucesso
-            .map(r => ({ evento_id: eventoAtual ? eventoAtual.id : r.eventoId, pessoaIdentificador: r.pessoaIdentificador, origem: 'crm' }))
-            .filter(v => v.evento_id);
-        if (vinculos.length > 0) {
-            await window.supabaseClient
-                .from(typeof NOME_TABELA_EVENTO_LEADS !== 'undefined' ? NOME_TABELA_EVENTO_LEADS : 'evento_leads')
-                .upsert(vinculos, { onConflict: 'evento_id,pessoaIdentificador', ignoreDuplicates: true });
-        }
-    }
 
     if (typeof registrarLogAtividade === 'function' && (sucesso.length > 0 || falha.length > 0)) {
         const nomesEventos = eventoAtual ? [eventoAtual.nome] : [...new Set(sucesso.map(r => r.eventoNome).filter(Boolean))];
         registrarLogAtividade('convite_whatsapp_api_lote', {
             pessoaIds: sucesso.map(r => r.pessoaIdentificador),
-            detalhes: { template: tpl.label, evento: nomesEventos.length > 0 ? nomesEventos.join(', ') : null, enviados: sucesso.length, falhas: falha.length },
+            detalhes: { template: tpl.label, evento: nomesEventos.length > 0 ? nomesEventos.join(', ') : null, enviados: sucesso.length, falhas: falha.length, parado },
         });
     }
 
-    // Pedido do usuário: mandar mensagem já tira o lead de uma coluna
-    // fria — só quem ainda estava lá, nunca puxa de volta quem já avançou.
-    await Promise.all(sucesso.map(r => moverParaAbordagemAposEnvio(r.pessoaIdentificador)));
-
-    return { resultados, sucesso, falha };
+    return { resultados, sucesso, falha, naoEnviados: linhas.length - resultados.length, parado };
 }
 
 async function confirmarEnviarConviteApiLote() {
@@ -3512,6 +3582,8 @@ async function confirmarEnviarConviteApiLote() {
     if (!tpl || linhas.length === 0) return;
 
     if (!confirm(`Confirma o envio automático de "${tpl.label}" para ${linhas.length} lead(s) agora, via API da Meta? Essa ação não pode ser desfeita.`)) return;
+    if (!iniciarEnvioMassaWpp()) return;
+    try {
 
     const previaEl = document.getElementById('conviteApiPrevia');
     const resultadoEl = document.getElementById('conviteApiResultado');
@@ -3519,14 +3591,14 @@ async function confirmarEnviarConviteApiLote() {
     resultadoEl.style.display = 'block';
     resultadoEl.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Enviando em segundo plano — acompanhe o progresso no canto da tela, pode fechar esta tela sem interromper.</p>';
 
-    const { resultados, sucesso, falha } = await enviarTemplateApiLote(tpl, linhas, {
+    const { resultados, sucesso, falha, naoEnviados } = await enviarTemplateApiLote(tpl, linhas, {
         idProgresso: 'conviteApi',
         titulo: 'Convidar (API)',
         eventoAtual: conviteApiEventoAtual,
     });
 
     resultadoEl.innerHTML = `
-        <p style="font-size:13px; margin-bottom:8px;"><strong>${sucesso.length} enviado(s)</strong>${falha.length > 0 ? `, <strong style="color:#991b1b;">${falha.length} falhou(aram)</strong>` : ''}.</p>
+        <p style="font-size:13px; margin-bottom:8px;"><strong>${sucesso.length} enviado(s)</strong>${falha.length > 0 ? `, <strong style="color:#991b1b;">${falha.length} falhou(aram)</strong>` : ''}${naoEnviados > 0 ? `, ${naoEnviados} não enviado(s) porque o disparo foi parado` : ''}.</p>
         <div style="max-height:280px; overflow-y:auto; border:1px solid var(--border-color); border-radius:6px; padding:6px; margin-bottom:12px;">
             ${resultados.map(r => `
                 <div style="display:flex; justify-content:space-between; gap:8px; padding:5px 6px; font-size:12px; border-bottom:1px dashed var(--border-color);">
@@ -3537,6 +3609,9 @@ async function confirmarEnviarConviteApiLote() {
         </div>
         <button class="btn-secondary" onclick="fecharModalConviteLoteApi()">Fechar</button>
     `;
+    } finally {
+        finalizarEnvioMassaWpp();
+    }
 }
 
 // ==========================================================
@@ -3558,7 +3633,7 @@ let conviteJanelaAbertaCandidatos = [];
 let conviteJanelaAbertaExcluidosInteligente = [];
 
 async function carregarProximaAberturaTurmaPorFilial() {
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
     const { data, error } = await window.supabaseClient
         .from('eventos')
         .select('id, nome, filial, data, hora, link_inscricao, data_limite_inscricao')
@@ -3712,6 +3787,8 @@ async function confirmarConviteJanelaAberta() {
     const candidatos = conviteJanelaAbertaCandidatos;
     if (candidatos.length === 0) return;
     if (!confirm(`Confirma o envio de verdade pra ${candidatos.length} lead(s) agora? Essa ação não pode ser desfeita.`)) return;
+    if (!iniciarEnvioMassaWpp()) return;
+    try {
 
     const corpoEl = document.getElementById('conviteJanelaAbertaCorpo');
     if (corpoEl) corpoEl.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Enviando em segundo plano — acompanhe o progresso no canto inferior direito, pode fechar esta tela sem interromper.</p>';
@@ -3726,6 +3803,7 @@ async function confirmarConviteJanelaAberta() {
     const TAMANHO_LOTE = 1;
     const pausaMs = calcularPausaEnvioMassa(candidatos.length);
     for (let i = 0; i < candidatos.length; i += TAMANHO_LOTE) {
+        if (envioMassaCancelado()) break;
         const lote = candidatos.slice(i, i + TAMANHO_LOTE);
         const respostas = await Promise.all(lote.map(async (c) => {
             try {
@@ -3740,29 +3818,32 @@ async function confirmarConviteJanelaAberta() {
             }
         }));
         resultados.push(...respostas);
+        // Registro logo após cada envio (ver enviarTemplateApiLote()).
+        for (const r of respostas.filter(x => x.ok)) {
+            try {
+                await window.supabaseClient.from('evento_leads').upsert(
+                    [{ evento_id: r.evento.id, pessoaIdentificador: r.pessoaIdentificador, origem: 'crm', resposta_convite: 'pendente' }],
+                    { onConflict: 'evento_id,pessoaIdentificador', ignoreDuplicates: true });
+                await moverParaAbordagemAposEnvio(r.pessoaIdentificador);
+            } catch (e) { console.warn('Envio saiu, mas não registrou vínculo/coluna:', e.message || e); }
+        }
         atualizarProgressoEnvioMassa('conviteJanelaAberta', { titulo: 'Convidar (Janela Aberta)', atual: resultados.length, total: candidatos.length });
-        if (i + TAMANHO_LOTE < candidatos.length) await pausarWpp(pausaMs);
+        if (i + TAMANHO_LOTE < candidatos.length) await pausarWppCancelavel(pausaMs);
     }
-    atualizarProgressoEnvioMassa('conviteJanelaAberta', { titulo: 'Convidar (Janela Aberta)', atual: resultados.length, total: candidatos.length, concluido: true });
+    const paradoJanela = envioMassaCancelado() && resultados.length < candidatos.length;
+    atualizarProgressoEnvioMassa('conviteJanelaAberta', { titulo: 'Convidar (Janela Aberta)', atual: resultados.length, total: candidatos.length, concluido: true, parado: paradoJanela });
 
     const sucesso = resultados.filter(r => r.ok);
     const falha = resultados.filter(r => !r.ok);
 
-    if (sucesso.length > 0) {
-        await window.supabaseClient.from('evento_leads').upsert(
-            sucesso.map(r => ({ evento_id: r.evento.id, pessoaIdentificador: r.pessoaIdentificador, origem: 'crm', resposta_convite: 'pendente' })),
-            { onConflict: 'evento_id,pessoaIdentificador', ignoreDuplicates: true }
-        );
-        if (typeof registrarLogAtividade === 'function') {
-            registrarLogAtividade('convite_janela_aberta', { pessoaIds: sucesso.map(r => r.pessoaIdentificador), detalhes: { enviados: sucesso.length, falhas: falha.length } });
-        }
-        await Promise.all(sucesso.map(r => moverParaAbordagemAposEnvio(r.pessoaIdentificador)));
+    if (sucesso.length > 0 && typeof registrarLogAtividade === 'function') {
+        registrarLogAtividade('convite_janela_aberta', { pessoaIds: sucesso.map(r => r.pessoaIdentificador), detalhes: { enviados: sucesso.length, falhas: falha.length, parado: paradoJanela } });
     }
 
     const corpoElFinal = document.getElementById('conviteJanelaAbertaCorpo');
     if (corpoElFinal) {
         corpoElFinal.innerHTML = `
-            <p style="font-size:13px; margin-bottom:8px;"><strong>${sucesso.length} enviado(s)</strong>${falha.length > 0 ? `, <strong style="color:#991b1b;">${falha.length} falhou(aram)</strong>` : ''}.</p>
+            <p style="font-size:13px; margin-bottom:8px;"><strong>${sucesso.length} enviado(s)</strong>${falha.length > 0 ? `, <strong style="color:#991b1b;">${falha.length} falhou(aram)</strong>` : ''}${paradoJanela ? `, ${candidatos.length - resultados.length} não enviado(s) porque o disparo foi parado` : ''}.</p>
             <div style="max-height:280px; overflow-y:auto; border:1px solid var(--border-color); border-radius:6px; padding:6px; margin-bottom:12px;">
                 ${resultados.map(r => `
                     <div style="display:flex; justify-content:space-between; gap:8px; padding:5px 6px; font-size:12px; border-bottom:1px dashed var(--border-color);">
@@ -3773,6 +3854,9 @@ async function confirmarConviteJanelaAberta() {
             </div>
             <button class="btn-secondary" onclick="fecharModalConviteJanelaAberta()">Fechar</button>
         `;
+    }
+    } finally {
+        finalizarEnvioMassaWpp();
     }
 }
 
@@ -4098,7 +4182,7 @@ function templatePadraoParaBucket(bucket) {
 // então o envio continua resolvendo nome do evento/data corretos por
 // lead, mesmo vindo de filiais/datas diferentes dentro do mesmo motivo.
 async function montarFilaPrioridadeInteligente() {
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
     const checkExcluir30Dias = document.getElementById('prioridadeExcluir30DiasCheck');
     const excluir30Dias = !checkExcluir30Dias || checkExcluir30Dias.checked;
     const candidatosPorBucket = { abertura: [], aula_inaugural: [], lembrete: [] };
@@ -4421,7 +4505,7 @@ async function analisarGrupoComIaPrioridade(indice) {
         }
     } catch (e) {
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Erro — tentar de novo'; }
-        alert('Erro ao analisar com IA: ' + e.message);
+        avisar('Erro ao analisar com IA: ' + e.message);
         return;
     }
 
@@ -4478,7 +4562,7 @@ async function enviarGrupoPrioridadeInteligente(indice) {
     const linhas = todasLinhas.filter(l => paramsManuaisPrioridadeOk(tpl, [l]));
     const puladas = todasLinhas.length - linhas.length;
     if (linhas.length === 0) {
-        alert(`Não dá pra enviar "${tpl.label}" aqui — falta um dado do evento em todos os candidatos. Escolha outro template ou confira se o evento tem nome/data cadastrados na Agenda.`);
+        avisar(`Não dá pra enviar "${tpl.label}" aqui — falta um dado do evento em todos os candidatos. Escolha outro template ou confira se o evento tem nome/data cadastrados na Agenda.`);
         return;
     }
 
@@ -4518,6 +4602,8 @@ async function enviarTodosGruposPrioridadeInteligente() {
     if (buckets.length === 0) return;
     const totalGeral = buckets.reduce((s, b) => s + b.candidatos.length, 0);
     if (!confirm(`Confirma o envio automático pra ${totalGeral} lead(s), de TODOS os ${buckets.length} motivo(s) acima, via API da Meta? Essa ação não pode ser desfeita.`)) return;
+    if (!iniciarEnvioMassaWpp()) return;
+    try {
 
     const etapaFila = document.getElementById('prioridadeEtapaFila');
     etapaFila.innerHTML = '<p style="font-size:12px; color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Enviando pra todos os motivos de uma vez — acompanhe o progresso no canto da tela, pode fechar esta janela sem interromper o envio.</p>';
@@ -4567,6 +4653,7 @@ async function enviarTodosGruposPrioridadeInteligente() {
     let baseAcumulada = 0;
     const relatorioPorMotivo = [];
     for (let idx = 0; idx < planoEnvio.length; idx++) {
+        if (envioMassaCancelado()) break;
         const { b, tpl, linhas } = planoEnvio[idx];
         const base = baseAcumulada;
         const { sucesso, falha } = await enviarTemplateApiLote(tpl, linhas, {
@@ -4579,12 +4666,13 @@ async function enviarTodosGruposPrioridadeInteligente() {
         // 1 motivo e o 1º do próximo saem sem respiro nenhum entre si,
         // já que o loop interno de enviarTemplateApiLote() só pausa ENTRE
         // itens do MESMO motivo).
-        if (idx < planoEnvio.length - 1) await pausarWpp(pausaMs);
+        if (idx < planoEnvio.length - 1) await pausarWppCancelavel(pausaMs);
     }
-    if (totalPlanejado > 0) atualizarProgressoEnvioMassa('prioridadeTodos', { titulo: 'Disparo Inteligente do Dia', atual: totalPlanejado, total: totalPlanejado, concluido: true });
+    const paradoTodos = envioMassaCancelado();
+    if (totalPlanejado > 0) atualizarProgressoEnvioMassa('prioridadeTodos', { titulo: 'Disparo Inteligente do Dia', atual: Math.min(baseAcumulada, totalPlanejado), total: totalPlanejado, concluido: true, parado: paradoTodos });
 
     etapaFila.innerHTML = `
-        <p style="font-size:13px; margin-bottom:8px;"><strong>Envio concluído pra todos os motivos.</strong></p>
+        <p style="font-size:13px; margin-bottom:8px;"><strong>${paradoTodos ? 'Disparo parado. Quem já recebeu está registrado; os demais não receberam.' : 'Envio concluído pra todos os motivos.'}</strong></p>
         <div style="border:1px solid var(--border-color); border-radius:6px; padding:8px; margin-bottom:12px;">
             ${relatorioPorMotivo.map(r => `
                 <div style="display:flex; justify-content:space-between; gap:8px; padding:5px 0; font-size:12px; border-bottom:1px dashed var(--border-color);">
@@ -4601,6 +4689,9 @@ async function enviarTodosGruposPrioridadeInteligente() {
         </div>
         <button class="btn-secondary" onclick="fecharModalConvitePrioridade()">Fechar</button>
     `;
+    } finally {
+        finalizarEnvioMassaWpp();
+    }
 }
 
 // ==========================================================
@@ -4633,7 +4724,9 @@ function mensagemEscritaPelaIaWpp(m) {
     return wppRespostasIa.textos.has(normalizarTextoIaWpp(m.corpo_texto));
 }
 
-async function carregarRespostasIaWpp() {
+let wppRespostasIaCarregadoEm = 0;
+async function carregarRespostasIaWpp({ forcar = false } = {}) {
+    if (!forcar && wppRespostasIaCarregadoEm && Date.now() - wppRespostasIaCarregadoEm < 3 * 60 * 1000) return;
     const porLead = new Map();
     const textos = new Set();
     const marcar = (pid, quando) => {
@@ -4655,19 +4748,28 @@ async function carregarRespostasIaWpp() {
     });
     (bots.data || []).forEach(r => marcar(r.pessoaIdentificador, r.criado_em));
     wppRespostasIa = { porLead, textos };
+    wppRespostasIaCarregadoEm = Date.now();
+}
+
+// Agrupa atualizações em rajada (campanha com dezenas de respostas por
+// minuto) numa só, 1,5s depois da última mensagem. Antes cada mensagem de
+// qualquer filial refazia a lista inteira com várias consultas.
+let timerAtualizacaoListaWpp = null;
+function agendarAtualizacaoListaWpp() {
+    clearTimeout(timerAtualizacaoListaWpp);
+    timerAtualizacaoListaWpp = setTimeout(() => {
+        const tab = document.getElementById('tab-whatsapp');
+        if (!tab || !tab.classList.contains('active')) return;
+        const searchEl = document.getElementById('wppSearch');
+        renderizarContatosWpp(searchEl ? searchEl.value : '');
+    }, 1500);
 }
 
 function iniciarEscutaGlobalWpp() {
     if (canalListaWpp) return;
     canalListaWpp = window.supabaseClient
         .channel('wpp-lista-global')
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mensagens_whatsapp' }, () => {
-            const tab = document.getElementById('tab-whatsapp');
-            if (tab && tab.classList.contains('active')) {
-                const searchEl = document.getElementById('wppSearch');
-                renderizarContatosWpp(searchEl ? searchEl.value : '');
-            }
-        })
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mensagens_whatsapp' }, () => agendarAtualizacaoListaWpp())
         .subscribe();
 }
 
@@ -4727,12 +4829,12 @@ function htmlTimerJanelaWpp(conversa) {
     if (!conversa || conversa.ultima_direcao !== 'entrada') return '';
     const restante = horasRestantesJanelaWpp(conversa);
     if (restante <= 0) {
-        return `<div class="wpp-timer-janela wpp-timer-fechada" title="Janela de 24h da Meta já fechou — só um modelo aprovado consegue reabrir a conversa"><i class="fa-solid fa-lock"></i> Janela fechada</div>`;
+        return `<div class="wpp-timer-janela wpp-timer-fechada" data-ultima-msg="${escapeHTML(conversa.ultima_mensagem_em)}" title="Janela de 24h da Meta já fechou — só um modelo aprovado consegue reabrir a conversa"><i class="fa-solid fa-lock"></i> Janela fechada</div>`;
     }
     const horas = Math.floor(restante);
     const minutos = Math.floor((restante - horas) * 60);
     const classe = restante < 4 ? 'wpp-timer-critico' : restante < 12 ? 'wpp-timer-atencao' : 'wpp-timer-ok';
-    return `<div class="wpp-timer-janela ${classe}" title="Tempo restante antes da janela de 24h da Meta fechar — depois disso só um modelo aprovado reabre a conversa"><i class="fa-solid fa-clock"></i> ${horas}h${String(minutos).padStart(2, '0')} restantes</div>`;
+    return `<div class="wpp-timer-janela ${classe}" data-ultima-msg="${escapeHTML(conversa.ultima_mensagem_em)}" title="Tempo restante antes da janela de 24h da Meta fechar — depois disso só um modelo aprovado reabre a conversa"><i class="fa-solid fa-clock"></i> ${horas}h${String(minutos).padStart(2, '0')} restantes</div>`;
 }
 
 // Pin/fixar e arquivar (pedido do usuário, 2026-09-30: "igual no whatsapp
@@ -4781,7 +4883,7 @@ async function alternarFixarConversaWpp(leadId, estavaFixado) {
         .from(typeof NOME_TABELA !== 'undefined' ? NOME_TABELA : 'leads_inscricoes')
         .update({ wpp_fixado: novoValor })
         .eq('pessoaIdentificador', leadId);
-    if (error) { alert('Erro ao ' + (novoValor ? 'fixar' : 'desafixar') + ': ' + error.message); return; }
+    if (error) { avisar('Erro ao ' + (novoValor ? 'fixar' : 'desafixar') + ': ' + error.message); return; }
     const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
     if (lead) lead.wpp_fixado = novoValor;
     const searchEl = document.getElementById('wppSearch');
@@ -4794,7 +4896,7 @@ async function alternarArquivarConversaWpp(leadId, estavaArquivado) {
         .from(typeof NOME_TABELA !== 'undefined' ? NOME_TABELA : 'leads_inscricoes')
         .update({ wpp_arquivado: novoValor })
         .eq('pessoaIdentificador', leadId);
-    if (error) { alert('Erro ao ' + (novoValor ? 'arquivar' : 'desarquivar') + ': ' + error.message); return; }
+    if (error) { avisar('Erro ao ' + (novoValor ? 'arquivar' : 'desarquivar') + ': ' + error.message); return; }
     const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
     if (lead) lead.wpp_arquivado = novoValor;
     const searchEl = document.getElementById('wppSearch');
@@ -4847,7 +4949,7 @@ function abrirMenuSilenciarWpp(botaoEl, leadId, jaSilenciado) {
                 .from(typeof NOME_TABELA !== 'undefined' ? NOME_TABELA : 'leads_inscricoes')
                 .update({ wpp_silenciado_ate: novoValor })
                 .eq('pessoaIdentificador', leadId);
-            if (error) { alert('Erro: ' + error.message); return; }
+            if (error) { avisar('Erro: ' + error.message); return; }
             const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(leadId));
             if (lead) lead.wpp_silenciado_ate = novoValor;
             const searchEl = document.getElementById('wppSearch');
@@ -5008,10 +5110,10 @@ async function enviarTextoNaoIdentificado(telefone) {
     input.disabled = false;
     input.focus();
 
-    if (error) { alert('Erro ao enviar mensagem: ' + error.message); input.value = texto; return; }
+    if (error) { avisar('Erro ao enviar mensagem: ' + error.message); input.value = texto; return; }
     if (!data.ok) {
         console.error('Erro ao enviar mensagem (não identificado):', data.detalhe || data.erro);
-        alert('Não foi possível enviar: ' + mensagemErroWpp(data));
+        avisar('Não foi possível enviar: ' + mensagemErroWpp(data));
         return;
     }
     await carregarERenderizarChatNaoIdentificado(telefone);
@@ -5031,7 +5133,7 @@ async function vincularConversaNaoIdentificadaPorId(telefone, pessoaIdentificado
         .update({ pessoaIdentificador, filial: lead ? lead.filial : null })
         .eq('telefone_whatsapp', telefone)
         .is('pessoaIdentificador', null);
-    if (error) { alert('Erro ao vincular: ' + error.message); return; }
+    if (error) { avisar('Erro ao vincular: ' + error.message); return; }
     wppTelefoneNaoIdentAtivo = null;
     if (wppCanalNaoIdent) { window.supabaseClient.removeChannel(wppCanalNaoIdent); wppCanalNaoIdent = null; }
     abrirChatWpp(pessoaIdentificador);
@@ -5146,7 +5248,7 @@ async function cadastrarContatoWppEConvidar(nome, telefoneDigits, filial, botaoE
                 filial: filial || (typeof filialAtual !== 'undefined' ? filialAtual : ''),
             };
             const { error } = await window.supabaseClient.from('leads_inscricoes').insert(registro);
-            if (error) { alert('Erro ao cadastrar o contato: ' + error.message); if (botaoEl) { botaoEl.disabled = false; botaoEl.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Cadastrar e Convidar'; } return; }
+            if (error) { avisar('Erro ao cadastrar o contato: ' + error.message); if (botaoEl) { botaoEl.disabled = false; botaoEl.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Cadastrar e Convidar'; } return; }
 
             if (typeof leadsAtuais !== 'undefined') leadsAtuais = [...leadsAtuais, registro];
             if (typeof registrarLogAtividade === 'function') registrarLogAtividade('criar_lead_manual', { pessoaIds: [leadId], detalhes: { nome, origem: 'contato_whatsapp_compartilhado' } });
@@ -5164,7 +5266,7 @@ async function cadastrarContatoWppEConvidar(nome, telefoneDigits, filial, botaoE
         // sem querer um evento de outra unidade.
         const filialLead = filial || (typeof filialAtual !== 'undefined' ? filialAtual : '');
         if (typeof filialAtual !== 'undefined' && filialLead && filialLead !== filialAtual) {
-            alert(`Atenção: esta pessoa é da filial "${filialLead}", mas a tela está mostrando eventos de "${filialAtual}" (a filial selecionada no topo). No próximo passo, confira se o evento escolhido é mesmo de "${filialLead}" antes de gerar o link.`);
+            avisar(`Atenção: esta pessoa é da filial "${filialLead}", mas a tela está mostrando eventos de "${filialAtual}" (a filial selecionada no topo). No próximo passo, confira se o evento escolhido é mesmo de "${filialLead}" antes de gerar o link.`);
         }
         if (typeof iniciarConvitesWhatsAppEmMassa === 'function') await iniciarConvitesWhatsAppEmMassa();
     } finally {
@@ -5180,7 +5282,7 @@ async function cadastrarContatoWppEConvidar(nome, telefoneDigits, filial, botaoE
 // Brasil, DDI 55 — mesma suposição já usada no resto do projeto pra
 // número de WhatsApp).
 function salvarContatoWppComoLead(nome, telefoneDigits) {
-    if (typeof abrirNovoLeadManual !== 'function') { alert('Função de Novo Lead não disponível nesta tela.'); return; }
+    if (typeof abrirNovoLeadManual !== 'function') { avisar('Função de Novo Lead não disponível nesta tela.'); return; }
     abrirNovoLeadManual();
     document.getElementById('novoLeadManualNome').value = nome || '';
     let resto = telefoneDigits || '';
@@ -5276,7 +5378,7 @@ async function salvarLembreteWpp(leadId, data, nota) {
     if (typeof renderizarCards === 'function') renderizarCards();
 
     const { error } = await window.supabaseClient.from('leads_inscricoes').update({ lembrete_em: data, lembrete_nota: nota }).eq('pessoaIdentificador', leadId);
-    if (error) { alert('Erro ao salvar lembrete: ' + error.message); return; }
+    if (error) { avisar('Erro ao salvar lembrete: ' + error.message); return; }
     if (typeof registrarLogAtividade === 'function') {
         registrarLogAtividade('lembrete_salvo', { pessoaIds: [String(leadId)], detalhes: { data, nota, origem: 'whatsapp_unificado' } });
     }
@@ -5292,7 +5394,7 @@ async function excluirLeadWpp(leadId) {
     if (!confirm(`Mover "${nome}" pra lixeira? Fica lá por 30 dias (dá pra restaurar até lá) e depois é apagado definitivamente.`)) return;
 
     const { error } = await window.supabaseClient.from('leads_inscricoes').update({ lixeira_em: new Date().toISOString() }).eq('pessoaIdentificador', leadId);
-    if (error) { alert('Erro ao mover pra lixeira: ' + error.message); return; }
+    if (error) { avisar('Erro ao mover pra lixeira: ' + error.message); return; }
 
     leadsAtuais = leadsAtuais.filter(l => String(l.pessoaIdentificador) !== String(leadId));
     if (typeof registrarLogAtividade === 'function') {
@@ -5360,11 +5462,11 @@ async function confirmarNumeroErradoWpp(leadId) {
                 .is('lixeira_em', null)
                 .limit(10);
             if (erroBusca) {
-                alert('Erro ao buscar: ' + erroBusca.message);
+                avisar('Erro ao buscar: ' + erroBusca.message);
             } else if (!candidatos || candidatos.length === 0) {
-                alert('Nenhum lead encontrado com esse nome — a conversa vai pra "Não Identificados".');
+                avisar('Nenhum lead encontrado com esse nome — a conversa vai pra "Não Identificados".');
             } else if (candidatos.length > 1) {
-                alert(`Encontrei ${candidatos.length} leads com esse nome — seja mais específico da próxima vez:\n` +
+                avisar(`Encontrei ${candidatos.length} leads com esse nome — seja mais específico da próxima vez:\n` +
                     candidatos.map(c => `${c.pessoaNome} (${c.filial || 'sem filial'})`).join('\n') +
                     `\n\nA conversa vai pra "Não Identificados" por enquanto.`);
             } else {
@@ -5384,7 +5486,7 @@ async function confirmarNumeroErradoWpp(leadId) {
         .from(nomeTabela)
         .update({ pessoaTelefoneDDD: '', pessoaTelefoneNumero: '', tags: tagsJson })
         .eq('pessoaIdentificador', leadId);
-    if (erroLead) { alert('Erro ao limpar telefone: ' + erroLead.message); return; }
+    if (erroLead) { avisar('Erro ao limpar telefone: ' + erroLead.message); return; }
 
     let mensagemFinal;
     if (novoLead) {
@@ -5392,7 +5494,7 @@ async function confirmarNumeroErradoWpp(leadId) {
             .from('mensagens_whatsapp')
             .update({ pessoaIdentificador: novoLead.pessoaIdentificador, filial: novoLead.filial })
             .eq('pessoaIdentificador', leadId);
-        if (erroReatrib) alert('Telefone removido, mas não consegui reatribuir a conversa: ' + erroReatrib.message);
+        if (erroReatrib) avisar('Telefone removido, mas não consegui reatribuir a conversa: ' + erroReatrib.message);
 
         // Se a pessoa certa ainda não tem telefone cadastrado, já grava
         // este número nela — assim as PRÓXIMAS mensagens dela casam
@@ -5417,7 +5519,7 @@ async function confirmarNumeroErradoWpp(leadId) {
             .from('mensagens_whatsapp')
             .update({ pessoaIdentificador: null, filial: null })
             .eq('pessoaIdentificador', leadId);
-        if (erroMsgs) alert('Telefone removido, mas não consegui desvincular a conversa: ' + erroMsgs.message);
+        if (erroMsgs) avisar('Telefone removido, mas não consegui desvincular a conversa: ' + erroMsgs.message);
         if (typeof registrarLogAtividade === 'function') {
             registrarLogAtividade('whatsapp_numero_errado', { pessoaIds: [String(leadId)], detalhes: { telefoneRemovido: telefoneAtual || null } });
         }
@@ -5459,7 +5561,7 @@ async function confirmarNumeroErradoWpp(leadId) {
     const searchEl = document.getElementById('wppSearch');
     if (typeof renderizarContatosWpp === 'function') renderizarContatosWpp(searchEl ? searchEl.value : '');
 
-    alert(mensagemFinal);
+    avisar(mensagemFinal);
 }
 
 async function alternarSugestaoIaLead(leadId, valor) {
@@ -5467,7 +5569,7 @@ async function alternarSugestaoIaLead(leadId, valor) {
     const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(leadId));
     if (leadIndex !== -1) leadsAtuais[leadIndex].ia_sugestao_resposta = novoValor;
     const { error } = await window.supabaseClient.from('leads_inscricoes').update({ ia_sugestao_resposta: novoValor }).eq('pessoaIdentificador', leadId);
-    if (error) alert('Erro ao salvar: ' + error.message);
+    if (error) avisar('Erro ao salvar: ' + error.message);
 }
 
 // ==========================================================
@@ -5519,7 +5621,7 @@ async function carregarSugestaoIaWpp(leadId) {
             <div style="font-size:11px; font-weight:600; color:#92400e; margin-bottom:4px;"><i class="fa-solid fa-clock"></i> A IA detectou uma data de retorno — criar lembrete?</div>
             <div style="font-size:12px; margin-bottom:6px;"><strong>${formatarDataBRWpp(data.lembrete_sugerido_data)}</strong> — ${escapeHTML(data.lembrete_sugerido_motivo || '')}</div>
             <div style="display:flex; gap:6px;">
-                <button class="btn-primary" style="font-size:11px; padding:4px 10px;" onclick="aplicarLembreteSugeridoWpp(${data.id}, '${leadId}', '${data.lembrete_sugerido_data}', '${escapeHTML(data.lembrete_sugerido_motivo || '').replace(/'/g, "\\'")}')"><i class="fa-solid fa-check"></i> Criar Lembrete</button>
+                <button class="btn-primary" style="font-size:11px; padding:4px 10px;" onclick="aplicarLembreteSugeridoWpp(${data.id}, '${leadId}', ${argJs(data.lembrete_sugerido_data)}, ${argJs(data.lembrete_sugerido_motivo || '')})"><i class="fa-solid fa-check"></i> Criar Lembrete</button>
                 <button class="btn-secondary" style="font-size:11px; padding:4px 10px;" onclick="ignorarLembreteSugeridoWpp(${data.id}, '${leadId}')">Ignorar</button>
             </div>
         </div>` : ''}
@@ -5565,7 +5667,7 @@ async function enviarSugestaoIaWpp(id, leadId) {
         body: { pessoaIdentificador: leadId, tipo: 'texto', texto, atendenteNome: obterNomeAtendente(), rascunhoAgente: {tipo: 'geral', id} }
     });
     if (error || !data || data.ok === false) {
-        alert('Não foi possível enviar: ' + (error ? error.message : mensagemErroWpp(data)));
+        avisar('Não foi possível enviar: ' + (error ? error.message : mensagemErroWpp(data)));
         return;
     }
 
@@ -5599,9 +5701,9 @@ async function confirmarNovaTagWpp(leadId) {
     if (leadIndex === -1) return;
     let tagsArray = parseTags(leadsAtuais[leadIndex].tags).map(t => t.trim()).filter(Boolean);
 
-    if (tagsArray.includes(novaTagText)) { alert('Esse lead já tem essa tag.'); return; }
+    if (tagsArray.includes(novaTagText)) { avisar('Esse lead já tem essa tag.'); return; }
     if (typeof TAG_LEAD_MANUAL !== 'undefined' && novaTagText === TAG_LEAD_MANUAL) {
-        alert('A tag "CRM" só é aplicada automaticamente ao criar um lead pelo botão "Novo Lead" — não dá pra adicionar à mão.');
+        avisar('A tag "CRM" só é aplicada automaticamente ao criar um lead pelo botão "Novo Lead" — não dá pra adicionar à mão.');
         return;
     }
     // Mesma regra de exclusão mútua já usada na gaveta (confirmarNovaTag(), js/app.js).
@@ -5629,7 +5731,7 @@ async function removerTagWpp(leadId, index) {
     let tagsArray = parseTags(leadsAtuais[leadIndex].tags);
     const tagRemovida = tagsArray[index];
     if (typeof TAG_LEAD_MANUAL !== 'undefined' && tagRemovida === TAG_LEAD_MANUAL) {
-        alert('A tag "CRM" é permanente — só some se o lead inteiro for apagado.');
+        avisar('A tag "CRM" é permanente — só some se o lead inteiro for apagado.');
         return;
     }
 
@@ -5853,7 +5955,9 @@ async function renderizarContatosWpp(filtro = '') {
         </div>`;
         html += naoIdentUnicos.map(htmlContatoNaoIdentificadoWpp).join('');
     }
+    const rolagem = lista.scrollTop;
     lista.innerHTML = html;
+    lista.scrollTop = rolagem;
 }
 
 function filtrarContatosWpp(valor) {
@@ -5942,7 +6046,7 @@ async function abrirChatWpp(leadId) {
             </div>
             <button class="icon-btn" title="Consultar mensalidade de todas as filiais" onclick="abrirMensalidadesFiliaisWpp('${leadId}')"><i class="fa-solid fa-sack-dollar"></i></button>
             <button class="icon-btn" title="Buscar nesta conversa" onclick="chatWpp.toggleBuscaConversa()"><i class="fa-solid fa-magnifying-glass"></i></button>
-            <button class="icon-btn" title="Exportar conversa (.txt) — auditoria/LGPD" onclick="exportarConversaWppTxt('${leadId}', '${escapeHTML(lead.pessoaNome || 'lead').replace(/'/g, '')}')"><i class="fa-solid fa-file-export"></i></button>
+            <button class="icon-btn" title="Exportar conversa (.txt) — auditoria/LGPD" onclick="exportarConversaWppTxt('${leadId}', ${argJs(lead.pessoaNome || 'lead')})"><i class="fa-solid fa-file-export"></i></button>
             <button class="icon-btn" title="Esse WhatsApp não é desta pessoa (telefone errado)" onclick="confirmarNumeroErradoWpp('${leadId}')"><i class="fa-solid fa-user-slash"></i></button>
             <button class="btn-toggle" style="font-size:10px;" title="Abre a ficha completa do lead (eventos, tags, resumo, lembrete, histórico, etc.)" onclick="abrirFichaCompletaDoWpp('${leadId}')"><i class="fa-solid fa-address-card"></i> Ficha completa</button>
         `;
@@ -5973,10 +6077,10 @@ async function vincularConversaNaoIdentificada(telefoneWhatsapp) {
         .ilike('pessoaNome', `%${termo}%`)
         .is('lixeira_em', null)
         .limit(10);
-    if (erroBusca) { alert('Erro ao buscar: ' + erroBusca.message); return; }
-    if (!candidatos || candidatos.length === 0) { alert('Nenhum lead encontrado com esse nome.'); return; }
+    if (erroBusca) { avisar('Erro ao buscar: ' + erroBusca.message); return; }
+    if (!candidatos || candidatos.length === 0) { avisar('Nenhum lead encontrado com esse nome.'); return; }
     if (candidatos.length > 1) {
-        alert(`Encontrei ${candidatos.length} leads com esse nome — seja mais específico:\n` +
+        avisar(`Encontrei ${candidatos.length} leads com esse nome — seja mais específico:\n` +
             candidatos.map(c => `${c.pessoaNome} (${c.filial || 'sem filial'})`).join('\n'));
         return;
     }
@@ -5987,7 +6091,7 @@ async function vincularConversaNaoIdentificada(telefoneWhatsapp) {
         .update({ pessoaIdentificador: lead.pessoaIdentificador, filial: lead.filial })
         .eq('telefone_whatsapp', telefoneWhatsapp)
         .is('pessoaIdentificador', null);
-    if (error) { alert('Erro ao vincular: ' + error.message); return; }
+    if (error) { avisar('Erro ao vincular: ' + error.message); return; }
 
     wppTelefoneNaoIdentAtivo = null;
     if (wppCanalNaoIdent) { window.supabaseClient.removeChannel(wppCanalNaoIdent); wppCanalNaoIdent = null; }
@@ -6002,8 +6106,9 @@ async function vincularConversaNaoIdentificada(telefoneWhatsapp) {
 // Unificado estiver aberta na tela.
 setInterval(() => {
     const tab = document.getElementById('tab-whatsapp');
-    if (tab && tab.classList.contains('active')) {
-        const searchEl = document.getElementById('wppSearch');
-        renderizarContatosWpp(searchEl ? searchEl.value : '');
-    }
+    if (!tab || !tab.classList.contains('active')) return;
+    document.querySelectorAll('#wppContactList .wpp-timer-janela[data-ultima-msg]').forEach(el => {
+        const novo = htmlTimerJanelaWpp({ ultima_direcao: 'entrada', ultima_mensagem_em: el.getAttribute('data-ultima-msg') });
+        if (novo && el.outerHTML !== novo) el.outerHTML = novo;
+    });
 }, 60 * 1000);

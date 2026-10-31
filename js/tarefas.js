@@ -61,7 +61,7 @@ async function atualizarNomeEquipe(id, novoNome) {
     novoNome = novoNome.trim();
     if (!novoNome) return;
     const { error } = await window.supabaseClient.from('equipes').update({ nome: novoNome }).eq('id', id);
-    if (error) { alert('Erro ao renomear equipe: ' + error.message); return; }
+    if (error) { avisar('Erro ao renomear equipe: ' + error.message); return; }
     const eq = equipesTarefasCache.find(e => e.id === id);
     if (eq) eq.nome = novoNome;
 }
@@ -71,7 +71,7 @@ async function adicionarEquipe() {
     const nome = input.value.trim();
     if (!nome) return;
     const { error } = await window.supabaseClient.from('equipes').insert({ nome, ordem: equipesTarefasCache.length });
-    if (error) { alert('Erro ao criar equipe: ' + error.message); return; }
+    if (error) { avisar('Erro ao criar equipe: ' + error.message); return; }
     input.value = '';
     await carregarEquipesTarefas();
     renderizarListaEquipesModal();
@@ -82,7 +82,7 @@ async function removerEquipe(id) {
     if (!eq) return;
     if (!confirm(`Remover a equipe "${eq.nome}"? Usuários e tarefas atribuídos a ela ficam sem equipe (nada é apagado).`)) return;
     const { error } = await window.supabaseClient.from('equipes').delete().eq('id', id);
-    if (error) { alert('Erro ao remover equipe: ' + error.message); return; }
+    if (error) { avisar('Erro ao remover equipe: ' + error.message); return; }
     await carregarEquipesTarefas();
     renderizarListaEquipesModal();
 }
@@ -158,7 +158,7 @@ function renderizarListaTarefas() {
         container.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Nenhuma tarefa por aqui ainda — clique em "Nova Tarefa" pra criar a primeira.</p>';
         return;
     }
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
     container.innerHTML = tarefasCache.map(t => {
         const leads = tarefaLeadsPorTarefa[t.id] || [];
         const total = leads.length;
@@ -239,7 +239,7 @@ async function alternarConclusaoTarefaLead(tarefaId, pessoaIdentificador, novoVa
     const { error } = await window.supabaseClient.from('tarefa_leads')
         .update({ concluida: novoValor, concluida_em: agora, concluida_via: novoValor ? 'manual' : null })
         .eq('tarefa_id', tarefaId).eq('pessoaIdentificador', String(pessoaIdentificador));
-    if (error) { alert('Erro ao salvar: ' + error.message); return; }
+    if (error) { avisar('Erro ao salvar: ' + error.message); return; }
 
     const itemModal = tarefaLeadsSelecionados.find(l => String(l.pessoaIdentificador) === String(pessoaIdentificador));
     if (itemModal) { itemModal.concluida = novoValor; itemModal.concluida_em = agora; }
@@ -389,7 +389,7 @@ function buscarLeadParaTarefa(termo) {
         if (filtrados.length === 0) { resultsEl.innerHTML = '<p style="font-size:11px; color:var(--text-muted);">Nenhum lead novo encontrado.</p>'; return; }
 
         resultsEl.innerHTML = filtrados.map(r => `
-            <div class="info-box" style="cursor:pointer; margin-bottom:4px; padding:6px 8px;" onclick="adicionarLeadNaTarefa('${r.pessoaIdentificador}', '${escapeHTML(r.pessoaNome).replace(/'/g, "\\'")}')">
+            <div class="info-box" style="cursor:pointer; margin-bottom:4px; padding:6px 8px;" onclick="adicionarLeadNaTarefa('${r.pessoaIdentificador}', ${argJs(r.pessoaNome)})">
                 <i class="fa-solid fa-user-plus"></i> ${escapeHTML(r.pessoaNome)} <span style="color:var(--text-muted); font-size:11px;">(${escapeHTML(r.filial)})</span>
             </div>
         `).join('');
@@ -431,7 +431,7 @@ function renderizarListaLeadsTarefaModal() {
 // ---------------------------------------------------------
 async function salvarTarefa() {
     const titulo = document.getElementById('tarefaTitulo').value.trim();
-    if (!titulo) { alert('Digite um título pra tarefa.'); return; }
+    if (!titulo) { avisar('Digite um título pra tarefa.'); return; }
 
     const tipoResponsavel = document.querySelector('input[name="tarefaTipoResponsavel"]:checked')?.value;
     const usuario = typeof usuarioLogado === 'function' ? usuarioLogado() : null;
@@ -451,10 +451,10 @@ async function salvarTarefa() {
     let tarefaId = tarefaEditandoId;
     if (tarefaId) {
         const { error } = await window.supabaseClient.from('tarefas').update(payload).eq('id', tarefaId);
-        if (error) { alert('Erro ao salvar tarefa: ' + error.message); return; }
+        if (error) { avisar('Erro ao salvar tarefa: ' + error.message); return; }
     } else {
         const { data, error } = await window.supabaseClient.from('tarefas').insert(payload).select('id').single();
-        if (error) { alert('Erro ao criar tarefa: ' + error.message); return; }
+        if (error) { avisar('Erro ao criar tarefa: ' + error.message); return; }
         tarefaId = data.id;
     }
 
@@ -465,7 +465,7 @@ async function salvarTarefa() {
         const { error: erroLeads } = await window.supabaseClient.from('tarefa_leads').insert(
             novos.map(l => ({ tarefa_id: tarefaId, pessoaIdentificador: String(l.pessoaIdentificador) }))
         );
-        if (erroLeads) alert('Tarefa salva, mas houve erro ao vincular algum(ns) lead(s): ' + erroLeads.message);
+        if (erroLeads) avisar('Tarefa salva, mas houve erro ao vincular algum(ns) lead(s): ' + erroLeads.message);
     }
 
     fecharModalTarefa();
@@ -476,7 +476,7 @@ async function cancelarTarefaAtual() {
     if (!tarefaEditandoId) return;
     if (!confirm('Cancelar esta tarefa? Ela some da lista (fica marcada como cancelada no banco, não é apagada).')) return;
     const { error } = await window.supabaseClient.from('tarefas').update({ cancelada: true }).eq('id', tarefaEditandoId);
-    if (error) { alert('Erro ao cancelar tarefa: ' + error.message); return; }
+    if (error) { avisar('Erro ao cancelar tarefa: ' + error.message); return; }
     fecharModalTarefa();
     await carregarTarefas();
 }
@@ -623,13 +623,13 @@ function _sinaisContatoIA(lead) {
 }
 
 async function gerarRecomendacoesContatoIA() {
-    if (typeof filialAtual === 'undefined' || !filialAtual) { alert('Escolha uma filial primeiro.'); return; }
+    if (typeof filialAtual === 'undefined' || !filialAtual) { avisar('Escolha uma filial primeiro.'); return; }
     const btn = document.getElementById('btnRecomendacoesContatoIA');
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Analisando leads...'; }
     try {
         const candidatos = await _obterCandidatosContatoIA(filialAtual);
         if (candidatos.length === 0) {
-            alert(`Nenhuma inscrição em abertura futura ou retorno registrado vencido/para hoje em "${filialAtual}".`);
+            avisar(`Nenhuma inscrição em abertura futura ou retorno registrado vencido/para hoje em "${filialAtual}".`);
             return;
         }
 
@@ -641,7 +641,7 @@ async function gerarRecomendacoesContatoIA() {
 
         const { data, error } = await window.supabaseClient.functions.invoke('ia-recomendar-contatos', { body: { leads: leadsParaIA } });
         if (error || !data || data.ok === false) {
-            alert('Falha ao gerar recomendações com IA: ' + (error?.message || data?.erro || 'erro desconhecido'));
+            avisar('Falha ao gerar recomendações com IA: ' + (error?.message || data?.erro || 'erro desconhecido'));
             return;
         }
 
@@ -687,7 +687,7 @@ async function gerarRecomendacoesContatoIA() {
         }));
         renderizarListaLeadsTarefaModal();
     } catch (e) {
-        alert('Erro inesperado ao gerar recomendações: ' + (e.message || e));
+        avisar('Erro inesperado ao gerar recomendações: ' + (e.message || e));
     } finally {
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Recomendações de Contato (IA)'; }
     }

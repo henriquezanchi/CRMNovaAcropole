@@ -161,5 +161,5 @@ async function abrirAtendimentoEtapaFunil(pessoa, botao) {
         document.getElementById('funilLeadsDialogo').close();
         switchModule('tab-crm','Atendimento','Acolhimento e acompanhamento dos interessados');
         await abrirAcompanhamentoDaFila(pessoa.pessoa);
-    } catch (e) { alert(e.message); } finally { botao.disabled = false; }
+    } catch (e) { avisar(e.message); } finally { botao.disabled = false; }
 }

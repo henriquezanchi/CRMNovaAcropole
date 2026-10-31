@@ -44,6 +44,7 @@
 // Chamada por pg_cron a cada 15 min (migracao_agendamento_reengajamento_janela.sql).
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin, NOME_TABELA_LEADS } from "../_shared/supabaseAdmin.ts";
+import { alterarTags } from "../_shared/tags.ts";
 import { buscarExemplosEstilo } from "../_shared/exemplosEstilo.ts";
 import { buscarListaFiliais, linkMapsDaFilial } from "../_shared/filiaisInfo.ts";
 import { montarTabelaDiasSemana, adicionarMeses } from "../_shared/calendario.ts";
@@ -76,16 +77,7 @@ const ROTULO_TAG_CONVERSA: Record<string, string> = {
 };
 
 async function aplicarTagConversa(pessoaIdentificador: string, tagNova: string) {
-    const { data: lead } = await supabaseAdmin.from(NOME_TABELA_LEADS).select("tags").eq("pessoaIdentificador", pessoaIdentificador).maybeSingle();
-    if (!lead) return;
-    let tags: string[] = [];
-    try {
-        const parsed = JSON.parse(lead.tags || "[]");
-        if (Array.isArray(parsed)) tags = parsed;
-    } catch { /* tags malformada — trata como vazia, nunca trava */ }
-    tags = tags.filter((t) => !String(t).startsWith("Conversa: "));
-    tags.push(tagNova);
-    await supabaseAdmin.from(NOME_TABELA_LEADS).update({ tags: JSON.stringify(tags) }).eq("pessoaIdentificador", pessoaIdentificador);
+    await alterarTags(pessoaIdentificador, { removerPrefixos: ["Conversa: "], adicionar: [tagNova] });
 }
 
 function json(body: unknown, status = 200) {
@@ -435,22 +427,63 @@ Deno.serve(async (req) => {
     }
 
     let processadas = 0;
+    // Orçamento de tempo: a Edge Function morre perto de 150s. Parar antes
+    // garante que nenhuma mensagem fique "enviada sem registro".
+    const prazoRodada = Date.now() + 110_000;
     for (const item of candidatas as Candidata[]) {
+        if (Date.now() > prazoRodada) break;
         const { texto: contextoConversa, ultimaDoLeadIlegivel } = await montarContextoCompleto(item.pessoaIdentificador);
         // Áudio ainda não transcrito (ou foto sem legenda) na última mensagem do
         // lead: o robô não sabe o que a pessoa disse. Não responde às cegas;
         // tenta de novo na próxima rodada (a transcrição roda a cada 2 min).
         if (ultimaDoLeadIlegivel) continue;
+
+        // RESERVA ANTES DE ENVIAR. Antes, o envio acontecia primeiro e o
+        // registro (reengajamento_em) só no fim — se a rodada estourasse o
+        // tempo, ou duas rodadas se sobrepusessem, a mesma mensagem saía de
+        // novo 15 min depois, sem revisão humana. Agora a mensagem é
+        // reivindicada no banco ANTES da IA e do envio; quem não consegue a
+        // reserva pula. A linha nova nasce 'descartada' (fica fora da tela de
+        // revisão e da fila) até o resultado final ser gravado.
+        let idReserva: number | null = null;
+        let reservaCriadaAgora = false;
+        const { data: existente } = await supabaseAdmin
+            .from("sugestoes_resposta_wpp")
+            .select("id")
+            .eq("mensagem_origem_id", item.mensagem_id)
+            .maybeSingle();
+        if (existente) {
+            const { data: reservadas } = await supabaseAdmin.from("sugestoes_resposta_wpp")
+                .update({ reengajamento_em: new Date().toISOString() })
+                .eq("id", existente.id).eq("status", "pendente").is("reengajamento_em", null)
+                .select("id");
+            if (!reservadas || reservadas.length !== 1) continue;
+            idReserva = existente.id;
+        } else {
+            const { data: nova, error: erroReserva } = await supabaseAdmin.from("sugestoes_resposta_wpp").insert({
+                pessoaIdentificador: item.pessoaIdentificador,
+                mensagem_origem_id: item.mensagem_id,
+                reengajamento_em: new Date().toISOString(),
+                status: "descartada",
+            }).select("id").single();
+            // unique(mensagem_origem_id): outra rodada (ou sugerir-resposta)
+            // chegou antes — pula sem duplicar.
+            if (erroReserva || !nova) continue;
+            idReserva = nova.id;
+            reservaCriadaAgora = true;
+        }
+
         const contextoCRM = await montarContextoCRM(item.pessoaIdentificador, item.filial, contextoConversa, hojeISO);
         const resultado = await retomarUma(contextoCRM, contextoConversa, exemplos, hojeISO);
 
-        // Falha TÉCNICA (rede, rate limit, JSON malformado) — nunca marca
-        // reengajamento_em, pra essa mensagem continuar candidata na
-        // próxima rodada do cron (15 min). Só "sem confiança pra
-        // responder" (sugestao: null, sem erro) conta como "já tentamos,
-        // não forçar de novo" — mesmo princípio de sugerir-resposta-whatsapp.
+        // Falha TÉCNICA (rede, rate limit, JSON malformado) — devolve a
+        // reserva, pra essa mensagem continuar candidata na próxima rodada.
+        // Só "sem confiança pra responder" (sugestao: null, sem erro) conta
+        // como "já tentamos, não forçar de novo".
         if (resultado.erro) {
             console.warn("Reengajamento não gerado (erro técnico, vai tentar de novo na próxima rodada):", resultado.erro);
+            if (reservaCriadaAgora) await supabaseAdmin.from("sugestoes_resposta_wpp").delete().eq("id", idReserva);
+            else await supabaseAdmin.from("sugestoes_resposta_wpp").update({ reengajamento_em: null }).eq("id", idReserva);
             continue;
         }
         aplicarLembretePadraoObjecaoSemPrazo(resultado, hojeISO);
@@ -497,40 +530,13 @@ Deno.serve(async (req) => {
             }
         }
 
-        // Já existe uma sugestão 'pendente' pra essa mensagem (criada
-        // antes por sugerir-resposta-whatsapp, no gatilho de 2h) — a RPC
-        // só traz essas como candidatas (status='pendente', ver
-        // migracao_rpc_candidatas_reengajamento_janela.sql), então
-        // ATUALIZA em vez de duplicar. Sem linha nenhuma ainda, cria.
-        const { data: existente } = await supabaseAdmin
-            .from("sugestoes_resposta_wpp")
-            .select("id")
-            .eq("mensagem_origem_id", item.mensagem_id)
-            .maybeSingle();
-
-        if (existente) {
-            await supabaseAdmin.from("sugestoes_resposta_wpp").update({
-                sugestao_resposta: resultado.sugestao,
-                lembrete_sugerido_data: resultado.lembreteData,
-                lembrete_sugerido_motivo: resultado.lembreteMotivo,
-                reengajamento_em: new Date().toISOString(),
-                status: statusFinal,
-            }).eq("id", existente.id);
-        } else {
-            const { error: erroInsert } = await supabaseAdmin.from("sugestoes_resposta_wpp").insert({
-                pessoaIdentificador: item.pessoaIdentificador,
-                mensagem_origem_id: item.mensagem_id,
-                sugestao_resposta: resultado.sugestao,
-                lembrete_sugerido_data: resultado.lembreteData,
-                lembrete_sugerido_motivo: resultado.lembreteMotivo,
-                reengajamento_em: new Date().toISOString(),
-                status: statusFinal,
-            });
-            // unique(mensagem_origem_id) — corrida com outra execução do
-            // cron (ou com sugerir-resposta-whatsapp inserindo ao mesmo
-            // tempo) falha o insert (23505) e segue, sem duplicar.
-            if (erroInsert) { console.warn("Não gravou reengajamento (provável corrida):", erroInsert.message); continue; }
-        }
+        // Grava o resultado final na linha já reservada.
+        await supabaseAdmin.from("sugestoes_resposta_wpp").update({
+            sugestao_resposta: resultado.sugestao,
+            lembrete_sugerido_data: resultado.lembreteData,
+            lembrete_sugerido_motivo: resultado.lembreteMotivo,
+            status: statusFinal,
+        }).eq("id", idReserva);
         processadas++;
 
         if (resultado.tagSugerida) {

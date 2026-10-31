@@ -472,7 +472,7 @@ function selecionarLeadManualMatricula(i, pessoaId) {
 // quanto pela ação "Vincular e Matricular" de uma sugestão no relatório
 // final (aceitarSugestaoRelatorioMatricula()).
 async function aplicarLinhaMatricula(l) {
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
 
     if (l.leadExistente) {
         const payload = {
@@ -647,7 +647,7 @@ async function aceitarSugestaoRelatorioMatricula(i) {
 
     item.linha.leadExistente = item.sugestao.lead;
     const { error } = await aplicarLinhaMatricula(item.linha);
-    if (error) { alert('Erro ao vincular: ' + error.message); return; }
+    if (error) { avisar('Erro ao vincular: ' + error.message); return; }
 
     relatorioSucessoMatricula.push(item.linha);
     relatorioNaoLocalizadas.splice(i, 1);

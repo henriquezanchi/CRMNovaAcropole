@@ -10,7 +10,7 @@ function lerPaineisSessao() {
 }
 function abrirPaineisFiliais() {
     const usuario = typeof usuarioLogado === 'function' ? usuarioLogado() : null;
-    if (!usuario) { alert('Entre no CRM para configurar seus atalhos.'); return; }
+    if (!usuario) { avisar('Entre no CRM para configurar seus atalhos.'); return; }
     const dialogo = document.getElementById('dialogoPaineisFiliais');
     document.getElementById('painelFilialNome').textContent = filialAtual || 'Selecione a filial no topo do CRM';
     const salvos = lerPaineisSessao();

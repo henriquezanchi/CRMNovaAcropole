@@ -126,6 +126,19 @@ async function sincronizarFilial(pma: any, filial: { id: number; nome: string; u
         `SELECT cad_matr, cad_nome, cad_nivel, cad_tur_unidade, cad_turma, cad_ingresso, cad_reingresso, cad_recuperado, cad_midia_ingresso, cad_cel_ddd, cad_cel_fone, cad_res_ddd, cad_res_fone, cad_email, cad_nascimento, cad_res_cidade, cad_res_uf FROM cadastro WHERE cad_unidade='${U}' AND cad_situacao='ATI'`, "cadastro");
     const inativosBrutos = await pma.consultar(
         `SELECT cad_matr, cad_nome, cad_nivel, cad_baixa, cad_cod_baixa, cad_motivo_baixa, cad_cel_ddd, cad_cel_fone, cad_res_ddd, cad_res_fone, cad_email FROM cadastro WHERE cad_unidade='${U}' AND cad_situacao='INA'`, "cadastro");
+    // Trava de segurança: uma leitura vazia (ou muito menor que a anterior)
+    // quase sempre é falha/manutenção do lado do Mercúrio, não uma saída em
+    // massa de alunos. Sem esta trava, a rodada marcaria todos como inativos,
+    // apagaria as fichas, zeraria os membros (Fixo) e tiraria a etiqueta Ativo
+    // de todo mundo. Aborta a filial ANTES de qualquer gravação.
+    {
+        const { count: ativosAntes } = await supabaseAdmin.from("mercurio_alunos")
+            .select("matricula", { count: "exact", head: true }).eq("unidade", U).eq("ativo", true);
+        const antes = ativosAntes ?? 0;
+        if (antes >= 10 && alunosBrutos.length < antes * 0.5) {
+            throw new Error(`Leitura do Mercúrio suspeita: ${alunosBrutos.length} ativo(s) agora contra ${antes} na rodada anterior. Nada foi gravado nesta filial.`);
+        }
+    }
     const motivosBrutos = await pma.consultar("SELECT smb_cod, smb_descricao FROM sig_motivo_baixa", "sig_motivo_baixa");
     const descricaoMotivo = new Map(motivosBrutos.map((m: any) => [String(m.smb_cod), String(m.smb_descricao || "").trim()]));
     const fichasBrutas = await pma.consultar(

@@ -106,7 +106,7 @@ async function renderizarCiclosTurma() {
                             <input type="date" value="${c.inicio}" onchange="salvarCampoCiclo(${c.id}, 'inicio', this.value)" style="padding:3px 6px; border:1px solid #cbd5e1; border-radius:4px;">
                             <span class="conc-aluno-meta">até</span>
                             <input type="date" value="${c.fim}" onchange="salvarCampoCiclo(${c.id}, 'fim', this.value)" style="padding:3px 6px; border:1px solid #cbd5e1; border-radius:4px;">
-                            <button class="icon-btn danger" title="Remover ciclo" onclick="removerCiclo(${c.id}, '${escapeHTML(c.nome).replace(/'/g, "\\'")}')"><i class="fa-solid fa-trash"></i></button>
+                            <button class="icon-btn danger" title="Remover ciclo" onclick="removerCiclo(${c.id}, ${argJs(c.nome)})"><i class="fa-solid fa-trash"></i></button>
                         </div>
                         <div class="conc-aluno-meta">${dentro(c).length ? dentro(c).map(t => `${escapeHTML(t.turma)} (${escapeHTML(t.nivel)}, abriu ${dataBRCob(t.inicio)})`).join(' · ') : 'nenhuma turma do programa branco abriu neste período'}</div>
                     </div>`).join('')}
@@ -128,25 +128,25 @@ async function adicionarCiclo(filialId) {
     const nome = document.getElementById(`cicloNovoNome-${filialId}`).value.trim();
     const inicio = document.getElementById(`cicloNovoInicio-${filialId}`).value;
     const fim = document.getElementById(`cicloNovoFim-${filialId}`).value;
-    if (!f || !nome || !inicio || !fim) { alert('Preencha nome, início e fim do ciclo.'); return; }
-    if (fim < inicio) { alert('O fim do ciclo não pode ser antes do início.'); return; }
+    if (!f || !nome || !inicio || !fim) { avisar('Preencha nome, início e fim do ciclo.'); return; }
+    if (fim < inicio) { avisar('O fim do ciclo não pode ser antes do início.'); return; }
     const { error } = await window.supabaseClient.from('ciclos_turma').insert({ filial: f.nome, nome, inicio, fim, criado_por: autorCob() });
-    if (error) { alert('Erro ao salvar o ciclo: ' + error.message); return; }
+    if (error) { avisar('Erro ao salvar o ciclo: ' + error.message); return; }
     if (typeof registrarLogAtividade === 'function') registrarLogAtividade('ciclo_turma_criado', { filial: f.nome, detalhes: { nome, inicio, fim } });
     renderizarCiclosTurma();
 }
 
 async function salvarCampoCiclo(id, campo, valor) {
-    if (!valor) { alert('O campo não pode ficar vazio.'); renderizarCiclosTurma(); return; }
+    if (!valor) { avisar('O campo não pode ficar vazio.'); renderizarCiclosTurma(); return; }
     const { error } = await window.supabaseClient.from('ciclos_turma').update({ [campo]: valor }).eq('id', id);
-    if (error) alert('Erro ao salvar: ' + error.message);
+    if (error) avisar('Erro ao salvar: ' + error.message);
     renderizarCiclosTurma();
 }
 
 async function removerCiclo(id, nome) {
     if (!confirm(`Remover o ciclo "${nome}"? Cobranças já fechadas não mudam.`)) return;
     const { error } = await window.supabaseClient.from('ciclos_turma').delete().eq('id', id);
-    if (error) { alert('Erro ao remover: ' + error.message); return; }
+    if (error) { avisar('Erro ao remover: ' + error.message); return; }
     renderizarCiclosTurma();
 }
 
@@ -171,7 +171,7 @@ async function carregarCobrancasMes(mes) {
 }
 
 function htmlItemCobranca(i, fechada) {
-    const clicavel = i.pessoa_identificador ? `<a href="#" onclick="event.preventDefault(); abrirResultadoBuscaGlobal('${escapeHTML(i.pessoa_identificador)}')"><strong>${escapeHTML(i.nome || '(sem nome)')}</strong></a>` : `<strong>${escapeHTML(i.nome || '(sem nome)')}</strong>`;
+    const clicavel = i.pessoa_identificador ? `<a href="#" onclick="event.preventDefault(); abrirResultadoBuscaGlobal(${argJs(i.pessoa_identificador)})"><strong>${escapeHTML(i.nome || '(sem nome)')}</strong></a>` : `<strong>${escapeHTML(i.nome || '(sem nome)')}</strong>`;
     const selos = [
         i.recuperado ? '<span class="tag tag-recuperado" style="font-size:9px;">Reingresso</span>' : '',
         i.ativo === false ? '<span class="tag tag-exaluno" style="font-size:9px;" title="Já não aparece como ativo no Mercúrio">Saiu</span>' : '',
@@ -282,10 +282,10 @@ async function gerarPreviaCobranca(botao) {
         const { data, error } = await window.supabaseClient.functions.invoke('cobranca-mensal', { body: { forcar: true, semAviso: true } });
         if (error) throw error;
         const problemas = (data?.resultados || []).filter(r => r.erro || r.pulada || r.erroCalculo).map(r => `${r.filial}: ${r.erro || r.pulada || r.erroCalculo}`);
-        if (problemas.length) alert(problemas.join('\n'));
+        if (problemas.length) avisar(problemas.join('\n'));
         mesSelecionadoCobranca = data?.mes || mesSelecionadoCobranca;
     } catch (e) {
-        alert('Erro ao gerar a prévia: ' + (e.message || e));
+        avisar('Erro ao gerar a prévia: ' + (e.message || e));
     } finally {
         botao.disabled = false; botao.innerHTML = original;
         renderizarCobrancaMensal();
@@ -314,7 +314,7 @@ async function alternarItemCobranca(itemId, cobrancaId, incluir) {
     }
     const { error } = await window.supabaseClient.from('cobranca_itens')
         .update({ incluido: incluir, motivo_exclusao: incluir ? null : (motivo.trim() || null) }).eq('id', itemId);
-    if (error) { alert('Erro: ' + error.message); return; }
+    if (error) { avisar('Erro: ' + error.message); return; }
     await recalcularTotaisCobranca(cobrancaId);
     if (typeof registrarLogAtividade === 'function') registrarLogAtividade('cobranca_item_alterado', { detalhes: { itemId, cobrancaId, incluir, motivo } });
     renderizarCobrancaMensal();
@@ -325,10 +325,10 @@ async function fecharCobrancaMes() {
     if (!mes) return;
     let cobrancas;
     try { cobrancas = await carregarCobrancasMes(mes); }
-    catch (e) { alert('Não foi possível conferir a cobrança antes do fechamento: ' + e.message); return; }
+    catch (e) { avisar('Não foi possível conferir a cobrança antes do fechamento: ' + e.message); return; }
     const pendentes = cobrancas.filter(c => c.status === 'rascunho').map(c => ({ filial: c.filial, motivo: motivoPendenciaCobranca(c) })).filter(c => c.motivo);
     if (pendentes.length) {
-        alert(`Não é possível fechar a cobrança enquanto houver cálculo pendente:\n${pendentes.map(c => `• ${c.filial}: ${c.motivo}`).join('\n')}`);
+        avisar(`Não é possível fechar a cobrança enquanto houver cálculo pendente:\n${pendentes.map(c => `• ${c.filial}: ${c.motivo}`).join('\n')}`);
         renderizarCobrancaMensal();
         return;
     }
@@ -336,16 +336,17 @@ async function fecharCobrancaMes() {
     const { error } = await window.supabaseClient.from('cobrancas_mensais')
         .update({ status: 'fechada', fechado_em: new Date().toISOString(), fechado_por: autorCob() })
         .eq('mes', mes).eq('status', 'rascunho');
-    if (error) { alert('Erro ao fechar: ' + error.message); return; }
+    if (error) { avisar('Erro ao fechar: ' + error.message); return; }
     if (typeof registrarLogAtividade === 'function') registrarLogAtividade('cobranca_fechada', { filial: 'GLOBAL', detalhes: { mes } });
     renderizarCobrancaMensal();
 }
 
 async function exportarCobrancaMensalExcel() {
-    if (typeof XLSX === 'undefined') { alert('A biblioteca de Excel ainda não carregou. Tente de novo em alguns segundos.'); return; }
+    try { await garantirBiblioteca('xlsx'); } catch (e) { avisar(e.message); return; }
+    if (typeof XLSX === 'undefined') { avisar('A biblioteca de Excel ainda não carregou. Tente de novo em alguns segundos.'); return; }
     const mes = mesSelecionadoCobranca;
     let cobrancas;
-    try { cobrancas = await carregarCobrancasMes(mes); } catch (e) { alert('Erro: ' + e.message); return; }
+    try { cobrancas = await carregarCobrancasMes(mes); } catch (e) { avisar('Erro: ' + e.message); return; }
     const MOEDA = '"R$" #,##0.00';
     const wb = XLSX.utils.book_new();
     const resumo = [['Filial', 'Ciclos', 'Membros', 'Fixo (R$4,96 por membro/mês)', 'Matrículas', 'Mensalidade', 'Comissão (30%)', 'Total a cobrar', 'Status']];

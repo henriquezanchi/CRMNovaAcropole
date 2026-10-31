@@ -31,7 +31,7 @@ Deno.serve(async (req) => {
         return json({ ok: false, erro: "CREDENCIAIS_SCRAPER_CHAVE não configurada — rode: supabase secrets set CREDENCIAIS_SCRAPER_CHAVE=<uma-senha-forte-qualquer>" }, 500);
     }
 
-    let corpo: { sistema?: string; filial?: string; usuario?: string; senha?: string };
+    let corpo: { sistema?: string; filial?: string; usuario?: string; senha?: string; adminNome?: string; adminSenha?: string };
     try {
         corpo = await req.json();
     } catch {
@@ -40,6 +40,24 @@ Deno.serve(async (req) => {
 
     const { sistema, usuario, senha } = corpo;
     let filial = corpo.filial;
+
+    // Só um ADMINISTRADOR do CRM pode trocar senhas do cofre. A chave pública
+    // do navegador sozinha não basta (antes, qualquer um com ela trocava a
+    // senha do Mercúrio/Ulisses e sabotava as sincronizações). A senha do
+    // admin vem em texto e é conferida aqui pelo hash; ter só o hash, que é
+    // legível no banco, não permite passar por esta checagem.
+    const tokenRecebido = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+    const ehServidor = tokenRecebido !== "" && tokenRecebido === Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!ehServidor) {
+        const adminNome = String(corpo.adminNome || "").trim();
+        const adminSenha = String(corpo.adminSenha || "");
+        if (!adminNome || !adminSenha) return json({ ok: false, erro: "Informe sua senha de administrador do CRM para salvar." }, 200);
+        const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(adminSenha))))
+            .map((x) => x.toString(16).padStart(2, "0")).join("");
+        const { data: admin } = await supabaseAdmin.from("usuarios_crm")
+            .select("id").eq("nome", adminNome).eq("senha_hash", hash).eq("eh_admin", true).eq("ativo", true).maybeSingle();
+        if (!admin) return json({ ok: false, erro: "Senha de administrador incorreta (ou usuário sem permissão de admin)." }, 200);
+    }
 
     // "crm_acesso" foi adicionado depois (migracao_credenciais_scraper_crm_acesso.sql
     // alargou a constraint no banco), mas essa checagem aqui nunca tinha

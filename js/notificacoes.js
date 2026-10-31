@@ -182,7 +182,7 @@ let lembretesJaNotificadosHoje = new Set(); // chave "pessoaId:data" — zera so
 async function verificarNotificacoesLembretes() {
     if (!filialAtual || typeof window.supabaseClient === 'undefined') return;
 
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
     const { data, error } = await window.supabaseClient
         .from(NOME_TABELA)
         .select('pessoaIdentificador, pessoaNome, lembrete_em')
@@ -342,7 +342,9 @@ function mostrarPopupWhatsApp({ chave, titulo, mensagem, aoClicar }) {
             else existente.popup.querySelector('.wpp-popup-toast-corpo').insertAdjacentHTML('beforeend', `<div class="wpp-popup-toast-contador">${existente.contador} mensagens novas</div>`);
         }
         existente.popup.onclickHandler = aoClicar; // sempre abre a conversa com a última mensagem recebida
-        existente.timer = setTimeout(() => remover(chaveFinal), 8000);
+        // `remover` desta chamada ainda não existe aqui (é declarado mais abaixo,
+        // e este ramo sai antes): usa a função guardada no próprio popup.
+        existente.timer = setTimeout(() => existente.remover(chaveFinal), 8000);
         return;
     }
 
@@ -369,7 +371,7 @@ function mostrarPopupWhatsApp({ chave, titulo, mensagem, aoClicar }) {
     });
     container.appendChild(popup);
     const timer = setTimeout(() => remover(chaveFinal), 8000);
-    if (chaveFinal) toastsWppAtivosPorContato.set(chaveFinal, { popup, timer, contador: 1 });
+    if (chaveFinal) toastsWppAtivosPorContato.set(chaveFinal, { popup, timer, contador: 1, remover });
 }
 
 // ==========================================

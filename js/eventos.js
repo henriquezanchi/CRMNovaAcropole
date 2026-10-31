@@ -284,23 +284,23 @@ async function atualizarNomeTipoEvento(id, novoNome) {
     novoNome = novoNome.trim();
     if (!novoNome) return;
     const { error } = await window.supabaseClient.from(NOME_TABELA_TIPOS_EVENTO).update({ nome: novoNome }).eq('id', id);
-    if (error) { alert('Erro ao renomear tipo: ' + error.message); return; }
+    if (error) { avisar('Erro ao renomear tipo: ' + error.message); return; }
     renderizarListaTiposEventoModal();
 }
 
 async function atualizarTrilhaTipoEvento(id, novaTrilha) {
     const { error } = await window.supabaseClient.from(NOME_TABELA_TIPOS_EVENTO).update({ trilha: novaTrilha || null }).eq('id', id);
-    if (error) { alert('Erro ao salvar trilha: ' + error.message); return; }
+    if (error) { avisar('Erro ao salvar trilha: ' + error.message); return; }
 }
 
 async function atualizarPalavrasChaveTipoEvento(id, novasPalavras) {
     const { error } = await window.supabaseClient.from(NOME_TABELA_TIPOS_EVENTO).update({ palavras_chave: novasPalavras.trim() || null }).eq('id', id);
-    if (error) { alert('Erro ao salvar palavras-chave: ' + error.message); return; }
+    if (error) { avisar('Erro ao salvar palavras-chave: ' + error.message); return; }
 }
 
 async function atualizarArtigoTipoEvento(id, novoArtigo) {
     const { error } = await window.supabaseClient.from(NOME_TABELA_TIPOS_EVENTO).update({ artigo: novoArtigo || null }).eq('id', id);
-    if (error) { alert('Erro ao salvar artigo: ' + error.message); return; }
+    if (error) { avisar('Erro ao salvar artigo: ' + error.message); return; }
 }
 
 async function adicionarTipoEvento() {
@@ -314,14 +314,14 @@ async function adicionarTipoEvento() {
         .from(NOME_TABELA_TIPOS_EVENTO)
         .insert({ nome, ordem: proximaOrdem });
 
-    if (error) { alert('Erro ao adicionar tipo: ' + error.message); return; }
+    if (error) { avisar('Erro ao adicionar tipo: ' + error.message); return; }
     input.value = '';
     renderizarListaTiposEventoModal();
 }
 
 async function removerTipoEvento(id) {
     const { error } = await window.supabaseClient.from(NOME_TABELA_TIPOS_EVENTO).delete().eq('id', id);
-    if (error) { alert('Erro ao remover tipo: ' + error.message); return; }
+    if (error) { avisar('Erro ao remover tipo: ' + error.message); return; }
     renderizarListaTiposEventoModal();
 }
 
@@ -351,7 +351,7 @@ function renderizarListaEventos() {
     const container = document.getElementById('agendaLista');
     if (!container) return;
 
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
     // Futuros: cronológico normal (o mais próximo primeiro — é "o que vem
     // a seguir"). Passados: ORDEM INVERTIDA (o mais recente primeiro,
     // descendo pros mais antigos) — pedido explícito do usuário; do jeito
@@ -596,7 +596,7 @@ async function salvarEvento() {
     const ingresso = document.getElementById('eventoIngressoInput').value.trim() || null;
     const linkInscricao = document.getElementById('eventoLinkInscricaoInput').value.trim() || null;
 
-    if (!nome) { alert('Digite o nome do evento.'); return; }
+    if (!nome) { avisar('Digite o nome do evento.'); return; }
 
     const multiFilial = !eventoEditandoId && document.getElementById('eventoMultiFilialCheck').checked;
 
@@ -608,8 +608,8 @@ async function salvarEvento() {
             capacidadeStr: row.querySelector('.evento-filial-capacidade').value,
         }));
 
-        if (linhas.length === 0) { alert('Marque ao menos uma filial.'); return; }
-        if (linhas.some(l => !l.data)) { alert('Preencha a data de cada filial marcada.'); return; }
+        if (linhas.length === 0) { avisar('Marque ao menos uma filial.'); return; }
+        if (linhas.some(l => !l.data)) { avisar('Preencha a data de cada filial marcada.'); return; }
 
         const participantesUnificados = document.getElementById('eventoParticipantesUnificadosCheck').checked;
         const grupoEventoId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `grp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -624,7 +624,7 @@ async function salvarEvento() {
         }));
 
         const { error } = await window.supabaseClient.from(NOME_TABELA_EVENTOS).insert(registros);
-        if (error) { alert('Erro ao salvar evento: ' + error.message); return; }
+        if (error) { avisar('Erro ao salvar evento: ' + error.message); return; }
 
         fecharFormEvento();
         carregarEventos();
@@ -637,8 +637,8 @@ async function salvarEvento() {
     const capacidade = capacidadeStr === '' ? null : Number(capacidadeStr);
     const dataLimiteInscricao = document.getElementById('eventoDataLimiteInput').value || null;
 
-    if (!data) { alert('Selecione a data do evento.'); return; }
-    if (dataLimiteInscricao && dataLimiteInscricao < data) { alert('A data limite de inscrição não pode ser antes da data do evento.'); return; }
+    if (!data) { avisar('Selecione a data do evento.'); return; }
+    if (dataLimiteInscricao && dataLimiteInscricao < data) { avisar('A data limite de inscrição não pode ser antes da data do evento.'); return; }
 
     const payload = { filial: filialAtual, nome, tipo, data, hora, ingresso, link_inscricao: linkInscricao, capacidade, data_limite_inscricao: dataLimiteInscricao, imagem_url: imagemUrl, descricao };
 
@@ -646,7 +646,7 @@ async function salvarEvento() {
         ? await window.supabaseClient.from(NOME_TABELA_EVENTOS).update(payload).eq('id', eventoEditandoId)
         : await window.supabaseClient.from(NOME_TABELA_EVENTOS).insert(payload);
 
-    if (error) { alert('Erro ao salvar evento: ' + error.message); return; }
+    if (error) { avisar('Erro ao salvar evento: ' + error.message); return; }
 
     fecharFormEvento();
     carregarEventos();
@@ -657,7 +657,7 @@ async function desativarEventoAtual() {
     if (!confirm('Desativar este evento? Ele sai da agenda, mas o histórico dos leads que já vieram nele não é alterado.')) return;
 
     const { error } = await window.supabaseClient.from(NOME_TABELA_EVENTOS).update({ ativo: false }).eq('id', eventoEditandoId);
-    if (error) { alert('Erro ao desativar evento: ' + error.message); return; }
+    if (error) { avisar('Erro ao desativar evento: ' + error.message); return; }
 
     fecharFormEvento();
     carregarEventos();
@@ -837,7 +837,7 @@ async function atualizarRespostaParticipante(id, valor) {
         .from(NOME_TABELA_EVENTO_LEADS)
         .update({ resposta_convite: valor, atualizado_em: new Date().toISOString() })
         .eq('id', id);
-    if (error) { alert('Não foi possível salvar a resposta. O valor anterior foi mantido.'); renderizarListaParticipantes(); return; }
+    if (error) { avisar('Não foi possível salvar a resposta. O valor anterior foi mantido.'); renderizarListaParticipantes(); return; }
     const p = participantesAtuais.find(x => x.id === id);
     if (p) p.resposta_convite = valor;
     renderizarListaParticipantes();
@@ -849,7 +849,7 @@ async function atualizarCompareceuParticipante(id, valor) {
         .from(NOME_TABELA_EVENTO_LEADS)
         .update({ compareceu, atualizado_em: new Date().toISOString() })
         .eq('id', id);
-    if (error) { alert('Não foi possível salvar a presença. O valor anterior foi mantido.'); renderizarListaParticipantes(); return; }
+    if (error) { avisar('Não foi possível salvar a presença. O valor anterior foi mantido.'); renderizarListaParticipantes(); return; }
 
     const p = participantesAtuais.find(x => x.id === id);
     if (p) p.compareceu = compareceu;
@@ -895,7 +895,7 @@ async function atualizarMatriculadoParticipante(id, valor) {
         .from(NOME_TABELA_EVENTO_LEADS)
         .update({ matriculado, atualizado_em: new Date().toISOString() })
         .eq('id', id);
-    if (error) { alert('Erro ao atualizar matrícula: ' + error.message); return; }
+    if (error) { avisar('Erro ao atualizar matrícula: ' + error.message); return; }
 
     const p = participantesAtuais.find(x => x.id === id);
     if (p) p.matriculado = matriculado;
@@ -922,13 +922,13 @@ async function efetivarMatriculasEmMassa(pessoaIds) {
     const validKeys = getColumnKeys();
     const matriculadosKey = validKeys.find(k => k.toLowerCase().includes('matriculad'));
     if (!matriculadosKey) {
-        alert('Nenhuma coluna com "Matriculados" no nome foi encontrada — crie ou renomeie uma coluna do Kanban pra isso antes de marcar matrícula por aqui.');
+        avisar('Nenhuma coluna com "Matriculados" no nome foi encontrada — crie ou renomeie uma coluna do Kanban pra isso antes de marcar matrícula por aqui.');
         return;
     }
 
     if (typeof moverLeadsParaColuna === 'function') moverLeadsParaColuna(pessoaIds, matriculadosKey);
 
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
     const semDataMatricula = pessoaIds.filter(id => {
         const lead = (typeof leadsAtuais !== 'undefined') ? leadsAtuais.find(l => String(l.pessoaIdentificador) === String(id)) : null;
         return !lead || !lead.data_matricula;
@@ -945,7 +945,7 @@ async function efetivarMatriculasEmMassa(pessoaIds) {
 async function removerParticipante(id) {
     if (!confirm('Remover este lead da lista de participantes do evento? Isso não apaga o lead, só o vínculo com o evento.')) return;
     const { error } = await window.supabaseClient.from(NOME_TABELA_EVENTO_LEADS).delete().eq('id', id);
-    if (error) { alert('Erro ao remover participante: ' + error.message); return; }
+    if (error) { avisar('Erro ao remover participante: ' + error.message); return; }
     participantesAtuais = participantesAtuais.filter(p => p.id !== id);
     participantesSelecionados.delete(id);
     renderizarListaParticipantes();
@@ -1018,7 +1018,7 @@ async function adicionarParticipante(pessoaId) {
         .from(NOME_TABELA_EVENTO_LEADS)
         .insert({ evento_id: eventoParticipantesId, "pessoaIdentificador": pessoaId, origem: 'crm' });
 
-    if (error) { alert('Erro ao adicionar participante: ' + error.message); return; }
+    if (error) { avisar('Erro ao adicionar participante: ' + error.message); return; }
 
     const buscaInput = document.getElementById('participantesBuscaInput');
     if (buscaInput) buscaInput.value = '';
@@ -1068,7 +1068,7 @@ async function aplicarRespostaEmMassaParticipantes() {
         .update({ resposta_convite: valor, atualizado_em: new Date().toISOString() })
         .in('id', ids);
 
-    if (error) { alert('Erro ao atualizar em massa: ' + error.message); return; }
+    if (error) { avisar('Erro ao atualizar em massa: ' + error.message); return; }
 
     participantesAtuais.forEach(p => { if (ids.includes(p.id)) p.resposta_convite = valor; });
     document.getElementById('participantesBulkResposta').value = '';
@@ -1086,7 +1086,7 @@ async function aplicarCompareceuEmMassaParticipantes() {
         .update({ compareceu, atualizado_em: new Date().toISOString() })
         .in('id', ids);
 
-    if (error) { alert('Erro ao atualizar em massa: ' + error.message); return; }
+    if (error) { avisar('Erro ao atualizar em massa: ' + error.message); return; }
 
     const pessoaIdsParaRecontato = [];
     participantesAtuais.forEach(p => {
@@ -1114,7 +1114,7 @@ async function aplicarMatriculadoEmMassaParticipantes() {
         .update({ matriculado, atualizado_em: new Date().toISOString() })
         .in('id', ids);
 
-    if (error) { alert('Erro ao atualizar em massa: ' + error.message); return; }
+    if (error) { avisar('Erro ao atualizar em massa: ' + error.message); return; }
 
     const pessoaIdsMatriculados = [];
     participantesAtuais.forEach(p => {
@@ -1138,7 +1138,7 @@ async function removerParticipantesEmMassa() {
     if (!confirm(`Remover ${ids.length} lead(s) da lista de participantes do evento? Isso não apaga nenhum lead, só o vínculo com o evento.`)) return;
 
     const { error } = await window.supabaseClient.from(NOME_TABELA_EVENTO_LEADS).delete().in('id', ids);
-    if (error) { alert('Erro ao remover em massa: ' + error.message); return; }
+    if (error) { avisar('Erro ao remover em massa: ' + error.message); return; }
 
     participantesAtuais = participantesAtuais.filter(p => !participantesSelecionados.has(p.id));
     participantesSelecionados = new Set();
@@ -1264,7 +1264,7 @@ function renderizarEventosDoLead() {
         return;
     }
 
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
     container.innerHTML = eventosDoLeadAtual.map(el => htmlItemEventoDoLead(el, hojeISO)).join('');
 }
 
@@ -1284,7 +1284,7 @@ function renderizarEventosAntigosDoLead() {
     }
     container.style.display = 'block';
 
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
     container.innerHTML = `
         <div class="info-label" style="margin-top:10px;"><i class="fa-solid fa-calendar-xmark"></i> Convites de Eventos Antigos</div>
         ${eventosAntigosDoLeadAtual.map(el => htmlItemEventoDoLead(el, hojeISO)).join('')}
@@ -1316,7 +1316,7 @@ async function alterarRespostaConviteNaGaveta(id, valor) {
         .from(NOME_TABELA_EVENTO_LEADS)
         .update({ resposta_convite: valor, atualizado_em: new Date().toISOString() })
         .eq('id', id);
-    if (error) { alert('Erro ao atualizar resposta: ' + error.message); return; }
+    if (error) { avisar('Erro ao atualizar resposta: ' + error.message); return; }
 
     // Pedido do usuário (2026-10-01): a lista agora é dividida em 2
     // gavetas (futuros+recentes / antigos) — o item editado pode estar
@@ -1332,7 +1332,7 @@ async function alterarRespostaConviteNaGaveta(id, valor) {
 async function removerEventoDoLeadNaGaveta(id) {
     if (!confirm('Remover o vínculo deste lead com o evento?')) return;
     const { error } = await window.supabaseClient.from(NOME_TABELA_EVENTO_LEADS).delete().eq('id', id);
-    if (error) { alert('Erro ao remover: ' + error.message); return; }
+    if (error) { avisar('Erro ao remover: ' + error.message); return; }
     eventosDoLeadAtual = eventosDoLeadAtual.filter(el => el.id !== id);
     eventosAntigosDoLeadAtual = eventosAntigosDoLeadAtual.filter(el => el.id !== id);
     renderizarEventosDoLead();
@@ -1360,7 +1360,7 @@ async function abrirFormConvidarEventoNaGaveta() {
     // ver dataEfetivaLimite()) — um "Abertura de Turma" com data limite de
     // inscrição preenchida continua aparecendo aqui até essa data, mesmo
     // que a data do evento em si já tenha passado.
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
     // Inclui eventosAntigosDoLeadAtual também (2026-10-01) — senão um
     // evento antigo (fora da lista principal agora, ver gaveta
     // "Histórico") deixaria de ser filtrado aqui, oferecendo "convidar"
@@ -1414,11 +1414,11 @@ let inscreverEventoIdSelecionado = null;
 async function abrirModalInscreverEvento() {
     if (!pessoaIdGavetaEventos) return;
     const lead = (typeof leadsAtuais !== 'undefined') ? leadsAtuais.find(l => String(l.pessoaIdentificador) === String(pessoaIdGavetaEventos)) : null;
-    if (!lead) { alert('Não achei os dados deste lead — reabra a gaveta e tente de novo.'); return; }
+    if (!lead) { avisar('Não achei os dados deste lead — reabra a gaveta e tente de novo.'); return; }
 
     if (typeof carregarEventos === 'function') await carregarEventos();
 
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    const hojeISO = hojeISOBrasilia();
     const select = document.getElementById('inscreverEventoSelect');
     // Mostra qualquer evento ainda ativo, mesmo já vinculado (origem='crm')
     // — é justamente o caso de uso principal: "upgradar" um convite nosso
@@ -1456,8 +1456,10 @@ function atualizarLinkInscreverEvento() {
     const aviso = document.getElementById('inscreverEventoSemLink');
     const eventoId = select ? Number(select.value) : null;
     const ev = eventoId ? eventosAtuais.find(e => e.id === eventoId) : null;
-    if (ev && ev.link_inscricao) {
-        link.href = ev.link_inscricao;
+    // Só aceita link http(s): um "javascript:" cadastrado na Agenda
+    // executaria código ao ser clicado.
+    if (ev && /^https?:\/\//i.test(String(ev.link_inscricao || '').trim())) {
+        link.href = ev.link_inscricao.trim();
         link.style.pointerEvents = '';
         link.style.opacity = '1';
         aviso.style.display = 'none';
@@ -1500,9 +1502,9 @@ async function copiarDadosInscreverEvento() {
     const texto = `Nome: ${nome}\nE-mail: ${email}\nTelefone: ${telefone}`;
     try {
         await navigator.clipboard.writeText(texto);
-        alert('Dados copiados — cole no formulário do site do evento.');
+        avisar('Dados copiados — cole no formulário do site do evento.');
     } catch {
-        alert('Não consegui copiar automaticamente. Dados pra colar à mão:\n\n' + texto);
+        avisar('Não consegui copiar automaticamente. Dados pra colar à mão:\n\n' + texto);
     }
 }
 
@@ -1523,7 +1525,7 @@ async function confirmarInscricaoManualEvento() {
         .from(NOME_TABELA_EVENTO_LEADS)
         .upsert({ evento_id: eventoId, "pessoaIdentificador": pessoaIdGavetaEventos, origem: 'ulisses', resposta_convite: 'confirmado', atualizado_em: new Date().toISOString() }, { onConflict: 'evento_id,pessoaIdentificador' });
 
-    if (error) { alert('Erro ao registrar a inscrição: ' + error.message); return; }
+    if (error) { avisar('Erro ao registrar a inscrição: ' + error.message); return; }
 
     if (typeof registrarLogAtividade === 'function') {
         registrarLogAtividade('inscricao_manual_ulisses', {
@@ -1550,7 +1552,7 @@ async function confirmarConvidarEventoNaGaveta() {
         .from(NOME_TABELA_EVENTO_LEADS)
         .insert({ evento_id: eventoId, "pessoaIdentificador": pessoaIdGavetaEventos, origem: 'crm' });
 
-    if (error) { alert('Erro ao convidar pro evento: ' + error.message); return; }
+    if (error) { avisar('Erro ao convidar pro evento: ' + error.message); return; }
 
     fecharFormConvidarEventoNaGaveta();
     await carregarEventosDoLead(pessoaIdGavetaEventos);

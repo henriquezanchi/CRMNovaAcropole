@@ -33,7 +33,7 @@ async function carregarAuditoriaBase(mais=false) {
    card.querySelector('[data-mesclar-auditoria]')?.addEventListener('click',()=>abrirModalMesclarManual([...card.querySelectorAll('input:checked')].map(c=>c.dataset.selecionarAuditoria)));
    card.querySelector('[data-descartar-auditoria]')?.addEventListener('click',async()=>{
     if(!confirm('Registrar que este grupo não deve ser mesclado? Nenhum cadastro será apagado.'))return;
-    const {error}=await window.supabaseClient.rpc('descartar_caso_auditoria',{p_id:caso.id,p_autor:(typeof usuarioLogado==='function'?usuarioLogado()?.nome:'')||'Equipe CRM'});if(error){alert(error.message);return;}carregarAuditoriaBase();
+    const {error}=await window.supabaseClient.rpc('descartar_caso_auditoria',{p_id:caso.id,p_autor:(typeof usuarioLogado==='function'?usuarioLogado()?.nome:'')||'Equipe CRM'});if(error){avisar(error.message);return;}carregarAuditoriaBase();
    });
    card.querySelectorAll('[data-abrir-auditoria]').forEach(b=>b.onclick=()=>abrirContatoDaAuditoria(leads[Number(b.dataset.abrirAuditoria)]));
   });

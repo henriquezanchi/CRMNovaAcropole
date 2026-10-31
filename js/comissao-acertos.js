@@ -94,7 +94,7 @@ function usarApuracaoAcerto(mes) {
     const filial = (typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : []).find(f => String(f.id) === String(filialAcertoSelecionada));
     const linha = relatorio?.mes === mes ? relatorio.resultados.find(r => r.nome === filial?.nome) : null;
     if (!linha || linha.comissao == null || linha.erroCalculo || linha.investigar > 0) {
-        alert('A prévia está pendente ou tem matrículas para investigar. Confira os dados antes de usá-la.'); return;
+        avisar('A prévia está pendente ou tem matrículas para investigar. Confira os dados antes de usá-la.'); return;
     }
     document.getElementById(`acerto-devido-${mes}`).value = (Math.round(linha.comissao * 100) / 100).toFixed(2);
     document.getElementById(`acerto-devido-${mes}`).dataset.origem = 'previa_mercurio';
@@ -117,7 +117,7 @@ async function salvarAcertoComissao(mes) {
         });
         if (error) throw error;
         await renderizarAcertosComissao();
-    } catch (e) { alert(e.message || String(e)); } finally { btn.disabled = false; }
+    } catch (e) { avisar(e.message || String(e)); } finally { btn.disabled = false; }
 }
 function exportarAcertosComissao() {
     const filial = (typeof filiaisDisponiveis !== 'undefined' ? filiaisDisponiveis : []).find(f => String(f.id) === String(filialAcertoSelecionada));

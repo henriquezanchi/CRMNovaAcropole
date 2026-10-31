@@ -7,11 +7,32 @@
     --na-green: #086357;
     --na-green-dark: #05433B;
     --na-gold: #FFCA00;
-    --bg-color: #f3f4f6;
+    /* Neutros levemente esverdeados: fundo mais claro, texto com bom
+       contraste (secundário ~5,5:1 sobre o fundo) e bordas mais suaves. */
+    --bg-color: #f6f8f7;
     --card-bg: #ffffff;
-    --text-dark: #1f2937;
-    --text-muted: #6b7280;
-    --border-color: #e5e7eb;
+    --text-dark: #1f2a27;
+    --text-muted: #5b6b66;
+    --border-color: #e3e9e6;
+    --superficie-suave: #f9fbfa;
+    --verde-suave: #eef5f3;
+    --cor-erro: #b42318;
+    --cor-erro-fundo: #fef3f2;
+    --cor-alerta: #b54708;
+    --cor-alerta-fundo: #fffaeb;
+    --cor-sucesso: #067647;
+    --cor-sucesso-fundo: #ecfdf3;
+    /* Espaçamento, cantos e sombras: uma escala só pra tudo ficar alinhado. */
+    --esp-1: 4px; --esp-2: 8px; --esp-3: 12px; --esp-4: 16px; --esp-5: 24px; --esp-6: 32px;
+    --raio-p: 6px; --raio: 10px; --raio-g: 14px;
+    --sombra-1: 0 1px 2px rgba(8, 99, 87, 0.05), 0 1px 3px rgba(8, 99, 87, 0.04);
+    --sombra-2: 0 4px 14px rgba(8, 99, 87, 0.08);
+    --sombra-3: 0 18px 44px rgba(16, 40, 36, 0.16);
+    --anel-foco: 0 0 0 3px rgba(8, 99, 87, 0.22);
+    /* Camadas: quem fica por cima de quem, em ordem. */
+    --z-tabela: 2; --z-topbar: 5; --z-sidebar: 10; --z-dropdown: 20; --z-barra-acoes: 40;
+    --z-overlay: 50; --z-menu: 60; --z-gaveta: 100; --z-modal: 110; --z-flutuante: 200;
+    --z-seletor: 3000; --z-seletor-painel: 3100; --z-avisos: 4000; --z-popup: 9999;
     --wpp-green: #d9fdd3;
     --wpp-dark: #166534;
 }
@@ -55,13 +76,19 @@ select:focus { border-color: var(--na-green); box-shadow: 0 0 0 2px rgba(0, 90, 
 select:hover { border-color: #94a3b8; }
 
 /* Sidebar */
-.sidebar { width: 70px; background: var(--na-green-dark); display: flex; flex-direction: column; align-items: center; padding: 20px 0; z-index: 10; }
-.sidebar-icon { color: rgba(255,255,255,0.6); font-size: 20px; margin-bottom: 30px; cursor: pointer; transition: 0.2s; position: relative; }
-.sidebar-icon:hover, .sidebar-icon.active { color: var(--na-gold); }
+.sidebar { width: 164px; flex-shrink: 0; background: var(--na-green-dark); display: flex; flex-direction: column; align-items: stretch; padding: 18px 10px; gap: 6px; z-index: var(--z-sidebar); }
+.sidebar-icon { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 10px; margin: 0; border: 0; background: transparent; text-align: left; border-radius: 8px; font-family: inherit; color: rgba(255,255,255,0.72); font-size: 20px; cursor: pointer; transition: 0.2s; position: relative; }
+.sidebar-icon i { font-size: 18px; width: 20px; text-align: center; }
+.sidebar-icon span { font-size: 13px; font-weight: 500; }
+.sidebar-icon:hover { color: white; }
+.sidebar-icon.active { background: rgba(255,255,255,.12); color: white; }
+.sidebar-icon:hover { background: rgba(255,255,255,.08); }
+.sidebar-icon:focus-visible { outline: 2px solid var(--na-gold); outline-offset: 2px; }
 
 /* Área Principal */
-.main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-.topbar { background: white; padding: 16px 24px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; z-index: 5; }
+.main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+.topbar { background: white; padding: 12px 18px; gap: 14px; flex-wrap: wrap; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; z-index: var(--z-topbar); }
+.topbar > div { min-width: 0; flex-wrap: wrap; }
 .topbar-logo { height: 42px; width: auto; object-fit: contain; }
 
 /* Filtros Kanban */
@@ -79,14 +106,14 @@ select:hover { border-color: #94a3b8; }
 .global-search-results {
     position: absolute; top: calc(100% + 4px); left: 0; width: 380px; max-height: 380px; overflow-y: auto;
     background: white; border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 6px 16px rgba(0,0,0,0.12);
-    z-index: 60; display: none;
+    z-index: var(--z-menu); display: none;
 }
 .global-search-results.open { display: block; }
 .global-search-result-item { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; cursor: pointer; font-size: 12px; }
 .global-search-result-item:last-child { border-bottom: none; }
 .global-search-result-item:hover { background: #f8fafc; }
 .global-search-result-name { font-weight: 600; }
-.global-search-result-meta { font-size: 10px; color: var(--text-muted); margin-top: 3px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.global-search-result-meta { font-size: 11px; color: var(--text-muted); margin-top: 3px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .global-search-result-coluna { background: #e2e8f0; color: var(--text-dark); padding: 1px 7px; border-radius: 10px; font-weight: 600; }
 .global-search-empty, .global-search-loading { padding: 14px; font-size: 11px; color: var(--text-muted); text-align: center; }
 
@@ -116,7 +143,7 @@ select:hover { border-color: #94a3b8; }
    abaixo do topbar e à direita da sidebar (nunca sobrepõe a caixa de
    digitar, que é sempre na parte de baixo) — zona sem nenhum elemento
    fixo concorrente. */
-#wppPopupContainer { position: fixed; top: 80px; left: 90px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; max-width: 320px; }
+#wppPopupContainer { position: fixed; top: 80px; left: 180px; z-index: var(--z-popup); display: flex; flex-direction: column; gap: 10px; max-width: 320px; }
 .wpp-popup-toast {
     background: white; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.18);
     padding: 12px 14px; cursor: pointer; border-left: 4px solid var(--na-green);
@@ -132,7 +159,7 @@ select:hover { border-color: #94a3b8; }
 /* "N mensagens novas" — aparece só quando o MESMO contato manda 2+
    mensagens enquanto o popup anterior ainda está na tela (ver
    mostrarPopupWhatsApp(), js/notificacoes.js). */
-.wpp-popup-toast-contador { font-size: 10.5px; font-weight: 700; color: var(--na-green-dark); margin-top: 2px; }
+.wpp-popup-toast-contador { font-size: 11px; font-weight: 700; color: var(--na-green-dark); margin-top: 2px; }
 /* Progresso de disparo em massa — flutuante, canto inferior direito,
    persiste mesmo com o modal do disparo fechado (ver atualizarProgressoEnvioMassa(),
    js/whatsapp.js) — nunca bloqueia o meio da tela. */
@@ -149,12 +176,12 @@ select:hover { border-color: #94a3b8; }
 .notificacoes-wrapper { position: relative; }
 .notificacoes-sino { position: relative; }
 .notificacoes-badge {
-    position: absolute; top: -6px; right: -6px; background: #dc2626; color: white; font-size: 9px; font-weight: 700;
+    position: absolute; top: -6px; right: -6px; background: #dc2626; color: white; font-size: 11px; font-weight: 700;
     min-width: 16px; height: 16px; border-radius: 8px; display: flex; align-items: center; justify-content: center; padding: 0 3px;
 }
 .notificacoes-painel {
     display: none; position: absolute; top: calc(100% + 8px); right: 0; width: 320px; max-height: 420px; overflow-y: auto;
-    background: white; border: 1px solid var(--border-color); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); z-index: 200;
+    background: white; border: 1px solid var(--border-color); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); z-index: var(--z-flutuante);
 }
 .notificacoes-painel.open { display: block; }
 .notificacoes-painel-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border-color); font-size: 12px; font-weight: 700; color: var(--na-green-dark); position: sticky; top: 0; background: white; }
@@ -169,7 +196,7 @@ select:hover { border-color: #94a3b8; }
 .notificacao-titulo { font-weight: 700; color: var(--text-dark); }
 .notificacao-contador { font-weight: 400; color: var(--text-muted); font-size: 11px; }
 .notificacao-mensagem { color: var(--text-muted); margin-top: 2px; overflow-wrap: break-word; }
-.notificacao-hora { font-size: 10px; color: #94a3b8; margin-top: 4px; }
+.notificacao-hora { font-size: 11px; color: #94a3b8; margin-top: 4px; }
 .notificacoes-vazio { padding: 20px 14px; font-size: 12px; color: var(--text-muted); text-align: center; }
 
 /* Botão de alternar (toggle) usado nos filtros avançados / gerenciar colunas */
@@ -214,7 +241,7 @@ select:hover { border-color: #94a3b8; }
     border-radius: 20px; padding: 6px 12px; font-size: 11px; font-weight: 600; color: var(--text-dark); cursor: pointer; transition: 0.2s; white-space: nowrap; flex-shrink: 0;
 }
 .coluna-recolhida-chip:hover { background: #f1f5f9; transform: translateY(-1px); }
-.coluna-recolhida-count { background: #e2e8f0; color: var(--text-muted); font-size: 10px; padding: 1px 6px; border-radius: 10px; }
+.coluna-recolhida-count { background: #e2e8f0; color: var(--text-muted); font-size: 11px; padding: 1px 6px; border-radius: 10px; }
 .coluna-recolhida-count.tem-leads { background: #fecaca; color: #991b1b; font-weight: 700; }
 
 /* O Kanban Board */
@@ -224,7 +251,7 @@ select:hover { border-color: #94a3b8; }
 .col-header-top { display: flex; justify-content: space-between; align-items: center; width: 100%; }
 .col-count { background: #e2e8f0; font-size: 11px; padding: 2px 8px; border-radius: 12px; color: var(--text-muted); }
 .col-select-all-btn {
-    background: none; border: none; color: var(--text-muted); font-size: 10px; font-weight: 600;
+    background: none; border: none; color: var(--text-muted); font-size: 11px; font-weight: 600;
     cursor: pointer; padding: 0; display: flex; align-items: center; gap: 5px; transition: 0.2s;
 }
 .col-select-all-btn:hover { color: var(--na-green); }
@@ -232,19 +259,19 @@ select:hover { border-color: #94a3b8; }
    resto dos controles do cabeçalho da coluna. */
 .col-ordenar-select {
     width: 100%; padding: 5px 24px 5px 8px; border: 1px solid #e2e8f0; border-radius: 8px;
-    font-size: 10px; font-weight: 600; color: var(--text-dark); background-color: #f8fafc;
+    font-size: 11px; font-weight: 600; color: var(--text-dark); background-color: #f8fafc;
     background-size: 9px; background-position: right 7px center;
     outline: none; cursor: pointer; transition: 0.2s;
 }
 .col-ordenar-select:focus { border-color: var(--na-green); background-color: white; }
 .col-import-matricula-btn {
-    background: #fffbeb; border: 1px dashed #fbbf24; color: #92400e; font-size: 10px; font-weight: 700;
+    background: #fffbeb; border: 1px dashed #fbbf24; color: #92400e; font-size: 11px; font-weight: 700;
     cursor: pointer; padding: 6px 8px; border-radius: 6px; display: flex; align-items: center; gap: 6px;
     justify-content: center; margin-bottom: 8px; transition: 0.2s; width: 100%;
 }
 .col-import-matricula-btn:hover { background: #fef3c7; border-color: #f59e0b; }
 .col-matricula-info {
-    background: #f8fafc; border: 1px dashed #cbd5e1; color: var(--text-muted); font-size: 10px; font-weight: 600;
+    background: #f8fafc; border: 1px dashed #cbd5e1; color: var(--text-muted); font-size: 11px; font-weight: 600;
     cursor: pointer; padding: 6px 8px; border-radius: 6px; display: flex; align-items: center; gap: 6px;
     justify-content: center; margin-bottom: 8px; transition: 0.2s; width: 100%;
 }
@@ -256,27 +283,27 @@ select:hover { border-color: #94a3b8; }
 
 /* Filtros Individuais por Coluna */
 .col-filter-wrapper { width: 100%; position: relative; }
-.col-filter-input { width: 100%; padding: 6px 24px 6px 10px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 10px; outline: none; background: #f8fafc; transition: 0.2s; font-weight: 400;}
+.col-filter-input { width: 100%; padding: 6px 24px 6px 10px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 11px; outline: none; background: #f8fafc; transition: 0.2s; font-weight: 400;}
 .col-filter-input:focus { border-color: var(--na-green); background: white; }
-.col-filter-wrapper i { position: absolute; right: 8px; top: 8px; color: #94a3b8; font-size: 10px; }
+.col-filter-wrapper i { position: absolute; right: 8px; top: 8px; color: #94a3b8; font-size: 11px; }
 
 /* Dropdown de Tags por Coluna */
 .col-tag-filter { position: relative; width: 100%; }
 .col-tag-btn {
     width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 6px;
-    padding: 6px 10px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 10px;
+    padding: 6px 10px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 11px;
     background: #f8fafc; cursor: pointer; color: var(--text-dark); font-weight: 500; transition: 0.2s;
 }
 .col-tag-btn:hover { border-color: var(--na-green); background: white; }
 .col-tag-badge {
-    background: var(--na-green); color: white; font-size: 9px; font-weight: 700;
+    background: var(--na-green); color: white; font-size: 11px; font-weight: 700;
     min-width: 14px; height: 14px; border-radius: 7px; display: inline-flex;
     align-items: center; justify-content: center; padding: 0 4px;
 }
 .col-tag-dropdown {
     position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: white;
     border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 6px 16px rgba(0,0,0,0.12);
-    max-height: 200px; overflow-y: auto; padding: 6px; z-index: 20; display: none;
+    max-height: 200px; overflow-y: auto; padding: 6px; z-index: var(--z-dropdown); display: none;
 }
 .col-tag-dropdown.open { display: block; }
 .col-tag-option {
@@ -290,20 +317,20 @@ select:hover { border-color: #94a3b8; }
 .col-filter-dropdown {
     position: absolute; top: calc(100% + 4px); left: 0; width: 320px; background: white;
     border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 6px 16px rgba(0,0,0,0.12);
-    max-height: 420px; overflow-y: auto; padding: 12px; z-index: 20; display: none;
+    max-height: 420px; overflow-y: auto; padding: 12px; z-index: var(--z-dropdown); display: none;
 }
 .col-filter-dropdown.open { display: block; }
 .col-filter-section { margin-bottom: 12px; }
 .col-filter-section:last-of-type { margin-bottom: 0; }
-.col-filter-section-title { font-size: 9px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px; }
+.col-filter-section-title { font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px; }
 .col-filter-chip-list { display: flex; flex-wrap: wrap; gap: 5px; }
-.col-filter-chip-list .chip { font-size: 10px; padding: 4px 8px; }
+.col-filter-chip-list .chip { font-size: 11px; padding: 4px 8px; }
 /* Lista de exclusão ("filter out") — chip ativo fica vermelho em vez de verde, pra não confundir com a lista de inclusão logo acima */
 .col-filter-exclude-list .chip.active { background: #dc2626; border-color: #dc2626; color: white; }
 /* Agrupamento das tags por família dentro do filtro de coluna (Sistema, Nível, Engajamento/SDR, Objeções, Interesses/Origem, Outras) */
 .tag-filter-grupo { margin-bottom: 10px; }
 .tag-filter-grupo:last-child { margin-bottom: 0; }
-.tag-filter-grupo-titulo { font-size: 8px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.tag-filter-grupo-titulo { font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
 .col-filter-dropdown input[type="text"], .col-filter-dropdown input[type="date"] {
     width: 100%; padding: 7px 9px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 11px; outline: none; background: white; box-sizing: border-box;
 }
@@ -321,7 +348,7 @@ select:hover { border-color: #94a3b8; }
 .evento-filial-hora { width: 90px; }
 .evento-filial-capacidade { width: 80px; }
 .col-filter-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 10px; border-top: 1px dashed var(--border-color); }
-.btn-mini { font-size: 10px; padding: 6px 10px; border-radius: 6px; font-weight: 600; cursor: pointer; transition: 0.2s; display: inline-flex; align-items: center; gap: 5px; }
+.btn-mini { font-size: 11px; padding: 6px 10px; border-radius: 6px; font-weight: 600; cursor: pointer; transition: 0.2s; display: inline-flex; align-items: center; gap: 5px; }
 .btn-secondary-mini { background: white; color: var(--text-dark); border: 1px solid #cbd5e1; }
 .btn-secondary-mini:hover { background: #f1f5f9; }
 .btn-primary-mini { background: var(--na-green); color: white; border: none; }
@@ -331,7 +358,7 @@ select:hover { border-color: #94a3b8; }
 .lead-card { position: relative; background: white; border: 1px solid var(--border-color); border-radius: 8px; padding: 14px; cursor: pointer; transition: 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
 .lead-select { position: absolute; top: 8px; right: 8px; cursor: pointer; z-index: 2; line-height: 0; }
 .lead-select input[type="checkbox"] { width: 15px; height: 15px; cursor: pointer; }
-.lead-card:hover { border-color: var(--na-gold); transform: translateY(-2px); box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+.lead-card:hover { border-color: #b9d6cf; transform: translateY(-1px); box-shadow: var(--sombra-2); }
 /* SLA de atendimento: lead frio (1ª coluna) sem contato há mais de
    SLA_HORAS_COLUNA_FRIA (js/app.js) — borda vermelha, bate o olho sem
    precisar abrir a ficha. */
@@ -345,13 +372,13 @@ select:hover { border-color: #94a3b8; }
 .lead-name { font-weight: 600; font-size: 13px; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center; }
 .lembrete-badge-icon { color: #f59e0b; font-size: 11px; margin-left: 6px; }
 .vinculo-badge-icon { color: #0891b2; font-size: 11px; margin-left: 6px; }
-.lead-source { font-size: 10px; color: var(--text-muted); margin-bottom: 10px; display: flex; align-items: center; gap: 4px; }
+.lead-source { font-size: 11px; color: var(--text-muted); margin-bottom: 10px; display: flex; align-items: center; gap: 4px; }
 .lead-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 
 /* Barra de ação em massa (selecionar + mover cards entre colunas) */
 .bulk-action-bar {
     position: fixed; left: 70px; right: 0; bottom: 0; background: var(--na-green-dark); color: white;
-    padding: 14px 24px; display: flex; align-items: center; gap: 14px; z-index: 40; flex-wrap: wrap;
+    padding: 14px 24px; display: flex; align-items: center; gap: 14px; z-index: var(--z-barra-acoes); flex-wrap: wrap;
     box-shadow: 0 -4px 16px rgba(0,0,0,0.15); font-size: 12px; font-weight: 600;
 }
 .bulk-action-bar select { padding: 8px 26px 8px 10px; border-radius: 8px; border: none; font-size: 12px; cursor: pointer; }
@@ -359,7 +386,7 @@ select:hover { border-color: #94a3b8; }
 .bulk-action-bar .btn-secondary:hover { background: rgba(255,255,255,0.25); }
 
 /* Etiquetas (Tags) */
-.tag { font-size: 9px; padding: 3px 6px; border-radius: 4px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;}
+.tag { font-size: 11px; padding: 3px 6px; border-radius: 4px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;}
 /* Botões do Filtro Rápido — mesma cor de família da tag (.tag + classeVisualTag), só maiores e clicáveis, pra reconhecer sem ler */
 .filtro-rapido-btn { font-size: 11px; padding: 6px 12px; border-radius: 14px; cursor: pointer; transition: 0.2s; }
 .filtro-rapido-btn:hover { filter: brightness(0.95); transform: translateY(-1px); box-shadow: 0 2px 4px rgba(0,0,0,0.08); }
@@ -382,7 +409,7 @@ select:hover { border-color: #94a3b8; }
    escondidos até o dia marcado (ver renderizarCards()/toggleSonecaColuna()) */
 .col-soneca-chip {
     align-items: center; gap: 5px; margin: 4px 0 0; padding: 3px 8px; border-radius: 20px;
-    background: #f1f5f9; color: var(--text-muted); border: 1px dashed #cbd5e1; font-size: 10px;
+    background: #f1f5f9; color: var(--text-muted); border: 1px dashed #cbd5e1; font-size: 11px;
     cursor: pointer; width: fit-content;
 }
 .col-soneca-chip:hover { background: #e2e8f0; }
@@ -423,21 +450,21 @@ select:hover { border-color: #94a3b8; }
 .drawer-tag-form input[type="text"]:focus { border-color: var(--na-green); }
 
 /* Gaveta Lateral e Overlay */
-.overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 50; display: none; }
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: var(--z-overlay); display: none; }
 .overlay.active { display: block; }
 /* max-width: 100vw evita que a gaveta (800px fixos) extrapole janelas
    mais estreitas que isso — sem isso, o painel de chat (que divide o
    espaço com .drawer-info, largura fixa de 350px) ficava cortado
    lateralmente, sem dar pra ver a conversa toda (bug real relatado pelo
    usuário, janela do navegador mais estreita que 800px). */
-.drawer { position: fixed; top: 0; right: -800px; width: 800px; max-width: 100vw; height: 100vh; background: white; box-shadow: -5px 0 25px rgba(0,0,0,0.1); display: flex; transition: right 0.3s ease; z-index: 100; }
+.drawer { position: fixed; top: 0; right: -800px; width: 800px; max-width: 100vw; height: 100vh; background: white; box-shadow: -5px 0 25px rgba(0,0,0,0.1); display: flex; transition: right 0.3s ease; z-index: var(--z-gaveta); }
 .drawer.open { right: 0; }
 .drawer-info { width: 350px; border-right: 1px solid var(--border-color); display: flex; flex-direction: column; background: #fdfdfd; padding: 20px;}
 
 /* Detalhes da Gaveta Interna */
 .drawer-header { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 20px; border-bottom: 1px solid var(--border-color); }
 .drawer-body { padding-top: 20px; overflow-y: auto; flex: 1; }
-.info-label { font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.5px; }
+.info-label { font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.5px; }
 .info-box { background: white; border: 1px solid var(--border-color); padding: 12px; border-radius: 8px; font-size: 12px; line-height: 1.5; }
 .drawer-contato-box { display: flex; flex-direction: column; gap: 8px; }
 .drawer-contato-tel { display: flex; gap: 6px; }
@@ -447,7 +474,7 @@ select:hover { border-color: #94a3b8; }
     padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 12px; outline: none; flex: 1; box-sizing: border-box;
 }
 .drawer-contato-box input:focus { border-color: var(--na-green); }
-.btn-add-tag { background: #f1f5f9; border: 1px dashed #cbd5e1; color: var(--text-muted); font-size: 9px; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-weight: 600; transition: 0.2s; }
+.btn-add-tag { background: #f1f5f9; border: 1px dashed #cbd5e1; color: var(--text-muted); font-size: 11px; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-weight: 600; transition: 0.2s; }
 .btn-add-tag:hover { background: #e2e8f0; color: var(--text-dark); border-color: var(--text-muted); }
 .tag-remove { cursor: pointer; opacity: 0.5; transition: 0.2s; margin-left: 4px; }
 .tag-remove:hover { opacity: 1; color: red; }
@@ -458,8 +485,8 @@ select:hover { border-color: #94a3b8; }
 .drawer-gaveta { margin-bottom: 10px; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; }
 .drawer-gaveta-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: #f8fafc; cursor: pointer; gap: 8px; }
 .drawer-gaveta-header:hover { background: #f1f5f9; }
-.drawer-gaveta-titulo { display: flex; align-items: center; gap: 8px; font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
-.drawer-gaveta-titulo i:first-child { font-size: 10px; width: 10px; color: var(--text-muted); }
+.drawer-gaveta-titulo { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.drawer-gaveta-titulo i:first-child { font-size: 11px; width: 10px; color: var(--text-muted); }
 .drawer-gaveta-body { padding: 12px; background: white; }
 .drawer-gaveta-body .info-box:not(:last-child) { margin-bottom: 10px; }
 
@@ -512,14 +539,14 @@ select:hover { border-color: #94a3b8; }
 .wpp-anexo-preview .remover { margin-left: auto; cursor: pointer; color: #991b1b; flex-shrink: 0; }
 
 /* Mensagens de WhatsApp — status de entrega e falha de envio */
-.msg-status { font-size: 9px; opacity: 0.7; margin-left: 2px; }
+.msg-status { font-size: 11px; opacity: 0.7; margin-left: 2px; }
 .msg-status-lido { color: #2563eb; opacity: 1; }
 .msg-falhou { background: #fef2f2 !important; border: 1px solid #fecaca; color: #991b1b; }
 .msg-status-falhou { color: #b91c1c; opacity: 1; }
 
 /* Seletor de template (janela de 24h fechada) */
 .wpp-template-picker { display: flex; flex-direction: column; gap: 8px; flex: 1; width: 100%; }
-.wpp-template-hint { font-size: 10px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+.wpp-template-hint { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
 .wpp-template-picker select, .wpp-template-picker input { padding: 8px 10px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 12px; background-color: white; }
 .wpp-template-picker select { padding-right: 28px; }
 .wpp-template-vars { display: flex; flex-direction: column; gap: 6px; }
@@ -564,7 +591,7 @@ select:hover { border-color: #94a3b8; }
 .calendario-evento-info { min-width: 0; }
 .calendario-evento-nome { font-weight: 600; }
 .calendario-evento-meta { color: var(--text-muted); font-size: 11px; margin-top: 1px; }
-.calendario-evento-tipo { font-size: 10px; font-weight: 400; color: var(--text-muted); }
+.calendario-evento-tipo { font-size: 11px; font-weight: 400; color: var(--text-muted); }
 .calendario-evento-peso0 { background: #f8fafc; }
 .calendario-evento-peso0 i { color: #94a3b8; }
 .calendario-evento-peso1 { background: #eff6ff; border-left: 3px solid #2563eb; }
@@ -581,7 +608,7 @@ select:hover { border-color: #94a3b8; }
 }
 .kpi-icon { width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 17px; flex-shrink: 0; }
 .kpi-value { font-size: 22px; font-weight: 700; color: var(--na-green-dark); line-height: 1.2; }
-.kpi-label { font-size: 10px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; margin-top: 2px; }
+.kpi-label { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; margin-top: 2px; }
 
 .activity-card { background: white; border: 1px solid var(--border-color); border-radius: 10px; padding: 18px; flex: 1; display: flex; flex-direction: column; min-height: 0; }
 
@@ -598,11 +625,11 @@ select:hover { border-color: #94a3b8; }
 .activity-item { display: flex; gap: 10px; padding: 10px 4px; border-bottom: 1px dashed var(--border-color); font-size: 12px; align-items: flex-start; }
 .activity-item:last-child { border-bottom: none; }
 .activity-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
-.activity-time { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+.activity-time { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 
 /* Destaque festivo (Matriculados/Recuperado) na Feed de Atividades */
 .activity-item-festiva { background: linear-gradient(90deg, #fffbeb, transparent); border-radius: 8px; padding: 10px 8px; border-bottom: 1px dashed #fde68a; }
-.activity-dot-festiva { width: 20px; height: 20px; border-radius: 50%; margin-top: 0; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, var(--na-gold), #f59e0b); color: white; font-size: 9px; flex-shrink: 0; }
+.activity-dot-festiva { width: 20px; height: 20px; border-radius: 50%; margin-top: 0; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, var(--na-gold), #f59e0b); color: white; font-size: 11px; flex-shrink: 0; }
 .activity-festiva-emoji { display: inline-block; animation: activity-festiva-bounce 1s ease-in-out infinite; }
 @keyframes activity-festiva-bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
 
@@ -619,7 +646,7 @@ select:hover { border-color: #94a3b8; }
 .evento-thumb { width: 64px; height: 64px; border-radius: 8px; object-fit: cover; flex-shrink: 0; }
 .evento-descricao { font-size: 11px; color: var(--text-muted); margin-top: 6px; max-height: 2.8em; overflow: hidden; text-overflow: ellipsis; white-space: pre-line; }
 .evento-vagas { width: 160px; flex-shrink: 0; }
-.evento-vagas-label { font-size: 10px; color: var(--text-muted); margin-bottom: 4px; text-align: right; }
+.evento-vagas-label { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; text-align: right; }
 .evento-vagas-bar-wrapper { background: #e2e8f0; border-radius: 6px; height: 8px; overflow: hidden; }
 .evento-vagas-bar-fill { height: 100%; background: linear-gradient(90deg, var(--na-green), var(--na-gold)); }
 .evento-vagas-bar-fill.evento-lotado { background: #dc2626; }
@@ -698,7 +725,7 @@ select:hover { border-color: #94a3b8; }
 }
 .tratar-gaveta-header:hover { border-color: var(--na-green); }
 .tratar-gaveta-titulo { display: flex; align-items: center; gap: 8px; }
-.tratar-gaveta-titulo i:first-child { font-size: 10px; color: var(--text-muted); width: 10px; }
+.tratar-gaveta-titulo i:first-child { font-size: 11px; color: var(--text-muted); width: 10px; }
 .tratar-gaveta-badge { background: var(--na-green); color: white; font-size: 11px; font-weight: 700; min-width: 22px; height: 22px; border-radius: 11px; display: inline-flex; align-items: center; justify-content: center; padding: 0 7px; }
 .tratar-gaveta-body { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
 
@@ -724,7 +751,7 @@ select:hover { border-color: #94a3b8; }
 .mesclar-conflito { margin-top: 14px; padding: 12px; border-radius: 8px; background: #fffbeb; border: 1px solid #fde68a; }
 .mesclar-conflito-titulo { font-size: 11px; font-weight: 700; color: #92400e; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
 .mesclar-conflito-opcao { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 0; cursor: pointer; }
-.mesclar-conflito-origem { font-size: 10px; color: var(--text-muted); }
+.mesclar-conflito-origem { font-size: 11px; color: var(--text-muted); }
 .mesclar-conflito-info { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; font-size: 11px; display: flex; align-items: center; gap: 6px; }
 
 /* ==========================================
@@ -747,7 +774,7 @@ select:hover { border-color: #94a3b8; }
 .wpp-contact-avatar { width: 38px; height: 38px; border-radius: 50%; background: #cbd5e1; display: flex; align-items: center; justify-content: center; color: white; font-size: 15px; flex-shrink: 0; }
 .wpp-contact-info { overflow: hidden; }
 .wpp-contact-name { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.wpp-contact-phone { font-size: 10px; color: var(--text-muted); }
+.wpp-contact-phone { font-size: 11px; color: var(--text-muted); }
 /* Conversa não lida (última mensagem é de ENTRADA e mais nova que a
    última vez que este navegador abriu o chat, ver localStorage em
    js/whatsapp.js) — nome em negrito mais forte + bolinha verde, mesmo
@@ -758,7 +785,7 @@ select:hover { border-color: #94a3b8; }
 /* Separador de dia entre mensagens (HOJE/ONTEM/data) — mesmo "pill"
    centralizado do WhatsApp real. */
 .wpp-date-divider { display: flex; justify-content: center; margin: 10px 0; }
-.wpp-date-divider span { background: #e2e8f0; color: #475569; font-size: 10.5px; font-weight: 600; padding: 4px 12px; border-radius: 8px; text-transform: uppercase; }
+.wpp-date-divider span { background: #e2e8f0; color: #475569; font-size: 11px; font-weight: 600; padding: 4px 12px; border-radius: 8px; text-transform: uppercase; }
 
 /* overflow-wrap:anywhere (2026-10-01) — além do min-width:0 acima (que
    resolve o container), reforça a quebra dentro do PRÓPRIO balão: uma
@@ -784,10 +811,10 @@ select:hover { border-color: #94a3b8; }
     border: 6px solid transparent; border-left-color: var(--wpp-green); border-bottom-width: 0;
 }
 .msg-falhou::before { border-right-color: #fef2f2; border-left-color: #fef2f2; }
-.msg-time { font-size: 9px; color: #94a3b8; margin-top: 4px; text-align: right; }
-.msg-atendente { font-size: 9px; color: #16a34a; font-weight: 600; text-align: right; margin-top: 2px; }
+.msg-time { font-size: 11px; color: #94a3b8; margin-top: 4px; text-align: right; }
+.msg-atendente { font-size: 11px; color: #16a34a; font-weight: 600; text-align: right; margin-top: 2px; }
 .msg-ia-badge { display: inline-block; padding: 0 5px; border-radius: 8px; background: #ede9fe; color: #5b21b6; font-weight: 700; }
-.wpp-ia-chip { font-size: 9px; padding: 0 6px; border-radius: 8px; background: #ede9fe; color: #5b21b6; font-weight: 600; }
+.wpp-ia-chip { font-size: 11px; padding: 0 6px; border-radius: 8px; background: #ede9fe; color: #5b21b6; font-weight: 600; }
 
 /* Reações com emoji (pedido do usuário, 2026-09-28) — botão só aparece no
    hover do balão (mesmo espírito do menu "..." do WhatsApp real), badge
@@ -808,7 +835,7 @@ select:hover { border-color: #94a3b8; }
 .msg-out .wpp-reacao-badge { right: 8px; }
 .msg-in .wpp-reacao-badge { left: 8px; }
 .wpp-reacao-picker {
-    display: none; position: fixed; z-index: 3000; background: white; border-radius: 24px;
+    display: none; position: fixed; z-index: var(--z-seletor); background: white; border-radius: 24px;
     padding: 6px 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); gap: 4px;
 }
 .wpp-reacao-opcao {
@@ -839,7 +866,7 @@ select:hover { border-color: #94a3b8; }
 .msg-in .wpp-encaminhar-btn { right: 44px; }
 /* Painel de "Encaminhar mensagem" — busca de lead destino, mesmo
    espírito visual do seletor de reação (overlay + caixa flutuante). */
-.wpp-encaminhar-panel { position: fixed; inset: 0; z-index: 3100; display: flex; align-items: center; justify-content: center; }
+.wpp-encaminhar-panel { position: fixed; inset: 0; z-index: var(--z-seletor-painel); display: flex; align-items: center; justify-content: center; }
 .wpp-encaminhar-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.4); }
 .wpp-encaminhar-caixa { position: relative; background: white; border-radius: 10px; width: 320px; max-width: 90vw; padding: 14px; box-shadow: 0 8px 30px rgba(0,0,0,0.3); }
 .wpp-encaminhar-titulo { display: flex; justify-content: space-between; align-items: center; font-size: 14px; font-weight: 700; margin-bottom: 8px; }
@@ -853,7 +880,7 @@ select:hover { border-color: #94a3b8; }
 /* Busca dentro da conversa aberta (pedido do usuário, 2026-09-29). */
 .wpp-busca-bar { display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: #f0f2f5; border-bottom: 1px solid var(--border-color); }
 .wpp-busca-bar .wpp-busca-input { flex: 1; border: none; background: white; padding: 6px 10px; border-radius: 6px; font-size: 12px; outline: none; }
-.wpp-busca-bar .wpp-busca-contador { font-size: 10.5px; color: var(--text-muted); white-space: nowrap; }
+.wpp-busca-bar .wpp-busca-contador { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
 .wpp-busca-bar .wpp-busca-fechar { background: none; border: none; cursor: pointer; color: #64748b; font-size: 13px; }
 .wpp-quote {
     border-left: 3px solid var(--na-green-dark); background: rgba(0,0,0,0.05); border-radius: 4px;
@@ -869,7 +896,7 @@ select:hover { border-color: #94a3b8; }
     background: #f0f2f5; border-radius: 6px; border-left: 3px solid var(--na-green-dark);
 }
 .wpp-respondendo-info { flex: 1; overflow: hidden; }
-.wpp-respondendo-remetente { font-size: 10.5px; font-weight: 700; color: var(--na-green-dark); }
+.wpp-respondendo-remetente { font-size: 11px; font-weight: 700; color: var(--na-green-dark); }
 .wpp-respondendo-preview { font-size: 11px; color: #475569; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .wpp-respondendo-cancelar { background: none; border: none; cursor: pointer; color: #64748b; font-size: 14px; padding: 4px; }
 
@@ -886,7 +913,7 @@ select:hover { border-color: #94a3b8; }
    Dashboard (pedido do usuário, 2026-09-28) — evita reabordar quem já
    está em conversa. */
 .wpp-status-badge {
-    display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600;
     padding: 1px 6px; border-radius: 8px; vertical-align: middle;
 }
 .wpp-status-respondeu { background: #dcfce7; color: #15803d; }
@@ -899,7 +926,7 @@ select:hover { border-color: #94a3b8; }
    (pedido do usuário, 2026-09-28) — só aparece enquanto a conversa está
    esperando NOSSA resposta (última mensagem foi do lead). */
 .wpp-timer-janela {
-    display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-weight: 700;
+    display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 700;
     margin-top: 2px; padding: 1px 6px; border-radius: 8px; width: fit-content;
 }
 .wpp-timer-ok { background: #dcfce7; color: #15803d; }
@@ -936,7 +963,7 @@ select:hover { border-color: #94a3b8; }
    padrão visual dos outros botões de ação no hover do balão. */
 .wpp-ocultar-btn {
     position: absolute; top: -12px; background: white; border: 1px solid #e2e8f0; border-radius: 50%;
-    width: 22px; height: 22px; font-size: 10px; color: #b91c1c; cursor: pointer; display: none;
+    width: 22px; height: 22px; font-size: 11px; color: #b91c1c; cursor: pointer; display: none;
     align-items: center; justify-content: center; box-shadow: 0 1px 2px rgba(0,0,0,0.15); padding: 0;
 }
 .msg:hover .wpp-ocultar-btn { display: flex; }
@@ -946,7 +973,7 @@ select:hover { border-color: #94a3b8; }
 /* Emoji picker pra DIGITAR (pedido do usuário, 2026-09-30) — mesmo
    espírito visual do picker de reação, só que em grade (mais opções). */
 .wpp-emoji-digitar-picker {
-    display: none; position: fixed; z-index: 3000; background: white; border-radius: 10px;
+    display: none; position: fixed; z-index: var(--z-seletor); background: white; border-radius: 10px;
     padding: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); grid-template-columns: repeat(6, 1fr);
     gap: 2px; width: 240px;
 }
@@ -969,7 +996,7 @@ select:hover { border-color: #94a3b8; }
 /* Silenciar conversa + badge de atendente responsável (pedido do usuário,
    2026-09-30). */
 .wpp-silenciar-menu {
-    display: none; position: fixed; z-index: 3000; background: white; border-radius: 8px;
+    display: none; position: fixed; z-index: var(--z-seletor); background: white; border-radius: 8px;
     padding: 4px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); flex-direction: column; min-width: 150px;
 }
 .wpp-silenciar-opcao { background: none; border: none; text-align: left; padding: 7px 10px; font-size: 12px; border-radius: 5px; cursor: pointer; }
@@ -979,17 +1006,17 @@ select:hover { border-color: #94a3b8; }
    Unificado — pedido do usuário (2026-10-05): "libere um calendário...
    digitar assim é incômodo", substituiu 2 prompt() encadeados. */
 .wpp-lembrete-popover {
-    display: none; position: fixed; z-index: 3000; background: white; border-radius: 8px;
+    display: none; position: fixed; z-index: var(--z-seletor); background: white; border-radius: 8px;
     padding: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); width: 220px;
 }
 .wpp-atendente-badge {
-    display: inline-flex; align-items: center; gap: 3px; font-size: 9px; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600;
     color: #475569; background: #f1f5f9; padding: 1px 6px; border-radius: 8px;
 }
 
 /* Respostas rápidas (canned responses) — pedido do usuário, 2026-09-30. */
 .wpp-respostas-rapidas-picker {
-    display: none; position: fixed; z-index: 3000; background: white; border-radius: 8px;
+    display: none; position: fixed; z-index: var(--z-seletor); background: white; border-radius: 8px;
     padding: 4px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); flex-direction: column; min-width: 200px; max-width: 260px;
 }
 .wpp-resposta-rapida-item { background: none; border: none; text-align: left; padding: 8px 10px; font-size: 12px; border-radius: 5px; cursor: pointer; }
@@ -1039,8 +1066,8 @@ select:hover { border-color: #94a3b8; }
 .funil-etapa-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 .funil-etapa-valor-bloco { text-align: right; flex-shrink: 0; }
 .funil-etapa-valor { font-size: 20px; font-weight: 700; }
-.funil-etapa-badge { font-size: 10px; font-weight: 700; color: white; background: var(--na-green); padding: 2px 8px; border-radius: 4px; display: inline-block; margin-top: 4px; white-space: nowrap; }
-.funil-etapa-pct { font-size: 10px; color: var(--text-muted); margin-top: 2px; white-space: nowrap; }
+.funil-etapa-badge { font-size: 11px; font-weight: 700; color: white; background: var(--na-green); padding: 2px 8px; border-radius: 4px; display: inline-block; margin-top: 4px; white-space: nowrap; }
+.funil-etapa-pct { font-size: 11px; color: var(--text-muted); margin-top: 2px; white-space: nowrap; }
 
 .funil-etapa-seta { text-align: center; color: var(--text-muted); font-size: 13px; }
 .funil-base-dupla { display: flex; gap: 12px; width: 100%; justify-content: center; }
@@ -1062,7 +1089,7 @@ select:hover { border-color: #94a3b8; }
 .import-upload-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 .import-upload-card { background: white; border: 1px solid var(--border-color); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
 .import-upload-title { font-size: 12px; font-weight: 700; color: var(--na-green-dark); display: flex; align-items: center; gap: 6px; }
-.import-upload-sub { font-size: 10px; color: var(--text-muted); line-height: 1.4; }
+.import-upload-sub { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
 .import-upload-card input[type="file"] { font-size: 11px; }
 
 .import-filial-row { display: flex; align-items: center; gap: 10px; }
@@ -1080,7 +1107,7 @@ select:hover { border-color: #94a3b8; }
 .import-summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .import-summary-card { background: #f8fafc; border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; text-align: center; }
 .import-summary-value { font-size: 20px; font-weight: 700; color: var(--na-green-dark); }
-.import-summary-label { font-size: 9px; color: var(--text-muted); text-transform: uppercase; font-weight: 600; margin-top: 2px; }
+.import-summary-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 600; margin-top: 2px; }
 
 .import-table-wrapper { overflow-x: auto; max-height: 360px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px; }
 .import-table { width: 100%; border-collapse: collapse; font-size: 11px; }
@@ -1113,7 +1140,7 @@ select:hover { border-color: #94a3b8; }
 .modal {
     position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.96);
     width: 520px; max-width: 92vw; max-height: 82vh; background: white; border-radius: 12px;
-    box-shadow: 0 20px 50px rgba(0,0,0,0.25); z-index: 110; display: none; flex-direction: column;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.25); z-index: var(--z-modal); display: none; flex-direction: column;
     opacity: 0; transition: opacity 0.15s ease, transform 0.15s ease;
 }
 .modal.open { display: flex; opacity: 1; transform: translate(-50%, -50%) scale(1); }
@@ -1230,17 +1257,6 @@ select:hover { border-color: #94a3b8; }
 .conc-aluno-meta { font-size: 11px; color: var(--text-muted); font-weight: 400; }
 .conc-aluno-motivo { margin-top: 3px; font-size: 11px; color: #b45309; }
 /* Navegação por nomes e conteúdo progressivo, sem alterar dados e permissões. */
-.sidebar { width:164px; flex-shrink:0; align-items:stretch; padding:18px 10px; gap:6px; }
-.sidebar-icon { display:flex; align-items:center; gap:10px; width:100%; padding:12px 10px; margin:0; border:0; background:transparent; text-align:left; border-radius:8px; font-family:inherit; }
-.sidebar-icon i { font-size:18px; width:20px; text-align:center; }
-.sidebar-icon span { font-size:12px; font-weight:600; }
-.sidebar-icon.active { background:rgba(255,255,255,.12); color:white; }
-.sidebar-icon:hover { background:rgba(255,255,255,.08); }
-.sidebar-icon:focus-visible { outline:2px solid var(--na-gold); outline-offset:2px; }
-.main-content { min-width:0; }
-.topbar { padding:12px 18px; gap:14px; flex-wrap:wrap; }
-.topbar>div { min-width:0; flex-wrap:wrap; }
-.topbar h2 { font-size:16px!important; }
 .dashboard-content,.report-content { gap:16px; padding:20px; }
 .secao-organizada { border:1px solid var(--border-color); border-radius:10px; padding:14px; background:white; min-width:0; }
 .secao-organizada>summary { font-size:14px; font-weight:700; color:var(--na-green-dark); cursor:pointer; padding:4px; }
@@ -1253,7 +1269,7 @@ select:hover { border-color: #94a3b8; }
 .report-content>div:first-of-type { flex-wrap:wrap; }
 .report-content>div:first-of-type>div:last-child { flex-wrap:wrap; }
 .tags-contexto { width:100%; margin-top:3px; color:var(--text-muted); }
-.tags-contexto summary { font-size:10px; cursor:pointer; }
+.tags-contexto summary { font-size: 11px; cursor:pointer; }
 .tags-contexto>div { display:flex; flex-wrap:wrap; gap:4px; padding-top:7px; }
 .tag-filter-grupo summary { cursor:pointer; display:list-item; }
 .tag-filter-grupo summary small { color:var(--text-muted); font-weight:400; margin-left:5px; }
@@ -1269,7 +1285,7 @@ select:hover { border-color: #94a3b8; }
 .dialogo-paineis button { padding:9px 12px; font:inherit; font-size:12px; background:white; border:1px solid var(--border-color); border-radius:7px; cursor:pointer; }
 .dialogo-paineis small { display:block; color:var(--text-muted); line-height:1.5; }
 .acoes-paineis { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:18px; }
-@media(max-width:760px) { body { flex-direction:column; } .sidebar { width:100%; flex-direction:row; padding:7px; overflow-x:auto; gap:4px; } .sidebar-icon { min-width:90px; width:auto; flex-direction:column; gap:5px; padding:7px; flex-shrink:0; } .sidebar-icon span { font-size:10px; } .sidebar-icon i { font-size:16px; } .topbar { padding:10px; } .topbar-logo { height:30px; } .dashboard-content,.report-content { padding:12px; } .busca-tags { font-size:16px; } }
+@media(max-width:760px) { body { flex-direction:column; } .sidebar { width:100%; flex-direction:row; padding:7px; overflow-x:auto; gap:4px; } .sidebar-icon { min-width:90px; width:auto; flex-direction:column; gap:5px; padding:7px; flex-shrink:0; } .sidebar-icon span { font-size: 11px; } .sidebar-icon i { font-size:16px; } .topbar { padding:10px; } .topbar-logo { height:30px; } .dashboard-content,.report-content { padding:12px; } .busca-tags { font-size:16px; } }
 
 /* Caixa de entrada: leitura e navegação próximas ao WhatsApp Web. */
 #wppChatHeader { flex-wrap:wrap; padding:12px 16px; }
@@ -1284,7 +1300,7 @@ select:hover { border-color: #94a3b8; }
 #tab-whatsapp .wpp-contact-name { font-size:14px; padding-right:40px; color:#111b21; }
 #tab-whatsapp .wpp-contact-phone { font-size:12px; color:#667781; margin:4px 0; }
 #tab-whatsapp .wpp-contact-item.active { background:#f0f2f5; }
-.wpp-contact-hora { position:absolute; top:12px; right:12px; font-size:10px; color:#667781; }
+.wpp-contact-hora { position:absolute; top:12px; right:12px; font-size: 11px; color:#667781; }
 #tab-whatsapp .wpp-contact-acoes { margin-top:14px; }
 #tab-whatsapp .wpp-contact-item:focus-within .wpp-contact-acoes { opacity:1; }
 #tab-whatsapp .chat-messages { background-color:#efeae2; background-image:radial-gradient(#c9c0b440 .8px,transparent .8px); background-size:18px 18px; padding:20px 6%; gap:7px; }
@@ -1405,7 +1421,7 @@ select:hover { border-color: #94a3b8; }
 /* Relatórios: um assunto por vez, cartões leves e espaço para leitura. */
 #tab-relatorios .report-content { padding:32px clamp(16px,3vw,48px) 56px; background:#f7f9f8; }
 .relatorios-intro { margin-bottom:24px; }
-.relatorios-intro>span,.anual-sobre { color:#70877e; font-size:10px; font-weight:700; letter-spacing:1.8px; }
+.relatorios-intro>span,.anual-sobre { color:#70877e; font-size: 11px; font-weight:700; letter-spacing:1.8px; }
 .relatorios-intro h1 { margin:8px 0; font-size:28px; font-weight:650; color:#234f42; letter-spacing:-.6px; }
 .relatorios-intro p { color:#718079; font-size:13px; margin:0; line-height:1.7; }
 #tab-relatorios .atalhos-relatorios { display:flex; gap:6px; padding:6px; margin:0 0 30px; border:1px solid #e3eae6; border-radius:12px; background:#eef3f0; flex-wrap:wrap; }
@@ -1437,7 +1453,7 @@ select:hover { border-color: #94a3b8; }
 .anual-indicadores article { padding:22px; background:white; border:1px solid #e6ece8; border-radius:14px; display:flex; flex-direction:column; gap:12px; }
 .anual-indicadores span { color:#7a8980; font-size:11px; line-height:1.5; }
 .anual-indicadores strong { font-size:31px; color:#39745b; font-weight:550; letter-spacing:-1px; line-height:1.15; }
-.anual-indicadores small { color:#8a978f; font-size:10px; line-height:1.7; }
+.anual-indicadores small { color:#8a978f; font-size: 11px; line-height:1.7; }
 .anual-card { background:#fff; border:1px solid #e5ece7; border-radius:16px; padding:26px; margin-bottom:26px; min-width:0; }
 .anual-card h3 { margin:0 0 8px; color:#385e4b; font-size:14px; font-weight:600; }
 .anual-titulo-linha { display:flex; gap:16px; align-items:flex-start; justify-content:space-between; margin-bottom:24px; }
@@ -1445,7 +1461,7 @@ select:hover { border-color: #94a3b8; }
 .anual-curva { display:block; width:100%; height:auto; max-height:360px; overflow:visible; }
 .anual-curva g:focus { outline:none; }
 .anual-curva g:focus circle { stroke:#133a2c; stroke-width:4; }
-.anual-legenda { font-size:10px; color:#8a978e; line-height:1.8; margin:15px 0 0; }
+.anual-legenda { font-size: 11px; color:#8a978e; line-height:1.8; margin:15px 0 0; }
 .anual-duas-colunas { display:grid; grid-template-columns:1fr 1fr; gap:26px; align-items:start; }
 .anual-analise { font-size:13px; line-height:1.9; color:#657c6d; }
 .anual-analise p { margin:20px 0; }
@@ -1456,7 +1472,7 @@ select:hover { border-color: #94a3b8; }
 .anual-ranking strong { font-weight:600; color:#487b60; }
 .anual-trilho { height:5px; background:#f0f5f2; border-radius:5px; margin:8px 0 4px; }
 .anual-trilho span { display:block; height:100%; background:#a7c9b7; border-radius:5px; }
-.anual-ranking small { color:#95a197; font-size:9px; }
+.anual-ranking small { color:#95a197; font-size: 11px; }
 .anual-tabela-wrap { overflow:auto; max-width:100%; }
 .anual-tabela { border-collapse:separate; border-spacing:0; width:100%; font-size:11px; white-space:nowrap; }
 .anual-tabela th,.anual-tabela td { text-align:right; padding:13px 11px; border-bottom:1px solid #eef3ef; color:#5d7666; }
@@ -1483,7 +1499,105 @@ select:hover { border-color: #94a3b8; }
 .anual-curva-wrap { overflow-x:auto; }
 @media(max-width:600px) { .anual-curva { min-width:920px; max-height:none; } .anual-curva-wrap { margin-right:-3px; } }
 /* Abaixo da topbar (5), acima dos cabeçalhos da tabela (1). */
-#tab-relatorios .atalhos-relatorios { position:sticky; top:0; z-index:2; }
+#tab-relatorios .atalhos-relatorios { position:sticky; top:0; z-index:var(--z-tabela); }
 #relatorioKanbanCabecalho,#relatorioKanbanCabecalho>div:last-child { flex-wrap:wrap; }
 .relatorios-assunto { grid-template-columns:minmax(0,1fr); min-width:0; }
 .relatorio-anual { min-width:0; max-width:100%; }
+
+/* Avisos (substituem a janela nativa do navegador) — avisar(), js/app.js */
+.avisos-crm {
+    position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+    z-index: var(--z-avisos); display: flex; flex-direction: column; gap: 8px;
+    width: min(460px, calc(100vw - 32px)); pointer-events: none;
+}
+.aviso-crm {
+    pointer-events: auto; display: flex; gap: 10px; align-items: flex-start;
+    background: #fff; color: var(--text-dark); border: 1px solid var(--border-color);
+    border-left: 4px solid var(--na-green); border-radius: 10px;
+    box-shadow: 0 8px 24px rgb(5 67 59 / 0.14); padding: 10px 12px; font-size: 13px; line-height: 1.45;
+    animation: avisoCrmEntrar 0.18s ease-out;
+}
+.aviso-crm-erro { border-left-color: #c2410c; }
+.aviso-crm-texto { flex: 1; white-space: pre-line; user-select: text; max-height: 40vh; overflow-y: auto; }
+.aviso-crm-fechar {
+    background: none; border: none; font-size: 18px; line-height: 1; color: var(--text-muted);
+    cursor: pointer; padding: 0 2px; min-width: 24px; min-height: 24px;
+}
+.aviso-crm-fechar:hover { color: var(--text-dark); }
+@keyframes avisoCrmEntrar { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .aviso-crm { animation: none; } }
+.aviso-crm-acao {
+    background: none; border: 1px solid var(--na-green); color: var(--na-green-dark); border-radius: 6px;
+    font-size: 12px; font-weight: 600; padding: 3px 10px; cursor: pointer; white-space: nowrap; align-self: center;
+}
+.aviso-crm-acao:hover { background: rgb(8 99 87 / 0.08); }
+
+/* Gaveta do lead em tela estreita: ficha e conversa empilhadas viram duas
+   abas, em vez de dividir 800px que o celular não tem. */
+.drawer-abas { display: none; }
+@media (max-width: 760px) {
+    .drawer { flex-direction: column; width: 100vw; right: -100vw; }
+    .drawer.open { right: 0; }
+    .drawer-abas { display: flex; align-items: center; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--border-color); background: #fff; }
+    .drawer-aba { flex: 1; padding: 10px; border: none; border-radius: 8px; background: transparent; font-size: 14px; font-weight: 600; color: var(--text-muted); cursor: pointer; }
+    .drawer-aba.ativa { background: #eef5f3; color: var(--na-green); }
+    .drawer-aba-fechar { border: none; background: none; font-size: 18px; padding: 8px 12px; color: var(--text-muted); cursor: pointer; }
+    .drawer-info { width: 100%; border-right: none; flex: 1; min-height: 0; overflow-y: auto; }
+    .drawer > .drawer-chat { flex: 1; min-height: 0; }
+    .drawer:not(.mostrar-chat) > .drawer-chat { display: none; }
+    .drawer.mostrar-chat > .drawer-info { display: none; }
+}
+
+/* ===================================================================
+   Camada leve (out/2026): mesmas telas, visual mais calmo.
+   Só usa os tokens do :root — cantos, sombras esverdeadas, foco visível
+   e menos peso de fonte. Fica no fim de propósito, para valer sobre as
+   regras antigas sem mexer em cada uma.
+   =================================================================== */
+body { background-color: var(--bg-color); color: var(--text-dark); -webkit-font-smoothing: antialiased; }
+
+/* Foco visível e consistente para quem navega pelo teclado. */
+:where(button, a, summary, [role="tab"], [tabindex]):focus-visible { outline: 2px solid var(--na-green); outline-offset: 2px; border-radius: var(--raio-p); }
+:where(input, textarea, select):focus-visible { outline: none; border-color: var(--na-green); box-shadow: var(--anel-foco); }
+
+/* Superfícies: cantos uniformes e sombras suaves em vez de cinza pesado. */
+.modal { border-radius: var(--raio-g); box-shadow: var(--sombra-3); }
+.modal-header { padding: var(--esp-4) var(--esp-5); }
+.modal-header h3 { font-size: 16px; font-weight: 600; }
+.modal-body { padding: var(--esp-4) var(--esp-5); }
+.modal-footer { padding: var(--esp-3) var(--esp-5); gap: var(--esp-2); background: var(--superficie-suave); border-radius: 0 0 var(--raio-g) var(--raio-g); }
+.overlay { background: rgba(16, 40, 36, 0.32); }
+.drawer { box-shadow: -8px 0 30px rgba(16, 40, 36, 0.12); }
+.drawer-info { background: var(--superficie-suave); }
+.drawer-gaveta { border-radius: var(--raio); border-color: var(--border-color); }
+.drawer-gaveta-header { background: var(--superficie-suave); }
+.drawer-gaveta-header:hover { background: var(--verde-suave); }
+.drawer-gaveta-titulo { font-weight: 600; letter-spacing: 0.3px; }
+.kanban-col { background: var(--superficie-suave); border-radius: var(--raio-g); }
+.lead-card { border-radius: var(--raio); box-shadow: var(--sombra-1); }
+.topbar { border-bottom-color: var(--border-color); box-shadow: var(--sombra-1); }
+.filter-bar { background: var(--card-bg); }
+.secao-organizada { border-radius: var(--raio-g); box-shadow: var(--sombra-1); }
+
+/* Botões: verde para a ação principal, contorno claro para as demais. */
+.btn-primary, .btn-primary-mini { border-radius: var(--raio-p); font-weight: 600; box-shadow: var(--sombra-1); }
+.btn-secondary, .btn-secondary-mini { border-radius: var(--raio-p); border-color: var(--border-color); font-weight: 500; }
+.btn-secondary:hover, .btn-secondary-mini:hover { background: var(--verde-suave); }
+
+/* Campos de texto com a mesma borda e altura confortável. */
+input[type="text"], input[type="search"], input[type="email"], input[type="tel"], input[type="date"], input[type="number"], input[type="password"], textarea {
+    border-color: var(--border-color);
+}
+select { border-color: var(--border-color); }
+select:hover { border-color: #b9c7c2; }
+
+/* Tela estreita: o aviso de nova mensagem não fica atrás da barra do topo
+   nem cobre a caixa de digitar. */
+@media (max-width: 760px) {
+    #wppPopupContainer { top: auto; bottom: 16px; left: 12px; right: 12px; max-width: none; }
+    .modal { max-width: 96vw; max-height: 90vh; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+}
