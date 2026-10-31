@@ -10997,6 +10997,10 @@ Especificação: `docs/superpowers/specs/2026-10-29-requalificacao-leads-design.
   mesmo ID real + mesmo primeiro nome não é conflito (sobrenome oficial do Mercúrio após mesclagem) e quem tem
   matrícula mantém o nome do Mercúrio; `crm_reorganizar_kanban` não protege quem está em Frios (cadastro novo nascia
   "movido à mão"); `scraper/importar-no-crm.js` devolve o log da tela quando o envio é interrompido.
+- **31/10:** `semana-evento` e `reta-final` nunca tinham disparado (erro "query has no destination": o comando
+  copiado começava com quebra de linha e o `select` não virava `perform`). Correção em `migracao_ulisses_cron_perform.sql`
+  (rodar no banco). `chamarApi()` agora tenta de novo após 20s e 60s quando o Cloudflare desafia uma chamada isolada
+  (05:00 de 31/10 caiu assim) e o aviso diz o motivo em português em vez de despejar o HTML.
 
 ## Incidente de recursos + remoção do Corretor Pro (29/10/2026, ~17h)
 
