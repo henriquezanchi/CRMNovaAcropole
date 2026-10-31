@@ -505,9 +505,22 @@ export async function sincronizarComparecimentoViaApi(filialCrm, filialIdUlisses
     }
     const vinculosUnicos = [...vinculosPorChave.values()];
 
+    // Busca só os vínculos destas pessoas, em lotes: buscar por evento trazia no
+    // máximo 1000 linhas (limite do PostgREST), e em Jardim América os eventos têm
+    // mais que isso — quem ficava de fora parecia "novo" e o insert inteiro caía por
+    // chave duplicada (30/10/2026).
     const eventoIds = [...new Set(vinculosUnicos.map(v => v.evento_id))];
-    const { data: existentes } = await supabaseAdmin.from('evento_leads').select('evento_id, pessoaIdentificador').in('evento_id', eventoIds);
-    const jaExiste = new Set((existentes || []).map(e => `${e.evento_id}|||${e.pessoaIdentificador}`));
+    const pessoaIds = [...new Set(vinculosUnicos.map(v => String(v.pessoaIdentificador)))];
+    const jaExiste = new Set();
+    for (let i = 0; i < pessoaIds.length; i += 200) {
+        const { data: existentes, error: erroExistentes } = await supabaseAdmin
+            .from('evento_leads')
+            .select('evento_id, pessoaIdentificador')
+            .in('evento_id', eventoIds)
+            .in('pessoaIdentificador', pessoaIds.slice(i, i + 200));
+        if (erroExistentes) throw new Error(`Falha ao ler vínculos existentes: ${erroExistentes.message}`);
+        (existentes || []).forEach(e => jaExiste.add(`${e.evento_id}|||${e.pessoaIdentificador}`));
+    }
 
     const novos = vinculosUnicos
         .filter(v => !jaExiste.has(`${v.evento_id}|||${v.pessoaIdentificador}`))
@@ -516,7 +529,8 @@ export async function sincronizarComparecimentoViaApi(filialCrm, filialIdUlisses
 
     let novosGravados = 0;
     if (novos.length > 0) {
-        const { error } = await supabaseAdmin.from('evento_leads').insert(novos);
+        const { error } = await supabaseAdmin.from('evento_leads')
+            .upsert(novos, { onConflict: 'evento_id,pessoaIdentificador', ignoreDuplicates: true });
         if (error) console.warn('[ulisses-api] Falha ao inserir novos vínculos evento_leads:', error.message);
         else novosGravados = novos.length;
     }
