@@ -292,6 +292,7 @@
     if (atual) secoes.appendChild(atual.fn());
   }
 
+  var timerPreparo = null;
   function carregar() {
     var estado = document.getElementById('estado');
     if (!/^[a-f0-9]{64}$/.test(chave)) { estado.textContent = 'Link incompleto. Abra o endereço completo que você recebeu.'; estado.className = 'estado erro'; return; }
@@ -300,9 +301,17 @@
       .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
       .then(function (res) {
         if (!res.ok) throw new Error(res.j && res.j.erro || 'Não foi possível consultar.');
+        clearTimeout(timerPreparo);
+        if (res.j.preparando) {
+          // Primeira vez deste período: o servidor calcula em segundo plano.
+          estado.textContent = res.j.mensagem || 'Os números estão sendo preparados…';
+          timerPreparo = setTimeout(carregar, 30000);
+          return;
+        }
         dados = res.j;
         document.getElementById('rotulo').textContent = dados.rotulo || '';
-        document.getElementById('atualizado').textContent = 'Atualizado às ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        var quando = dados.gerado_em ? new Date(dados.gerado_em) : new Date();
+        document.getElementById('atualizado').textContent = 'Números de ' + quando.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
         estado.textContent = '';
         document.getElementById('conteudo').hidden = false;
         montar();

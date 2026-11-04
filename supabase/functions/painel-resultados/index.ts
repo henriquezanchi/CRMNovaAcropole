@@ -40,14 +40,32 @@ Deno.serve(async (req) => {
     }
     await supabaseAdmin.from("painel_resultados_links").update({ ultimo_acesso_em: new Date().toISOString() }).eq("id", link.id);
 
-    // "Desde o início" = início do trabalho com WhatsApp no CRM (set/2026).
-    const desde = dias === 0 ? "2026-09-01" : new Date(Date.now() - dias * 86400000).toISOString().slice(0, 10);
+    // Os números vêm do cache (painel_resultados_cache), recalculado por um job
+    // do pg_cron a cada minuto. Nunca calcular aqui: a consulta é pesada e,
+    // quando a página desiste, continua rodando no banco (travou o servidor
+    // em 04/11/2026). Aqui só se registra o pedido e se lê o último resultado.
+    const filiaisOrd = link.filiais ? [...link.filiais].sort() : null;
+    const chaveEscolas = `escolas:${filiaisOrd ? filiaisOrd.join("|") : "todas"}:${dias}`;
+    const pedidos = [
+        { chave: chaveEscolas, tipo: "escolas", filiais: filiaisOrd, dias, slug: null },
+        ...(link.campanhas || []).map((slug: string) => ({ chave: `campanha:${slug}`, tipo: "campanha", slug, filiais: null, dias: null })),
+    ];
     try {
-        const [escolas, ...campanhas] = await Promise.all([
-            supabaseAdmin.rpc("painel_escolas", { p_filiais: link.filiais, p_desde: desde }),
-            ...(link.campanhas || []).map((slug: string) => supabaseAdmin.rpc("painel_campanha", { p_slug: slug })),
-        ]);
-        if (escolas.error) throw escolas.error;
+        const agora = new Date().toISOString();
+        const { error: errPedido } = await supabaseAdmin.from("painel_resultados_cache")
+            .upsert(pedidos.map((p) => ({ ...p, pedido_em: agora })), { onConflict: "chave" });
+        if (errPedido) throw errPedido;
+        const { data: linhas, error } = await supabaseAdmin.from("painel_resultados_cache")
+            .select("chave, dados, gerado_em").in("chave", pedidos.map((p) => p.chave));
+        if (error) throw error;
+        const porChave = new Map((linhas || []).map((l: any) => [l.chave, l]));
+        const escolasLinha: any = porChave.get(chaveEscolas);
+        if (!escolasLinha?.dados) {
+            return responder({ preparando: true, mensagem: "Os números estão sendo preparados. A página atualiza sozinha em instantes." });
+        }
+        const campanhas = (link.campanhas || []).map((slug: string) => ({ data: (porChave.get(`campanha:${slug}`) as any)?.dados || null }));
+        const geradoEm = [escolasLinha.gerado_em, ...(link.campanhas || []).map((s: string) => (porChave.get(`campanha:${s}`) as any)?.gerado_em)]
+            .filter(Boolean).sort()[0];
         // Link restrito a escolas: a lista da campanha só mostra pessoas dessas escolas.
         const campanhasDados = campanhas.map((r: any) => {
             const d = r.data;
@@ -57,7 +75,7 @@ Deno.serve(async (req) => {
                 inscritos: (d.inscritos || []).filter((x: any) => permitida(x.escola)),
                 por_escola: (d.por_escola || []).filter((x: any) => permitida(x.escola)) };
         });
-        return responder({ rotulo: link.rotulo, dias, escolas: escolas.data, campanhas: campanhasDados.filter(Boolean) });
+        return responder({ rotulo: link.rotulo, dias, gerado_em: geradoEm, escolas: escolasLinha.dados, campanhas: campanhasDados.filter(Boolean) });
     } catch (e) {
         console.error(e);
         return responder({ erro: "Não foi possível consultar agora. Tente de novo em instantes." }, 503);
