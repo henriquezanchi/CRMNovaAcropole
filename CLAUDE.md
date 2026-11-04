@@ -11117,3 +11117,7 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
   respostas, inscrições após contato, funil atual, matrículas do Mercúrio por mês, vagas das aberturas e aulas
   experimentais). Links emitidos: coordenação (todas + DMF) e um por escola ativa, válidos 120 dias, guardados
   fora do repositório. Revogar: `revogado_em`.
+- **Peso por proximidade (desde 05/11, `migracao_campanha_dmf_peso_proximidade.sql`):** `config.peso_filial` soma
+  "dias de recência" à prioridade (Setor Universitário 180, Setor Oeste 100, Alto da Glória 56, Jardim América 20,
+  demais 0; distâncias em `config.distancia_km`). Só reordena dentro do grupo; o grupo A continua primeiro.
+  Peso de meio grupo foi testado e descartado (escolas distantes zeravam).
