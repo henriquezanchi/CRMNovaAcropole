@@ -174,7 +174,7 @@ ${c.config?.instrucoes || "(nenhuma)"}
 - Áudio com transcrição: responda ao conteúdo transcrito. Mídia sem texto e sem transcrição: peça com leveza que a pessoa escreva.
 - Mensagem automática do WhatsApp da pessoa ("Retornarei sua mensagem", "No momento não posso atender", "Obrigado pelo contato, responderemos em breve" e parecidas): "resposta": null. Não é a pessoa falando.
 - Quando a pessoa só cumprimenta ("Oi", "Boa tarde") ou volta depois de uma mensagem automática, sem responder ao convite: cumprimente de volta de forma simples e natural, sem comemorar ("que bom ter seu retorno", "que alegria" são exageros aqui), e retome o convite em 1 ou 2 frases, perguntando se pode mandar os detalhes (ou mandando, se ela já tinha aceitado antes). Fale como uma pessoa da escola falaria por WhatsApp: tom calmo, no máximo uma exclamação por mensagem quando não houver motivo real de alegria.
-- No WhatsApp a conversa continua ao longo de dias, sem encerrar nem reiniciar. Nunca anuncie que vai parar, encerrar ou continuar depois ("hoje não posso continuar", "volto amanhã", "vou encerrar por aqui", "amanhã retomamos"). Se a pessoa escreveu à noite e você responde na manhã seguinte, responda direto ao que ela disse, como se a conversa nunca tivesse parado: sem pedir desculpas pela demora e sem cumprimentar de novo como se fosse uma conversa nova. Se a pessoa se despedir, não responda ("resposta": null).
+- No WhatsApp a conversa continua ao longo de dias, sem encerrar nem reiniciar. Nunca anuncie que vai parar, encerrar ou continuar depois ("hoje não posso continuar", "volto amanhã", "vou encerrar por aqui", "amanhã retomamos"). Quando a conversa ficou parada de um dia para o outro (aviso RETOMADA), comece só com a saudação indicada (ex.: "Bom dia!") e continue de onde parou: nada de se apresentar de novo, repetir o convite do zero ou pedir desculpas pela demora. Se a pessoa se despedir, não responda ("resposta": null).
 - Mensagem só de agradecimento, "ok", emoji ou despedida, sem pergunta pendente: "resposta": null (não precisa responder). Mas um "sim", "pode", "quero" respondendo a uma pergunta nossa SEMPRE merece resposta.
 - Nome: chame pelo nome indicado, com a primeira letra maiúscula e as demais minúsculas. Nunca escreva o nome todo em maiúsculas.
 - Formato: no máximo 6 linhas curtas; pode usar quebras de linha; no máximo 1 emoji; sem markdown com ** ou #. Nunca use travessão longo (—) no texto enviado.
@@ -184,7 +184,7 @@ Responda SOMENTE com JSON válido, sem texto antes ou depois:
 {"resposta": "texto" ou null, "enviar_arte": true|false, "situacao": "vai"|"talvez"|"nao_vai"|"quer_info"|"outro", "nao_contatar": true|false, "numero_errado": true|false, "mudou_cidade": true|false, "escola_preferida": "nome exato entre colchetes" ou null, "precisa_humano": true|false, "motivo_humano": "texto curto" ou null}`;
 }
 
-function promptDinamico(ctx: any, conversa: string): string {
+function promptDinamico(ctx: any, conversa: string, retomada: string | null = null): string {
     const l = ctx.lead;
     const nome = (l.como_prefere_ser_chamado || String(l.pessoaNome || "").split(" ")[0] || "").trim();
     const tags = listaTags(l.tags).filter((t) => !/^(Contato Recente|Temperatura)/.test(t));
@@ -199,7 +199,10 @@ function promptDinamico(ctx: any, conversa: string): string {
         l.resumo_ia ? `Anotações da equipe: ${String(l.resumo_ia).slice(0, 800)}` : "",
         ctx.memoria?.resumo ? `Resumo das conversas anteriores: ${String(ctx.memoria.resumo).slice(0, 800)}` : "",
     ].filter(Boolean);
-    return `# Sobre esta pessoa\n${linhas.join("\n")}\n\n# Conversa (mais antiga primeiro; "Escola" somos nós)\n${conversa}\n\nEscreva a próxima mensagem da escola.`;
+    const aviso = retomada
+        ? `\n\nRETOMADA: a conversa ficou parada de um dia para o outro. Comece exatamente com "${retomada}" e continue a conversa de onde parou, respondendo direto ao que a pessoa disse. Não se apresente de novo, não repita o convite do zero e não peça desculpas pela demora.`
+        : "";
+    return `# Sobre esta pessoa\n${linhas.join("\n")}\n\n# Conversa (mais antiga primeiro; "Escola" somos nós)\n${conversa}${aviso}\n\nEscreva a próxima mensagem da escola.`;
 }
 
 // Rede de segurança: a IA às vezes erra o dia da semana (caso real 04/11:
@@ -225,10 +228,16 @@ export function corrigirDiasDaSemana(texto: string, hojeISO: string): string {
     return t;
 }
 
-async function decidir(c: any, ev: any, ctx: any, conversa: string, hojeISO: string) {
+// "Bom dia!" / "Boa tarde!" / "Boa noite!" conforme a hora em Brasília.
+function saudacaoDoHorario(agora = new Date()): string {
+    const hora = Number(new Intl.DateTimeFormat("en-US", { timeZone: FUSO, hour: "numeric", hour12: false }).format(agora)) % 24;
+    return hora < 12 ? "Bom dia!" : hora < 18 ? "Boa tarde!" : "Boa noite!";
+}
+
+async function decidir(c: any, ev: any, ctx: any, conversa: string, hojeISO: string, retomada: string | null = null) {
     const escolas = await escolasDaRegiao(c.filiais, hojeISO);
     const fixo = promptFixo(c, ev, hojeISO, escolas);
-    const dinamico = promptDinamico(ctx, conversa);
+    const dinamico = promptDinamico(ctx, conversa, retomada);
     let r = await chamarClaude({ apiKey: ANTHROPIC_API_KEY, modelo: MODELO, blocoCacheavel: fixo, blocoDinamico: dinamico, maxTokens: 700, functionName: "campanha-responder" });
     if (r.erro || !r.texto) r = await chamarClaude({ apiKey: ANTHROPIC_API_KEY, modelo: MODELO_RESERVA, blocoCacheavel: fixo, blocoDinamico: dinamico, maxTokens: 700, functionName: "campanha-responder" });
     if (r.erro || !r.texto) return { erro: r.erro || "resposta_vazia" };
@@ -348,7 +357,10 @@ async function responder(pessoa: string, mensagemId: number | null, esperaSegund
         await supabaseAdmin.from("campanha_respostas_bot").delete().eq("mensagem_id", ultima.id);
         return { pessoa, pulado: "áudio aguardando transcrição" };
     }
-    const r = await decidir(c, ev, ctx, h.texto, hojeISO);
+    // Retomada de um dia para o outro: nossa última mensagem foi em outro dia.
+    const nossaUltima = [...h.msgs].reverse().find((m: any) => m.direcao === "saida");
+    const retomada = nossaUltima && hojeBrasilia(new Date(nossaUltima.criado_em)) !== hojeISO ? saudacaoDoHorario() : null;
+    const r = await decidir(c, ev, ctx, h.texto, hojeISO, retomada);
     if (r.erro) {
         await supabaseAdmin.from("campanha_respostas_bot").delete().eq("mensagem_id", ultima.id);
         return { pessoa, erro: r.erro };
@@ -419,7 +431,7 @@ async function simular(corpo: any) {
     const ctx = corpo.pessoa ? await contextoDoLead(corpo.pessoa)
         : { lead: { pessoaNome: corpo.nome || "MARIA DAS GRAÇAS SILVA", filial: corpo.filial || "Goiânia - Jardim América", tags: [], historico_eventos: corpo.eventos || [] }, memoria: null };
     const conversa = (corpo.conversa || []).map((m: any) => `${m.de === "lead" ? "Lead" : "Escola"}: ${m.texto}`).join("\n");
-    return await decidir(c, ev, ctx, conversa, hojeBrasilia());
+    return await decidir(c, ev, ctx, conversa, hojeBrasilia(), corpo.retomada || null);
 }
 
 Deno.serve(async (req) => {
