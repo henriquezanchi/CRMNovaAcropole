@@ -190,7 +190,9 @@ um_por_telefone as (
 )
 select pid, filial, tel, grupo,
        (case grupo when 'A' then 6 when 'B' then 5 when 'C' then 4 when 'D' then 3 when 'E' then 2 else 1 end) * 100000
-         + coalesce(ultimo_evento - date '2000-01-01', 0) prioridade
+         + coalesce(ultimo_evento - date '2000-01-01', 0)
+         -- Peso por proximidade da escola de origem ao local do evento (config.peso_filial).
+         + coalesce(((select config from c)->'peso_filial'->>filial)::numeric, 0) prioridade
 from um_por_telefone
 order by prioridade desc, pid
 limit p_limite
