@@ -72,7 +72,8 @@ inscritos as (
 inscritos_class as (
     select i.*,
         (i.tel is not null and i.tel in (select tel from alunos_tel where tel is not null)) aluno,
-        exists (select 1 from convidados cv where cv.telefone_chave = i.tel or cv."pessoaIdentificador" = i."pessoaIdentificador") via_convite
+        exists (select 1 from convidados cv where (cv.telefone_chave = i.tel or cv."pessoaIdentificador" = i."pessoaIdentificador")
+                  and i.criado_em >= cv.enviado_em - interval '10 minutes') via_convite
     from (select distinct on (coalesce(tel, "pessoaIdentificador")) * from inscritos order by coalesce(tel, "pessoaIdentificador"), criado_em) i
 )
 select jsonb_build_object(

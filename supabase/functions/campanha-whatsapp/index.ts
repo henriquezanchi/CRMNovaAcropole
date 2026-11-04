@@ -79,7 +79,8 @@ function primeiroNome(lead: any): string {
 }
 
 async function campanhasAtivas() {
-    const { data, error } = await supabaseAdmin.from("campanhas_whatsapp").select("*").eq("ativa", true);
+    const { data, error } = await supabaseAdmin.from("campanhas_whatsapp").select("*").eq("ativa", true)
+        .order("cota_diaria", { ascending: false }).order("id");
     if (error) throw new Error(error.message);
     return data || [];
 }
@@ -126,13 +127,17 @@ async function planejar(c: any, forcar: boolean) {
     if (inicio >= fimDia) return { campanha: c.slug, foraDaJanela: true };
 
     const limiteMeta = await limiteDiarioMeta();
-    const total = Math.max(0, Math.min(c.cota_diaria + (limiteMeta > c.cota_diaria ? limiteMeta - c.cota_diaria : 0), limiteMeta - MARGEM_LIMITE) - (jaPlanejados || 0));
+    // Várias campanhas dividem o mesmo limite da Meta: cada uma usa só a própria
+    // cota e nunca mais do que sobra depois do que as outras já planejaram hoje.
+    const { count: outrasHoje } = await supabaseAdmin.from("campanha_fila").select("id", { count: "exact", head: true })
+        .neq("campanha_id", c.id).gte("agendado_para", inicioDia.toISOString()).lte("agendado_para", fimDia.toISOString())
+        .neq("status", "cancelado");
+    const total = Math.max(0, Math.min(c.cota_diaria, limiteMeta - MARGEM_LIMITE - (outrasHoje || 0)) - (jaPlanejados || 0));
 
     const podeConvidar = hoje >= c.inicio && hoje <= c.fim_convites;
     const podeFollowup = hoje > c.inicio && hoje <= c.fim_followup;
     const pctFollowup = Number(c.config?.percentual_maximo_followup ?? 0.4);
-    // Com limite folgado (1K ou mais), todos os convites do dia + todas as 2ªs tentativas.
-    const tetoFollowup = limiteMeta > c.cota_diaria + 50 ? total - Math.min(c.cota_diaria, total) : Math.floor(total * pctFollowup);
+    const tetoFollowup = Math.floor(total * pctFollowup);
     const followups = podeFollowup ? await elegiveisFollowup(c, podeConvidar ? tetoFollowup : total) : [];
 
     let convitesQtd = podeConvidar ? Math.min(c.cota_diaria, total - followups.length) : 0;

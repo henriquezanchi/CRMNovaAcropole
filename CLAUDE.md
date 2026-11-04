@@ -11121,3 +11121,19 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
   "dias de recência" à prioridade (Setor Universitário 180, Setor Oeste 100, Alto da Glória 56, Jardim América 20,
   demais 0; distâncias em `config.distancia_km`). Só reordena dentro do grupo; o grupo A continua primeiro.
   Peso de meio grupo foi testado e descartado (escolas distantes zeravam).
+- **Campanhas simultâneas (04/11, `migracao_campanhas_aberturas_barra.sql`):** DMF Goiânia 200/dia; `dmf-barra-2026`
+  (evento 793, 18/11, 10/dia); uma `turma-<escola>-2026` por escola com abertura (Alto da Glória, Eldorado, Jardim
+  América, Setor Oeste, Setor Universitário, Goiânia II; 35/dia somadas) convidando para a "Última turma de 2026" com a
+  aula experimental gratuita como primeiro passo. Garavelo e Cidade Jardim não têm abertura cadastrada. O agendador
+  limita cada campanha à própria cota e ao que sobra do limite da Meta depois das outras (DMF planejado primeiro).
+  Regras específicas de cada campanha ficam em `config.instrucoes` (o robô não tem mais o DMF da PUC fixo no texto);
+  `config.padrao_grupo_a`/`padrao_inscrito` parametrizam `campanha_candidatos`; fila pendente de qualquer campanha ativa
+  bloqueia convite em outra. Para focar só nas aberturas depois do DMF: baixar `cota_diaria` do `dmf-2026` e subir as das turmas.
+- **Robô (04/11):** reserva "processando" há mais de 5 min é retomada; texto com link sai antes da arte; mensagem
+  automática do contato (`RE_RESPOSTA_AUTOMATICA`) é ignorada sem IA; calendário de 35 dias no prompt. "Deu certo sua
+  inscrição?" (`campanha_checagens_inscricao()`/`campanha_checagens`): quem o robô marcou como "vai", 12–23h depois, sem
+  mensagem nova e sem inscrição no Ulisses, recebe uma vez, só em horário comercial. Painel: "veio pelo convite" exige
+  inscrição depois do convite; `campanha_fila.enviado_em` é o horário de antes da chamada de envio.
+- **Painel de resultados lê de cache (`migracao_painel_resultados_cache.sql`):** job `painel-resultados-cache` (1/min,
+  50s de limite) recalcula uma chave por vez; a Edge Function só lê. Incidente de 04/11: servidor saturado (CRM e
+  painel fora do ar); o usuário aumentou o tamanho do projeto no Supabase.
