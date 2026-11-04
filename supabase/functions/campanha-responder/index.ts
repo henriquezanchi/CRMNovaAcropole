@@ -38,6 +38,22 @@ function hojeBrasilia(d = new Date()) {
 }
 
 // Seg-sex 8h-18h, sábado 8h-12h (Brasília).
+// Horário de resposta (pedido do usuário, 04/11/2026), todos os dias:
+//   8h-20h responde; 20h-22h só se a janela de 24h (contada da última mensagem
+//   da pessoa) fechar antes das 8h do dia seguinte, ou se a conversa estiver em
+//   andamento (conversaEmAndamento); 22h-8h não responde.
+//   Às 8h a varredura pega quem escreveu à noite.
+export function podeResponderAgora(ultimaEntradaISO: string, agora = new Date(), conversaEmAndamento = false): boolean {
+    const hora = Number(new Intl.DateTimeFormat("en-US", { timeZone: FUSO, hour: "numeric", hour12: false }).format(agora)) % 24;
+    if (hora >= 8 && hora < 20) return true;
+    if (hora < 20 || hora >= 22) return false;
+    if (conversaEmAndamento) return true;
+    const amanha = new Date(agora.getTime() + 24 * 3600 * 1000);
+    const proximas8h = new Date(`${hojeBrasilia(amanha)}T08:00:00-03:00`);
+    const fechaJanela = new Date(new Date(ultimaEntradaISO).getTime() + 24 * 3600 * 1000);
+    return fechaJanela < proximas8h;
+}
+
 export function horarioComercial(d = new Date()): boolean {
     const partes = new Intl.DateTimeFormat("en-US", { timeZone: FUSO, weekday: "short", hour: "numeric", hour12: false }).formatToParts(d);
     const dia = partes.find((p) => p.type === "weekday")?.value;
@@ -158,6 +174,7 @@ ${c.config?.instrucoes || "(nenhuma)"}
 - Áudio com transcrição: responda ao conteúdo transcrito. Mídia sem texto e sem transcrição: peça com leveza que a pessoa escreva.
 - Mensagem automática do WhatsApp da pessoa ("Retornarei sua mensagem", "No momento não posso atender", "Obrigado pelo contato, responderemos em breve" e parecidas): "resposta": null. Não é a pessoa falando.
 - Quando a pessoa só cumprimenta ("Oi", "Boa tarde") ou volta depois de uma mensagem automática, sem responder ao convite: cumprimente de volta de forma simples e natural, sem comemorar ("que bom ter seu retorno", "que alegria" são exageros aqui), e retome o convite em 1 ou 2 frases, perguntando se pode mandar os detalhes (ou mandando, se ela já tinha aceitado antes). Fale como uma pessoa da escola falaria por WhatsApp: tom calmo, no máximo uma exclamação por mensagem quando não houver motivo real de alegria.
+- Nunca se despeça: não escreva "boa noite", "até amanhã", "até mais", "tenha um ótimo dia", "fico à disposição" ou parecidos no fim da mensagem. Termine com a informação ou com uma pergunta que mantenha a conversa aberta. Se a pessoa se despedir, não responda ("resposta": null).
 - Mensagem só de agradecimento, "ok", emoji ou despedida, sem pergunta pendente: "resposta": null (não precisa responder). Mas um "sim", "pode", "quero" respondendo a uma pergunta nossa SEMPRE merece resposta.
 - Nome: chame pelo nome indicado, com a primeira letra maiúscula e as demais minúsculas. Nunca escreva o nome todo em maiúsculas.
 - Formato: no máximo 6 linhas curtas; pode usar quebras de linha; no máximo 1 emoji; sem markdown com ** ou #. Nunca use travessão longo (—) no texto enviado.
@@ -279,6 +296,14 @@ async function responder(pessoa: string, mensagemId: number | null, esperaSegund
         .order("criado_em", { ascending: false }).limit(1).maybeSingle();
     if (!ultima || ultima.direcao !== "entrada") return { pessoa, pulado: "já respondida" };
     if (mensagemId && ultima.id !== mensagemId) return { pessoa, pulado: "chegou mensagem mais nova" };
+    if (!podeResponderAgora(ultima.criado_em)) {
+        // 20h-22h: não interrompe uma conversa em andamento (respondemos há menos de 30 min).
+        const { data: nossa } = await supabaseAdmin.from("mensagens_whatsapp").select("criado_em")
+            .eq("pessoaIdentificador", pessoa).eq("direcao", "saida").neq("wa_status", "falhou")
+            .order("criado_em", { ascending: false }).limit(1).maybeSingle();
+        const emAndamento = nossa && Date.now() - new Date(nossa.criado_em).getTime() < 30 * 60_000 && podeResponderAgora(ultima.criado_em, new Date(), true);
+        if (!emAndamento) return { pessoa, pulado: "fora do horário de resposta (volta às 8h)" };
+    }
     // Junta mensagens em sequência: espera um pouco depois da última.
     const falta = new Date(ultima.criado_em).getTime() + esperaSegundos * 1000 - Date.now();
     if (falta > 0) {
