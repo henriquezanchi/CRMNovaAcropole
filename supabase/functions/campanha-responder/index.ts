@@ -185,6 +185,29 @@ function promptDinamico(ctx: any, conversa: string): string {
     return `# Sobre esta pessoa\n${linhas.join("\n")}\n\n# Conversa (mais antiga primeiro; "Escola" somos nós)\n${conversa}\n\nEscreva a próxima mensagem da escola.`;
 }
 
+// Rede de segurança: a IA às vezes erra o dia da semana (caso real 04/11:
+// "17/11 (segunda-feira)", é terça). Confere cada "DD/MM ... dia" e
+// "dia ... DD/MM" próximos e troca o dia pelo certo, mantendo o formato.
+const NOMES_DIA = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
+const RE_DIA = "(segunda|terça|terca|quarta|quinta|sexta|sábado|sabado|domingo)";
+export function corrigirDiasDaSemana(texto: string, hojeISO: string): string {
+    const anoBase = Number(hojeISO.slice(0, 4)), mesHoje = Number(hojeISO.slice(5, 7));
+    const certo = (d: number, m: number) => {
+        const ano = m < mesHoje - 6 ? anoBase + 1 : anoBase; // dezembro -> janeiro
+        return NOMES_DIA[new Date(Date.UTC(ano, m - 1, d)).getUTCDay()];
+    };
+    const trocar = (palavra: string, correto: string) => {
+        const base = palavra.toLowerCase().replace("terca", "terça").replace("sabado", "sábado");
+        if (base === correto) return palavra;
+        return palavra[0] === palavra[0].toUpperCase() ? correto[0].toUpperCase() + correto.slice(1) : correto;
+    };
+    let t = texto.replace(new RegExp(String.raw`(\d{1,2})/(\d{1,2})([^\n\d]{0,25}?)` + RE_DIA, "gi"),
+        (_m, d, m, meio, dia) => `${d}/${m}${meio}${trocar(dia, certo(+d, +m))}`);
+    t = t.replace(new RegExp(RE_DIA + String.raw`([-a-zçá ]{0,8}[, ]{1,3}(?:dia )?)(\d{1,2})/(\d{1,2})`, "gi"),
+        (_m, dia, meio, d, m) => `${trocar(dia, certo(+d, +m))}${meio}${d}/${m}`);
+    return t;
+}
+
 async function decidir(c: any, ev: any, ctx: any, conversa: string, hojeISO: string) {
     const escolas = await escolasDaRegiao(c.filiais, hojeISO);
     const fixo = promptFixo(c, ev, hojeISO, escolas);
@@ -196,7 +219,7 @@ async function decidir(c: any, ev: any, ctx: any, conversa: string, hojeISO: str
     try {
         const inicio = bruto.indexOf("{"), fim = bruto.lastIndexOf("}");
         const d = JSON.parse(bruto.slice(inicio, fim + 1));
-        if (typeof d.resposta === "string") d.resposta = d.resposta.replace(/\s—\s/g, ", ").replace(/\*\*/g, "").trim() || null;
+        if (typeof d.resposta === "string") d.resposta = corrigirDiasDaSemana(d.resposta.replace(/\s—\s/g, ", ").replace(/\*\*/g, "").trim(), hojeISO) || null;
         return { decisao: d };
     } catch (e) {
         return { erro: "json_invalido: " + String(e), bruto };
