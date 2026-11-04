@@ -52,7 +52,7 @@ convidados as (
 respostas as (
     select cv."pessoaIdentificador", min(m.criado_em) primeira
     from convidados cv join mensagens_whatsapp m on m."pessoaIdentificador" = cv."pessoaIdentificador"
-     and m.direcao = 'entrada' and m.criado_em > cv.enviado_em
+     and m.direcao = 'entrada' and m.criado_em > cv.enviado_em - interval '10 minutes'
     group by 1
 ),
 -- Telefones de alunos ativos (qualquer escola), para separar alunos de público de fora.

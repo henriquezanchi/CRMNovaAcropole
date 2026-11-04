@@ -128,6 +128,7 @@ ${escolas}
 
 # Como conduzir
 - O objetivo é a pessoa ir ao evento. Quando ela demonstrar interesse ou disser que pode receber detalhes, mande o essencial em poucas linhas: o que é (uma tarde de palestras sobre filosofia e ciência, com apresentações artísticas), data e hora, local (Auditório da Área 4 da PUC Goiás, Setor Universitário), entrada franca e o link de inscrição, pedindo que ela se inscreva pelo link para garantir a vaga. Nesse caso marque "enviar_arte": true (a arte do evento vai junto, uma única vez).
+- Quando a pessoa disser que vai ("sim, irei", "vou sim", "pode contar comigo", "estarei lá"): comemore com alegria e calor humano (ex.: "Que alegria, Valdete! 😊"), explique que as vagas são limitadas e por isso é importante garantir a dela pelo link de inscrição, e mande na mesma mensagem o link, a data, o horário e o local. Dizer que vai NÃO é estar inscrita: o lugar só fica garantido com a inscrição no link. Marque "enviar_arte": true (se a arte ainda não foi enviada) e "situacao": "vai".
 - Gratuidade: sempre que falar do evento, diga com clareza que a entrada é gratuita (entrada franca). Se a pessoa hesitar ou perguntar sobre valor, reforce que é gratuito.
 - Programação: quando ajudar a despertar interesse, cite 1 ou 2 palestras da programação, com o tema e quem fala, escolhendo as que mais combinam com a pessoa (atividades que já frequentou, profissão, etiquetas, o que disse na conversa). Ex.: quem é da saúde -> "A Ciência da Saúde", com o médico e filósofo Dr. Hugo Cerveira; quem fala de falta de tempo ou rotina -> "A Ciência do Tempo", com João Guilherme Nalon; quem gosta de mitologia, histórias ou literatura -> "A Ciência do Mito", com Alice Amaral; quem gosta de ciência ou meio ambiente -> o diálogo final com o Prof. Antônio Pasqualetto, cientista, e o Prof. Jean Cesar Antunes. Sem pista nenhuma, cite a programação de forma geral (palestras sobre saúde, tempo e mito, apresentações artísticas e um diálogo entre filosofia e ciência). Se a pessoa pedir a programação completa, mande-a com os horários.
 - Não repita informação que já foi enviada na conversa. Se ela já recebeu os detalhes, responda só ao que perguntou.
@@ -135,7 +136,7 @@ ${escolas}
 - Perguntas sobre estacionamento, acessibilidade, levar crianças/acompanhantes, duração exata, lanche ou qualquer dado que não está acima: não invente. Diga que vai confirmar com a equipe e marque "precisa_humano": true com o motivo. Levar acompanhante: pode convidar, e o acompanhante também se inscreve pelo link.
 - Horário de término: não existe nos dados. A última atividade da programação começa às 19h. Nunca diga a que horas termina; se perguntarem, diga que a última atividade começa às 19h e marque "precisa_humano": true.
 - Valores (mensalidade, preço do curso, descontos): nunca informe nenhum valor. Diga que a equipe da escola explica tudo sobre o curso, de preferência na aula experimental, e marque "precisa_humano": true se a pessoa insistir no valor.
-- Sempre que der os detalhes do evento, inclua o link de inscrição na mesma mensagem (não pergunte "posso mandar o link?").
+- Sempre que der os detalhes do evento, inclua o link de inscrição na mesma mensagem (não pergunte "posso mandar o link?") e escreva, com essas palavras, que as vagas são limitadas e por isso é importante garantir a vaga pelo link.
 - Outras cidades: a Nova Acrópole tem escolas em muitas cidades do Brasil, mas você não tem os contatos delas. Indique o site acropole.org.br para encontrar a unidade mais próxima. Nunca ofereça "passar o contato".
 - Endereço exato da PUC Área 4 não está nos dados: diga "Auditório da Área 4 da PUC Goiás, no Setor Universitário" e, se pedirem o endereço exato, diga que vai confirmar ("precisa_humano": true).
 - Escola de origem: a pessoa se aproximou da Nova Acrópole pela escola indicada como "escola de origem". Quando fizer sentido (ela gostou da ideia, perguntou sobre o curso, sobre a escola, ou disse que não pode ir ao evento mas tem interesse), conte de forma leve sobre a próxima atividade dessa escola, de preferência a abertura de turma ou a aula experimental do Curso de Filosofia para Viver, com data e link quando existirem. Uma menção por conversa, sem insistir.
@@ -259,6 +260,12 @@ async function responder(pessoa: string, mensagemId: number | null, esperaSegund
             method: "POST", headers: { "Content-Type": "application/json", "x-funil-token": Deno.env.get("FUNIL_ANALISE_TOKEN") || "" }, body: "{}",
         }).catch(() => {});
     }
+    // Reserva presa: se a execução anterior morreu no meio (ex.: servidor
+    // sobrecarregado em 04/11/2026), a reserva ficava "processando" para
+    // sempre e a pessoa nunca recebia resposta. Depois de 5 min, libera.
+    // Não duplica envio: antes de enviar, confere se a última mensagem ainda é dela.
+    await supabaseAdmin.from("campanha_respostas_bot").delete().eq("mensagem_id", ultima.id)
+        .eq("status", "processando").lt("criado_em", new Date(Date.now() - 5 * 60_000).toISOString());
     // Reserva: a chave primária impede que webhook e cron respondam a mesma mensagem.
     const { error: erroReserva } = await supabaseAdmin.from("campanha_respostas_bot")
         .insert({ mensagem_id: ultima.id, pessoaIdentificador: pessoa, campanha_id: c.id });
@@ -290,11 +297,13 @@ async function responder(pessoa: string, mensagemId: number | null, esperaSegund
             .eq("pessoaIdentificador", pessoa).neq("wa_status", "falhou").order("criado_em", { ascending: false }).limit(1).maybeSingle();
         if (agora?.id !== ultima.id) status = "ultrapassada";
         else {
-            if (d.enviar_arte && ev?.imagem_url && !(await arteJaEnviada(pessoa, ev.imagem_url))) {
-                await enviar({ pessoaIdentificador: pessoa, tipo: "imagem", imagemUrl: ev.imagem_url, caption: "" });
-            }
+            // Texto (com o link) primeiro, arte depois: se a execução cair no meio,
+            // o essencial já saiu (caso real 04/11: só a arte chegou e o texto não).
             const envio = await enviar({ pessoaIdentificador: pessoa, tipo: "texto", texto: d.resposta });
             status = envio.ok ? "respondida" : "falha_envio: " + String(envio.erro || "").slice(0, 200);
+            if (envio.ok && d.enviar_arte && ev?.imagem_url && !(await arteJaEnviada(pessoa, ev.imagem_url))) {
+                await enviar({ pessoaIdentificador: pessoa, tipo: "imagem", imagemUrl: ev.imagem_url, caption: "" });
+            }
         }
     }
     await aplicarDecisao(pessoa, c, ev, d, ctx.lead.filial);

@@ -106,7 +106,7 @@ async function elegiveisFollowup(c: any, limite: number): Promise<any[]> {
         if (saida.length >= limite) break;
         if (comFollowup.has(e.pessoaIdentificador)) continue;
         const { count } = await supabaseAdmin.from("mensagens_whatsapp").select("id", { count: "exact", head: true })
-            .eq("pessoaIdentificador", e.pessoaIdentificador).eq("direcao", "entrada").gte("criado_em", e.enviado_em);
+            .eq("pessoaIdentificador", e.pessoaIdentificador).eq("direcao", "entrada").gte("criado_em", antes10min(e.enviado_em));
         if (count && count > 0) continue;
         saida.push(e);
     }
@@ -235,7 +235,7 @@ async function enviar() {
             ? (await supabaseAdmin.from("campanha_fila").select("enviado_em").eq("campanha_id", c.id).eq("pessoaIdentificador", it.pessoaIdentificador).eq("tipo", "convite").maybeSingle()).data?.enviado_em
             : new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
         const { count: conversa } = await supabaseAdmin.from("mensagens_whatsapp").select("id", { count: "exact", head: true })
-            .eq("pessoaIdentificador", it.pessoaIdentificador).gte("criado_em", desde || new Date().toISOString())
+            .eq("pessoaIdentificador", it.pessoaIdentificador).gte("criado_em", it.tipo === "followup" && desde ? antes10min(desde) : (desde || new Date().toISOString()))
             .in("direcao", it.tipo === "followup" ? ["entrada"] : ["entrada", "saida"]);
         if (conversa && conversa > 0) { await finalizar("pulado", { motivo: it.tipo === "followup" ? "respondeu ao convite" : "conversa nos últimos 7 dias" }); continue; }
         if (c.evento_id) {
@@ -250,6 +250,9 @@ async function enviar() {
         const params = paramsDoModelo(modelo, c, lead, filialPrep);
         const corpo = (c.config?.corpos || {})[modelo] as string | undefined;
         const preview = corpo ? corpo.replace(/\{\{(\d+)\}\}/g, (_: string, n: string) => params[Number(n) - 1] ?? "") : `[Modelo ${modelo}] ${params.join(" | ")}`;
+        // Horário de ANTES da chamada: com o servidor lento a chamada pode levar
+        // mais de um minuto, e a pessoa responder antes de ela terminar (04/11).
+        const momentoEnvio = new Date().toISOString();
         const envio = await chamarEnvio({
             pessoaIdentificador: it.pessoaIdentificador, tipo: "template", templateNome: modelo,
             templateIdioma: c.template_idioma, templateParams: params, templatePreview: preview,
@@ -257,7 +260,7 @@ async function enviar() {
         });
         if (envio.ok) {
             usados++;
-            await finalizar("enviado", { enviado_em: new Date().toISOString(), wa_message_id: envio.dados?.wa_message_id ?? null });
+            await finalizar("enviado", { enviado_em: momentoEnvio, wa_message_id: envio.dados?.wa_message_id ?? null });
             if (c.evento_id && it.tipo === "convite") {
                 await supabaseAdmin.from("evento_leads").upsert(
                     { evento_id: c.evento_id, pessoaIdentificador: it.pessoaIdentificador, resposta_convite: "pendente", origem: "crm" },
@@ -314,6 +317,10 @@ async function status() {
     }
     return { campanhas: saida, limiteMeta: await limiteDiarioMeta(), iniciadas24h: await iniciadasUltimas24h() };
 }
+
+// Margem de segurança ao procurar resposta a um envio: o horário gravado pode
+// ser um pouco posterior ao envio real.
+function antes10min(iso: string) { return new Date(new Date(iso).getTime() - 10 * 60_000).toISOString(); }
 
 Deno.serve(async (req) => {
     const token = Deno.env.get("FUNIL_ANALISE_TOKEN");
