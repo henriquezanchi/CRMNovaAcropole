@@ -160,6 +160,7 @@ ${c.config?.instrucoes || "(nenhuma)"}
 - Perguntas sobre estacionamento, acessibilidade, levar crianças/acompanhantes, duração exata, lanche ou qualquer dado que não está acima: não invente. Diga que vai confirmar com a equipe e marque "precisa_humano": true com o motivo. Levar acompanhante: pode convidar, e o acompanhante também se inscreve pelo link.
 - Horário de término: se não estiver nos dados, nunca invente; diga que vai confirmar e marque "precisa_humano": true.
 - Valores (mensalidade, preço do curso, descontos): nunca informe nenhum valor. Diga que a equipe da escola explica tudo sobre o curso, de preferência na aula experimental, e marque "precisa_humano": true se a pessoa insistir no valor.
+- Se a pessoa já aceitou ("sim", "pode", "quero") a uma pergunta nossa sobre detalhes ou link, mande o link nesta mensagem; nunca pergunte de novo se pode mandar.
 - Sempre que der os detalhes do evento, inclua o link de inscrição na mesma mensagem (não pergunte "posso mandar o link?") e escreva, com essas palavras, que as vagas são limitadas e por isso é importante garantir a vaga pelo link.
 - Outras cidades: a Nova Acrópole tem escolas em muitas cidades do Brasil, mas você não tem os contatos delas. Indique o site acropole.org.br para encontrar a unidade mais próxima. Nunca ofereça "passar o contato".
 - Endereço: use só o que está nos dados (descrição do evento, instruções da campanha ou endereço da escola). Se não estiver, diga que vai confirmar ("precisa_humano": true) e ofereça o mapa da escola.
@@ -230,6 +231,15 @@ export function corrigirDiasDaSemana(texto: string, hojeISO: string): string {
     return t;
 }
 
+// Rede de segurança (caso real 04/11, Simey): a pessoa já tinha aceitado e o robô
+// perguntou de novo "Posso te passar o link?". Pergunta sobre mandar o link, sem
+// link nenhum na resposta, vira o próprio link.
+const RE_PERGUNTA_LINK = /[^.!?\n]*\b(posso|quer que eu|gostaria que eu|quer|deseja|gostaria de receber)\b[^.!?\n]{0,40}\blink\b[^?\n]*\?/i;
+export function trocarPerguntaDoLink(texto: string, link: string | null | undefined): string {
+    if (!link || /https?:\/\//i.test(texto) || !RE_PERGUNTA_LINK.test(texto)) return texto;
+    return texto.replace(RE_PERGUNTA_LINK, (m) => `${m.match(/^\s*/)?.[0] || ""}Para garantir sua vaga, é só se inscrever pelo link:\n${link}`);
+}
+
 // "Bom dia!" / "Boa tarde!" / "Boa noite!" conforme a hora em Brasília.
 function saudacaoDoHorario(agora = new Date()): string {
     const hora = Number(new Intl.DateTimeFormat("en-US", { timeZone: FUSO, hour: "numeric", hour12: false }).format(agora)) % 24;
@@ -247,6 +257,7 @@ async function decidir(c: any, ev: any, ctx: any, conversa: string, hojeISO: str
     try {
         const inicio = bruto.indexOf("{"), fim = bruto.lastIndexOf("}");
         const d = JSON.parse(bruto.slice(inicio, fim + 1));
+        if (typeof d.resposta === "string") d.resposta = trocarPerguntaDoLink(d.resposta, c.config?.link_convite || ev?.link_inscricao);
         if (typeof d.resposta === "string") d.resposta = corrigirDiasDaSemana(d.resposta.replace(/\s—\s/g, ", ").replace(/\*\*/g, "").trim(), hojeISO) || null;
         return { decisao: d };
     } catch (e) {

@@ -304,3 +304,11 @@ update campanhas_whatsapp set config = jsonb_set(config, '{instrucoes}', to_json
     '- A aula experimental é gratuita. Não diga que o curso é gratuito.',
     '- A aula experimental é gratuita. Não diga que o curso é gratuito. Chame sempre de "aula experimental", nunca de "primeira aula" (a primeira aula é a da turma).')))
 where slug like 'turma-%-2026' and config->>'instrucoes' not like '%nunca de "primeira aula"%';
+
+-- Link usado quando o robô pergunta "quer o link?" sem mandar (ver trocarPerguntaDoLink):
+-- nas turmas, o primeiro passo é a aula experimental.
+update campanhas_whatsapp c set config = c.config || jsonb_build_object('link_convite', ea.link_inscricao)
+from (values ('turma-alto-da-gloria-2026', 774), ('turma-eldorado-2026', 775), ('turma-jardim-america-2026', 779),
+             ('turma-setor-oeste-2026', 782), ('turma-universitario-2026', 786), ('turma-goiania-ii-2026', 777)) v(slug, aula)
+join eventos ea on ea.id = v.aula
+where c.slug = v.slug;
