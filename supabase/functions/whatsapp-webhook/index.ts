@@ -281,6 +281,26 @@ async function resolverPorUltimoEnvioNosso(ddd: string, candidatos: string[]): P
 // "no escuro" pela chegada de uma mensagem recebida. Ver whatsapp-send/
 // index.ts, parâmetro `origemEnvio`.
 
+// Seg-sex 8h-18h, sábado 8h-12h (Brasília) — mesma regra de campanha-responder.
+function horarioComercialAgora(): boolean {
+    const partes = new Intl.DateTimeFormat("en-US", { timeZone: "America/Sao_Paulo", weekday: "short", hour: "numeric", hour12: false }).formatToParts(new Date());
+    const dia = partes.find((p) => p.type === "weekday")?.value;
+    const hora = Number(partes.find((p) => p.type === "hour")?.value) % 24;
+    if (dia === "Sun") return false;
+    if (dia === "Sat") return hora >= 8 && hora < 12;
+    return hora >= 8 && hora < 18;
+}
+
+async function acionarRespostaCampanha(pessoa: string, waMessageId: string) {
+    if (!horarioComercialAgora()) return;
+    const { data: naCampanha } = await supabaseAdmin.from("campanha_fila").select("id, campanhas_whatsapp!inner(ativa)")
+        .eq("pessoaIdentificador", pessoa).eq("status", "enviado").eq("campanhas_whatsapp.ativa", true).limit(1);
+    if (!naCampanha?.length) return;
+    const { data: m } = await supabaseAdmin.from(NOME_TABELA_MENSAGENS).select("id").eq("wa_message_id", waMessageId).maybeSingle();
+    if (!m) return;
+    await supabaseAdmin.rpc("executar_campanha_responder", { p_corpo: { pessoa, mensagem_id: m.id } });
+}
+
 Deno.serve(async (req) => {
     const url = new URL(req.url);
 
@@ -417,6 +437,13 @@ Deno.serve(async (req) => {
                 if (error) console.error("Erro ao gravar mensagem recebida:", error);
                 if (!error && match?.pessoaIdentificador && msg.type === "text") {
                     await registrarPedidoNaoContatar(match.pessoaIdentificador, extrairTexto(msg));
+                }
+                // Campanha com resposta automática (04/11/2026): quem foi convidado e
+                // respondeu recebe resposta do robô em até 1 minuto no horário
+                // comercial. A chamada sai pelo pg_net (assíncrona), sem atrasar o 200
+                // que a Meta espera. Fora do horário, o cron a cada minuto responde.
+                if (!error && match?.pessoaIdentificador) {
+                    await acionarRespostaCampanha(match.pessoaIdentificador, msg.id).catch((e) => console.warn("Resposta da campanha não acionada:", e));
                 }
             }
 

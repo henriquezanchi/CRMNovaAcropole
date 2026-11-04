@@ -11084,3 +11084,36 @@ portfólio próprio verificado com a Aletheia como parceira (troca só número/t
   Meta recusar a consulta. Quando a situação muda, avisa o admin pelo `lembrete-scraper` (se a conta estiver banida
   pode não chegar). Sino: gatilho 11 (`verificarNotificacoesSaudeContaWpp()`, poll 10 min, dedup por número+problema
   em localStorage). Resumo Diário ganhou a linha "Conta do WhatsApp". Só monitora os números do CRM, não a Semperia.
+
+## Campanha DMF 2026 + painel de resultados para dirigentes (04/11/2026)
+
+Pedido do usuário: convites automáticos do Dia Mundial da Filosofia (evento 764, PUC Goiás, 14/11 16h) só para
+Goiânia e Aparecida (8 escolas; Alto da Glória entra), 250/dia pelo modelo aprovado, espaçados até 20h; robô
+respondendo sozinho (≤1 min em horário comercial, ≤5 min fora); 2ª tentativa para quem não respondeu em 24h;
+página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí religadas; Anápolis fora em definitivo
+(`migracao_filiais_participantes_20261104.sql`).
+- **Fila** (`migracao_campanha_whatsapp.sql`): `campanhas_whatsapp` (slug `dmf-2026`), `campanha_fila`
+  (convite/followup, agendado_para, status), `campanha_respostas_bot` (PK = mensagem recebida, impede responder 2x).
+  `campanha_candidatos()` segue a ordem combinada em 30/10: nunca foi aluno antes (A já foi a um DMF, B último
+  evento 2026, C 2025, D 2023-24, E antes), ex-alunos (X) por último; 1 convite por telefone; fora: aluno ativo,
+  Não Contatar, conferência, sem interesse, mudou de cidade, conversa nos últimos 7 dias, já inscrito, cadastro "Teste".
+- **Edge `campanha-whatsapp`** (token interno x-funil-token, Vault `funil_analise_token`): `planejar` (cron 08:25
+  Brasília; distribui por igual até `janela_fim`; respeita o limite real da Meta em 24h corridas, lido de
+  `whatsapp_saude_conta` — com TIER_250 os convites + 2ªs tentativas dividem 245/dia, 2ª tentativa até 40%;
+  freio: ≥90% das vagas → 150/dia, ≥97% → para), `enviar` (cron a cada minuto, `campanha_assumir_envios()`
+  atômico, confere de novo antes de mandar), `status`, `modelos` (a listagem da Meta falhou: o id em
+  `WHATSAPP_WABA_ID` não é o da WABA). 2ª tentativa usa `contato_inicial`.
+- **Edge `campanha-responder`**: acionada pelo webhook em horário comercial (seg-sex 8-18h, sáb 8-12h) via
+  `executar_campanha_responder()` (pg_net, sem atrasar o 200 da Meta), espera 20s para juntar mensagens; cron a
+  cada minuto como rede de segurança (25s / 2,5 min fora do horário). Conhece o evento, a escola de origem e as
+  próximas atividades das 8 escolas (para quem mora/trabalha perto de outra). Nunca dá valor de curso nem horário
+  de término; marca etiquetas "Campanha: Vai ao evento/Interessado/Não vai/Falar com atendente" (este último com
+  lembrete do dia). `{acao:"simular"}` gera resposta sem enviar (usado para treinar; 25 cenários rodados).
+  Modelo `claude-sonnet-4-5` com reserva Haiku 4.5. Reengajamento (`reengajar-janela-fechando`) religado.
+- **Painel** `resultados.html` + `js/resultados.js` + `css/resultados.css` + Edge `painel-resultados`
+  (`migracao_painel_resultados.sql`): link com chave no fragmento, só o hash em `painel_resultados_links`, com
+  escopo (escolas; campanhas). Aba da campanha (meta de 50 de fora, ocupação, convites/entregas/respostas,
+  inscritos alunos x de fora, por escola, listas com nome e telefone, banco a convidar) e aba Escolas (contatados,
+  respostas, inscrições após contato, funil atual, matrículas do Mercúrio por mês, vagas das aberturas e aulas
+  experimentais). Links emitidos: coordenação (todas + DMF) e um por escola ativa, válidos 120 dias, guardados
+  fora do repositório. Revogar: `revogado_em`.

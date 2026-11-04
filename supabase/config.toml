@@ -42,3 +42,12 @@ verify_jwt = false
 
 [functions.transcrever-audios-crm]
 verify_jwt = false
+
+[functions.campanha-whatsapp]
+verify_jwt = false
+
+[functions.campanha-responder]
+verify_jwt = false
+
+[functions.painel-resultados]
+verify_jwt = false

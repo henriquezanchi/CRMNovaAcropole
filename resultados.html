@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex,nofollow">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src https://eovgljcowblwoxmobeno.supabase.co; base-uri 'none'; form-action 'none'">
+<title>Resultados da captação</title>
+<link rel="icon" href="img/logo-nova-acropole.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700;900&display=swap">
+<link rel="stylesheet" href="css/resultados.css">
+</head>
+<body>
+<header class="topo">
+  <div class="topo-in">
+    <img src="img/logo-nova-acropole.png" alt="" class="logo">
+    <div>
+      <p class="marca">Nova Acrópole · Goiânia e região</p>
+      <h1>Resultados da captação</h1>
+      <p id="rotulo" class="rotulo"></p>
+    </div>
+  </div>
+</header>
+<main>
+  <section class="controles" aria-label="Período">
+    <span class="rot">Período</span>
+    <div class="segmentos" role="group" aria-label="Período dos números">
+      <button type="button" data-dias="7">7 dias</button>
+      <button type="button" data-dias="30" aria-pressed="true">30 dias</button>
+      <button type="button" data-dias="90">90 dias</button>
+      <button type="button" data-dias="0">Desde set/2026</button>
+    </div>
+    <button type="button" id="atualizar" class="secundario">Atualizar</button>
+    <span id="atualizado" class="muted"></span>
+  </section>
+  <p id="estado" role="status" aria-live="polite" class="estado">Carregando…</p>
+  <div id="conteudo" hidden>
+    <nav class="abas" id="abas" aria-label="Seções"></nav>
+    <div id="secoes"></div>
+  </div>
+  <footer>Este acesso permite somente consulta. Os números vêm do CRM, do Ulisses (inscrições e presença, sincronizados várias vezes ao dia) e do Mercúrio (matrículas). Compartilhe o link apenas com quem acompanha os resultados; ele funciona como uma chave de acesso.</footer>
+</main>
+<script src="js/resultados.js"></script>
+</body>
+</html>
