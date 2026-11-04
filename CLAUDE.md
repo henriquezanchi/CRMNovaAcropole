@@ -11137,3 +11137,7 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
 - **Painel de resultados lê de cache (`migracao_painel_resultados_cache.sql`):** job `painel-resultados-cache` (1/min,
   50s de limite) recalcula uma chave por vez; a Edge Function só lê. Incidente de 04/11: servidor saturado (CRM e
   painel fora do ar); o usuário aumentou o tamanho do projeto no Supabase.
+- **Número errado não bloqueia (04/11):** o robô marca `"Campanha: Nome a conferir"` (só aviso; nas respostas não usa o
+  nome do cadastro) em vez de `"Contato em conferência"`, que bloqueia todo envio no `whatsapp-send` e deixou sem
+  resposta quem só tinha mandado a saudação automática da própria empresa. `RE_SAUDACAO_EMPRESA` ("X agradece seu
+  contato. Como podemos ajudar?") conta como mensagem automática mesmo com "?".
