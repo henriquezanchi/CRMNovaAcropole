@@ -36,7 +36,7 @@ function organizarInterfaceCrm() {
         ];
         const navegacao = document.createElement('nav'); navegacao.className = 'atalhos-relatorios'; navegacao.setAttribute('aria-label','Assuntos dos relatórios');
         const cabecalho = document.createElement('header'); cabecalho.className = 'relatorios-intro';
-        cabecalho.innerHTML = '<span>VISÃO DE GESTÃO</span><h1>Relatórios</h1><p>Escolha um assunto para analisar os resultados com mais clareza.</p>';
+        cabecalho.innerHTML = '<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px; flex-wrap:wrap;"><div><span>VISÃO DE GESTÃO</span><h1>Relatórios</h1><p>Escolha um assunto para analisar os resultados com mais clareza.</p></div><button type="button" class="btn-secondary" style="white-space:nowrap;" onclick="abrirPainelResultados()"><i class="fa-solid fa-chart-line"></i> Painel de Resultados</button></div>';
         const secoes = [], botoes = [];
         grupos.forEach(([titulo, ids], indice) => {
             const secao = document.createElement('section'); secao.className = 'relatorios-assunto'; secao.id = 'relatorios-assunto-' + indice;
