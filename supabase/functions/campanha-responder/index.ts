@@ -189,9 +189,11 @@ ${c.config?.instrucoes || "(nenhuma)"}
 - Assuntos fora do evento e da escola (religião, política, opinião pessoal, saúde): resposta breve e respeitosa; a Nova Acrópole é uma escola de filosofia, não é religião. Se insistirem, "precisa_humano": true.
 - Áudio com transcrição: responda ao conteúdo transcrito. Mídia sem texto e sem transcrição: peça com leveza que a pessoa escreva.
 - Mensagem automática do WhatsApp da pessoa ("Retornarei sua mensagem", "No momento não posso atender", "Obrigado pelo contato, responderemos em breve" e parecidas): "resposta": null. Não é a pessoa falando.
-- Quando a pessoa só cumprimenta ("Oi", "Boa tarde") ou volta depois de uma mensagem automática, sem responder ao convite: cumprimente de volta de forma simples e natural, sem comemorar ("que bom ter seu retorno", "que alegria" são exageros aqui), e retome o convite em 1 ou 2 frases, perguntando se pode mandar os detalhes (ou mandando, se ela já tinha aceitado antes). Fale como uma pessoa da escola falaria por WhatsApp: tom calmo, no máximo uma exclamação por mensagem quando não houver motivo real de alegria.
+- Quando a pessoa só cumprimenta ("Oi", "Boa tarde") ou volta depois de uma mensagem automática, sem responder ao convite: não comemore ("que bom ter seu retorno", "que alegria" são exageros aqui), e retome o convite em 1 ou 2 frases, perguntando se pode mandar os detalhes (ou mandando, se ela já tinha aceitado antes). Fale como uma pessoa da escola falaria por WhatsApp: tom calmo, no máximo uma exclamação por mensagem quando não houver motivo real de alegria.
+- Saudação: no mesmo dia em que já falamos com a pessoa (inclusive o convite), a conversa só está continuando, mesmo depois de horas e mesmo que ela comece com "Boa tarde": não use saudação nenhuma ("Bom dia", "Boa tarde", "Boa noite", "Oi", "Olá"). Comece direto pelo assunto; pode usar o nome (ex.: "Regina, o Dia Mundial da Filosofia vai ser..."). Saudação só no aviso RETOMADA (conversa parada de um dia para o outro).
 - No WhatsApp a conversa continua ao longo de dias, sem encerrar nem reiniciar. Nunca anuncie que vai parar, encerrar ou continuar depois ("hoje não posso continuar", "volto amanhã", "vou encerrar por aqui", "amanhã retomamos"). Quando a conversa ficou parada de um dia para o outro (aviso RETOMADA), comece só com a saudação indicada (ex.: "Bom dia!") e continue de onde parou: nada de se apresentar de novo, repetir o convite do zero ou pedir desculpas pela demora. Se a pessoa se despedir, não responda ("resposta": null).
 - Mensagem só de agradecimento, "ok", emoji ou despedida, sem pergunta pendente: "resposta": null (não precisa responder). Mas um "sim", "pode", "quero" respondendo a uma pergunta nossa SEMPRE merece resposta.
+- Quem fala: os convites saem em nome de Henrique, que é homem. Ao falar de si mesmo, use sempre o masculino ("obrigado", "tudo ótimo, obrigado", "fico feliz", "ocupado"), nunca "obrigada".
 - Nome: chame pelo nome indicado, com a primeira letra maiúscula e as demais minúsculas. Nunca escreva o nome todo em maiúsculas.
 - Formato: no máximo 6 linhas curtas; pode usar quebras de linha; no máximo 1 emoji; sem markdown com ** ou #. Nunca use travessão longo (—) no texto enviado.
 - Datas: use a tabela de calendário acima; nunca calcule dia da semana de cabeça.
@@ -300,13 +302,30 @@ export function corrigirDatasDeAtividades(texto: string, eventos: { nome: string
     }).join("\n");
 }
 
+// No mesmo dia a conversa só continua (decisão do usuário, 04–05/11; casos Regina e
+// Fernanda: "Boa tarde, Regina!" uma hora depois do convite). Tira a saudação do
+// começo da resposta e começa pelo resto, com a primeira letra maiúscula.
+export function tirarSaudacaoInicial(texto: string): string {
+    const t = texto.replace(/^\s*(bom dia|boa tarde|boa noite|ol[áa]|oi+e?)(?![a-zà-ÿ])(,?\s+[A-Za-zÀ-ÿ]+)?\s*[!.,]*\s*(\u{1F60A}|\u{1F642})?\s*/iu, "");
+    if (!t || t === texto) return texto;
+    return t[0].toUpperCase() + t.slice(1);
+}
+
+// Toda atividade divulgada pede inscrição (decisão do usuário, 05/11). Caso real
+// 04/11 (Carlos): "não precisa reservar com antecedência". A frase que diz isso é
+// trocada pela regra certa, sem passar a conversa para atendente.
+export function corrigirInscricaoOpcional(texto: string): string {
+    const re = /[^.!?\n]*\bn[ãa]o (precisa|é preciso|é necessário)[^.!?\n]{0,30}(reservar|se inscrever|inscri[çc][ãa]o|garantir)[^.!?\n]*[.!?]?/gi;
+    if (!re.test(texto)) return texto;
+    return texto.replace(re, (m) => `${m.match(/^\s*/)?.[0] || ""}É importante se inscrever pelo link, porque as vagas são limitadas.`);
+}
+
 // Trava final antes de enviar: o robô nunca informa valor nem diz que consultou a
 // equipe (ele não consulta ninguém). Devolve o motivo do bloqueio, ou null.
 export function motivoBloqueioResposta(texto: string, linksPermitidos: string[] = []): string | null {
     if (/R\$\s?\d|\d+(,\d{2})?\s?reais\b/i.test(texto)) return "informou valor em dinheiro";
     if (/(confirmei|conferi|verifiquei|consultei|chequei)\b[^.!?\n]{0,30}\b(equipe|escola|secretaria|professor)/i.test(texto)) return "disse que confirmou com a equipe";
     if (/primeira aula[^.!?\n]{0,40}(gratuit|de gra[çc]a|sem custo)/i.test(texto)) return "disse que a primeira aula é gratuita";
-    if (/n[ãa]o precisa[^.!?\n]{0,25}(reservar|se inscrever|inscri[çc][ãa]o|garantir)/i.test(texto)) return "disse que não precisa se inscrever";
     const permitidos = new Set(linksPermitidos.map((l) => (l.match(/eventoId=(\d+)/) || [])[1]).filter(Boolean));
     for (const m of texto.matchAll(/eventoId=(\d+)/g)) if (!permitidos.has(m[1])) return `link de inscrição desconhecido (${m[1]})`;
     return null;
@@ -318,7 +337,7 @@ function saudacaoDoHorario(agora = new Date()): string {
     return hora < 12 ? "Bom dia!" : hora < 18 ? "Boa tarde!" : "Boa noite!";
 }
 
-async function decidir(c: any, ev: any, ctx: any, conversa: string, hojeISO: string, retomada: string | null = null) {
+async function decidir(c: any, ev: any, ctx: any, conversa: string, hojeISO: string, retomada: string | null = null, mesmoDia = false) {
     const { texto: escolas, links, eventos } = await escolasDaRegiao(c.filiais, hojeISO);
     const fixo = promptFixo(c, ev, hojeISO, escolas);
     const dinamico = promptDinamico(ctx, conversa, retomada);
@@ -330,6 +349,8 @@ async function decidir(c: any, ev: any, ctx: any, conversa: string, hojeISO: str
         const inicio = bruto.indexOf("{"), fim = bruto.lastIndexOf("}");
         const d = JSON.parse(bruto.slice(inicio, fim + 1));
         if (typeof d.resposta === "string") d.resposta = trocarPerguntaDoLink(d.resposta, c.config?.link_convite || ev?.link_inscricao);
+        if (typeof d.resposta === "string") d.resposta = corrigirInscricaoOpcional(d.resposta);
+        if (typeof d.resposta === "string" && mesmoDia) d.resposta = tirarSaudacaoInicial(d.resposta);
         if (typeof d.resposta === "string") d.resposta = corrigirLinksDeAtividades(d.resposta, eventos.filter((e) => e.link));
         if (typeof d.resposta === "string") d.resposta = corrigirDatasDeAtividades(d.resposta, eventos);
         if (typeof d.resposta === "string") d.resposta = corrigirDiasDaSemana(d.resposta.replace(/\s—\s/g, ", ").replace(/\*\*/g, "").trim(), hojeISO) || null;
@@ -471,7 +492,8 @@ async function responder(pessoa: string, mensagemId: number | null, esperaSegund
     // Retomada de um dia para o outro: nossa última mensagem foi em outro dia.
     const nossaUltima = [...h.msgs].reverse().find((m: any) => m.direcao === "saida");
     const retomada = nossaUltima && hojeBrasilia(new Date(nossaUltima.criado_em)) !== hojeISO ? saudacaoDoHorario() : null;
-    const r = await decidir(c, ev, ctx, h.texto, hojeISO, retomada);
+    const mesmoDia = !!nossaUltima && !retomada;
+    const r = await decidir(c, ev, ctx, h.texto, hojeISO, retomada, mesmoDia);
     if (r.erro) {
         await supabaseAdmin.from("campanha_respostas_bot").delete().eq("mensagem_id", ultima.id);
         return { pessoa, erro: r.erro };
@@ -536,7 +558,7 @@ async function simular(corpo: any) {
     const ctx = corpo.pessoa ? await contextoDoLead(corpo.pessoa)
         : { lead: { pessoaNome: corpo.nome || "MARIA DAS GRAÇAS SILVA", filial: corpo.filial || "Goiânia - Jardim América", tags: [], historico_eventos: corpo.eventos || [] }, memoria: null };
     const conversa = (corpo.conversa || []).map((m: any) => `${m.de === "lead" ? "Lead" : "Escola"}: ${m.texto}`).join("\n");
-    return await decidir(c, ev, ctx, conversa, hojeBrasilia(), corpo.retomada || null);
+    return await decidir(c, ev, ctx, conversa, hojeBrasilia(), corpo.retomada || null, !!corpo.mesmoDia);
 }
 
 Deno.serve(async (req) => {

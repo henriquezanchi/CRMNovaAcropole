@@ -11173,3 +11173,11 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
   disser o nome (`nome_informado`, só aceito se o número já foi apontado como de outra pessoa), ele vira
   `como_prefere_ser_chamado` e o robô passa a usá-lo; o nome do cadastro nunca mais aparece. `campanha_candidatos()`
   bloqueia o telefone marcado "Nome a conferir" para convites de campanha (o modelo usaria o nome errado).
+- **Saudação, gênero e inscrição (05/11, casos Regina, Fernanda e Carlos):** no mesmo dia em que já falamos com a
+  pessoa (o convite conta), o robô não usa saudação nenhuma, mesmo que ela comece com "Boa tarde" e mesmo depois de
+  horas; `tirarSaudacaoInicial()` tira "Bom dia/Boa tarde/Boa noite/Oi/Olá [Nome]!" do começo da resposta quando
+  `mesmoDia` (nossa última mensagem é de hoje). Saudação só na RETOMADA (outro dia), já documentada acima. O robô fala
+  em nome de Henrique: masculino sempre ("obrigado"). "Não precisa reservar/se inscrever" não passa mais para humano:
+  `corrigirInscricaoOpcional()` troca a frase por "É importante se inscrever pelo link, porque as vagas são
+  limitadas." (toda atividade divulgada pede inscrição). Primeira aula sem custo (quem não pode ir à aula
+  experimental) continua passando para o usuário, que vê com a direção.
