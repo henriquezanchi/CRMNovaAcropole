@@ -844,7 +844,10 @@ function renderizarCards() {
     //    uma fonte importante de indicação de novos alunos, e o time
     //    precisa conseguir contatá-los pra isso — por isso aparecem
     //    normalmente no Kanban, com um badge próprio.
-    let leadsBase = leadsAtuais;
+    // Só a escola selecionada: cadastros de outra filial abertos pela busca, pelo
+    // WhatsApp Unificado ou por notificação ficam em leadsAtuais para a gaveta, mas
+    // não entram no quadro (caso real 05/11: lead do Setor Oeste no Kanban de Jataí).
+    let leadsBase = filialAtual ? leadsAtuais.filter(l => !l.filial || l.filial === filialAtual) : leadsAtuais;
 
     // 2. Ordenação — agora é POR COLUNA (2026-09-11, pedido do usuário),
     //    não mais um critério global aplicado antes de distribuir. Cada
