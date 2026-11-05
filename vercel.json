@@ -1,0 +1,10 @@
+{
+  "redirects": [
+    {
+      "source": "/:caminho*",
+      "has": [{ "type": "host", "value": "crm-nova-acropole-5dv3.vercel.app" }],
+      "destination": "https://crm-nova-acropole.vercel.app/:caminho*",
+      "permanent": false
+    }
+  ]
+}

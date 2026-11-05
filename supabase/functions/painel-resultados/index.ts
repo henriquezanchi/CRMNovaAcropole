@@ -5,7 +5,7 @@
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
 import { hashChaveEscola } from "../_shared/painel-escola.ts";
 
-const ORIGENS = ["https://crm-nova-acropole-5dv3.vercel.app", "http://127.0.0.1:5500", "http://localhost:8766"];
+const ORIGENS = ["https://crm-nova-acropole.vercel.app", "https://crm-nova-acropole-5dv3.vercel.app", "http://127.0.0.1:5500", "http://localhost:8766"];
 
 function cabecalhos(origem: string | null) {
     return {

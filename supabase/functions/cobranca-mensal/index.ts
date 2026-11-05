@@ -31,7 +31,7 @@ import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
 const PERCENTUAL_COMISSAO = 0.3;
 const CENTAVOS_POR_MEMBRO_MODULO2 = 496;
 const DIA_COBRANCA = 10;
-const URL_CRM = "https://crm-nova-acropole-5dv3.vercel.app/";
+const URL_CRM = "https://crm-nova-acropole.vercel.app/";
 
 function json(body: unknown, status = 200) {
     return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });

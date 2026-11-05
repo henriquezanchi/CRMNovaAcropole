@@ -29,7 +29,7 @@
 //     na Zona de Perigo, nunca tocada por este script).
 import { lerCredencial } from './lib/supabaseAdmin.js';
 
-const URL_CRM = 'https://crm-nova-acropole-5dv3.vercel.app/';
+const URL_CRM = 'https://crm-nova-acropole.vercel.app/';
 
 async function esperarTexto(page, seletor, regex, timeoutMs) {
     const fim = Date.now() + timeoutMs;

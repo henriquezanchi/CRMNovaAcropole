@@ -2,7 +2,9 @@
 const CHAVE_PAINEIS_SESSAO = 'crm_paineis_filiais_sessao';
 function validarEnderecoPainel(valor) {
     const url = new URL(valor);
-    if (url.origin !== 'https://crm-nova-acropole-5dv3.vercel.app' || url.pathname !== '/escola.html' || url.username || url.password || url.search || !/^[a-f0-9]{64}$/.test(new URLSearchParams(url.hash.slice(1)).get('chave') || '')) throw new Error('Use o link completo do painel fornecido pela administração.');
+    // Links antigos (endereço -5dv3) continuam valendo e passam a abrir no endereço oficial.
+    if (url.origin === 'https://crm-nova-acropole-5dv3.vercel.app') return validarEnderecoPainel(new URL(url.pathname + url.search + url.hash, 'https://crm-nova-acropole.vercel.app').href);
+    if (url.origin !== 'https://crm-nova-acropole.vercel.app' || url.pathname !== '/escola.html' || url.username || url.password || url.search || !/^[a-f0-9]{64}$/.test(new URLSearchParams(url.hash.slice(1)).get('chave') || '')) throw new Error('Use o link completo do painel fornecido pela administração.');
     return url.href;
 }
 function lerPaineisSessao() {

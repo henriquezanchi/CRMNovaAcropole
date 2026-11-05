@@ -16,4 +16,4 @@ create policy painel_resultados_atalhos_leitura on painel_resultados_atalhos for
 -- O link da coordenação (com a chave) foi inserido direto no banco em 05/11/2026 e não
 -- fica neste arquivo, que é público no repositório. Para trocar:
 --   insert into painel_resultados_atalhos (rotulo, url, ordem)
---   values ('Coordenação regional', 'https://crm-nova-acropole-5dv3.vercel.app/resultados.html#<chave>', 0);
+--   values ('Coordenação regional', 'https://crm-nova-acropole.vercel.app/resultados.html#<chave>', 0);

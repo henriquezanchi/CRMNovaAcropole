@@ -1,11 +1,14 @@
 import { supabaseAdmin } from '../_shared/supabaseAdmin.ts';
 import { validarConsultaEscola, hashChaveEscola } from '../_shared/painel-escola.ts';
-const origemPermitida = 'https://crm-nova-acropole-5dv3.vercel.app';
-const headers = { 'Content-Type':'application/json', 'Cache-Control':'no-store', 'Access-Control-Allow-Origin':origemPermitida, 'Access-Control-Allow-Methods':'POST, OPTIONS', 'Access-Control-Allow-Headers':'content-type', 'Vary':'Origin' };
+// Endereço oficial + o antigo (redireciona para o oficial desde 05/11/2026).
+const ORIGENS = ['https://crm-nova-acropole.vercel.app', 'https://crm-nova-acropole-5dv3.vercel.app'];
+let origemPermitida = ORIGENS[0];
+const headers = { 'Content-Type':'application/json', 'Cache-Control':'no-store', get 'Access-Control-Allow-Origin'() { return origemPermitida; }, 'Access-Control-Allow-Methods':'POST, OPTIONS', 'Access-Control-Allow-Headers':'content-type', 'Vary':'Origin' };
 const responder = (corpo: unknown, status = 200) => new Response(JSON.stringify(corpo),{status,headers});
 Deno.serve(async req => {
     const origem = req.headers.get('Origin');
-    if (origem && origem !== origemPermitida) return responder({erro:'Origem não permitida.'},403);
+    if (origem && !ORIGENS.includes(origem)) return responder({erro:'Origem não permitida.'},403);
+    origemPermitida = origem || ORIGENS[0];
     if (req.method==='OPTIONS') return new Response(null,{status:204,headers});
     if (req.method!=='POST') return responder({erro:'Use o link de acompanhamento.'},405);
     if (Number(req.headers.get('Content-Length') || 0)>4096) return responder({erro:'Consulta muito longa.'},413);
