@@ -11181,3 +11181,7 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
   `corrigirInscricaoOpcional()` troca a frase por "É importante se inscrever pelo link, porque as vagas são
   limitadas." (toda atividade divulgada pede inscrição). Primeira aula sem custo (quem não pode ir à aula
   experimental) continua passando para o usuário, que vê com a direção.
+- **Mensagem incompreensível e nome repetido (05/11, caso Denise, "Mais não eu"):** o robô não adivinha o sentido de
+  mensagem truncada/ambígua; pede "Desculpe, não entendi. Pode me explicar?". Nome da pessoa no máximo uma vez nas
+  respostas (o convite já usou); `tirarNomeRepetido()` tira ", Nome"/"Nome, " da resposta quando nossas mensagens
+  anteriores já usaram o nome duas vezes.

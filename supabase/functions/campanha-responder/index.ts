@@ -192,6 +192,8 @@ ${c.config?.instrucoes || "(nenhuma)"}
 - Quando a pessoa só cumprimenta ("Oi", "Boa tarde") ou volta depois de uma mensagem automática, sem responder ao convite: não comemore ("que bom ter seu retorno", "que alegria" são exageros aqui), e retome o convite em 1 ou 2 frases, perguntando se pode mandar os detalhes (ou mandando, se ela já tinha aceitado antes). Fale como uma pessoa da escola falaria por WhatsApp: tom calmo, no máximo uma exclamação por mensagem quando não houver motivo real de alegria.
 - Saudação: no mesmo dia em que já falamos com a pessoa (inclusive o convite), a conversa só está continuando, mesmo depois de horas e mesmo que ela comece com "Boa tarde": não use saudação nenhuma ("Bom dia", "Boa tarde", "Boa noite", "Oi", "Olá"). Comece direto pelo assunto; pode usar o nome (ex.: "Regina, o Dia Mundial da Filosofia vai ser..."). Saudação só no aviso RETOMADA (conversa parada de um dia para o outro).
 - No WhatsApp a conversa continua ao longo de dias, sem encerrar nem reiniciar. Nunca anuncie que vai parar, encerrar ou continuar depois ("hoje não posso continuar", "volto amanhã", "vou encerrar por aqui", "amanhã retomamos"). Quando a conversa ficou parada de um dia para o outro (aviso RETOMADA), comece só com a saudação indicada (ex.: "Bom dia!") e continue de onde parou: nada de se apresentar de novo, repetir o convite do zero ou pedir desculpas pela demora. Se a pessoa se despedir, não responda ("resposta": null).
+- Mensagem que você não entendeu (frase truncada, ambígua, sem sentido claro, como "Mais não eu"): não adivinhe o que a pessoa quis dizer. Peça esclarecimento de forma simples, ex.: "Desculpe, não entendi. Pode me explicar?"
+- Nome da pessoa: o convite já usou o nome. Nas respostas, use o nome no máximo uma vez na conversa inteira (de preferência na primeira resposta); depois, não repita. Repetir o nome a cada mensagem soa artificial.
 - Mensagem só de agradecimento, "ok", emoji ou despedida, sem pergunta pendente: "resposta": null (não precisa responder). Mas um "sim", "pode", "quero" respondendo a uma pergunta nossa SEMPRE merece resposta.
 - Quem fala: os convites saem em nome de Henrique, que é homem. Ao falar de si mesmo, use sempre o masculino ("obrigado", "tudo ótimo, obrigado", "fico feliz", "ocupado"), nunca "obrigada".
 - Nome: chame pelo nome indicado, com a primeira letra maiúscula e as demais minúsculas. Nunca escreva o nome todo em maiúsculas.
@@ -311,6 +313,21 @@ export function tirarSaudacaoInicial(texto: string): string {
     return t[0].toUpperCase() + t.slice(1);
 }
 
+// Rede de segurança (pedido do usuário 05/11, caso Denise): repetir o nome a cada
+// mensagem denuncia o robô. Se nossas mensagens anteriores já usaram o nome duas
+// vezes (o convite conta uma), tira ", Nome" e "Nome, " desta resposta.
+export function tirarNomeRepetido(texto: string, nome: string, conversa: string): string {
+    if (!nome || nome.length < 2) return texto;
+    const esc = nome.replace(/[^A-Za-zÀ-ÿ ]/g, ""); // nomes só têm letras; nada a escapar
+    if (!esc) return texto;
+    const reNome = new RegExp(`(^|[^A-Za-zÀ-ÿ])${esc}(?![A-Za-zÀ-ÿ])`, "i");
+    const usos = conversa.split("\n").filter((l) => l.startsWith("Escola:") && reNome.test(l)).length;
+    if (usos < 2) return texto;
+    let t = texto.replace(new RegExp(`,\\s*${esc}(?=\\s*[!.,?])`, "gi"), "");
+    t = t.replace(new RegExp(`(^|\\n)${esc},\\s*([a-zà-ÿ])`, "gi"), (_m, ini, letra) => ini + letra.toUpperCase());
+    return t;
+}
+
 // Toda atividade divulgada pede inscrição (decisão do usuário, 05/11). Caso real
 // 04/11 (Carlos): "não precisa reservar com antecedência". A frase que diz isso é
 // trocada pela regra certa, sem passar a conversa para atendente.
@@ -351,6 +368,9 @@ async function decidir(c: any, ev: any, ctx: any, conversa: string, hojeISO: str
         if (typeof d.resposta === "string") d.resposta = trocarPerguntaDoLink(d.resposta, c.config?.link_convite || ev?.link_inscricao);
         if (typeof d.resposta === "string") d.resposta = corrigirInscricaoOpcional(d.resposta);
         if (typeof d.resposta === "string" && mesmoDia) d.resposta = tirarSaudacaoInicial(d.resposta);
+        const nomeLead = String(ctx?.lead?.como_prefere_ser_chamado || String(ctx?.lead?.pessoaNome || "").split(" ")[0] || "").trim();
+        const nomeCap = nomeLead ? nomeLead[0].toUpperCase() + nomeLead.slice(1).toLowerCase() : "";
+        if (typeof d.resposta === "string") d.resposta = tirarNomeRepetido(d.resposta, nomeCap, conversa);
         if (typeof d.resposta === "string") d.resposta = corrigirLinksDeAtividades(d.resposta, eventos.filter((e) => e.link));
         if (typeof d.resposta === "string") d.resposta = corrigirDatasDeAtividades(d.resposta, eventos);
         if (typeof d.resposta === "string") d.resposta = corrigirDiasDaSemana(d.resposta.replace(/\s—\s/g, ", ").replace(/\*\*/g, "").trim(), hojeISO) || null;
