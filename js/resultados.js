@@ -45,6 +45,8 @@
     return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   }
   function nomeEscola(n) { return String(n || '').replace(/^Goiânia - /, ''); }
+  var SIGLAS = {};
+  function sigla(n) { return SIGLAS[n] || nomeEscola(n).normalize('NFD').replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase(); }
   function nomeProprio(n) {
     return String(n || '').toLowerCase().replace(/(^|\s)(\S)/g, function (m, a, b) { return a + b.toUpperCase(); })
       .replace(/\s(Da|De|Do|Das|Dos|E)\s/g, function (m) { return m.toLowerCase(); });
@@ -107,13 +109,14 @@
     return el('div', { classe: 'grafico' }, [s, leg]);
   }
 
-  function listaComBusca(titulo, itens, colunas, linhaDe, vazio) {
+  function listaComBusca(titulo, itens, colunas, linhaDe, vazio, pessoaDe, legenda) {
     // Fechada por padrão: no celular as listas abertas deixavam a página com ~15 telas.
     var cont = el('details');
     cont.appendChild(el('summary', { texto: titulo + ' (' + num(itens.length) + ')' }));
     var entrada = el('input', { type: 'search', placeholder: 'Buscar por nome, telefone ou escola', 'aria-label': 'Buscar' });
     var info = el('span', { classe: 'muted' });
     cont.appendChild(el('div', { classe: 'busca' }, [entrada, info]));
+    if (legenda) cont.appendChild(el('p', { classe: 'legenda-icones so-celular', texto: legenda }));
     var area = el('div'); cont.appendChild(area);
     function desenhar() {
       var q = entrada.value.trim().toLowerCase();
@@ -123,7 +126,11 @@
       var mostrar = filtrados.slice(0, 300);
       var linhas = mostrar.map(function (x) { return { celulas: linhaDe(x) }; });
       var t = tabela(colunas, linhas); t.classList.add('so-tela-larga'); area.appendChild(t);
-      area.appendChild(cartoes(colunas, linhas));
+      if (pessoaDe) {
+        var lista = el('div', { classe: 'pessoas-lista so-celular' });
+        mostrar.forEach(function (x) { lista.appendChild(pessoaDe(x)); });
+        area.appendChild(lista);
+      } else area.appendChild(cartoes(colunas, linhas));
       info.textContent = filtrados.length > 300 ? 'Mostrando 300 de ' + num(filtrados.length) + '. Use a busca para encontrar alguém.' : '';
     }
     entrada.addEventListener('input', desenhar);
@@ -154,6 +161,32 @@
       lista.appendChild(c);
     });
     return lista;
+  }
+
+  // Linha compacta de pessoa (celular): nome, sigla da escola e ícones com a situação.
+  // O telefone fica escondido até tocar no ícone (pedido do usuário, 05/11).
+  function icone(simbolo, titulo, classe) {
+    return el('span', { classe: 'ic' + (classe ? ' ' + classe : ''), title: titulo, 'aria-label': titulo, role: 'img', texto: simbolo });
+  }
+  function pessoa(x, icones) {
+    var linha = el('div', { classe: 'pessoa' });
+    var topo = el('div', { classe: 'pessoa-topo' }, [
+      el('span', { classe: 'pessoa-nome', texto: nomeProprio(x.nome) }),
+      el('span', { classe: 'sigla', title: nomeEscola(x.escola), texto: sigla(x.escola) })
+    ]);
+    linha.appendChild(topo);
+    var ics = el('div', { classe: 'pessoa-icones' });
+    icones.filter(Boolean).forEach(function (i) { ics.appendChild(i); });
+    if (x.telefone) {
+      var bt = el('button', { type: 'button', classe: 'ic ic-tel', title: 'Mostrar telefone', 'aria-label': 'Mostrar telefone', texto: '📞' });
+      bt.addEventListener('click', function () {
+        var a = el('a', { href: 'tel:+55' + String(x.telefone).replace(/\D/g, ''), classe: 'pessoa-tel', texto: x.telefone });
+        bt.replaceWith(a);
+      });
+      ics.appendChild(bt);
+    }
+    linha.appendChild(ics);
+    return linha;
   }
 
   function selo(texto, tipo) { return el('span', { classe: 'selo' + (tipo ? ' ' + tipo : ''), texto: texto }); }
@@ -217,14 +250,35 @@
     s.appendChild(listaComBusca('Inscritos no Ulisses', c.inscritos || [], ['Nome', 'Telefone', 'Escola', 'Perfil', 'Veio do convite', 'Inscrição', 'Presença'], function (x) {
       return [nomeProprio(x.nome), x.telefone || '', nomeEscola(x.escola), x.aluno ? selo('Aluno', 'cz') : selo('De fora'),
         x.via_convite ? selo('Sim') : '', dataCurta(x.em), x.compareceu === true ? selo('Presente') : (x.compareceu === false ? selo('Faltou', 'vm') : '')];
-    }, 'Nenhum inscrito ainda.'));
+    }, 'Nenhum inscrito ainda.', function (x) {
+      return pessoa(x, [
+        x.aluno ? icone('🎓', 'Aluno') : icone('🙋', 'De fora (não é aluno)'),
+        x.via_convite ? icone('📩', 'Inscreveu-se depois do nosso convite') : null,
+        x.em ? el('span', { classe: 'ic-data', title: 'Data da inscrição', texto: dataCurta(x.em) }) : null,
+        x.compareceu === true ? icone('✅', 'Presente') : (x.compareceu === false ? icone('❌', 'Faltou') : null)
+      ]);
+    }, '🎓 aluno · 🙋 de fora · 📩 veio do convite · ✅ presente · ❌ faltou · 📞 toque para ver o telefone'));
 
     var ENTREGA = { lido: ['Lido', ''], entregue: ['Entregue', 'cz'], enviado: ['Enviado', 'cz'], falhou: ['Não entregue', 'vm'] };
     s.appendChild(listaComBusca('Pessoas contatadas', c.contatados || [], ['Nome', 'Telefone', 'Escola', 'Convite', 'Entrega', 'Respondeu', 'Situação'], function (x) {
       var e = ENTREGA[x.entrega] || [x.entrega || '', 'cz'];
       var sit = x.parar ? selo('Pediu para não receber', 'vm') : x.situacao ? selo(String(x.situacao).replace('Campanha: ', ''), /Não vai/.test(x.situacao) ? 'cz' : (/Vai/.test(x.situacao) ? '' : 'am')) : '';
       return [nomeProprio(x.nome), x.telefone || '', nomeEscola(x.escola), dataHora(x.enviado_em), selo(e[0], e[1]), x.respondeu ? 'Sim' : '', sit];
-    }, 'Nenhum convite enviado ainda.'));
+    }, 'Nenhum convite enviado ainda.', function (x) {
+      var ENT = { enviado: ['✓', 'Enviado', 'ic-cinza'], entregue: ['✓✓', 'Entregue', 'ic-cinza'], lido: ['✓✓', 'Lido', 'ic-azul'], falhou: ['⚠', 'Não entregue', 'ic-verm'] };
+      var en = ENT[x.entrega];
+      var st = String(x.situacao || '');
+      var sitIc = x.parar ? icone('🚫', 'Pediu para não receber') :
+        /Não vai/.test(st) ? icone('🙅', 'Não vai') :
+        /Vai ao evento|Vai/.test(st) ? icone('🎉', 'Vai ao evento') :
+        /Interessado/.test(st) ? icone('⭐', 'Interessado') :
+        /atendente/i.test(st) ? icone('🙋‍♂️', 'Pediu atendente') : null;
+      return pessoa(x, [
+        en ? icone(en[0], en[1], en[2]) : null,
+        x.respondeu ? icone('💬', 'Respondeu') : null,
+        sitIc
+      ]);
+    }, '✓ enviado · ✓✓ entregue · ✓✓ azul lido · ⚠ não entregue · 💬 respondeu · ⭐ interessado · 🎉 vai · 🙅 não vai · 🚫 pediu para parar · 📞 toque para ver o telefone'));
 
     var banco = c.campanha && c.campanha.banco;
     if (banco) {
@@ -307,6 +361,7 @@
     var abas = document.getElementById('abas');
     secoes.textContent = ''; abas.textContent = '';
     var lista = [];
+    SIGLAS = dados.siglas || {};
     (dados.campanhas || []).forEach(function (c, i) { lista.push({ id: 'c' + i, nome: (c.campanha && c.campanha.nome) || 'Campanha', fn: function () { return secaoCampanha(c); } }); });
     if (dados.escolas) lista.push({ id: 'escolas', nome: 'Escolas', fn: function () { return secaoEscolas(dados.escolas); } });
     if (!abaAtual || !lista.some(function (a) { return a.id === abaAtual; })) abaAtual = lista.length ? lista[0].id : null;
