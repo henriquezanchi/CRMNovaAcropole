@@ -108,7 +108,8 @@
   }
 
   function listaComBusca(titulo, itens, colunas, linhaDe, vazio) {
-    var cont = el('details', { open: 'open' });
+    // Fechada por padrão: no celular as listas abertas deixavam a página com ~15 telas.
+    var cont = el('details');
     cont.appendChild(el('summary', { texto: titulo + ' (' + num(itens.length) + ')' }));
     var entrada = el('input', { type: 'search', placeholder: 'Buscar por nome, telefone ou escola', 'aria-label': 'Buscar' });
     var info = el('span', { classe: 'muted' });
@@ -120,12 +121,39 @@
       area.textContent = '';
       if (!filtrados.length) { area.appendChild(el('p', { classe: 'muted', texto: vazio })); info.textContent = ''; return; }
       var mostrar = filtrados.slice(0, 300);
-      area.appendChild(tabela(colunas, mostrar.map(function (x) { return { celulas: linhaDe(x) }; })));
+      var linhas = mostrar.map(function (x) { return { celulas: linhaDe(x) }; });
+      var t = tabela(colunas, linhas); t.classList.add('so-tela-larga'); area.appendChild(t);
+      area.appendChild(cartoes(colunas, linhas));
       info.textContent = filtrados.length > 300 ? 'Mostrando 300 de ' + num(filtrados.length) + '. Use a busca para encontrar alguém.' : '';
     }
     entrada.addEventListener('input', desenhar);
     desenhar();
     return cont;
+  }
+
+  // No celular cada pessoa vira um cartão: nome em destaque, telefone que liga com
+  // um toque e as demais colunas como "rótulo: valor" (sem rolar para o lado).
+  function cartoes(colunas, linhas) {
+    var lista = el('div', { classe: 'cartoes so-celular' });
+    linhas.forEach(function (l) {
+      var c = el('div', { classe: 'cartao-pessoa' });
+      l.celulas.forEach(function (v, i) {
+        var rot = String(colunas[i] || '');
+        if (i === 0) { c.appendChild(el('strong', { texto: v instanceof Node ? v.textContent : String(v == null ? '' : v) })); return; }
+        if (v == null || v === '' || (v instanceof Node && !v.textContent)) return;
+        var linha = el('div', { classe: 'cartao-linha' });
+        if (/telefone/i.test(rot) && !(v instanceof Node)) {
+          var dig = String(v).replace(/\D/g, '');
+          var a = el('a', { href: 'tel:+55' + dig, texto: String(v) }); linha.appendChild(a);
+        } else {
+          linha.appendChild(el('span', { classe: 'muted', texto: rot + ': ' }));
+          if (v instanceof Node) linha.appendChild(v.cloneNode(true)); else linha.appendChild(document.createTextNode(String(v)));
+        }
+        c.appendChild(linha);
+      });
+      lista.appendChild(c);
+    });
+    return lista;
   }
 
   function selo(texto, tipo) { return el('span', { classe: 'selo' + (tipo ? ' ' + tipo : ''), texto: texto }); }

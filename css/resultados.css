@@ -72,7 +72,16 @@ details { margin-top: 14px; }
 details > summary { cursor: pointer; font-weight: 700; padding: 6px 0; }
 .nota { font-size: 13px; color: var(--suave); margin: 8px 0 0; }
 footer { margin-top: 36px; font-size: 13px; color: var(--suave); border-top: 1px solid var(--linha); padding-top: 14px; }
+.so-celular { display: none; }
+.cartoes { display: grid; gap: 8px; }
+.cartao-pessoa { background: #fff; border: 1px solid var(--linha); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
+.cartao-pessoa strong { display: block; margin-bottom: 4px; }
+.cartao-linha { margin-top: 2px; line-height: 1.5; }
+.cartao-linha a { color: var(--verde, #086357); font-weight: 600; text-decoration: none; }
+summary { padding: 10px 0; cursor: pointer; }
 @media (max-width: 640px) {
+  .so-tela-larga { display: none; }
+  .so-celular { display: grid; }
   .topo-in { padding: 16px; }
   h1 { font-size: 21px; }
   main { padding: 14px 16px 32px; }
