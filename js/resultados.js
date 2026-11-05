@@ -6,6 +6,16 @@
   'use strict';
   var URL_API = 'https://eovgljcowblwoxmobeno.supabase.co/functions/v1/painel-resultados';
   var chave = (location.hash || '').replace(/^#/, '').trim();
+  // Sessão do diretor (PIN): token de 12 h guardado só neste aparelho.
+  var CHAVE_SESSAO = 'painel_sessao_' + chave.slice(0, 12);
+  function sessaoAtual() { try { var s = JSON.parse(localStorage.getItem(CHAVE_SESSAO) || 'null'); if (s && s.token && new Date(s.expira) > new Date()) return s.token; } catch (e) { /* sem armazenamento */ } return null; }
+  function guardarSessao(token, expira) { try { localStorage.setItem(CHAVE_SESSAO, JSON.stringify({ token: token, expira: expira })); } catch (e) { /* sem armazenamento */ } }
+  function limparSessao() { try { localStorage.removeItem(CHAVE_SESSAO); } catch (e) { /* sem armazenamento */ } }
+  function chamar(corpo) {
+    corpo.chave = chave; var t = sessaoAtual(); if (t) corpo.sessao = t;
+    return fetch(URL_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo), cache: 'no-store', referrerPolicy: 'no-referrer' })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) { if (j && j.precisa_pin) limparSessao(); throw new Error((j && j.erro) || 'Não foi possível consultar.'); } return j; }); });
+  }
   var dias = 30;
   var dados = null;
   var abaAtual = null;
@@ -124,8 +134,9 @@
       area.textContent = '';
       if (!filtrados.length) { area.appendChild(el('p', { classe: 'muted', texto: vazio })); info.textContent = ''; return; }
       var mostrar = filtrados.slice(0, 300);
-      var linhas = mostrar.map(function (x) { return { celulas: linhaDe(x) }; });
-      var t = tabela(colunas, linhas); t.classList.add('so-tela-larga'); area.appendChild(t);
+      var comAcoes = dados.diretor && mostrar.some(function (x) { return x.pid; });
+      var linhas = mostrar.map(function (x) { var cel = linhaDe(x); if (comAcoes) cel.push(el('span', { classe: 'acoes-inline' }, acoesPessoa(x))); return { celulas: cel }; });
+      var t = tabela(comAcoes ? colunas.concat(['Ações']) : colunas, linhas); t.classList.add('so-tela-larga'); area.appendChild(t);
       if (pessoaDe) {
         var lista = el('div', { classe: 'pessoas-lista so-celular' });
         mostrar.forEach(function (x) { lista.appendChild(pessoaDe(x)); });
@@ -177,7 +188,9 @@
     linha.appendChild(topo);
     var ics = el('div', { classe: 'pessoa-icones' });
     icones.filter(Boolean).forEach(function (i) { ics.appendChild(i); });
-    if (x.telefone) {
+    acoesPessoa(x).forEach(function (b) { ics.appendChild(b); });
+    if (x.borrado && x.telefone) ics.appendChild(el('span', { classe: 'ic-data', title: 'Entre com o PIN para ver', texto: x.telefone }));
+    else if (x.telefone) {
       var bt = el('button', { type: 'button', classe: 'ic ic-tel', title: 'Mostrar telefone', 'aria-label': 'Mostrar telefone', texto: '📞' });
       bt.addEventListener('click', function () {
         var a = el('a', { href: 'tel:+55' + String(x.telefone).replace(/\D/g, ''), classe: 'pessoa-tel', texto: x.telefone });
@@ -189,15 +202,131 @@
     return linha;
   }
 
+
+  // ---- Acesso do diretor (PIN da escola) ----
+  function renderizarBarraDiretor() {
+    var bar = document.getElementById('diretor-bar');
+    if (!bar) { bar = el('div', { id: 'diretor-bar', classe: 'diretor-bar' }); document.querySelector('.topo-in > div').appendChild(bar); }
+    bar.textContent = '';
+    if (!dados.escola_unica) return;
+    if (dados.diretor) {
+      var sair = el('button', { type: 'button', classe: 'secundario', texto: 'Sair' }); sair.addEventListener('click', sairDiretor);
+      bar.appendChild(el('span', { texto: '🔓 Acesso do diretor ativo ' })); bar.appendChild(sair);
+    } else if (dados.pin_disponivel) {
+      var b = el('button', { type: 'button', classe: 'secundario', texto: 'Entrar com o PIN da escola' }); b.addEventListener('click', entrarComPin);
+      bar.appendChild(b); bar.appendChild(el('span', { texto: ' Nomes e telefones aparecem completos com o PIN.' }));
+    } else bar.appendChild(el('span', { texto: 'Nomes e telefones aparecem resumidos. O administrador ainda não definiu o PIN desta escola.' }));
+  }
+  function entrarComPin() {
+    var pin = prompt('PIN da escola (6 números):'); if (pin == null) return;
+    chamar({ acao: 'pin', pin: String(pin).replace(/\D/g, '') }).then(function (j) { guardarSessao(j.sessao, j.expira_em); carregar(); }).catch(function (e) { alert(e.message); });
+  }
+  function sairDiretor() { chamar({ acao: 'sair' }).catch(function () {}).then(function () { limparSessao(); carregar(); }); }
+
+  // Ações do diretor por pessoa: ver a conversa, não contatar, observação.
+  function acoesPessoa(x) {
+    if (!x.pid || !dados.diretor) return [];
+    var ver = el('button', { type: 'button', classe: 'ic ic-acao', title: 'Ver a conversa', 'aria-label': 'Ver a conversa', texto: '🗨️' });
+    ver.addEventListener('click', function () { verConversa(x); });
+    var nc = el('button', { type: 'button', classe: 'ic ic-acao', title: x.parar ? 'Liberar contato' : 'Marcar: não contatar', texto: x.parar ? '🔓' : '🚫' });
+    nc.addEventListener('click', function () { marcarNaoContatar(x, nc); });
+    var obs = el('button', { type: 'button', classe: 'ic ic-acao', title: 'Deixar uma observação para a equipe', texto: '✏️' });
+    obs.addEventListener('click', function () { deixarObservacao(x); });
+    return [ver, nc, obs];
+  }
+  function verConversa(x) {
+    chamar({ acao: 'resumo', pid: x.pid }).then(function (j) {
+      var folha = document.getElementById('folha-conversa');
+      if (!folha) { folha = el('div', { id: 'folha-conversa', classe: 'folha' }); document.body.appendChild(folha); folha.addEventListener('click', function (e) { if (e.target === folha) folha.remove(); }); }
+      var caixa = el('div', { classe: 'folha-caixa' });
+      var fechar = el('button', { type: 'button', classe: 'secundario', texto: 'Fechar' }); fechar.addEventListener('click', function () { folha.remove(); });
+      caixa.appendChild(el('div', { classe: 'folha-topo' }, [el('strong', { texto: nomeProprio(j.nome) }), fechar]));
+      if ((j.situacao || []).length) caixa.appendChild(el('p', { classe: 'muted', texto: j.situacao.join(' · ') }));
+      if (j.resumo_conversa) { caixa.appendChild(el('h4', { texto: 'O que a conversa mostrou' })); caixa.appendChild(el('p', { texto: j.resumo_conversa })); }
+      if (j.proximo_passo) caixa.appendChild(el('p', { classe: 'muted', texto: 'Próximo passo: ' + j.proximo_passo }));
+      if (j.anotacoes) { caixa.appendChild(el('h4', { texto: 'Anotações da equipe' })); caixa.appendChild(el('p', { classe: 'pre', texto: j.anotacoes })); }
+      if ((j.ultimas_mensagens || []).length) {
+        caixa.appendChild(el('h4', { texto: 'Últimas mensagens' }));
+        j.ultimas_mensagens.forEach(function (m) { caixa.appendChild(el('p', { classe: 'fala ' + (m.de === 'escola' ? 'fala-escola' : 'fala-pessoa'), texto: m.texto })); });
+      }
+      if (!j.resumo_conversa && !j.anotacoes && !(j.ultimas_mensagens || []).length) caixa.appendChild(el('p', { classe: 'muted', texto: 'Ainda não há conversa registrada com esta pessoa.' }));
+      folha.textContent = ''; folha.appendChild(caixa);
+    }).catch(function (e) { alert(e.message); });
+  }
+  function marcarNaoContatar(x, botao) {
+    var desfazer = !!x.parar, nome = nomeProprio(x.nome);
+    if (!confirm(desfazer ? 'Liberar o contato com ' + nome + '?' : 'Marcar ' + nome + ' para NÃO ser contatado pela equipe?')) return;
+    var motivo = desfazer ? '' : (prompt('Motivo (opcional):') || '');
+    chamar({ acao: 'nao_contatar', pid: x.pid, motivo: motivo, desfazer: desfazer }).then(function () {
+      x.parar = !desfazer; botao.textContent = x.parar ? '🔓' : '🚫'; botao.title = x.parar ? 'Liberar contato' : 'Marcar: não contatar';
+      alert(x.parar ? 'Marcado: a equipe não vai mais contatar.' : 'Contato liberado.');
+    }).catch(function (e) { alert(e.message); });
+  }
+  function deixarObservacao(x) {
+    var t = prompt('Observação para a equipe sobre ' + nomeProprio(x.nome) + ':'); if (!t || !t.trim()) return;
+    chamar({ acao: 'observacao', pid: x.pid, texto: t.trim() }).then(function () { alert('Enviada. A equipe vê no CRM hoje.'); }).catch(function (e) { alert(e.message); });
+  }
+
+  // ---- Abertura de turma: vagas, turmas e prazo (configurável pelo diretor) ----
+  function configDaCampanha(c) {
+    var ev = c.evento || {}, lista = dados.turmas_config || [];
+    return lista.filter(function (t) { return String(t.data) === String(ev.data); })[0] || lista[0] || null;
+  }
+  function metaTurma(c) {
+    var n = c.numeros || {}, cfg = configDaCampanha(c), box = el('div');
+    var inscritos = Number(n.inscritos_total) || 0;
+    var total = cfg && cfg.vagas_por_turma ? cfg.vagas_por_turma * (cfg.qtd_turmas || 1) : 0;
+    var detalhe = total && (cfg.qtd_turmas || 1) > 1 ? ' (' + cfg.qtd_turmas + ' turmas × ' + cfg.vagas_por_turma + ')' : '';
+    box.appendChild(el('div', { classe: 'meta-topo' }, [
+      el('div', null, [el('div', { classe: 'r muted', texto: 'Inscritos na turma' }),
+        el('div', { classe: 'meta-num' }, [num(inscritos), el('small', { texto: total ? ' / ' + num(total) + ' vagas' + detalhe : '' })])]),
+      el('div', { classe: 'muted', texto: total ? (cfg.data_limite ? 'Retardatários podem se matricular até ' + dataCurta(cfg.data_limite) + '.' : 'Sem prazo para retardatários definido.') : 'Vagas ainda não configuradas pelo diretor.' })
+    ]));
+    if (total) box.appendChild(barra(inscritos, total, inscritos >= total * 0.9 ? 'cheia' : ''));
+    return box;
+  }
+  function secaoConfigTurma() {
+    var s = el('section'), lista = dados.turmas_config || [];
+    s.appendChild(el('h2', { texto: 'Configuração da abertura de turma' }));
+    if (!lista.length) { s.appendChild(el('p', { classe: 'muted', texto: 'Nenhuma abertura de turma cadastrada para esta escola.' })); return s; }
+    s.appendChild(el('p', { classe: 'sub', texto: dados.diretor ? 'Informe quantas turmas abrem juntas, as vagas de cada uma e até quando retardatários podem se matricular. Vale no CRM na hora.' : 'Entre com o PIN da escola para configurar.' }));
+    lista.forEach(function (t) {
+      var card = el('div', { classe: 'config-turma' });
+      card.appendChild(el('strong', { texto: t.nome + ' · ' + dataCurta(t.data) + (t.hora ? ' às ' + String(t.hora).slice(0, 5) : '') }));
+      if (!dados.diretor) {
+        card.appendChild(el('p', { classe: 'muted', texto: (t.qtd_turmas || 1) + ' turma(s) · ' + (t.vagas_por_turma != null ? t.vagas_por_turma + ' vagas por turma' : 'vagas não definidas') + ' · retardatários até ' + (t.data_limite ? dataCurta(t.data_limite) : 'não definido') }));
+        s.appendChild(card); return;
+      }
+      var qt = el('input', { type: 'number', min: '1', max: '20', value: t.qtd_turmas || 1 });
+      var vg = el('input', { type: 'number', min: '0', max: '999', value: t.vagas_por_turma == null ? '' : t.vagas_por_turma, placeholder: 'ex.: 25' });
+      var dl = el('input', { type: 'date', value: t.data_limite || '', min: t.data });
+      var bt = el('button', { type: 'button', classe: 'secundario', texto: 'Salvar' });
+      var st = el('span', { classe: 'muted' });
+      bt.addEventListener('click', function () {
+        bt.disabled = true; st.textContent = 'Salvando…';
+        chamar({ acao: 'configurar_turma', evento_id: t.evento_id, qtd_turmas: qt.value, vagas_por_turma: vg.value, data_limite: dl.value })
+          .then(function () { st.textContent = 'Salvo.'; carregar(); })
+          .catch(function (e) { st.textContent = e.message; bt.disabled = false; });
+      });
+      card.appendChild(el('div', { classe: 'config-grade' }, [
+        el('label', null, ['Turmas abrindo juntas', qt]), el('label', null, ['Vagas por turma', vg]), el('label', null, ['Retardatários até', dl])]));
+      card.appendChild(el('div', { classe: 'config-acoes' }, [bt, st]));
+      if (t.atualizado_em) card.appendChild(el('p', { classe: 'muted', texto: 'Última alteração: ' + dataHora(t.atualizado_em) }));
+      s.appendChild(card);
+    });
+    return s;
+  }
+
   function selo(texto, tipo) { return el('span', { classe: 'selo' + (tipo ? ' ' + tipo : ''), texto: texto }); }
 
-  function secaoCampanha(c) {
+  function secaoCampanha(c, turma) {
     var s = el('section');
     var ev = c.evento || {}, n = c.numeros || {}, meta = Number(c.campanha && c.campanha.meta_presentes_fora) || 50;
     s.appendChild(el('h2', { texto: (c.campanha && c.campanha.nome) || 'Campanha' }));
-    s.appendChild(el('p', { classe: 'sub', texto: 'Evento em ' + dataCurta(ev.data) + ' às ' + String(ev.hora || '').slice(0, 5) + '. Convites pelo WhatsApp para quem já participou de atividades da Nova Acrópole e não é aluno.' }));
+    s.appendChild(el('p', { classe: 'sub', texto: (turma ? 'Abertura em ' : 'Evento em ') + dataCurta(ev.data) + ' às ' + String(ev.hora || '').slice(0, 5) + '. Convites pelo WhatsApp para quem já participou de atividades da Nova Acrópole e ' + (turma ? 'ainda não é aluno.' : 'não é aluno.') }));
 
     var m = el('div', { classe: 'meta' });
+    if (turma) { m.appendChild(metaTurma(c)); } else {
     var forasPresentes = Number(n.presentes_fora) || 0;
     var dataEvento = ev.data ? new Date(ev.data + 'T23:59:00-03:00') : null;
     var depois = dataEvento && Date.now() > dataEvento.getTime();
@@ -213,16 +342,17 @@
       m.appendChild(el('div', { classe: 'meta-topo' }, [el('span', { texto: 'Ocupação das vagas no Ulisses' }), el('strong', { texto: num(ocup) + ' de ' + num(vagas) + ' (' + pct(ocup, vagas) + ')' })]));
       m.appendChild(barra(ocup, vagas, ocup >= vagas * 0.9 ? 'cheia' : 'amarela'));
     }
+    }
     s.appendChild(m);
 
     s.appendChild(el('div', { classe: 'cartoes' }, [
       cartao(num(n.convites_enviados), 'convites enviados', n.agendados ? num(n.agendados) + ' agendados hoje' : ''),
       cartao(num(n.entregues), 'entregues', pct(n.entregues, n.convites_enviados) + ' dos enviados'),
       cartao(num(n.responderam), 'responderam', pct(n.responderam, n.entregues) + ' dos entregues'),
-      cartao(num(n.vao), 'disseram que vão', num(n.interessados) + ' interessados'),
+      cartao(num(n.vao), turma ? 'querem entrar' : 'disseram que vão', num(n.interessados) + ' interessados'),
       cartao(num(n.inscritos_via_convite), 'inscritos após o convite', ''),
-      cartao(num(n.inscritos_total), 'inscritos no Ulisses', num(n.inscritos_alunos) + ' alunos · ' + num(n.inscritos_fora) + ' de fora'),
-      cartao(num(n.nao_vao), 'não podem ir', num(n.pediram_parar) + ' pediram para não receber'),
+      cartao(num(n.inscritos_total), turma ? 'inscritos na turma' : 'inscritos no Ulisses', num(n.inscritos_alunos) + ' alunos · ' + num(n.inscritos_fora) + ' de fora'),
+      cartao(num(n.nao_vao), turma ? 'não vão agora' : 'não podem ir', num(n.pediram_parar) + ' pediram para não receber'),
       cartao(num(n.segunda_tentativa), 'segunda tentativa', 'para quem não respondeu em 24h')
     ]));
 
@@ -236,7 +366,7 @@
       ]));
     }
 
-    if ((c.por_escola || []).length) {
+    if ((c.por_escola || []).length && !(turma && dados.escola_unica)) {
       s.appendChild(el('h3', { texto: 'Por escola de origem do convidado' }));
       var tot = { c: 0, r: 0, i: 0 };
       var linhas = c.por_escola.map(function (e) {
@@ -247,7 +377,7 @@
       s.appendChild(tabela(['Escola', 'Convidados', 'Responderam', 'Taxa', 'Inscritos após convite'], linhas, [1, 2, 3, 4]));
     }
 
-    s.appendChild(listaComBusca('Inscritos no Ulisses', c.inscritos || [], ['Nome', 'Telefone', 'Escola', 'Perfil', 'Veio do convite', 'Inscrição', 'Presença'], function (x) {
+    s.appendChild(listaComBusca(turma ? 'Inscritos na turma' : 'Inscritos no Ulisses', c.inscritos || [], ['Nome', 'Telefone', 'Escola', 'Perfil', 'Veio do convite', 'Inscrição', 'Presença'], function (x) {
       return [nomeProprio(x.nome), x.telefone || '', nomeEscola(x.escola), x.aluno ? selo('Aluno', 'cz') : selo('De fora'),
         x.via_convite ? selo('Sim') : '', dataCurta(x.em), x.compareceu === true ? selo('Presente') : (x.compareceu === false ? selo('Faltou', 'vm') : '')];
     }, 'Nenhum inscrito ainda.', function (x) {
@@ -284,7 +414,7 @@
     if (banco) {
       var nomesGrupo = { A: 'Já foram a um Dia Mundial da Filosofia', B: 'Último evento em 2026', C: 'Último evento em 2025', D: 'Último evento em 2023 ou 2024', E: 'Eventos mais antigos', X: 'Ex-alunos (por último)' };
       var lin = Object.keys(nomesGrupo).filter(function (g) { return banco[g] != null; }).map(function (g) { return { celulas: [nomesGrupo[g], num(banco[g])] }; });
-      s.appendChild(el('h3', { texto: 'Banco de contatos ainda a convidar' }));
+      s.appendChild(el('h3', { texto: turma ? 'Contatos ainda a convidar para a turma' : 'Banco de contatos ainda a convidar' }));
       s.appendChild(tabela(['Grupo (na ordem de envio)', 'Pessoas'], lin, [1]));
       s.appendChild(el('p', { classe: 'nota', texto: 'Ficam fora: alunos ativos, quem pediu para não receber mensagens, quem disse não ter interesse, quem conversou com a escola nos últimos 7 dias e quem já se inscreveu. Cada número recebe no máximo um convite.' }));
     }
@@ -368,7 +498,8 @@
     // + os números da escola), sem abas (pedido do usuário, 05/11).
     if (dados.escola_unica) lista = [{ id: 'campanha', nome: 'Campanha', fn: function () {
       var box = el('div');
-      (dados.campanhas || []).forEach(function (c) { box.appendChild(secaoCampanha(c)); });
+      (dados.campanhas || []).forEach(function (c) { box.appendChild(secaoCampanha(c, true)); });
+      box.appendChild(secaoConfigTurma());
       if (dados.escolas) box.appendChild(secaoEscolas(dados.escolas));
       return box;
     } }];
@@ -388,10 +519,9 @@
     var estado = document.getElementById('estado');
     if (!/^[a-f0-9]{64}$/.test(chave)) { estado.textContent = 'Link incompleto. Abra o endereço completo que você recebeu.'; estado.className = 'estado erro'; return; }
     estado.textContent = 'Carregando…'; estado.className = 'estado';
-    fetch(URL_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chave: chave, dias: dias }), cache: 'no-store', referrerPolicy: 'no-referrer' })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
-      .then(function (res) {
-        if (!res.ok) throw new Error(res.j && res.j.erro || 'Não foi possível consultar.');
+    chamar({ dias: dias })
+      .then(function (j) {
+        var res = { j: j };
         clearTimeout(timerPreparo);
         if (res.j.preparando) {
           // Primeira vez deste período: o servidor calcula em segundo plano.
@@ -408,6 +538,7 @@
           document.title = 'Campanha de abertura de turma';
           document.getElementById('rotulo').textContent = nomeEscola(dados.rotulo) + (evt && evt.data ? ' · abertura em ' + dataCurta(evt.data) + (evt.hora ? ', às ' + String(evt.hora).slice(0, 5) : '') : '');
         }
+        renderizarBarraDiretor();
         var quando = dados.gerado_em ? new Date(dados.gerado_em) : new Date();
         document.getElementById('atualizado').textContent = 'Números de ' + quando.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
         estado.textContent = '';

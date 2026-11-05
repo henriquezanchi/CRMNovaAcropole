@@ -109,9 +109,9 @@ select jsonb_build_object(
             count(*) filter (where exists (select 1 from respostas r where r."pessoaIdentificador" = f."pessoaIdentificador")) responderam,
             count(*) filter (where exists (select 1 from inscritos_class i where i.via_convite and (i.tel = f.telefone_chave or i."pessoaIdentificador" = f."pessoaIdentificador"))) inscritos
         from convidados f group by f.filial) x),
-    'inscritos', (select coalesce(jsonb_agg(jsonb_build_object('nome', nome, 'telefone', painel_tel_formatado(ddd, num), 'escola', filial,
+    'inscritos', (select coalesce(jsonb_agg(jsonb_build_object('pid', "pessoaIdentificador", 'nome', nome, 'telefone', painel_tel_formatado(ddd, num), 'escola', filial,
             'aluno', aluno, 'via_convite', via_convite, 'em', criado_em, 'compareceu', compareceu) order by criado_em desc), '[]') from inscritos_class),
-    'contatados', (select coalesce(jsonb_agg(jsonb_build_object('nome', cv.nome, 'telefone', painel_tel_formatado(cv.ddd, cv.num), 'escola', cv.filial,
+    'contatados', (select coalesce(jsonb_agg(jsonb_build_object('pid', cv."pessoaIdentificador", 'nome', cv.nome, 'telefone', painel_tel_formatado(cv.ddd, cv.num), 'escola', cv.filial,
             'enviado_em', cv.enviado_em, 'entrega', cv.wa_status, 'respondeu', r.primeira is not null,
             'situacao', (select t from unnest(cv.tags) t where t like 'Campanha: %' limit 1),
             'parar', 'Não Contatar' = any(cv.tags)) order by cv.enviado_em desc), '[]')
@@ -156,6 +156,7 @@ matr as (
 turmas as (
     -- O Ulisses às vezes tem dois cadastros para a mesma atividade na mesma escola: junta.
     select e.filial, e.nome, e.tipo, e.data, min(e.hora) hora, max(e.capacidade) capacidade, min(e.link_inscricao) link_inscricao,
+        array_agg(e.id) ids, max(e.data_limite_inscricao) data_limite,
         (select count(distinct el."pessoaIdentificador") from evento_leads el where el.evento_id = any(array_agg(e.id)) and el.origem = 'ulisses') inscritos,
         (select count(distinct el."pessoaIdentificador") from evento_leads el where el.evento_id = any(array_agg(e.id)) and el.origem = 'crm') convidados_crm,
         (select count(distinct el."pessoaIdentificador") from evento_leads el where el.evento_id = any(array_agg(e.id)) and el.compareceu) compareceram

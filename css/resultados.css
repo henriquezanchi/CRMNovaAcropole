@@ -89,6 +89,23 @@ footer { margin-top: 36px; font-size: 13px; color: var(--suave); border-top: 1px
 .ic-data { font-size: 12px; color: var(--suave); }
 .ic-tel { background: none; border: 0; padding: 0; font-size: 15px; cursor: pointer; margin-left: auto; }
 .pessoa-tel { margin-left: auto; font-size: 13px; font-weight: 600; color: #086357; text-decoration: none; }
+.diretor-bar { margin-top: 8px; font-size: 13px; color: #d7e4df; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.diretor-bar button.secundario { background: #fff; }
+.ic-acao { background: none; border: 0; padding: 0; font-size: 15px; cursor: pointer; }
+.acoes-inline { display: inline-flex; gap: 8px; }
+.folha { position: fixed; inset: 0; background: rgba(15, 23, 20, .45); z-index: 50; display: flex; align-items: flex-end; justify-content: center; }
+.folha-caixa { background: #fff; width: min(680px, 100%); max-height: 85vh; overflow: auto; border-radius: 14px 14px 0 0; padding: 16px 18px 24px; font-size: 14px; }
+.folha-topo { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 6px; }
+.folha-caixa h4 { margin: 14px 0 4px; font-size: 13px; color: var(--suave); text-transform: uppercase; letter-spacing: .04em; }
+.folha-caixa .pre { white-space: pre-wrap; }
+.fala { padding: 8px 10px; border-radius: 10px; margin: 4px 0; max-width: 90%; white-space: pre-wrap; }
+.fala-pessoa { background: #f1f5f3; }
+.fala-escola { background: #dcf3e8; margin-left: auto; }
+.config-turma { background: #fff; border: 1px solid var(--linha); border-radius: 12px; padding: 12px 14px; margin: 10px 0; }
+.config-grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
+.config-grade label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--suave); }
+.config-grade input { border: 1px solid var(--linha); border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 15px; }
+.config-acoes { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .legenda-icones { font-size: 12px; color: var(--suave); line-height: 1.6; margin: 4px 0 8px; }
 .cartao-pessoa { background: #fff; border: 1px solid var(--linha); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
 .cartao-pessoa strong { display: block; margin-bottom: 4px; }

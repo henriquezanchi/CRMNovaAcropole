@@ -2486,6 +2486,7 @@ let filiaisModalCache = []; // todas (ativas + inativas), carregadas ao abrir o 
 async function abrirGerenciarFiliais() {
     filiaisAbertasModal = new Set();
     await renderizarListaFiliaisModal();
+    carregarStatusPinPaineis();
     document.getElementById('modalFiliais').classList.add('open');
     document.getElementById('overlayModalFiliais').classList.add('active');
 }
@@ -2542,6 +2543,7 @@ async function renderizarListaFiliaisModal() {
                     ${campo('Nome na frase', 'Usado nas mensagens: "da Nova Acrópole do Jardim América".', `<input type="text" value="${escapeHTML(f.nome_com_preposicao || '')}" placeholder="do Jardim América" onchange="atualizarPreposicaoFilial(${f.id}, this.value)">`)}
                     ${campo('Endereço', 'Aparece na ficha de todo lead desta filial.', `<input type="text" value="${escapeHTML(f.endereco || '')}" onchange="atualizarEnderecoFilial(${f.id}, this.value)">`, true)}
                     ${campo('WhatsApp do chefe da filial', 'Só números, com 55 e DDD. Recebe aviso de aniversário e resumo de lead.', `<input type="text" inputmode="numeric" value="${escapeHTML(f.whatsapp_chefe_numero || '')}" placeholder="5562991234567" onchange="atualizarWhatsappChefeFilial(${f.id}, this.value)">`, true)}
+                    ${campo('PIN do painel do diretor', 'Com o PIN, o diretor vê nomes e telefones completos no painel da escola e pode agir (não contatar, observação, vagas da turma).', `<button type="button" class="btn-secondary" onclick="definirPinPainelFilial(${JSON.stringify(f.nome).replace(/"/g, '&quot;')})">Definir / redefinir PIN</button> <span class="pin-status" data-filial="${escapeHTML(f.nome)}" style="font-size:12px;color:var(--text-muted);"></span>`, true)}
                 </div>
                 <h4 class="filial-grupo">Mercúrio e cobrança</h4>
                 <div class="filial-grade">
@@ -2632,6 +2634,31 @@ async function atualizarPreposicaoFilial(id, novoValor) {
 // dígitos (E.164 sem "+"), destinatário do aviso de aniversário de aluno
 // Ativo (job diário do Mercúrio) e do resumo de lead sob demanda (gaveta
 // do lead). Ver migracao_filial_whatsapp_chefe.sql.
+// PIN do painel do diretor (painel_resultados_links.pin_hash): definido pelo admin,
+// conferindo a senha do CRM de novo (a chave publishable não prova nada sozinha).
+async function definirPinPainelFilial(nomeFilial) {
+    const usuario = typeof usuarioLogado === 'function' ? usuarioLogado() : null;
+    if (!usuario || !usuario.ehAdmin) { avisar('Só um administrador define o PIN.'); return; }
+    const pin = prompt(`Novo PIN de 6 números para o painel de "${nomeFilial}":`);
+    if (pin == null) return;
+    if (!/^\d{6}$/.test(pin.trim())) { avisar('O PIN precisa ter exatamente 6 números.'); return; }
+    const senha = prompt('Confirme com a sua senha do CRM:');
+    if (senha == null) return;
+    const { data, error } = await window.supabaseClient.rpc('painel_definir_pin', { p_filial: nomeFilial, p_pin: pin.trim(), p_usuario: usuario.nome, p_senha_hash: await calcularHashSenha(senha) });
+    if (error || !data?.ok) { avisar('Não foi possível definir o PIN: ' + (error?.message || data?.erro || 'erro')); return; }
+    avisar(`PIN definido. Mande ao diretor por um canal diferente do link. Sessões antigas do painel foram encerradas.`);
+    carregarStatusPinPaineis();
+}
+async function carregarStatusPinPaineis() {
+    const spans = document.querySelectorAll('.pin-status');
+    if (!spans.length) return;
+    const { data } = await window.supabaseClient.rpc('painel_pin_status');
+    const por = new Map((data || []).map(r => [r.filial, r]));
+    spans.forEach(sp => {
+        const r = por.get(sp.dataset.filial);
+        sp.textContent = !r ? 'Esta escola ainda não tem painel.' : r.pin_definido_em ? 'PIN definido em ' + new Date(r.pin_definido_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) + (r.bloqueado_ate && new Date(r.bloqueado_ate) > new Date() ? ' · bloqueado por tentativas erradas' : '') : 'Sem PIN: o painel mostra nomes e telefones resumidos.';
+    });
+}
 async function atualizarWhatsappChefeFilial(id, novoValor) {
     novoValor = novoValor.replace(/\D/g, '');
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ whatsapp_chefe_numero: novoValor || null }).eq('id', id);
