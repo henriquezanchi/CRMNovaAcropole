@@ -111,7 +111,7 @@ async function escolasDaRegiao(filiais: string[], hojeISO: string): Promise<{ te
     return {
         texto,
         links: (evs || []).map((e: any) => e.link_inscricao).filter(Boolean),
-        eventos: (evs || []).filter((e: any) => e.link_inscricao).map((e: any) => ({ nome: String(e.nome), link: String(e.link_inscricao) })),
+        eventos: (evs || []).map((e: any) => ({ nome: String(e.nome), link: String(e.link_inscricao || ""), data: String(e.data || "") })),
     };
 }
 
@@ -172,9 +172,11 @@ ${c.config?.instrucoes || "(nenhuma)"}
 - Se a pessoa já aceitou ("sim", "pode", "quero") a uma pergunta nossa sobre detalhes ou link, mande o link nesta mensagem; nunca pergunte de novo se pode mandar.
 - Sempre que der os detalhes do evento, inclua o link de inscrição na mesma mensagem (não pergunte "posso mandar o link?") e escreva, com essas palavras, que as vagas são limitadas e por isso é importante garantir a vaga pelo link.
 - Inscrição: nunca diga que não precisa se inscrever, reservar ou garantir a vaga. Todas as atividades pedem inscrição pelo link.
-- Outras atividades da lista de escolas (palestras, cursos, aulas experimentais de outras datas): você só conhece nome, data, hora e link. Copie data, hora e link exatamente da linha daquela atividade (nunca troque o link pelo de outro evento, nunca use outra data). Não diga que são gratuitas nem descreva o conteúdo além do nome, a menos que isso esteja nas instruções da campanha.
-- Curso de Filosofia para Viver: o que é gratuito é só a aula experimental. Nunca diga que a primeira aula, o curso ou a matrícula são gratuitos.
-- Outras cidades: a Nova Acrópole tem escolas em muitas cidades do Brasil, mas você não tem os contatos delas. Indique o site acropole.org.br para encontrar a unidade mais próxima. Nunca ofereça "passar o contato".
+- Outras atividades da lista de escolas (palestras, cursos, aulas experimentais de outras datas): você só conhece nome, data, hora e link. Copie data, hora e link exatamente da linha daquela atividade (nunca troque o link pelo de outro evento, nunca use outra data). Não descreva o conteúdo além do nome, a menos que isso esteja nas instruções da campanha.
+- Entrada: palestras abertas das escolas têm entrada franca (gratuita). Cursos livres, workshops, oficinas e o Curso de Filosofia para Viver não são gratuitos: não fale de valor deles.
+- Curso de Filosofia para Viver: o que é gratuito é só a aula experimental. Nunca diga que a primeira aula, o curso ou a matrícula são gratuitos. Se a pessoa não puder ir à aula experimental (viagem, compromisso), diga que vai ver com a direção da escola se ela pode conhecer na primeira aula sem custo, e marque "precisa_humano": true. Nunca prometa que a primeira aula será gratuita.
+- Curso de Filosofia para Viver, formato: aulas uma vez por semana, com 2 horas de duração e intervalo de 20 minutos; o curso dura de 4 a 6 meses.
+- Outras cidades: a Nova Acrópole tem escolas em muitas cidades do Brasil, mas você não tem a lista nem os contatos delas. Nunca afirme que existe (ou que não existe) escola numa cidade específica: diga que ela pode procurar a unidade mais próxima no site acropole.org.br. Nunca ofereça "passar o contato".
 - Endereço: use só o que está nos dados (descrição do evento, instruções da campanha ou endereço da escola). Se não estiver, diga que vai confirmar ("precisa_humano": true) e ofereça o mapa da escola.
 - Escola de origem: a pessoa se aproximou da Nova Acrópole pela escola indicada como "escola de origem". Quando fizer sentido (ela gostou da ideia, perguntou sobre o curso, sobre a escola, ou disse que não pode ir ao evento mas tem interesse), conte de forma leve sobre a próxima atividade dessa escola, de preferência a abertura de turma ou a aula experimental do Curso de Filosofia para Viver, com data e link quando existirem. Uma menção por conversa, sem insistir.
 - Se a pessoa disser que se mudou, que trabalha ou mora em outro bairro/setor, ou que outra unidade é mais perto, procure na lista de escolas acima a(s) mais provável(is) pela região mencionada e ofereça as atividades dessa unidade. Se não tiver certeza de qual é mais perto, cite as 2 ou 3 mais prováveis com o endereço/mapa e pergunte qual fica melhor. Registre em "escola_preferida" o nome exato entre colchetes da escola escolhida. Se ela se mudou para fora de Goiânia/Aparecida, marque "mudou_cidade": true e responda com gentileza.
@@ -276,6 +278,25 @@ export function corrigirLinksDeAtividades(texto: string, eventos: { nome: string
     return saida;
 }
 
+// Rede de segurança (caso real 05/11, Frederico): "no sábado (07/11) tem a palestra
+// O Poder da Simplicidade", que é dia 21/11. Em cada linha que cita exatamente uma
+// atividade da agenda (com uma única data cadastrada), toda data DD/MM diferente da
+// dela é trocada pela data certa. O dia da semana é acertado depois por
+// corrigirDiasDaSemana().
+export function corrigirDatasDeAtividades(texto: string, eventos: { nome: string; data: string }[]): string {
+    const norm = (x: string) => x.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+    const unicos = eventos.filter((e) => e.nome.length >= 8 && e.data &&
+        new Set(eventos.filter((o) => norm(o.nome) === norm(e.nome)).map((o) => o.data)).size === 1);
+    return texto.split("\n").map((linha) => {
+        const citados = [...new Map(unicos.filter((e) => norm(linha).includes(norm(e.nome))).map((e) => [norm(e.nome), e])).values()];
+        if (citados.length !== 1) return linha;
+        const [ano, mes, dia] = citados[0].data.slice(0, 10).split("-");
+        const certa = `${dia}/${mes}`;
+        return linha.replace(/\b(\d{1,2})\/(\d{1,2})(?!\/?\d)/g, (m, d, mm) =>
+            (Number(d) === Number(dia) && Number(mm) === Number(mes)) ? m : certa);
+    }).join("\n");
+}
+
 // Trava final antes de enviar: o robô nunca informa valor nem diz que consultou a
 // equipe (ele não consulta ninguém). Devolve o motivo do bloqueio, ou null.
 export function motivoBloqueioResposta(texto: string, linksPermitidos: string[] = []): string | null {
@@ -306,7 +327,8 @@ async function decidir(c: any, ev: any, ctx: any, conversa: string, hojeISO: str
         const inicio = bruto.indexOf("{"), fim = bruto.lastIndexOf("}");
         const d = JSON.parse(bruto.slice(inicio, fim + 1));
         if (typeof d.resposta === "string") d.resposta = trocarPerguntaDoLink(d.resposta, c.config?.link_convite || ev?.link_inscricao);
-        if (typeof d.resposta === "string") d.resposta = corrigirLinksDeAtividades(d.resposta, eventos);
+        if (typeof d.resposta === "string") d.resposta = corrigirLinksDeAtividades(d.resposta, eventos.filter((e) => e.link));
+        if (typeof d.resposta === "string") d.resposta = corrigirDatasDeAtividades(d.resposta, eventos);
         if (typeof d.resposta === "string") d.resposta = corrigirDiasDaSemana(d.resposta.replace(/\s—\s/g, ", ").replace(/\*\*/g, "").trim(), hojeISO) || null;
         d.links_permitidos = [...links, ev?.link_inscricao, c.config?.link_convite, ...(String(c.config?.instrucoes || "").match(/https?:\/\/\S+/g) || [])].filter(Boolean);
         return { decisao: d };

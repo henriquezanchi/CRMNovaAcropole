@@ -11160,3 +11160,10 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
   palestras da agenda só com nome/data/hora/link copiados da linha, sem dizer que são gratuitas (a gratuidade delas não
   está cadastrada). `reengajar-janela-fechando` não entra em conversa de campanha ativa (disse que o DMF era "aqui na
   escola do Setor Universitário").
+- **Regras confirmadas pelo usuário (05/11):** Curso de Filosofia para Viver = 1 aula por semana, 2h, intervalo de
+  20 min, duração de 4 a 6 meses (nas instruções das campanhas de turma e no prompt). Só a aula experimental é
+  gratuita; quem não puder ir a ela pode, a critério da direção da escola, fazer a primeira aula sem custo — o robô
+  diz que vai ver com a direção e passa para humano, nunca promete. Palestras abertas das escolas têm entrada franca;
+  cursos livres/workshops/oficinas não. O robô nunca afirma que existe (ou não) escola numa cidade específica: indica
+  acropole.org.br. `corrigirDatasDeAtividades()`: em linha que cita uma única atividade da agenda, data DD/MM errada
+  vira a data cadastrada (caso Frederico, "07/11" para uma palestra de 21/11).
