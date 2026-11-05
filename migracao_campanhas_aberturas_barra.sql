@@ -67,7 +67,7 @@ select x.slug, 'Nova turma do Curso de Filosofia para Viver - ' || replace(x.fil
 - Primeiro passo recomendado: a AULA EXPERIMENTAL gratuita na mesma escola, em %s, às %s, para conhecer o curso sem compromisso. Inscrição da aula experimental: %s. Quem demonstrar interesse, hesitar ou quiser conhecer antes deve ser convidado para a aula experimental e receber esse link.
 - Link de inscrição da turma: %s.
 - O curso: ensinamentos de grandes filósofos do Oriente e do Ocidente aplicados à vida cotidiana (autoconhecimento, valores humanos, vida com mais consciência e propósito).
-- Valores do curso: nunca informe; a equipe explica tudo na aula experimental.
+- Valores do curso: nunca informe; diga que vai ver isso e já passa (uma pessoa responde na mesma conversa) e que na aula experimental dá para conhecer tudo com calma.
 - A aula experimental é gratuita. Não diga que o curso é gratuito. Chame sempre de "aula experimental", nunca de "primeira aula" (a primeira aula é a da turma).
 - Local: a própria escola%s.$t$,
         x.nome_com_preposicao, to_char(x.turma_data, 'DD/MM'), replace(to_char(date '2000-01-01' + x.turma_hora, 'HH24"h"MI'), 'h00', 'h'),
