@@ -11141,3 +11141,6 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
   nome do cadastro) em vez de `"Contato em conferência"`, que bloqueia todo envio no `whatsapp-send` e deixou sem
   resposta quem só tinha mandado a saudação automática da própria empresa. `RE_SAUDACAO_EMPRESA` ("X agradece seu
   contato. Como podemos ajudar?") conta como mensagem automática mesmo com "?".
+- **Botão "Painel de Resultados" (05/11, `migracao_painel_resultados_atalho.sql`):** aba Relatórios, ao lado de "Log de
+  Atividade" (`abrirPainelResultados()`, `js/app.js`); abre em outra aba o link guardado em `painel_resultados_atalhos`
+  (leitura pública, só o link da coordenação, inserido direto no banco — a chave nunca vai pro repositório).

@@ -1572,6 +1572,26 @@ function csvEscapeCampo(valor) {
     return str;
 }
 
+// Botão "Painel de Resultados" (aba Relatórios): abre em outra aba o painel dos
+// dirigentes com o link guardado em painel_resultados_atalhos.
+async function abrirPainelResultados() {
+    // A aba é aberta antes da consulta: depois de um await o navegador bloqueia o pop-up.
+    const aba = window.open('about:blank', '_blank');
+    const { data, error } = await supabaseClient.from('painel_resultados_atalhos')
+        .select('url').order('ordem').limit(1).maybeSingle();
+    if (error || !data?.url) {
+        if (aba) aba.close();
+        alert('Não encontrei o link do painel de resultados.' + (error ? ' ' + error.message : ''));
+        return;
+    }
+    if (aba) {
+        aba.opener = null;
+        aba.location.href = data.url;
+    } else {
+        window.open(data.url, '_blank', 'noopener');
+    }
+}
+
 function exportarLeadsCSV() {
     if (leadsAtuais.length === 0) {
         avisar('Nenhum lead carregado para exportar. Abra a aba CRM e deixe os leads carregarem primeiro.');
