@@ -78,7 +78,8 @@ footer { margin-top: 36px; font-size: 13px; color: var(--suave); border-top: 1px
 .pessoa { padding: 9px 12px; border-bottom: 1px solid var(--linha); }
 .pessoa:last-child { border-bottom: 0; }
 .pessoa-topo { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-.pessoa-nome { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pessoa-nome { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.pessoas-lista, .pessoa { min-width: 0; max-width: 100%; box-sizing: border-box; }
 .sigla { font-size: 11px; font-weight: 700; letter-spacing: .06em; color: var(--suave); background: #eef3f1; border-radius: 6px; padding: 1px 6px; flex-shrink: 0; }
 .pessoa-icones { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 4px; font-size: 15px; }
 .ic { line-height: 1; }
