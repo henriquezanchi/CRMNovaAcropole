@@ -11195,3 +11195,9 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
   enviados aos dirigentes (painel de resultados e painéis das escolas) usam esse endereço e dependem do redirecionamento.
   `painel-escola` e `painel-resultados` aceitam os dois endereços; antes `painel-escola` só aceitava o `-5dv3` e os
   "Painéis das filiais" não abriam pelo endereço sem `-5dv3`.
+- **DMF e turma como uma escola só (05/11):** `campanha_candidatos()` bloqueia telefone que já foi convidado (não só
+  na fila) por qualquer campanha ativa, para ninguém receber dois convites como se fôssemos entidades diferentes.
+  O robô do DMF divulga a aula experimental da escola de origem na própria conversa: só depois do DMF (detalhes já
+  enviados e a pessoa já resolveu: vai, inscreveu ou não pode), de forma natural e só se a conversa abrir espaço,
+  uma vez. `corrigirLinkAulaExperimental()` troca o link da turma pelo da aula experimental quando vem depois de
+  "aula experimental". Borda vermelha de "sem contato há 2h" no Kanban removida (pedido do usuário: sem pressa).

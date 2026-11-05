@@ -111,7 +111,7 @@ async function escolasDaRegiao(filiais: string[], hojeISO: string): Promise<{ te
     return {
         texto,
         links: (evs || []).map((e: any) => e.link_inscricao).filter(Boolean),
-        eventos: (evs || []).map((e: any) => ({ nome: String(e.nome), link: String(e.link_inscricao || ""), data: String(e.data || "") })),
+        eventos: (evs || []).map((e: any) => ({ nome: String(e.nome), link: String(e.link_inscricao || ""), data: String(e.data || ""), filial: String(e.filial || "") })),
     };
 }
 
@@ -179,6 +179,7 @@ ${c.config?.instrucoes || "(nenhuma)"}
 - Outras cidades: a Nova Acrópole tem escolas em muitas cidades do Brasil, mas você não tem a lista nem os contatos delas. Nunca afirme que existe (ou que não existe) escola numa cidade específica: diga que ela pode procurar a unidade mais próxima no site acropole.org.br. Nunca ofereça "passar o contato".
 - Endereço: use só o que está nos dados (descrição do evento, instruções da campanha ou endereço da escola). Se não estiver, diga que vai confirmar ("precisa_humano": true) e ofereça o mapa da escola.
 - Escola de origem: a pessoa se aproximou da Nova Acrópole pela escola indicada como "escola de origem". Quando fizer sentido (ela gostou da ideia, perguntou sobre o curso, sobre a escola, ou disse que não pode ir ao evento mas tem interesse), conte de forma leve sobre a próxima atividade dessa escola, de preferência a abertura de turma ou a aula experimental do Curso de Filosofia para Viver, com data e link quando existirem. Uma menção por conversa, sem insistir.
+- Aula experimental na conversa de outro evento (ex.: Dia Mundial da Filosofia): somos uma escola só, então o mesmo contato serve para as duas coisas. Primeiro o evento: nunca fale da aula experimental na mensagem que apresenta o evento nem antes de a pessoa ter recebido os detalhes dele. Depois que a pessoa já resolveu o assunto do evento (disse que vai, já se inscreveu, ou disse que não pode ir) e só se a conversa abrir espaço para isso (a pessoa está receptiva, não está encerrando nem recusando contato), conte de forma natural, como quem lembra de uma novidade, em 1 ou 2 linhas que a escola de origem dela vai abrir a última turma de 2026 do Curso de Filosofia para Viver, convidando para a aula experimental gratuita, com data, hora e o link de inscrição DA AULA EXPERIMENTAL (nunca o da turma) copiados da lista daquela escola. Só uma vez na conversa, sem insistir, e só se essa aula experimental estiver na lista. Se a pessoa já perguntou sobre o curso, responda direto.
 - Se a pessoa disser que se mudou, que trabalha ou mora em outro bairro/setor, ou que outra unidade é mais perto, procure na lista de escolas acima a(s) mais provável(is) pela região mencionada e ofereça as atividades dessa unidade. Se não tiver certeza de qual é mais perto, cite as 2 ou 3 mais prováveis com o endereço/mapa e pergunte qual fica melhor. Registre em "escola_preferida" o nome exato entre colchetes da escola escolhida. Se ela se mudou para fora de Goiânia/Aparecida, marque "mudou_cidade": true e responda com gentileza.
 - Se a pessoa não pode ir: acolha sem insistir, e se fizer sentido mencione a próxima atividade da escola de origem. Nunca pressione.
 - Pedido para não receber mensagens ("pare", "me tira da lista", "não quero mais"): responda uma frase curta pedindo desculpas pelo incômodo e confirmando que não vamos mais enviar, e marque "nao_contatar": true.
@@ -291,6 +292,18 @@ export function corrigirLinksDeAtividades(texto: string, eventos: { nome: string
 // atividade da agenda (com uma única data cadastrada), toda data DD/MM diferente da
 // dela é trocada pela data certa. O dia da semana é acertado depois por
 // corrigirDiasDaSemana().
+// Rede de segurança (simulação 05/11): o robô convidou para a aula experimental com
+// o link da turma. Depois de "aula experimental", um link que não é de aula
+// experimental vira o link da aula experimental da escola de origem.
+export function corrigirLinkAulaExperimental(texto: string, eventos: { nome: string; link: string; filial: string }[], filialLead: string): string {
+    const ehAula = (n: string) => /aula experimental/i.test(n);
+    const aula = eventos.find((e) => e.filial === filialLead && ehAula(e.nome) && e.link) || eventos.find((e) => ehAula(e.nome) && e.link);
+    if (!aula) return texto;
+    const linksDeAula = new Set(eventos.filter((e) => ehAula(e.nome)).map((e) => e.link));
+    return texto.replace(/(aula experimental[^]{0,300}?)(https?:\/\/\S*eventoId=\d+)/gi, (m, antes, link) =>
+        linksDeAula.has(link) || /https?:\/\//.test(antes) ? m : antes + aula.link);
+}
+
 export function corrigirDatasDeAtividades(texto: string, eventos: { nome: string; data: string }[]): string {
     const norm = (x: string) => x.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
     const unicos = eventos.filter((e) => e.nome.length >= 8 && e.data &&
@@ -392,6 +405,7 @@ async function decidir(c: any, ev: any, ctx: any, conversa: string, hojeISO: str
         if (typeof d.resposta === "string" && d.situacao !== "vai") d.resposta = ajustarEntusiasmo(d.resposta, conversa);
         if (typeof d.resposta === "string") d.resposta = corrigirLinksDeAtividades(d.resposta, eventos.filter((e) => e.link));
         if (typeof d.resposta === "string") d.resposta = corrigirDatasDeAtividades(d.resposta, eventos);
+        if (typeof d.resposta === "string") d.resposta = corrigirLinkAulaExperimental(d.resposta, eventos, String(ctx?.lead?.filial || ""));
         if (typeof d.resposta === "string") d.resposta = corrigirDiasDaSemana(d.resposta.replace(/\s—\s/g, ", ").replace(/\*\*/g, "").trim(), hojeISO) || null;
         d.links_permitidos = [...links, ev?.link_inscricao, c.config?.link_convite, ...(String(c.config?.instrucoes || "").match(/https?:\/\/\S+/g) || [])].filter(Boolean);
         return { decisao: d };

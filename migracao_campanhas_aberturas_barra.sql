@@ -158,11 +158,13 @@ bloqueados as (
         or a->>'contato' = 'nao_contatar' or a->>'relacao' = 'ativo'
     )
     union
-    -- já está nesta campanha, ou na fila (ainda não enviado) de qualquer campanha ativa
+    -- já está nesta campanha, ou já foi convidado (ou está na fila) de qualquer campanha ativa:
+    -- quem recebeu o convite do DMF não recebe outro da turma como se fôssemos outra entidade;
+    -- a aula experimental é divulgada na própria conversa pelo robô (05/11/2026).
     select f.telefone_chave from campanha_fila f join c on f.campanha_id = c.id where f.telefone_chave is not null and f.status <> 'cancelado'
     union
     select f.telefone_chave from campanha_fila f join campanhas_whatsapp c2 on c2.id = f.campanha_id
-    where c2.ativa and f.telefone_chave is not null and f.status in ('pendente', 'enviando')
+    where c2.ativa and f.telefone_chave is not null and f.status in ('pendente', 'enviando', 'enviado')
     union
     select campanha_telefone_chave(l."pessoaTelefoneDDD", l."pessoaTelefoneNumero")
     from evento_leads el join evento ev on ev.id = el.evento_id join leads_inscricoes l on l."pessoaIdentificador" = el."pessoaIdentificador"
