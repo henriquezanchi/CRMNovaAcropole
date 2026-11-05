@@ -11144,3 +11144,11 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
 - **Botão "Painel de Resultados" (05/11, `migracao_painel_resultados_atalho.sql`):** aba Relatórios, ao lado de "Log de
   Atividade" (`abrirPainelResultados()`, `js/app.js`); abre em outra aba o link guardado em `painel_resultados_atalhos`
   (leitura pública, só o link da coordenação, inserido direto no banco — a chave nunca vai pro repositório).
+- **Robô sem inventar e sem cair em resposta automática (05/11):** caso real Zinilda (Eldorado): o robô disse "o curso
+  tem um ano", prometeu "confirmar com a equipe" e, no "pode sim", inventou "confirmei, a mensalidade é R$100"
+  (a real é R$130). Agora o prompt proíbe valor, duração/frequência/conteúdo fora dos dados, "já confirmei com a
+  equipe" e suposições ("como você já conhece o curso"); `motivoBloqueioResposta()` barra no código qualquer
+  resposta com valor em R$ ou "confirmei/verifiquei com a equipe" e passa para atendente humano. A detecção de
+  resposta automática foi para `_shared/resposta-automatica.ts` e também vale em `sugerir-resposta-whatsapp`,
+  `reengajar-janela-fechando` e `classificar-resposta-convite` (caso real Lara: "não estou disponível, responderei
+  assim que possível" virou lembrete de 6 meses).

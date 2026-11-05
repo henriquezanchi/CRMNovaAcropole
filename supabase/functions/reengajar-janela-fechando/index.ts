@@ -51,6 +51,7 @@ import { montarTabelaDiasSemana, adicionarMeses } from "../_shared/calendario.ts
 import { buscarPersonaAtendente } from "../_shared/persona.ts";
 import { chamarClaude } from "../_shared/anthropic.ts";
 import { montarHistoricoWpp } from "../_shared/historico-wpp.ts";
+import { ehRespostaAutomatica } from "../_shared/resposta-automatica.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const MODELO = "claude-haiku-4-5-20251001";
@@ -141,7 +142,7 @@ async function aplicarLembreteAutomatico(pessoaIdentificador: string, data: stri
 
 type Candidata = { mensagem_id: number; pessoaIdentificador: string; filial: string | null };
 
-async function montarContextoCompleto(pessoaIdentificador: string): Promise<{ texto: string; ultimaDoLeadIlegivel: boolean }> {
+async function montarContextoCompleto(pessoaIdentificador: string): Promise<{ texto: string; ultimaDoLeadIlegivel: boolean; respostaAutomatica: boolean }> {
     const { count } = await supabaseAdmin
         .from("mensagens_whatsapp")
         .select("id", { count: "exact", head: true })
@@ -153,7 +154,8 @@ async function montarContextoCompleto(pessoaIdentificador: string): Promise<{ te
         .eq("pessoaIdentificador", pessoaIdentificador)
         .order("criado_em", { ascending: false })
         .limit(LIMITE_HISTORICO_COMPLETO);
-    const { texto, ultimaDoLeadIlegivel } = await montarHistoricoWpp((data || []).reverse());
+    const cronologicas = (data || []).reverse();
+    const { texto, ultimaDoLeadIlegivel } = await montarHistoricoWpp(cronologicas);
 
     const truncado = typeof count === "number" && count > LIMITE_HISTORICO_COMPLETO;
     return {
@@ -161,6 +163,7 @@ async function montarContextoCompleto(pessoaIdentificador: string): Promise<{ te
             ? `(conversa tem ${count} mensagens no total — abaixo só as ${LIMITE_HISTORICO_COMPLETO} mais recentes, mais que suficiente pra entender o fio atual)\n${texto}`
             : texto,
         ultimaDoLeadIlegivel,
+        respostaAutomatica: ehRespostaAutomatica(cronologicas),
     };
 }
 
@@ -432,7 +435,10 @@ Deno.serve(async (req) => {
     const prazoRodada = Date.now() + 110_000;
     for (const item of candidatas as Candidata[]) {
         if (Date.now() > prazoRodada) break;
-        const { texto: contextoConversa, ultimaDoLeadIlegivel } = await montarContextoCompleto(item.pessoaIdentificador);
+        const { texto: contextoConversa, ultimaDoLeadIlegivel, respostaAutomatica } = await montarContextoCompleto(item.pessoaIdentificador);
+        // Resposta automática do WhatsApp Business dela ("no momento não estou
+        // disponível"): não é a pessoa falando, não há o que retomar.
+        if (respostaAutomatica) continue;
         // Áudio ainda não transcrito (ou foto sem legenda) na última mensagem do
         // lead: o robô não sabe o que a pessoa disse. Não responde às cegas;
         // tenta de novo na próxima rodada (a transcrição roda a cada 2 min).

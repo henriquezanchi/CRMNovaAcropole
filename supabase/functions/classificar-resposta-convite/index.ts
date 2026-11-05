@@ -31,6 +31,7 @@ import { buscarPersonaAtendente } from "../_shared/persona.ts";
 import { contextoOficialCRM } from "../_shared/contexto-oficial-crm.ts";
 import { prepararAgente } from "../_shared/agentes-crm.ts";
 import { chamarClaude } from "../_shared/anthropic.ts";
+import { textoEhRespostaAutomatica } from "../_shared/resposta-automatica.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const MODELO = "claude-haiku-4-5-20251001";
@@ -386,6 +387,8 @@ Deno.serve(async (req) => {
 
     let processadas = 0;
     for (const item of candidatas as Candidata[]) {
+        // Resposta automática não é resposta ao convite.
+        if (textoEhRespostaAutomatica(item.corpo_texto)) continue;
         const historico = await montarHistorico(item.pessoaIdentificador);
         const dados = await buscarDadosEvento(item.evento_id, `${historico}\n${item.corpo_texto}`);
         const persona = await buscarPersonaDoLead(item.pessoaIdentificador);

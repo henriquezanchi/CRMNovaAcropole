@@ -20,6 +20,7 @@ import { montarTabelaDiasSemana } from "../_shared/calendario.ts";
 import { chamarClaude } from "../_shared/anthropic.ts";
 import { montarHistoricoWpp } from "../_shared/historico-wpp.ts";
 import { linkMapsDaFilial } from "../_shared/filiaisInfo.ts";
+import { ehRespostaAutomatica } from "../_shared/resposta-automatica.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const MODELO = Deno.env.get("CAMPANHA_MODELO_IA") ?? "claude-sonnet-4-5";
@@ -159,7 +160,10 @@ ${c.config?.instrucoes || "(nenhuma)"}
 - A inscrição é feita pela própria pessoa no link. Você não inscreve ninguém e não confirma inscrição. Se ela disser que já se inscreveu, agradeça e diga que a esperamos.
 - Perguntas sobre estacionamento, acessibilidade, levar crianças/acompanhantes, duração exata, lanche ou qualquer dado que não está acima: não invente. Diga que vai confirmar com a equipe e marque "precisa_humano": true com o motivo. Levar acompanhante: pode convidar, e o acompanhante também se inscreve pelo link.
 - Horário de término: se não estiver nos dados, nunca invente; diga que vai confirmar e marque "precisa_humano": true.
-- Valores (mensalidade, preço do curso, descontos): nunca informe nenhum valor. Diga que a equipe da escola explica tudo sobre o curso, de preferência na aula experimental, e marque "precisa_humano": true se a pessoa insistir no valor.
+- Valores (mensalidade, preço do curso, material, descontos): nunca informe nenhum valor, nem aproximado. Diga que a equipe da escola explica tudo sobre o curso, de preferência na aula experimental, e marque "precisa_humano": true.
+- Duração, carga horária, frequência das aulas, conteúdo do curso, quem é o professor ou qualquer detalhe que não esteja nos dados acima: não diga. Responda que a equipe explica na aula experimental (ou que vai confirmar) e marque "precisa_humano": true.
+- Quando você disse que ia confirmar algo com a equipe, quem responde é uma pessoa da equipe, não você. Se a pessoa disser "pode sim"/"ok" para isso, responda só que a equipe vai retornar, sem trazer a informação. Nunca diga que já confirmou, verificou ou consultou a equipe: você não consulta ninguém.
+- Não suponha o que a pessoa já sabe ou já fez (ex.: "como você já conhece o curso") a menos que isso esteja nos dados.
 - Se a pessoa já aceitou ("sim", "pode", "quero") a uma pergunta nossa sobre detalhes ou link, mande o link nesta mensagem; nunca pergunte de novo se pode mandar.
 - Sempre que der os detalhes do evento, inclua o link de inscrição na mesma mensagem (não pergunte "posso mandar o link?") e escreva, com essas palavras, que as vagas são limitadas e por isso é importante garantir a vaga pelo link.
 - Outras cidades: a Nova Acrópole tem escolas em muitas cidades do Brasil, mas você não tem os contatos delas. Indique o site acropole.org.br para encontrar a unidade mais próxima. Nunca ofereça "passar o contato".
@@ -238,6 +242,14 @@ const RE_PERGUNTA_LINK = /[^.!?\n]*\b(posso|quer que eu|gostaria que eu|quer|des
 export function trocarPerguntaDoLink(texto: string, link: string | null | undefined): string {
     if (!link || /https?:\/\//i.test(texto) || !RE_PERGUNTA_LINK.test(texto)) return texto;
     return texto.replace(RE_PERGUNTA_LINK, (m) => `${m.match(/^\s*/)?.[0] || ""}Para garantir sua vaga, é só se inscrever pelo link:\n${link}`);
+}
+
+// Trava final antes de enviar: o robô nunca informa valor nem diz que consultou a
+// equipe (ele não consulta ninguém). Devolve o motivo do bloqueio, ou null.
+export function motivoBloqueioResposta(texto: string): string | null {
+    if (/R\$\s?\d|\d+(,\d{2})?\s?reais\b/i.test(texto)) return "informou valor em dinheiro";
+    if (/(confirmei|conferi|verifiquei|consultei|chequei)\b[^.!?\n]{0,30}\b(equipe|escola|secretaria|professor)/i.test(texto)) return "disse que confirmou com a equipe";
+    return null;
 }
 
 // "Bom dia!" / "Boa tarde!" / "Boa noite!" conforme a hora em Brasília.
@@ -382,7 +394,14 @@ async function responder(pessoa: string, mensagemId: number | null, esperaSegund
     }
     const d = r.decisao;
     let status = "sem_resposta";
-    if (d.resposta) {
+    const bloqueio = d.resposta ? motivoBloqueioResposta(d.resposta) : null;
+    if (bloqueio) {
+        // Trava: não envia, e a conversa vai para atendimento humano (caso real 05/11:
+        // o robô inventou "R$ 100,00" e disse que tinha confirmado com a equipe).
+        status = "bloqueada: " + bloqueio;
+        d.precisa_humano = true;
+        d.motivo_humano = `Resposta automática bloqueada (${bloqueio}). Responder manualmente.`;
+    } else if (d.resposta) {
         // Confere de novo: um atendente pode ter respondido enquanto a IA pensava.
         const { data: agora } = await supabaseAdmin.from("mensagens_whatsapp").select("id")
             .eq("pessoaIdentificador", pessoa).neq("wa_status", "falhou").order("criado_em", { ascending: false }).limit(1).maybeSingle();
@@ -401,27 +420,6 @@ async function responder(pessoa: string, mensagemId: number | null, esperaSegund
     await supabaseAdmin.from("campanha_respostas_bot").update({ status, resposta: d.resposta, decisao: d, respondido_em: new Date().toISOString() })
         .eq("mensagem_id", ultima.id);
     return { pessoa, status, situacao: d.situacao };
-}
-
-// Mensagens automáticas típicas (WhatsApp Business de quem recebe o convite).
-const RE_RESPOSTA_AUTOMATICA = /(mensagem autom[aá]tica|resposta autom[aá]tica|retornarei|retornaremos|retorno (em breve|assim que|logo)|responderei (assim que|logo|em breve)|responderemos (assim que|em breve)|no momento,? n[aã]o (posso|consigo|estou podendo) (atender|responder)|n[aã]o estou dispon[ií]vel|fora do hor[aá]rio de atendimento|nosso hor[aá]rio de atendimento|agradecemos (o|seu|pelo) contato|obrigad[oa] pelo (seu )?contato|(logo|assim) que (eu )?(visualizar|ver a mensagem))/i;
-
-// Saudação automática de WhatsApp Business ("Pet Shop X agradece seu contato.
-// Como podemos ajudar?"): vale mesmo com ponto de interrogação.
-const RE_SAUDACAO_EMPRESA = /(agradece|agradecemos) (o |seu |pelo |a sua |sua )?(contato|mensagem)|seja bem[- ]vind[oa] (a|à|ao)|bem[- ]vind[oa] (a|à|ao) [a-z]|como (podemos|posso) (te |lhe )?ajudar|em que (podemos|posso) (te |lhe )?ajudar/i;
-
-// Todas as mensagens dela depois da nossa última são automáticas?
-function ehRespostaAutomatica(msgs: any[]): boolean {
-    let i = msgs.length - 1;
-    const dela: any[] = [];
-    while (i >= 0 && msgs[i].direcao === "entrada") dela.push(msgs[i--]);
-    if (!dela.length) return false;
-    return dela.every((m) => {
-        const t = String(m.corpo_texto || "");
-        if (m.tipo !== "texto" || t.length >= 400) return false;
-        const saudacao = RE_SAUDACAO_EMPRESA.test(t) && /(agradece|agradecemos|bem[- ]vind)/i.test(t);
-        return saudacao || (RE_RESPOSTA_AUTOMATICA.test(t) && !/\?/.test(t));
-    });
 }
 
 async function checarInscricoes(prazo: number) {
