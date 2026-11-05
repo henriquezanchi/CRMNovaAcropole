@@ -401,6 +401,13 @@
         }
         dados = res.j;
         document.getElementById('rotulo').textContent = dados.rotulo || '';
+        // Link de uma escola: o título é a campanha de abertura de turma e a data dela.
+        if (dados.escola_unica) {
+          var ct = (dados.campanhas || [])[0], evt = ct && ct.evento;
+          document.querySelector('h1').textContent = 'Campanha de abertura de turma';
+          document.title = 'Campanha de abertura de turma';
+          document.getElementById('rotulo').textContent = nomeEscola(dados.rotulo) + (evt && evt.data ? ' · abertura em ' + dataCurta(evt.data) + (evt.hora ? ', às ' + String(evt.hora).slice(0, 5) : '') : '');
+        }
         var quando = dados.gerado_em ? new Date(dados.gerado_em) : new Date();
         document.getElementById('atualizado').textContent = 'Números de ' + quando.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
         estado.textContent = '';
