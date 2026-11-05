@@ -439,6 +439,13 @@ Deno.serve(async (req) => {
         // Resposta automática do WhatsApp Business dela ("no momento não estou
         // disponível"): não é a pessoa falando, não há o que retomar.
         if (respostaAutomatica) continue;
+        // Conversa de campanha ativa: quem responde é o robô da campanha, que
+        // conhece o evento (caso real 04/11: este robô disse que o DMF era "aqui
+        // na escola do Setor Universitário", quando é na PUC).
+        const { count: emCampanha } = await supabaseAdmin.from("campanha_fila")
+            .select("id, campanhas_whatsapp!inner(ativa)", { count: "exact", head: true })
+            .eq("pessoaIdentificador", item.pessoaIdentificador).eq("status", "enviado").eq("campanhas_whatsapp.ativa", true);
+        if (emCampanha) continue;
         // Áudio ainda não transcrito (ou foto sem legenda) na última mensagem do
         // lead: o robô não sabe o que a pessoa disse. Não responde às cegas;
         // tenta de novo na próxima rodada (a transcrição roda a cada 2 min).

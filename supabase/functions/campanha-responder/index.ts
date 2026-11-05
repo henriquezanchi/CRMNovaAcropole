@@ -92,7 +92,7 @@ async function descreverEvento(eventoId: number) {
     return ev;
 }
 
-async function escolasDaRegiao(filiais: string[], hojeISO: string): Promise<string> {
+async function escolasDaRegiao(filiais: string[], hojeISO: string): Promise<{ texto: string; links: string[]; eventos: { nome: string; link: string }[] }> {
     const { data: fs } = await supabaseAdmin.from("filiais")
         .select("nome, nome_com_preposicao, endereco, link_maps_ulisses").in("nome", filiais);
     const ate = new Date(`${hojeISO}T12:00:00Z`); ate.setUTCDate(ate.getUTCDate() + 45);
@@ -100,7 +100,7 @@ async function escolasDaRegiao(filiais: string[], hojeISO: string): Promise<stri
         .select("filial, nome, tipo, data, hora, link_inscricao")
         .in("filial", filiais).eq("ativo", true).gte("data", hojeISO).lte("data", ate.toISOString().slice(0, 10))
         .order("data");
-    return (fs || []).map((f: any) => {
+    const texto = (fs || []).map((f: any) => {
         const proprios = (evs || []).filter((e: any) => e.filial === f.nome && !/mundial da filosofia/i.test(e.nome));
         const vistos = new Set<string>();
         const lista = proprios.filter((e: any) => { const k = `${e.nome}|${e.data}`; if (vistos.has(k)) return false; vistos.add(k); return true; })
@@ -108,6 +108,11 @@ async function escolasDaRegiao(filiais: string[], hojeISO: string): Promise<stri
             .map((e: any) => `   - ${dataBR(e.data)}${e.hora ? " " + String(e.hora).slice(0, 5) : ""}: ${e.nome}${e.tipo ? ` (${e.tipo})` : ""}${e.link_inscricao ? ` — inscrição: ${e.link_inscricao}` : ""}`);
         return `• Nova Acrópole ${f.nome_com_preposicao || f.nome} [${f.nome}]\n   Endereço: ${f.endereco || "não cadastrado (não informe endereço; ofereça o mapa)"} — mapa: ${linkMapsDaFilial(f)}\n   Próximas atividades:\n${lista.length ? lista.join("\n") : "   - nenhuma cadastrada"}`;
     }).join("\n");
+    return {
+        texto,
+        links: (evs || []).map((e: any) => e.link_inscricao).filter(Boolean),
+        eventos: (evs || []).filter((e: any) => e.link_inscricao).map((e: any) => ({ nome: String(e.nome), link: String(e.link_inscricao) })),
+    };
 }
 
 async function contextoDoLead(pessoa: string) {
@@ -166,6 +171,9 @@ ${c.config?.instrucoes || "(nenhuma)"}
 - Não suponha o que a pessoa já sabe ou já fez (ex.: "como você já conhece o curso") a menos que isso esteja nos dados.
 - Se a pessoa já aceitou ("sim", "pode", "quero") a uma pergunta nossa sobre detalhes ou link, mande o link nesta mensagem; nunca pergunte de novo se pode mandar.
 - Sempre que der os detalhes do evento, inclua o link de inscrição na mesma mensagem (não pergunte "posso mandar o link?") e escreva, com essas palavras, que as vagas são limitadas e por isso é importante garantir a vaga pelo link.
+- Inscrição: nunca diga que não precisa se inscrever, reservar ou garantir a vaga. Todas as atividades pedem inscrição pelo link.
+- Outras atividades da lista de escolas (palestras, cursos, aulas experimentais de outras datas): você só conhece nome, data, hora e link. Copie data, hora e link exatamente da linha daquela atividade (nunca troque o link pelo de outro evento, nunca use outra data). Não diga que são gratuitas nem descreva o conteúdo além do nome, a menos que isso esteja nas instruções da campanha.
+- Curso de Filosofia para Viver: o que é gratuito é só a aula experimental. Nunca diga que a primeira aula, o curso ou a matrícula são gratuitos.
 - Outras cidades: a Nova Acrópole tem escolas em muitas cidades do Brasil, mas você não tem os contatos delas. Indique o site acropole.org.br para encontrar a unidade mais próxima. Nunca ofereça "passar o contato".
 - Endereço: use só o que está nos dados (descrição do evento, instruções da campanha ou endereço da escola). Se não estiver, diga que vai confirmar ("precisa_humano": true) e ofereça o mapa da escola.
 - Escola de origem: a pessoa se aproximou da Nova Acrópole pela escola indicada como "escola de origem". Quando fizer sentido (ela gostou da ideia, perguntou sobre o curso, sobre a escola, ou disse que não pode ir ao evento mas tem interesse), conte de forma leve sobre a próxima atividade dessa escola, de preferência a abertura de turma ou a aula experimental do Curso de Filosofia para Viver, com data e link quando existirem. Uma menção por conversa, sem insistir.
@@ -244,11 +252,39 @@ export function trocarPerguntaDoLink(texto: string, link: string | null | undefi
     return texto.replace(RE_PERGUNTA_LINK, (m) => `${m.match(/^\s*/)?.[0] || ""}Para garantir sua vaga, é só se inscrever pelo link:\n${link}`);
 }
 
+// Rede de segurança (caso real 04/11, Francisco): a IA citou a palestra "O dilema
+// do guerreiro" com o link do Dia Mundial da Filosofia. Para cada atividade citada
+// pelo nome, o primeiro link de inscrição que vem depois dela (antes de outra
+// atividade) passa a ser o link cadastrado dela.
+export function corrigirLinksDeAtividades(texto: string, eventos: { nome: string; link: string }[]): string {
+    const norm = (x: string) => x.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const alvo = norm(texto);
+    const achados = eventos
+        .filter((e) => e.nome.length >= 8 && new Set(eventos.filter((o) => norm(o.nome) === norm(e.nome)).map((o) => o.link)).size === 1)
+        .map((e) => ({ ...e, pos: alvo.indexOf(norm(e.nome)) }))
+        .filter((e) => e.pos >= 0)
+        .filter((e, i, a) => a.findIndex((o) => o.pos === e.pos) === i)
+        .sort((a, b) => a.pos - b.pos);
+    let saida = texto;
+    for (let i = achados.length - 1; i >= 0; i--) {
+        const e = achados[i];
+        const fim = i + 1 < achados.length ? achados[i + 1].pos : saida.length;
+        const trecho = saida.slice(e.pos, fim);
+        const m = trecho.match(/https?:\/\/\S*eventoId=\d+/);
+        if (m && m[0] !== e.link) saida = saida.slice(0, e.pos) + trecho.replace(m[0], e.link) + saida.slice(fim);
+    }
+    return saida;
+}
+
 // Trava final antes de enviar: o robô nunca informa valor nem diz que consultou a
 // equipe (ele não consulta ninguém). Devolve o motivo do bloqueio, ou null.
-export function motivoBloqueioResposta(texto: string): string | null {
+export function motivoBloqueioResposta(texto: string, linksPermitidos: string[] = []): string | null {
     if (/R\$\s?\d|\d+(,\d{2})?\s?reais\b/i.test(texto)) return "informou valor em dinheiro";
     if (/(confirmei|conferi|verifiquei|consultei|chequei)\b[^.!?\n]{0,30}\b(equipe|escola|secretaria|professor)/i.test(texto)) return "disse que confirmou com a equipe";
+    if (/primeira aula[^.!?\n]{0,40}(gratuit|de gra[çc]a|sem custo)/i.test(texto)) return "disse que a primeira aula é gratuita";
+    if (/n[ãa]o precisa[^.!?\n]{0,25}(reservar|se inscrever|inscri[çc][ãa]o|garantir)/i.test(texto)) return "disse que não precisa se inscrever";
+    const permitidos = new Set(linksPermitidos.map((l) => (l.match(/eventoId=(\d+)/) || [])[1]).filter(Boolean));
+    for (const m of texto.matchAll(/eventoId=(\d+)/g)) if (!permitidos.has(m[1])) return `link de inscrição desconhecido (${m[1]})`;
     return null;
 }
 
@@ -259,7 +295,7 @@ function saudacaoDoHorario(agora = new Date()): string {
 }
 
 async function decidir(c: any, ev: any, ctx: any, conversa: string, hojeISO: string, retomada: string | null = null) {
-    const escolas = await escolasDaRegiao(c.filiais, hojeISO);
+    const { texto: escolas, links, eventos } = await escolasDaRegiao(c.filiais, hojeISO);
     const fixo = promptFixo(c, ev, hojeISO, escolas);
     const dinamico = promptDinamico(ctx, conversa, retomada);
     let r = await chamarClaude({ apiKey: ANTHROPIC_API_KEY, modelo: MODELO, blocoCacheavel: fixo, blocoDinamico: dinamico, maxTokens: 700, functionName: "campanha-responder" });
@@ -270,7 +306,9 @@ async function decidir(c: any, ev: any, ctx: any, conversa: string, hojeISO: str
         const inicio = bruto.indexOf("{"), fim = bruto.lastIndexOf("}");
         const d = JSON.parse(bruto.slice(inicio, fim + 1));
         if (typeof d.resposta === "string") d.resposta = trocarPerguntaDoLink(d.resposta, c.config?.link_convite || ev?.link_inscricao);
+        if (typeof d.resposta === "string") d.resposta = corrigirLinksDeAtividades(d.resposta, eventos);
         if (typeof d.resposta === "string") d.resposta = corrigirDiasDaSemana(d.resposta.replace(/\s—\s/g, ", ").replace(/\*\*/g, "").trim(), hojeISO) || null;
+        d.links_permitidos = [...links, ev?.link_inscricao, c.config?.link_convite, ...(String(c.config?.instrucoes || "").match(/https?:\/\/\S+/g) || [])].filter(Boolean);
         return { decisao: d };
     } catch (e) {
         return { erro: "json_invalido: " + String(e), bruto };
@@ -394,7 +432,7 @@ async function responder(pessoa: string, mensagemId: number | null, esperaSegund
     }
     const d = r.decisao;
     let status = "sem_resposta";
-    const bloqueio = d.resposta ? motivoBloqueioResposta(d.resposta) : null;
+    const bloqueio = d.resposta ? motivoBloqueioResposta(d.resposta, d.links_permitidos || []) : null;
     if (bloqueio) {
         // Trava: não envia, e a conversa vai para atendimento humano (caso real 05/11:
         // o robô inventou "R$ 100,00" e disse que tinha confirmado com a equipe).

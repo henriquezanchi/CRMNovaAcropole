@@ -11152,3 +11152,11 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
   resposta automática foi para `_shared/resposta-automatica.ts` e também vale em `sugerir-resposta-whatsapp`,
   `reengajar-janela-fechando` e `classificar-resposta-convite` (caso real Lara: "não estou disponível, responderei
   assim que possível" virou lembrete de 6 meses).
+- **Revisão das 177 respostas da IA de 04–05/11 (pedido do usuário):** erros achados e travas novas no
+  `campanha-responder`: link de outra atividade (Francisco: palestra com o link do DMF) → `corrigirLinksDeAtividades()`
+  troca o link que segue o nome de uma atividade pelo link cadastrado dela (nomes com mais de um link, como a aula
+  experimental 24697/24698, ficam de fora); "primeira aula gratuita" (Eules), "não precisa reservar" (Carlos) e link de
+  `eventoId` fora da agenda/instruções → `motivoBloqueioResposta()` barra e passa para humano; regra nova no prompt:
+  palestras da agenda só com nome/data/hora/link copiados da linha, sem dizer que são gratuitas (a gratuidade delas não
+  está cadastrada). `reengajar-janela-fechando` não entra em conversa de campanha ativa (disse que o DMF era "aqui na
+  escola do Setor Universitário").
