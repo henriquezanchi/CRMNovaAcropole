@@ -84,6 +84,9 @@ function nucleoDistintivoFilialApi(nome) {
 // nunca "adivinha" uma correspondência nova.
 const MAPEAMENTO_FILIAL_ID_CONHECIDO = {
     'Goiânia II': 65,
+    // Rio Verde (id 31, "Goiás - Rio Verde", confirmado em /evento/23902 em 05/11/2026):
+    // o casamento por nome não acha correspondência única.
+    'Rio Verde': 31,
 };
 
 // Acha o filialId do Ulisses pra 1 filial nossa, comparando o núcleo
