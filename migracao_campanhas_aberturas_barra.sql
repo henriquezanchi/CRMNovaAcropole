@@ -152,6 +152,8 @@ bloqueados as (
     where tel is not null and (
         inscrito_dmf
         or 'Não Contatar' = any(tags) or 'Contato em conferência' = any(tags)
+        -- número de outra pessoa ("não sei quem é Fulano"): convite com o nome do cadastro seria errado
+        or 'Campanha: Nome a conferir' = any(tags)
         or exists (select 1 from unnest(tags) t where t like 'Ativo: %' or t in ('Ativo', 'Aluno Ativo'))
         or a->>'contato' = 'nao_contatar' or a->>'relacao' = 'ativo'
     )

@@ -182,7 +182,8 @@ ${c.config?.instrucoes || "(nenhuma)"}
 - Se a pessoa disser que se mudou, que trabalha ou mora em outro bairro/setor, ou que outra unidade é mais perto, procure na lista de escolas acima a(s) mais provável(is) pela região mencionada e ofereça as atividades dessa unidade. Se não tiver certeza de qual é mais perto, cite as 2 ou 3 mais prováveis com o endereço/mapa e pergunte qual fica melhor. Registre em "escola_preferida" o nome exato entre colchetes da escola escolhida. Se ela se mudou para fora de Goiânia/Aparecida, marque "mudou_cidade": true e responda com gentileza.
 - Se a pessoa não pode ir: acolha sem insistir, e se fizer sentido mencione a próxima atividade da escola de origem. Nunca pressione.
 - Pedido para não receber mensagens ("pare", "me tira da lista", "não quero mais"): responda uma frase curta pedindo desculpas pelo incômodo e confirmando que não vamos mais enviar, e marque "nao_contatar": true.
-- Se a mensagem mostra que o número é de outra pessoa ("não sou fulano", "número errado"): peça desculpas em uma frase e marque "numero_errado": true.
+- Se a pessoa diz que não é quem procuramos ("não sou fulano", "não conheço nenhum fulano", "número errado"): o número é de OUTRA pessoa, não de quem está no cadastro. Peça desculpas pelo engano em uma frase, diga em uma frase quem somos (a Nova Acrópole, escola de filosofia) e pergunte com leveza com quem você está falando, se ela quiser dizer. Marque "numero_errado": true. Daqui em diante, nunca use o nome do cadastro nesta conversa, nem nas mensagens seguintes, mesmo que ele apareça em mensagens anteriores nossas.
+- Se essa pessoa (do número que não é o do cadastro) quiser receber o convite, siga normalmente, sem nome ou com o nome que ela mesma informou. Quando ela disser o próprio nome, devolva-o em "nome_informado" (só o nome, como ela escreveu).
 - Se a mensagem claramente não é para a escola (pix, pedido de comida, cobrança, outra empresa): responda que a mensagem parece ter vindo para o número errado, que aqui é a Nova Acrópole, e mais nada.
 - Se perguntarem se é um robô: diga com naturalidade que é o atendimento da escola com apoio de um assistente automático e que uma pessoa da equipe acompanha a conversa.
 - Assuntos fora do evento e da escola (religião, política, opinião pessoal, saúde): resposta breve e respeitosa; a Nova Acrópole é uma escola de filosofia, não é religião. Se insistirem, "precisa_humano": true.
@@ -196,7 +197,7 @@ ${c.config?.instrucoes || "(nenhuma)"}
 - Datas: use a tabela de calendário acima; nunca calcule dia da semana de cabeça.
 
 Responda SOMENTE com JSON válido, sem texto antes ou depois:
-{"resposta": "texto" ou null, "enviar_arte": true|false, "situacao": "vai"|"talvez"|"nao_vai"|"quer_info"|"outro", "nao_contatar": true|false, "numero_errado": true|false, "mudou_cidade": true|false, "escola_preferida": "nome exato entre colchetes" ou null, "precisa_humano": true|false, "motivo_humano": "texto curto" ou null}`;
+{"resposta": "texto" ou null, "enviar_arte": true|false, "situacao": "vai"|"talvez"|"nao_vai"|"quer_info"|"outro", "nao_contatar": true|false, "numero_errado": true|false, "nome_informado": "nome que a própria pessoa disse ser o dela" ou null, "mudou_cidade": true|false, "escola_preferida": "nome exato entre colchetes" ou null, "precisa_humano": true|false, "motivo_humano": "texto curto" ou null}`;
 }
 
 function promptDinamico(ctx: any, conversa: string, retomada: string | null = null): string {
@@ -206,7 +207,9 @@ function promptDinamico(ctx: any, conversa: string, retomada: string | null = nu
     const eventos = Array.isArray(l.historico_eventos) ? l.historico_eventos.slice(-5).map((e: any) => `${e.evento} (${String(e.data || "").slice(0, 10)})`).join("; ") : "";
     const linhas = [
         listaTags(l.tags).includes("Campanha: Nome a conferir")
-            ? "Nome para chamar: (não use nome: o número pode ser de outra pessoa; se ela quiser receber o convite, siga normalmente sem chamar pelo nome do cadastro)"
+            ? (l.como_prefere_ser_chamado
+                ? `Nome para chamar: ${l.como_prefere_ser_chamado} (nome que a própria pessoa informou; o cadastro está em nome de outra pessoa, ${String(l.pessoaNome || "").split(" ")[0]}, que você nunca deve usar)`
+                : `Nome para chamar: (nenhum. Este WhatsApp NÃO é de ${String(l.pessoaNome || "").split(" ")[0]}: a pessoa já disse isso. Nunca use esse nome. Se ainda não perguntou com quem está falando, pergunte uma vez, com leveza)`)
             : `Nome para chamar: ${nome || "(sem nome; não use nome)"}`,
         `Escola de origem: [${l.filial}]`,
         l.cidade ? `Cidade cadastrada: ${l.cidade}` : "",
@@ -363,7 +366,28 @@ async function aplicarDecisao(pessoa: string, c: any, ev: any, d: any, filialLea
     if (d.mudou_cidade) await alterarTags(pessoa, { adicionar: ["Conversa: Mudou de Cidade"] });
     // Só aviso: "Contato em conferência" bloqueava todo envio e deixou sem resposta
     // quem só tinha mandado a mensagem automática da empresa (caso real 04/11).
-    if (d.numero_errado) await alterarTags(pessoa, { adicionar: ["Campanha: Nome a conferir"] });
+    // "nome_informado" só vale se o número já foi apontado como de outra pessoa
+    // (nunca sobrescreve o nome de quem é de fato a pessoa do cadastro).
+    const jaConferir = d.nome_informado && !d.numero_errado
+        ? listaTags((await supabaseAdmin.from("leads_inscricoes").select("tags").eq("pessoaIdentificador", pessoa).maybeSingle()).data?.tags).includes("Campanha: Nome a conferir")
+        : false;
+    if (d.numero_errado || jaConferir) {
+        // Caso real 04/11 (Francisco): "não sei quem é Francisco", e o robô continuou
+        // chamando de Francisco. O número é de outra pessoa: o nome do cadastro sai de
+        // uso (como_prefere_ser_chamado vazio, ou o nome que ela mesma informou) e fica
+        // uma nota para a equipe corrigir o cadastro.
+        await alterarTags(pessoa, { adicionar: ["Campanha: Nome a conferir"] });
+        const { data: l } = await supabaseAdmin.from("leads_inscricoes").select("pessoaNome, resumo_ia").eq("pessoaIdentificador", pessoa).maybeSingle();
+        const nomeInformado = typeof d.nome_informado === "string" ? d.nome_informado.trim().slice(0, 60) : "";
+        const nota = nomeInformado
+            ? `Este WhatsApp é de ${nomeInformado}, não de ${l?.pessoaNome || "quem está no cadastro"}. Conferir o cadastro.`
+            : `Quem responde neste WhatsApp disse que não é ${l?.pessoaNome || "a pessoa do cadastro"}. Conferir o cadastro.`;
+        const resumo = String(l?.resumo_ia || "");
+        await supabaseAdmin.from("leads_inscricoes").update({
+            como_prefere_ser_chamado: nomeInformado || null,
+            ...(resumo.includes(nota) ? {} : { resumo_ia: [resumo, nota].filter(Boolean).join("\n---\n") }),
+        }).eq("pessoaIdentificador", pessoa);
+    }
     if (d.nao_contatar) await alterarTags(pessoa, { adicionar: ["Não Contatar"] });
     if (d.precisa_humano) {
         await alterarTags(pessoa, { adicionar: ["Campanha: Falar com atendente"] });

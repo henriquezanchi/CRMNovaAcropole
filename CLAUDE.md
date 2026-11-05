@@ -11167,3 +11167,9 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
   cursos livres/workshops/oficinas não. O robô nunca afirma que existe (ou não) escola numa cidade específica: indica
   acropole.org.br. `corrigirDatasDeAtividades()`: em linha que cita uma única atividade da agenda, data DD/MM errada
   vira a data cadastrada (caso Frederico, "07/11" para uma palestra de 21/11).
+- **Número de outra pessoa (05/11, caso Francisco):** "não sei quem é Francisco" e o robô continuou chamando de
+  Francisco. Agora: o robô pede desculpas, diz quem somos e pergunta com quem está falando; marca "Campanha: Nome a
+  conferir", apaga `como_prefere_ser_chamado` e deixa nota no Resumo para a equipe conferir o cadastro. Se a pessoa
+  disser o nome (`nome_informado`, só aceito se o número já foi apontado como de outra pessoa), ele vira
+  `como_prefere_ser_chamado` e o robô passa a usá-lo; o nome do cadastro nunca mais aparece. `campanha_candidatos()`
+  bloqueia o telefone marcado "Nome a conferir" para convites de campanha (o modelo usaria o nome errado).
