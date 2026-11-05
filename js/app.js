@@ -1568,22 +1568,48 @@ function csvEscapeCampo(valor) {
 
 // Botão "Painel de Resultados" (aba Relatórios): abre em outra aba o painel dos
 // dirigentes com o link guardado em painel_resultados_atalhos.
+// Painéis de resultados (resultados.html): o da coordenação (todas as escolas) e um por
+// escola, para cada diretor acompanhar só a sua. Os links (com a chave) ficam em
+// painel_resultados_atalhos; aqui dá para abrir ou copiar para mandar ao diretor.
 async function abrirPainelResultados() {
-    // A aba é aberta antes da consulta: depois de um await o navegador bloqueia o pop-up.
-    const aba = window.open('about:blank', '_blank');
     const { data, error } = await supabaseClient.from('painel_resultados_atalhos')
-        .select('url').order('ordem').limit(1).maybeSingle();
-    if (error || !data?.url) {
-        if (aba) aba.close();
-        alert('Não encontrei o link do painel de resultados.' + (error ? ' ' + error.message : ''));
+        .select('rotulo, url, ordem').order('ordem');
+    if (error || !data?.length) {
+        alert('Não encontrei os links dos painéis.' + (error ? ' ' + error.message : ''));
         return;
     }
-    if (aba) {
-        aba.opener = null;
-        aba.location.href = data.url;
-    } else {
-        window.open(data.url, '_blank', 'noopener');
+    let caixa = document.getElementById('modalPaineisResultados');
+    if (!caixa) {
+        caixa = document.createElement('div');
+        caixa.id = 'modalPaineisResultados';
+        caixa.className = 'paineis-resultados-fundo';
+        caixa.addEventListener('click', (e) => { if (e.target === caixa) caixa.remove(); });
+        document.body.appendChild(caixa);
     }
+    const linhas = data.map((a, i) => `
+        <li class="paineis-resultados-item">
+            <span>${escapeHTML(a.rotulo)}</span>
+            <span class="paineis-resultados-acoes">
+                <button type="button" class="btn-secondary" data-abrir="${i}"><i class="fa-solid fa-arrow-up-right-from-square"></i> Abrir</button>
+                <button type="button" class="btn-secondary" data-copiar="${i}"><i class="fa-regular fa-copy"></i> Copiar link</button>
+            </span>
+        </li>`).join('');
+    caixa.innerHTML = `
+        <div class="paineis-resultados-caixa" role="dialog" aria-label="Painéis de resultados">
+            <div class="paineis-resultados-topo">
+                <h3><i class="fa-solid fa-chart-line"></i> Painéis de resultados</h3>
+                <button type="button" class="btn-secondary" data-fechar>Fechar</button>
+            </div>
+            <p>Cada escola tem o seu painel: copie o link e mande ao diretor. Ele abre no celular ou no computador, sem senha, e vê só a escola dele. O link funciona como uma chave: compartilhe apenas com o responsável.</p>
+            <ul>${linhas}</ul>
+        </div>`;
+    caixa.querySelector('[data-fechar]').onclick = () => caixa.remove();
+    caixa.querySelectorAll('[data-abrir]').forEach((b) => b.onclick = () => window.open(data[+b.dataset.abrir].url, '_blank', 'noopener'));
+    caixa.querySelectorAll('[data-copiar]').forEach((b) => b.onclick = async () => {
+        const url = data[+b.dataset.copiar].url;
+        try { await navigator.clipboard.writeText(url); b.innerHTML = '<i class="fa-solid fa-check"></i> Copiado'; }
+        catch { prompt('Copie o link:', url); }
+    });
 }
 
 function exportarLeadsCSV() {
