@@ -934,15 +934,9 @@ function renderizarCards() {
             sonecaPorColuna[colunaAlvo]++;
             return; // fica em soneca — não desenha o card nesta coluna por enquanto
         }
-        // SLA visual: lead ainda na primeira coluna (frio, nunca abordado)
-        // há mais de SLA_HORAS_COLUNA_FRIA horas ganha borda vermelha — o
-        // tempo de resposta é o maior fator de conversão, então um lead
-        // esfriando precisa ficar óbvio de bater o olho, sem precisar abrir
-        // a ficha. Usa funil_agencia_atualizado_em (migracao_sla_funil.sql),
-        // gravado por moverLeadsParaColuna() a cada troca de coluna — sem a
-        // migração rodada (coluna null pra leads antigos), não marca nada.
-        const slaVencido = colunaAlvo === primeiraColuna && lead.funil_agencia_atualizado_em &&
-            (Date.now() - new Date(lead.funil_agencia_atualizado_em).getTime()) > SLA_HORAS_COLUNA_FRIA * 60 * 60 * 1000;
+        // Borda vermelha de "sem contato há mais de 2h" removida a pedido do usuário
+        // (05/11/2026): não queremos pressa para matricular ninguém.
+        const slaVencido = false;
         const cardHTML = `
             <div class="lead-card ${slaVencido ? 'lead-card-sla-vencido' : ''}" draggable="true" id="card-${identificador}" data-tags="${tagsAttr}" data-search="${textoBuscaAttr}"
                  data-evento="${escapeHTML(String(lead.eventoNome || '').toLowerCase())}" data-eventodata="${escapeHTML(lead.eventoData || '')}"
@@ -5459,18 +5453,7 @@ async function confirmarNovaTag() {
     registrarLogAtividade('tag_adicionar', { pessoaIds: [pessoaIdTag], detalhes: { tag: novaTagText } });
 }
 
-// Refresca o Kanban de tempos em tempos só pra atualizar a borda de SLA
-// vencido (SLA_HORAS_COLUNA_FRIA) mesmo com o quadro parado, sem precisar
-// de nenhuma interação (mover lead, trocar de aba...) que já disparasse
-// renderizarCards() de qualquer jeito.
-setInterval(() => {
-    // Só com o quadro visível e sem nada aberto: antes rodava com a aba
-    // escondida e fechava filtros, buscas e detalhes que a pessoa tinha aberto.
-    if (document.visibilityState !== 'visible') return;
-    if (!document.getElementById('tab-crm')?.classList.contains('active')) return;
-    if (document.querySelector('.col-filter-dropdown.open, .kanban-col details[open], .lead-card.dragging')) return;
-    if (typeof leadsAtuais !== 'undefined' && leadsAtuais.length > 0) renderizarCards();
-}, 3 * 60 * 1000);
+// (Havia aqui um refresco do Kanban a cada 3 min só para a borda de SLA, removida em 05/11/2026.)
 
 async function removerTag(index) {
     const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(currentLeadId));
