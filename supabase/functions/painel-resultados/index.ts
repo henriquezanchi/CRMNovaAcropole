@@ -78,7 +78,7 @@ Deno.serve(async (req) => {
         // Sigla de 3 letras de cada escola (código da unidade no Mercúrio), para as listas.
         const { data: fs } = await supabaseAdmin.from("filiais").select("nome, mercurio_unidade");
         const siglas = Object.fromEntries((fs || []).map((f: any) => [f.nome, f.mercurio_unidade || String(f.nome).replace(/^Goiânia - /, "").normalize("NFD").replace(/[^A-Za-z]/g, "").slice(0, 3).toUpperCase()]));
-        return responder({ rotulo: link.rotulo, dias, gerado_em: geradoEm, escolas: escolasLinha.dados, campanhas: campanhasDados.filter(Boolean), siglas });
+        return responder({ rotulo: link.rotulo, dias, gerado_em: geradoEm, escolas: escolasLinha.dados, campanhas: campanhasDados.filter(Boolean), siglas, escola_unica: Array.isArray(link.filiais) && link.filiais.length === 1 });
     } catch (e) {
         console.error(e);
         return responder({ erro: "Não foi possível consultar agora. Tente de novo em instantes." }, 503);

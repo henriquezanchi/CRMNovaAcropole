@@ -364,6 +364,14 @@
     SIGLAS = dados.siglas || {};
     (dados.campanhas || []).forEach(function (c, i) { lista.push({ id: 'c' + i, nome: (c.campanha && c.campanha.nome) || 'Campanha', fn: function () { return secaoCampanha(c); } }); });
     if (dados.escolas) lista.push({ id: 'escolas', nome: 'Escolas', fn: function () { return secaoEscolas(dados.escolas); } });
+    // Link de uma escola só: uma página única "Campanha" (a abertura de turma mais recente
+    // + os números da escola), sem abas (pedido do usuário, 05/11).
+    if (dados.escola_unica) lista = [{ id: 'campanha', nome: 'Campanha', fn: function () {
+      var box = el('div');
+      (dados.campanhas || []).forEach(function (c) { box.appendChild(secaoCampanha(c)); });
+      if (dados.escolas) box.appendChild(secaoEscolas(dados.escolas));
+      return box;
+    } }];
     if (!abaAtual || !lista.some(function (a) { return a.id === abaAtual; })) abaAtual = lista.length ? lista[0].id : null;
     if (lista.length > 1) lista.forEach(function (a) {
       var b = el('button', { type: 'button', role: 'tab', 'aria-selected': String(a.id === abaAtual), texto: a.nome });
