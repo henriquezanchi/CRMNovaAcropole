@@ -412,7 +412,7 @@
 
     var banco = c.campanha && c.campanha.banco;
     if (banco) {
-      var nomesGrupo = { A: 'Já foram a um Dia Mundial da Filosofia', B: 'Último evento em 2026', C: 'Último evento em 2025', D: 'Último evento em 2023 ou 2024', E: 'Eventos mais antigos', X: 'Ex-alunos (por último)' };
+      var nomesGrupo = { A: turma ? 'Já foram a uma atividade do Curso de Filosofia para Viver' : 'Já foram a um Dia Mundial da Filosofia', B: 'Último evento em 2026', C: 'Último evento em 2025', D: 'Último evento em 2023 ou 2024', E: 'Eventos mais antigos', X: 'Ex-alunos (por último)' };
       var lin = Object.keys(nomesGrupo).filter(function (g) { return banco[g] != null; }).map(function (g) { return { celulas: [nomesGrupo[g], num(banco[g])] }; });
       s.appendChild(el('h3', { texto: turma ? 'Contatos ainda a convidar para a turma' : 'Banco de contatos ainda a convidar' }));
       s.appendChild(tabela(['Grupo (na ordem de envio)', 'Pessoas'], lin, [1]));
@@ -423,7 +423,8 @@
 
   function secaoEscolas(d) {
     var s = el('section');
-    s.appendChild(el('h2', { texto: 'Ação de matrícula nas escolas' }));
+    var umaEscola = !!dados.escola_unica;
+    s.appendChild(el('h2', { texto: umaEscola ? 'Ação de matrícula da escola' : 'Ação de matrícula nas escolas' }));
     s.appendChild(el('p', { classe: 'sub', texto: 'Contatos pelo WhatsApp desde ' + dataCurta(d.desde) + '/' + String(d.desde).slice(0, 4) + ', funil atual, matrículas confirmadas no Mercúrio e vagas das próximas aberturas de turma.' }));
     var escolas = d.escolas || [];
     var tot = { c: 0, r: 0, i: 0 };
@@ -452,10 +453,15 @@
       ]));
     }
 
-    s.appendChild(el('h3', { texto: 'Por escola' }));
     var meses = {};
     escolas.forEach(function (e) { Object.keys(e.matriculas || {}).forEach(function (m) { meses[m] = 1; }); });
     var listaMeses = Object.keys(meses).sort().slice(-3);
+    if (umaEscola) {
+      var e1 = escolas[0] || {};
+      s.appendChild(el('h3', { texto: 'Matrículas por mês' }));
+      s.appendChild(tabela(['Mês', 'Matrículas'], listaMeses.map(function (m) { return { celulas: [rotMes(m), num((e1.matriculas || {})[m] || 0)] }; }), [1]));
+    } else {
+    s.appendChild(el('h3', { texto: 'Por escola' }));
     s.appendChild(tabela(['Escola', 'Contatados', 'Responderam', 'Taxa', 'Inscrições após contato'].concat(listaMeses.map(function (m) { return 'Matrículas ' + rotMes(m); })),
       escolas.map(function (e) {
         return { celulas: [nomeEscola(e.escola), num(e.contatados), num(e.responderam), pct(e.responderam, e.contatados), num(e.inscricoes_apos_contato)]
@@ -463,9 +469,10 @@
       }).concat([{ classe: 'total', celulas: ['Total', num(tot.c), num(tot.r), pct(tot.r, tot.c), num(tot.i)].concat(listaMeses.map(function (m) {
         return num(escolas.reduce(function (a, e) { return a + Number((e.matriculas || {})[m] || 0); }, 0)); })) }]),
       [1, 2, 3, 4].concat(listaMeses.map(function (_, i) { return 5 + i; }))));
+    }
     s.appendChild(el('p', { classe: 'nota', texto: 'Matrículas: alunos novos e reingressos que contam para a escola, conforme o Mercúrio (o mês é o da turma de abertura). "Inscrições após contato" conta quem se inscreveu numa atividade do Ulisses depois de receber mensagem nossa.' }));
 
-    s.appendChild(el('h3', { texto: 'Funil de cada escola (situação atual)' }));
+    s.appendChild(el('h3', { texto: umaEscola ? 'Funil da escola (situação atual)' : 'Funil de cada escola (situação atual)' }));
     s.appendChild(tabela(['Escola'].concat(ROTULOS_FUNIL.map(function (f) { return f[1]; })),
       escolas.map(function (e) {
         return { celulas: [nomeEscola(e.escola)].concat(ROTULOS_FUNIL.map(function (f) { return num((e.funil || {})[f[0]] || 0); })) };
