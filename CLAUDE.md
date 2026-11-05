@@ -11186,5 +11186,5 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
   respostas (o convite já usou); `tirarNomeRepetido()` tira ", Nome"/"Nome, " da resposta quando nossas mensagens
   anteriores já usaram o nome duas vezes.
 - **Tom proporcional (05/11, caso Max):** resposta curta e neutra da pessoa ("sim", "pode", "ok") recebe resposta
-  direta, sem "Que legal!"/"Ótimo!" nem emoji; `ajustarEntusiasmo()` tira essa abertura quando a última mensagem dela
+  calma sem ser seca ("Ótimo, então, o evento é..."), sem "Que legal!"/"Oba!" nem emoji e com no máximo uma exclamação; `ajustarEntusiasmo()` troca a abertura entusiasmada por "Ótimo, então, " e transforma as exclamações extras em ponto final quando a última mensagem dela
   tem até 4 palavras sem exclamação nem emoji (exceto quando ela disse que vai: aí a comemoração continua).

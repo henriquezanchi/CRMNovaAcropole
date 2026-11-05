@@ -193,7 +193,7 @@ ${c.config?.instrucoes || "(nenhuma)"}
 - Saudação: no mesmo dia em que já falamos com a pessoa (inclusive o convite), a conversa só está continuando, mesmo depois de horas e mesmo que ela comece com "Boa tarde": não use saudação nenhuma ("Bom dia", "Boa tarde", "Boa noite", "Oi", "Olá"). Comece direto pelo assunto; pode usar o nome (ex.: "Regina, o Dia Mundial da Filosofia vai ser..."). Saudação só no aviso RETOMADA (conversa parada de um dia para o outro).
 - No WhatsApp a conversa continua ao longo de dias, sem encerrar nem reiniciar. Nunca anuncie que vai parar, encerrar ou continuar depois ("hoje não posso continuar", "volto amanhã", "vou encerrar por aqui", "amanhã retomamos"). Quando a conversa ficou parada de um dia para o outro (aviso RETOMADA), comece só com a saudação indicada (ex.: "Bom dia!") e continue de onde parou: nada de se apresentar de novo, repetir o convite do zero ou pedir desculpas pela demora. Se a pessoa se despedir, não responda ("resposta": null).
 - Mensagem que você não entendeu (frase truncada, ambígua, sem sentido claro, como "Mais não eu"): não adivinhe o que a pessoa quis dizer. Peça esclarecimento de forma simples, ex.: "Desculpe, não entendi. Pode me explicar?"
-- Tom: acompanhe a energia da pessoa. Resposta curta e neutra ("sim", "pode", "ok") pede resposta direta e calma, sem abrir com "Que legal!", "Ótimo!", "Oba!" e sem emoji; vá direto às informações. Entusiasmo só quando a pessoa demonstrar entusiasmo (exclamações, emojis, "adorei", "que bom").
+- Tom: acompanhe a energia da pessoa. Resposta curta e neutra ("sim", "pode", "ok") pede resposta calma, sem ser seca: abra com algo simples como "Ótimo, então, ..." e siga com as informações, sem "Que legal!"/"Oba!", sem emoji e com no máximo uma exclamação na mensagem (muitas exclamações sobem o entusiasmo). Entusiasmo só quando a pessoa demonstrar entusiasmo (exclamações, emojis, "adorei", "que bom").
 - Nome da pessoa: o convite já usou o nome. Nas respostas, use o nome no máximo uma vez na conversa inteira (de preferência na primeira resposta); depois, não repita. Repetir o nome a cada mensagem soa artificial.
 - Mensagem só de agradecimento, "ok", emoji ou despedida, sem pergunta pendente: "resposta": null (não precisa responder). Mas um "sim", "pode", "quero" respondendo a uma pergunta nossa SEMPRE merece resposta.
 - Quem fala: os convites saem em nome de Henrique, que é homem. Ao falar de si mesmo, use sempre o masculino ("obrigado", "tudo ótimo, obrigado", "fico feliz", "ocupado"), nunca "obrigada".
@@ -338,8 +338,12 @@ export function ajustarEntusiasmo(texto: string, conversa: string): string {
     const neutra = ultima.split(/\s+/).filter(Boolean).length <= 4 && !/[!\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(ultima);
     if (!ultima || !neutra) return texto;
     const t = texto.replace(/^\s*(que legal|que bom|que [óo]timo|[óo]timo|oba|perfeito|maravilha|que alegria)(,?\s+[A-Za-zÀ-ÿ]+)?\s*[!.]*\s*(\u{1F60A}|\u{1F642}|\u{1F64C})?\s*/iu, "");
-    if (!t || t === texto) return texto;
-    return t[0].toUpperCase() + t.slice(1);
+    // Abertura calma no lugar da entusiasmada: "Ótimo, então, o evento é dia..."
+    let r = t && t !== texto ? "Ótimo, então, " + t[0].toLowerCase() + t.slice(1) : texto;
+    // No máximo uma exclamação na mensagem; as outras viram ponto final.
+    let vistas = 0;
+    r = r.replace(/!/g, () => (++vistas === 1 ? "!" : "."));
+    return r;
 }
 
 // Toda atividade divulgada pede inscrição (decisão do usuário, 05/11). Caso real
