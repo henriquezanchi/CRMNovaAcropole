@@ -11188,3 +11188,10 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
 - **Tom proporcional (05/11, caso Max):** resposta curta e neutra da pessoa ("sim", "pode", "ok") recebe resposta
   calma sem ser seca ("Ótimo, então, o evento é..."), sem "Que legal!"/"Oba!" nem emoji e com no máximo uma exclamação; `ajustarEntusiasmo()` troca a abertura entusiasmada por "Ótimo, então, " e transforma as exclamações extras em ponto final quando a última mensagem dela
   tem até 4 palavras sem exclamação nem emoji (exceto quando ela disse que vai: aí a comemoração continua).
+- **Endereço único do CRM (05/11):** havia 2 projetos na Vercel ligados ao mesmo repositório (`crm-nova-acropole` e
+  `crm-nova-acropole-5dv3`), os dois publicando o mesmo código a cada push, com o mesmo banco. Oficial agora:
+  **https://crm-nova-acropole.vercel.app**. `vercel.json` redireciona (307, caminho/consulta preservados; o `#chave` dos
+  links de painel segue no navegador) tudo que chega pelo `-5dv3`. Não apagar o projeto `-5dv3` na Vercel: os links já
+  enviados aos dirigentes (painel de resultados e painéis das escolas) usam esse endereço e dependem do redirecionamento.
+  `painel-escola` e `painel-resultados` aceitam os dois endereços; antes `painel-escola` só aceitava o `-5dv3` e os
+  "Painéis das filiais" não abriam pelo endereço sem `-5dv3`.
