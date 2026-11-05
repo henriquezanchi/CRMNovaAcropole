@@ -11185,3 +11185,6 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
   mensagem truncada/ambígua; pede "Desculpe, não entendi. Pode me explicar?". Nome da pessoa no máximo uma vez nas
   respostas (o convite já usou); `tirarNomeRepetido()` tira ", Nome"/"Nome, " da resposta quando nossas mensagens
   anteriores já usaram o nome duas vezes.
+- **Tom proporcional (05/11, caso Max):** resposta curta e neutra da pessoa ("sim", "pode", "ok") recebe resposta
+  direta, sem "Que legal!"/"Ótimo!" nem emoji; `ajustarEntusiasmo()` tira essa abertura quando a última mensagem dela
+  tem até 4 palavras sem exclamação nem emoji (exceto quando ela disse que vai: aí a comemoração continua).
