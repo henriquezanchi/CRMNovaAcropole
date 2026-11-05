@@ -134,7 +134,7 @@
   // No celular cada pessoa vira um cartão: nome em destaque, telefone que liga com
   // um toque e as demais colunas como "rótulo: valor" (sem rolar para o lado).
   function cartoes(colunas, linhas) {
-    var lista = el('div', { classe: 'cartoes so-celular' });
+    var lista = el('div', { classe: 'pessoas-cartoes so-celular' });
     linhas.forEach(function (l) {
       var c = el('div', { classe: 'cartao-pessoa' });
       l.celulas.forEach(function (v, i) {

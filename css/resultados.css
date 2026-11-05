@@ -73,7 +73,7 @@ details > summary { cursor: pointer; font-weight: 700; padding: 6px 0; }
 .nota { font-size: 13px; color: var(--suave); margin: 8px 0 0; }
 footer { margin-top: 36px; font-size: 13px; color: var(--suave); border-top: 1px solid var(--linha); padding-top: 14px; }
 .so-celular { display: none; }
-.cartoes { display: grid; gap: 8px; }
+.pessoas-cartoes { display: grid; grid-template-columns: 1fr; gap: 8px; }
 .cartao-pessoa { background: #fff; border: 1px solid var(--linha); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
 .cartao-pessoa strong { display: block; margin-bottom: 4px; }
 .cartao-linha { margin-top: 2px; line-height: 1.5; }
