@@ -110,20 +110,25 @@ Deno.serve(async (req) => {
             if (tags.includes("Convite: Sem Interesse")) { pulados++; return; }
 
             const nome = lead.como_prefere_ser_chamado || (lead.pessoaNome || "").split(" ")[0] || "";
-            const texto = `Oi${nome ? `, ${nome}` : ""}! Vimos que você não conseguiu vir na "${evento.nome}" — imprevistos acontecem, super normal! 😊\n\nSó pra gente te entender melhor (sem compromisso nenhum, é rapidinho): o que rolou?\n\n1️⃣ Surgiu algo de última hora\n2️⃣ Esqueci / perdi a hora\n3️⃣ Tive dificuldade pra chegar (trânsito, transporte, etc.)\n4️⃣ Pensei melhor e decidi não ir dessa vez\n5️⃣ Prefiro não dizer\n\nPode responder só com o número 😉`;
-
-            // Marca ANTES de saber o resultado — nunca reenvia pra sempre
-            // se a chamada falhar.
-            await supabaseAdmin.from("evento_leads").update({ pesquisa_noshow_enviada_em: new Date().toISOString() }).eq("id", c.id);
+            // A lista de presença depende de os voluntários marcarem na recepção, então
+            // "não compareceu" pode estar errado (pedido do usuário, 05/11). Primeiro
+            // perguntamos se a pessoa foi; a pesquisa do motivo só vem se ela disser que
+            // não foi (e não tiver dito por quê): ver regra em sugerir-resposta-whatsapp.
+            const texto = `Oi${nome ? `, ${nome}` : ""}! Você conseguiu ir na "${evento.nome}"?\n\nSe conseguiu, conta pra gente o que achou 😊`;
 
             try {
                 const resp = await fetch(urlWhatsappSend, {
                     method: "POST",
                     headers: { "Content-Type": "application/json", Authorization: authServiceRole },
-                    body: JSON.stringify({ pessoaIdentificador: c.pessoaIdentificador, tipo: "texto", texto, atendenteNome: "Pesquisa automática", origemEnvio: "campanha" }),
+                    body: JSON.stringify({ pessoaIdentificador: c.pessoaIdentificador, tipo: "texto", texto, atendenteNome: "Henrique", origemEnvio: "manual" }),
                 });
                 const data = await resp.json();
-                if (data?.ok) enviados++; else falharam++;
+                // Marca só quando saiu de verdade: antes marcava antes de enviar, e quem
+                // era bloqueado nunca mais era tentado.
+                if (data?.ok) {
+                    enviados++;
+                    await supabaseAdmin.from("evento_leads").update({ pesquisa_noshow_enviada_em: new Date().toISOString() }).eq("id", c.id);
+                } else falharam++;
             } catch {
                 falharam++;
             }
