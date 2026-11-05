@@ -11201,3 +11201,14 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
   enviados e a pessoa já resolveu: vai, inscreveu ou não pode), de forma natural e só se a conversa abrir espaço,
   uma vez. `corrigirLinkAulaExperimental()` troca o link da turma pelo da aula experimental quando vem depois de
   "aula experimental". Borda vermelha de "sem contato há 2h" no Kanban removida (pedido do usuário: sem pressa).
+- **Painéis por escola e celular (05/11):** os 12 links por escola (`painel_resultados_links`) ganharam chaves novas
+  (ninguém tinha os antigos) e passaram a incluir as campanhas da escola (turma, DMF de Barra); o da coordenação, todas
+  as campanhas ativas. Os links ficam em `painel_resultados_atalhos` (ordem = id do link) e o CRM lista todos em
+  `abrirPainelResultados()` (botões "Painéis das filiais" no topo e "Painel de Resultados" em Relatórios), com Abrir e
+  Copiar link. `resultados.html` no celular: listas fechadas por padrão e cada pessoa vira um cartão (telefone clicável).
+  Kanban mostra só cadastros da escola selecionada (lead de outra filial aberto pela busca/WhatsApp entrava no quadro).
+- **Ausência em evento (05/11):** a lista de presença depende dos voluntários, então `pesquisa-noshow-evento` agora
+  pergunta "Você conseguiu ir na ...? Se conseguiu, conta pra gente o que achou" (como Henrique, `origemEnvio:'manual'`,
+  marca só depois de enviar). A pesquisa de motivo (opções 1-5) só vem na sugestão de resposta, se a pessoa disser que
+  não foi sem explicar. Histórico: das 76 pesquisas antigas (02–30/10), 73 falharam (texto livre fora da janela), 3
+  chegaram e 2 responderam (Rosemary "1", Nilva "5"); as respostas ficam só nas conversas, sem tabela própria.
