@@ -10,7 +10,10 @@ with l as materialized (
     nullif(campanha_telefone_chave(l."pessoaTelefoneDDD", l."pessoaTelefoneNumero"),'') tel,
     lower(nullif(mp.email,'')) mp_email, mp.tel_chave mp_tel, mp.unidade, mp.matricula, split_part(mp.nome,' ',1) pn
   from leads_inscricoes l join mercurio_pessoas mp on mp.pessoa_identificador = l."pessoaIdentificador"
-  where l.lixeira_em is null and (p_filial is null or l.filial = p_filial)),
+  where l.lixeira_em is null and (p_filial is null or l.filial = p_filial)
+    -- Só cadastro sintético (criado pelo CRM a partir do Mercúrio): com ID real do Ulisses foi a própria
+    -- pessoa que informou o contato (família dividindo telefone/e-mail não é erro do CRM).
+    and l."pessoaIdentificador"::bigint >= 900000000),
 o as materialized (select lower(nullif(email,'')) email, tel_chave, unidade, matricula, nome, split_part(nome,' ',1) pn from mercurio_pessoas)
 select l.pid, l.filial, 'email', l.email, l.mp_email, o.nome
 from l join o on o.unidade = l.unidade and o.matricula <> l.matricula and o.email = l.email and o.pn <> l.pn
