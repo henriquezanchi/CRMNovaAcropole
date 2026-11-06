@@ -11212,3 +11212,13 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
   marca só depois de enviar). A pesquisa de motivo (opções 1-5) só vem na sugestão de resposta, se a pessoa disser que
   não foi sem explicar. Histórico: das 76 pesquisas antigas (02–30/10), 73 falharam (texto livre fora da janela), 3
   chegaram e 2 responderam (Rosemary "1", Nilva "5"); as respostas ficam só nas conversas, sem tabela própria.
+- **Painel da escola com PIN do diretor (05/11, `migracao_painel_pin_diretor.sql`, JÁ RODADA):** só com o link, a
+  função `painel-resultados` envia nomes abreviados ("Maria L.") e telefone mascarado, sem `pid` (borrão no servidor).
+  Com o PIN da escola (6 dígitos, `painel_resultados_links.pin_hash` = sha256("<id>:<pin>"), definido pelo admin em
+  Gerenciar Filiais via RPC `painel_definir_pin` que reconfere a senha do CRM), o diretor ganha sessão de 12 h
+  (`painel_sessoes`, só hash do token; 5 erros bloqueiam 15 min) e pode: ver resumo/anotações/últimas mensagens,
+  marcar/liberar "Não Contatar", deixar observação (vira nota no Resumo + lembrete do dia) e configurar a abertura de
+  turma (`painel_turma_config`: turmas juntas, vagas por turma; prazo de retardatários em
+  `eventos.data_limite_inscricao`). Tudo no `log_atividade` como "Diretor — <escola>". Links de escola mostram só a
+  campanha de turma mais recente, numa página única, título "Campanha de abertura de turma" com a data; resquícios do
+  DMF removidos. Fluxo com PIN real ainda não testado (nenhum PIN definido); proteções sem PIN testadas.
