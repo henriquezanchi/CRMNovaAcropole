@@ -493,34 +493,38 @@
     return s;
   }
 
-  var turmaAtual = null;
+  var escolhaGrupo = {};
   function montar() {
     var secoes = document.getElementById('secoes');
     var abas = document.getElementById('abas');
     secoes.textContent = ''; abas.textContent = '';
     var lista = [];
     SIGLAS = dados.siglas || {};
-    // As campanhas de turma (uma por escola) viram uma aba só, "Novas turmas", com a escola
-    // escolhida numa lista dentro dela, para as abas caberem sem barra de rolagem (06/11).
-    var turmasCamp = [];
+    // Campanhas da mesma ação em várias escolas (Nova turma, Dia Mundial da Filosofia) viram
+    // uma aba só, com a escola escolhida numa lista dentro dela — abas sem barra de rolagem (06/11).
+    var grupos = [{ id: "dmf", nome: "Dia Mundial da Filosofia", re: /^dia mundial da filosofia/i, turma: false, base: "Goiânia", itens: [] },
+                  { id: "turmas", nome: "Novas turmas", re: /^nova turma/i, turma: true, base: "", itens: [] }];
     (dados.campanhas || []).forEach(function (c, i) {
-      var nomeC = (c.campanha && c.campanha.nome) || 'Campanha';
-      if (/^nova turma/i.test(nomeC)) { turmasCamp.push(c); return; }
-      lista.push({ id: 'c' + i, nome: nomeC.replace(/^Dia Mundial da Filosofia 2026/i, 'DMF 2026'), fn: function () { return secaoCampanha(c); } });
+      var nomeC = (c.campanha && c.campanha.nome) || "Campanha";
+      var g = grupos.filter(function (x) { return x.re.test(nomeC); })[0];
+      if (g) { g.itens.push(c); return; }
+      lista.push({ id: "c" + i, nome: nomeC, fn: function () { return secaoCampanha(c); } });
     });
-    if (turmasCamp.length) lista.push({ id: 'turmas', nome: 'Novas turmas', fn: function () {
-      var box = el('div');
-      var nomeEsc = function (c) { var n = (c.campanha && c.campanha.nome) || ''; var p = n.split(' - '); return p.length > 1 ? p.slice(1).join(' - ') : n; };
-      if (turmaAtual == null || turmaAtual >= turmasCamp.length) turmaAtual = 0;
-      if (turmasCamp.length > 1) {
-        var sel = el('select', { classe: 'seletor-escola', 'aria-label': 'Escola' });
-        turmasCamp.forEach(function (c, i) { var o = el('option', { value: String(i), texto: nomeEsc(c) }); if (i === turmaAtual) o.selected = true; sel.appendChild(o); });
-        sel.addEventListener('change', function () { turmaAtual = Number(sel.value); montar(); });
-        box.appendChild(el('label', { classe: 'seletor-escola-rotulo' }, ['Escola ', sel]));
-      }
-      box.appendChild(secaoCampanha(turmasCamp[turmaAtual], true));
-      return box;
-    } });
+    grupos.forEach(function (g) {
+      if (!g.itens.length) return;
+      if (g.itens.length === 1) { lista.push({ id: g.id, nome: (g.itens[0].campanha && g.itens[0].campanha.nome) || g.nome, fn: function () { return secaoCampanha(g.itens[0], g.turma); } }); return; }
+      lista.push({ id: g.id, nome: g.nome, fn: function () {
+        var box = el("div");
+        var nomeEsc = function (c) { var n = (c.campanha && c.campanha.nome) || ""; var p = n.split(" - "); return p.length > 1 ? p.slice(1).join(" - ") : (g.base || n); };
+        var atual = escolhaGrupo[g.id] || 0; if (atual >= g.itens.length) atual = 0;
+        var sel = el("select", { classe: "seletor-escola", "aria-label": "Escola" });
+        g.itens.forEach(function (c, i) { var o = el("option", { value: String(i), texto: nomeEsc(c) }); if (i === atual) o.selected = true; sel.appendChild(o); });
+        sel.addEventListener("change", function () { escolhaGrupo[g.id] = Number(sel.value); montar(); });
+        box.appendChild(el("label", { classe: "seletor-escola-rotulo" }, ["Escola ", sel]));
+        box.appendChild(secaoCampanha(g.itens[atual], g.turma));
+        return box;
+      } });
+    });
     if (dados.escolas) lista.push({ id: 'escolas', nome: 'Escolas', fn: function () { return secaoEscolas(dados.escolas); } });
     // Link de uma escola só: uma página única "Campanha" (a abertura de turma mais recente
     // + os números da escola), sem abas (pedido do usuário, 05/11).

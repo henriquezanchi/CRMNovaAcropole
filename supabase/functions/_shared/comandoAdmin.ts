@@ -102,6 +102,11 @@ async function sugestaoDesatualizada(s: any): Promise<boolean> {
 
 export async function tratarComandoAdmin(msg: any): Promise<void> {
     if (msg?.type !== "text") return; // comando só por texto, de propósito — nunca interpreta áudio/imagem/etc.
+    // Reentrega da Meta: a mesma mensagem de comando só é tratada uma vez.
+    if (msg?.id) {
+        const { error: dup } = await supabaseAdmin.from("whatsapp_comandos_admin").insert({ wa_message_id: String(msg.id) });
+        if (dup) return;
+    }
     const texto = String(msg.text?.body || "").trim().toLowerCase();
 
     if (!PALAVRAS_CONFIRMACAO.includes(texto)) {

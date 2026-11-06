@@ -405,6 +405,10 @@ async function sugerirUma(contexto: string, contextoCRM: string, ultimaMensagem:
 }
 
 Deno.serve(async (req) => {
+    // Só o agendador (token interno do Vault) aciona esta rotina (varredura de 06/11/2026).
+    if (req.method === "OPTIONS") return new Response("ok");
+    const tokenInterno = Deno.env.get("FUNIL_ANALISE_TOKEN");
+    if (!tokenInterno || req.headers.get("x-funil-token") !== tokenInterno) return new Response("Não autorizado", { status: 401 });
     const cors = handleCors(req);
     if (cors) return cors;
     if (req.method !== "POST") return json({ ok: false, erro: "method_not_allowed" }, 405);
