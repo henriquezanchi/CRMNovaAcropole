@@ -2530,7 +2530,7 @@ async function renderizarListaFiliaisModal() {
     }
 
     filiaisModalCache = data || [];
-    container.innerHTML = filiaisModalCache.map(f => {
+    const htmlFilial = (f) => {
         const campo = (rotulo, ajuda, controle, largo = false) => `
             <label class="filial-campo${largo ? ' largo' : ''}">
                 <span class="filial-campo-rotulo">${rotulo}</span>
@@ -2570,8 +2570,17 @@ async function renderizarListaFiliaisModal() {
                 </div>
             </div>
         </details>`;
-    }).join('');
+    };
+    // Inativas ficam numa gaveta fechada no fim da lista (pedido do usuário, 06/11).
+    const ativas = filiaisModalCache.filter(f => f.ativo);
+    const inativas = filiaisModalCache.filter(f => !f.ativo);
+    container.innerHTML = ativas.map(htmlFilial).join('') + (inativas.length ? `
+        <details class="filiais-inativas" ${gavetaFiliaisInativasAberta ? 'open' : ''} ontoggle="gavetaFiliaisInativasAberta = this.open">
+            <summary class="filiais-inativas-cabecalho"><i class="fa-solid fa-chevron-right filiais-inativas-seta" aria-hidden="true"></i> Filiais inativas <span class="filial-chip">${inativas.length}</span></summary>
+            <div class="filiais-inativas-lista">${inativas.map(htmlFilial).join('')}</div>
+        </details>` : '');
 }
+let gavetaFiliaisInativasAberta = false;
 
 // Cada filial abre e fecha; todas começam fechadas ao abrir o modal. O Set
 // só guarda quais o usuário abriu, pra reordenar (que redesenha a lista)

@@ -1612,3 +1612,11 @@ select:hover { border-color: #b9c7c2; }
 .paineis-resultados-item { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 0; border-top:1px solid #e8eeeb; font-size:14px; }
 .paineis-resultados-acoes { display:flex; gap:6px; flex-shrink:0; }
 @media (max-width:560px) { .paineis-resultados-item { flex-direction:column; align-items:flex-start; } }
+
+/* Gerenciar Filiais: gaveta das inativas (06/11) */
+.filiais-inativas { margin: 6px 0 10px; }
+.filiais-inativas-cabecalho { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px dashed var(--border-color, #d6dde3); border-radius: 10px; color: var(--text-muted); font-weight: 600; font-size: 14px; }
+.filiais-inativas-cabecalho::-webkit-details-marker { display: none; }
+.filiais-inativas-seta { font-size: 11px; transition: transform .15s; }
+.filiais-inativas[open] .filiais-inativas-seta { transform: rotate(90deg); }
+.filiais-inativas-lista { margin-top: 8px; }
