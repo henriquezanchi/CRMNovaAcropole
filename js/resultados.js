@@ -493,13 +493,34 @@
     return s;
   }
 
+  var turmaAtual = null;
   function montar() {
     var secoes = document.getElementById('secoes');
     var abas = document.getElementById('abas');
     secoes.textContent = ''; abas.textContent = '';
     var lista = [];
     SIGLAS = dados.siglas || {};
-    (dados.campanhas || []).forEach(function (c, i) { lista.push({ id: 'c' + i, nome: (c.campanha && c.campanha.nome) || 'Campanha', fn: function () { return secaoCampanha(c); } }); });
+    // As campanhas de turma (uma por escola) viram uma aba só, "Novas turmas", com a escola
+    // escolhida numa lista dentro dela, para as abas caberem sem barra de rolagem (06/11).
+    var turmasCamp = [];
+    (dados.campanhas || []).forEach(function (c, i) {
+      var nomeC = (c.campanha && c.campanha.nome) || 'Campanha';
+      if (/^nova turma/i.test(nomeC)) { turmasCamp.push(c); return; }
+      lista.push({ id: 'c' + i, nome: nomeC.replace(/^Dia Mundial da Filosofia 2026/i, 'DMF 2026'), fn: function () { return secaoCampanha(c); } });
+    });
+    if (turmasCamp.length) lista.push({ id: 'turmas', nome: 'Novas turmas', fn: function () {
+      var box = el('div');
+      var nomeEsc = function (c) { var n = (c.campanha && c.campanha.nome) || ''; var p = n.split(' - '); return p.length > 1 ? p.slice(1).join(' - ') : n; };
+      if (turmaAtual == null || turmaAtual >= turmasCamp.length) turmaAtual = 0;
+      if (turmasCamp.length > 1) {
+        var sel = el('select', { classe: 'seletor-escola', 'aria-label': 'Escola' });
+        turmasCamp.forEach(function (c, i) { var o = el('option', { value: String(i), texto: nomeEsc(c) }); if (i === turmaAtual) o.selected = true; sel.appendChild(o); });
+        sel.addEventListener('change', function () { turmaAtual = Number(sel.value); montar(); });
+        box.appendChild(el('label', { classe: 'seletor-escola-rotulo' }, ['Escola ', sel]));
+      }
+      box.appendChild(secaoCampanha(turmasCamp[turmaAtual], true));
+      return box;
+    } });
     if (dados.escolas) lista.push({ id: 'escolas', nome: 'Escolas', fn: function () { return secaoEscolas(dados.escolas); } });
     // Link de uma escola só: uma página única "Campanha" (a abertura de turma mais recente
     // + os números da escola), sem abas (pedido do usuário, 05/11).

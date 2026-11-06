@@ -31,7 +31,9 @@ button:focus-visible { outline: 3px solid var(--amarelo); outline-offset: 2px; }
 .muted { color: var(--suave); font-size: 13px; }
 .estado { color: var(--suave); }
 .estado.erro { color: var(--alerta); font-weight: 600; }
-.abas { display: flex; gap: 6px; border-bottom: 1px solid var(--linha); margin-bottom: 18px; overflow-x: auto; }
+.abas { display: flex; flex-wrap: wrap; gap: 2px 6px; border-bottom: 1px solid var(--linha); margin-bottom: 18px; }
+.seletor-escola-rotulo { display: flex; align-items: center; gap: 8px; margin: 0 0 16px; font-weight: 600; color: var(--suave); }
+.seletor-escola { font: inherit; padding: 7px 10px; border: 1px solid var(--linha); border-radius: 8px; background: #fff; color: inherit; max-width: 100%; }
 .abas button { border: 0; background: transparent; padding: 10px 14px; font: inherit; font-weight: 600; color: var(--suave); border-bottom: 3px solid transparent; cursor: pointer; white-space: nowrap; }
 .abas button[aria-selected="true"] { color: var(--verde); border-bottom-color: var(--verde); }
 h2 { font-size: 20px; margin: 0 0 4px; font-weight: 700; }
