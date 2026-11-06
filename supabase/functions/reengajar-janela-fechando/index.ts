@@ -510,6 +510,14 @@ Deno.serve(async (req) => {
         // dizer, ou que a conversa já parece concluída) significa
         // simplesmente não mandar nada — correto e esperado, não é falha.
         let statusFinal: "enviada" | "descartada" | "pendente" = "descartada";
+        // A rodada dura até ~110 s: se alguém da equipe respondeu (ou chegou mensagem
+        // nova) depois de a lista ser lida, não envia (varredura de 05/11/2026).
+        if (resultado.sugestao) {
+            const { data: ultima } = await supabaseAdmin.from("mensagens_whatsapp").select("id")
+                .eq("pessoaIdentificador", item.pessoaIdentificador).neq("wa_status", "falhou")
+                .order("criado_em", { ascending: false }).limit(1).maybeSingle();
+            if (ultima && Number(ultima.id) !== Number(item.mensagem_id)) { resultado.sugestao = null; }
+        }
         if (resultado.sugestao) {
             const envio = await enviarMensagemWhatsapp(item.pessoaIdentificador, resultado.sugestao);
             if (envio.ok) {

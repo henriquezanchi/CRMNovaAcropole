@@ -112,6 +112,7 @@ Deno.serve(async (req) => {
             const corpo = montarCorpoReenvio(f);
             if (!corpo) { semDadoSuficiente++; return; }
 
+            const inicioEnvio = new Date().toISOString();
             try {
                 const resp = await fetch(urlWhatsappSend, {
                     method: "POST",
@@ -128,6 +129,11 @@ Deno.serve(async (req) => {
                 } else {
                     falharamDeNovo++;
                 }
+                // whatsapp-send grava uma linha NOVA por tentativa. Sem herdar o contador,
+                // cada falha virava uma candidata nova e a fila se multiplicava (varredura 05/11/2026).
+                await supabaseAdmin.from(NOME_TABELA_MENSAGENS)
+                    .update({ tentativas_reenvio: f.tentativas_reenvio + 1, ultima_tentativa_reenvio_em: new Date().toISOString() })
+                    .eq("pessoaIdentificador", String(f.pessoaIdentificador)).eq("direcao", "saida").gte("criado_em", inicioEnvio).neq("id", f.id);
             } catch {
                 falharamDeNovo++;
             }

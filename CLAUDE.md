@@ -11222,3 +11222,12 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
   `eventos.data_limite_inscricao`). Tudo no `log_atividade` como "Diretor — <escola>". Links de escola mostram só a
   campanha de turma mais recente, numa página única, título "Campanha de abertura de turma" com a data; resquícios do
   DMF removidos. Fluxo com PIN real ainda não testado (nenhum PIN definido); proteções sem PIN testadas.
+- **Varredura do código (05/11), corrigido:** escape do nome no `<select>` de login (`js/acesso.js`); buscas com
+  parênteses/aspas não quebram mais o `.or()` (app/eventos/tarefas/importar-conversa); selo "inscrito/presença" do
+  Kanban buscado depois das pré-cargas; `gravarMudancaTags()` (`js/app.js`) relê as etiquetas do banco antes de
+  gravar (nova, remover, desfazer, em massa) para não apagar o que o servidor gravou; indicador do scraper consulta a
+  cada 60 s e só com a aba visível; rede de Ativos/Inativos não é mais baixada no boot; busca do WhatsApp com espera de
+  300 ms; reengajamento confere se a conversa andou antes de enviar; lembrete de evento sai como `manual` e marca só
+  depois de enviar; reenvio de falhas faz a linha nova herdar o contador (antes a fila se multiplicava). Pendentes da
+  varredura: crons sem `x-funil-token` (podem ser acionados com a chave pública), reentrega do webhook no comando do
+  admin, listas de `campanha-whatsapp` sem paginação, Kanban com `select('*')`, Relatórios carregando tudo de uma vez.

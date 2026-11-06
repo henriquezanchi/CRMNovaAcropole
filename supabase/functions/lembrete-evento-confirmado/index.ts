@@ -100,18 +100,16 @@ Deno.serve(async (req) => {
 
             const texto = `Oi${nome ? `, ${nome}` : ""}! Passando só pra lembrar: amanhã é o dia da "${evento.nome}"${horaTxt}, aqui ${filialFalada}${endereco}.${linkMaps}\nTe esperamos! 🙏`;
 
-            // Marca ANTES de saber o resultado — nunca reenvia pra sempre
-            // se a chamada falhar (mesmo princípio do resto do projeto).
-            await supabaseAdmin.from("evento_leads").update({ lembrete_enviado_em: new Date().toISOString() }).eq("id", c.id);
-
             try {
                 const resp = await fetch(urlWhatsappSend, {
                     method: "POST",
                     headers: { "Content-Type": "application/json", Authorization: authServiceRole },
-                    body: JSON.stringify({ pessoaIdentificador: c.pessoaIdentificador, tipo: "texto", texto, atendenteNome: "Lembrete automático", origemEnvio: "campanha" }),
+                    body: JSON.stringify({ pessoaIdentificador: c.pessoaIdentificador, tipo: "texto", texto, atendenteNome: "Lembrete automático", origemEnvio: "manual" }),
                 });
                 const data = await resp.json();
-                if (data?.ok) enviados++; else falharam++;
+                // Marca só quando saiu de verdade (antes marcava antes e quem era bloqueado nunca era tentado de novo).
+                if (data?.ok) { enviados++; await supabaseAdmin.from("evento_leads").update({ lembrete_enviado_em: new Date().toISOString() }).eq("id", c.id); }
+                else falharam++;
             } catch {
                 falharam++;
             }
