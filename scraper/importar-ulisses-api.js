@@ -218,6 +218,11 @@ export async function sincronizarEventosUlissesApi() {
         }
         const nome = (ev.nome || '').trim();
         if (!nome) continue;
+        // Evento inativado no Ulisses (o link mostra "Este evento foi inativado"):
+        // sai da Agenda como os internos, senão o robô e os convites seguem mandando
+        // um link morto. Caso real 06/11/2026: aula experimental 24697 inativada,
+        // substituída pela 24698 com o mesmo nome e as mesmas datas.
+        if (ev.ativo === false) { eventoIdsNaoPublicados.add(eventoId); continue; }
 
         const descricao = [ev.dadoPequeno, ev.dadoMedio, ev.dadoGrande, ev.dadoFinal]
             .map(t => (t || '').trim()).filter(Boolean).join('\n\n') || null;
@@ -256,10 +261,23 @@ export async function sincronizarEventosUlissesApi() {
             // WhatsApp, ver CLAUDE.md "Convites em massa via wa.me").
             const linkInscricao = ev.linkFinal || null;
 
-            let { data: existente } = await supabaseAdmin
-                .from('eventos').select('id, hora, capacidade, imagem_url, ingresso, descricao, tipo, link_inscricao, evento_id_ulisses')
-                .eq('filial', filialCrmNome).eq('nome', nome).eq('data', data)
-                .maybeSingle();
+            // Primeiro a linha que já é deste evento do Ulisses; depois mesmo nome
+            // e data. Nunca .maybeSingle() no nome+data: com 2 eventos de mesmo
+            // nome e data (um substituindo o outro) ele dava erro, a busca voltava
+            // vazia e o CRM criava outra linha a cada sincronização.
+            const COLUNAS_EXISTENTE = 'id, hora, capacidade, imagem_url, ingresso, descricao, tipo, link_inscricao, evento_id_ulisses';
+            let { data: porId } = await supabaseAdmin
+                .from('eventos').select(COLUNAS_EXISTENTE)
+                .eq('filial', filialCrmNome).eq('evento_id_ulisses', eventoId).eq('data', data)
+                .order('id').limit(1);
+            let existente = porId?.[0] || null;
+            if (!existente) {
+                const { data: porNome } = await supabaseAdmin
+                    .from('eventos').select(COLUNAS_EXISTENTE)
+                    .eq('filial', filialCrmNome).eq('nome', nome).eq('data', data)
+                    .order('ativo', { ascending: false }).order('id').limit(1);
+                existente = porNome?.[0] || null;
+            }
 
             // Fallback por nome PARECIDO na mesma data/filial — mesma
             // rede de segurança já usada em sincronizarComparecimentoNoCrm()
@@ -362,7 +380,7 @@ export async function sincronizarEventosUlissesApi() {
     }
 
     return `${criados} evento(s) criado(s), ${atualizados} atualizado(s), de ${eventoIdsRelevantes.size} evento(s) únicos verificados`
-        + (eventoIdsNaoPublicados.size ? `, ${eventoIdsNaoPublicados.size} evento(s) interno(s) (não publicados no site) ignorado(s)` : '')
+        + (eventoIdsNaoPublicados.size ? `, ${eventoIdsNaoPublicados.size} evento(s) interno(s) ou inativado(s) no Ulisses ignorado(s)` : '')
         + (internosDesativados ? `, ${internosDesativados} tirado(s) da Agenda` : '')
         + (semDataParaFilial ? `, ${semDataParaFilial} ignorado(s) por filial sem data` : '')
         + (semMatch.length ? `. Filial(is) do CRM sem correspondência no Ulisses: ${semMatch.join(', ')}` : '')
