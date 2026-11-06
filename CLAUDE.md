@@ -11259,3 +11259,24 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
   `campanha-whatsapp`: listas de 2ª tentativa e o `status` paginam de 1000 em 1000 (`todasAsLinhas()`) — antes,
   com mais de 1000 2ªs tentativas, quem ficasse fora da 1ª página receberia outra. Kanban com `select('*')` mantido:
   medido ~5,7 MB pra Jardim América inteira, e a gaveta depende das colunas completas.
+
+## Contatos trocados por número sintético reaproveitado — varredura CRM x Mercúrio (06/11/2026)
+
+Caso real (Rosemary x Paula, Barra do Garças): cadastro vindo só do Mercúrio com telefone, e-mail e eventos
+de OUTRA pessoa. Causa: até `idSinteticoEstavel()` existir, o número sintético (900M/950M) era um contador por
+importação e passava de uma pessoa para a vizinha na ordem alfabética; a importação trocava o nome e preservava
+o contato/histórico da anterior. A causa já estava corrigida; sobrou a sujeira.
+- Correções aplicadas (`log_atividade.acao='correcao_contato_trocado'`): 128 cadastros com e-mail E telefone de
+  outra matrícula (`migracao_contatos_trocados_id_reaproveitado.sql` + `..._nono_digito.sql` — a 1ª gravou a chave
+  do Mercúrio sem o nono dígito, a 2ª devolveu o 9) e 241 com um dos dois (`..._varredura2.sql`). Contato volta ao
+  do Mercúrio (sem valor lá = fica vazio, nunca o de outra pessoa); mensagens vão para a dona do telefone; eventos
+  idênticos aos da dona saem do histórico. `mercurio_pessoas.tel_chave` NÃO tem o nono dígito: ao gravar
+  telefone a partir dela, 8 dígitos começando em 6-9 recebem o 9.
+- Critério: e-mail/telefone pertence a outra matrícula da mesma unidade com outro primeiro nome, e o Mercúrio tem
+  valor próprio diferente. Cadastro com ID real do Ulisses que divide contato com outra pessoa fica de fora (a
+  própria pessoa informou; família).
+- Para não voltar escondido: RPC `crm_contatos_trocados_mercurio()` (`migracao_rpc_contatos_trocados.sql`) +
+  sinal `contato_de_outra_pessoa` no Diagnóstico de Saúde; aviso amarelo na gaveta ("Difere do Mercúrio",
+  `mostrarAvisoContatoMercurio()`, `js/app.js`) quando telefone/e-mail do cadastro não bate com o Mercúrio —
+  distingue "pessoa trocou de número" de "o CRM misturou".
+- Nomes: 101 cadastros diferem do Mercúrio só por acento; não é erro.

@@ -4663,6 +4663,7 @@ function abrirGaveta(id, opcoes = {}) {
     document.getElementById('drawer-tel-numero').value = lead.pessoaTelefoneNumero || '';
     document.getElementById('drawer-email').value = lead.pessoaEmail || '';
     document.getElementById('drawer-data-nascimento').value = lead.data_nascimento || '';
+    mostrarAvisoContatoMercurio(lead);
 
     // CIDADE/UF — capturado pelo scraper do Mercúrio (ENDEREÇOS/
     // Aniversariantes), só leitura; bloco só aparece se tiver algum dado.
@@ -5671,4 +5672,31 @@ function mostrarPainelGaveta(painel) {
         aba.classList.toggle('ativa', ativa);
         aba.setAttribute('aria-selected', ativa ? 'true' : 'false');
     });
+}
+
+// Aviso na gaveta quando o telefone/e-mail do cadastro difere do que o Mercúrio tem para a mesma
+// matrícula. Serve para a equipe saber, antes de mandar mensagem ou quando alguém diz "não é meu
+// número", se foi a pessoa que mudou de contato ou se foi o CRM que misturou (06/11/2026).
+async function mostrarAvisoContatoMercurio(lead) {
+    const box = document.getElementById('drawer-contato-mercurio-aviso');
+    if (!box) return;
+    box.style.display = 'none';
+    box.textContent = '';
+    if (!lead || !lead.pessoaIdentificador) return;
+    const pid = String(lead.pessoaIdentificador);
+    const { data: mp } = await window.supabaseClient.from('mercurio_pessoas')
+        .select('matricula, tel_chave, email').eq('pessoa_identificador', pid).limit(1).maybeSingle();
+    if (!mp || String(currentLeadId) !== pid) return;
+    const telCrm = normalizarTelefoneParaChave(lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero) || '';
+    const emailCrm = String(lead.pessoaEmail || '').trim().toLowerCase();
+    const emailMp = String(mp.email || '').trim().toLowerCase();
+    const avisos = [];
+    if (mp.tel_chave && telCrm && telCrm !== mp.tel_chave) {
+        const n = mp.tel_chave.slice(2);
+        avisos.push(`Telefone no Mercúrio (matr. ${mp.matricula}): ${mp.tel_chave.slice(0, 2)} ${n.length === 8 && /^[6-9]/.test(n) ? '9' + n : n}`);
+    }
+    if (emailMp && emailCrm && emailMp !== emailCrm && !/^n[aã]o(possui|tem)/.test(emailMp)) avisos.push(`E-mail no Mercúrio: ${emailMp}`);
+    if (!avisos.length) return;
+    box.textContent = 'Difere do Mercúrio. ' + avisos.join(' · ') + '. Se a pessoa disser que o número não é dela, use o do Mercúrio.';
+    box.style.display = 'block';
 }

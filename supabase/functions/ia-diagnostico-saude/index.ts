@@ -89,6 +89,13 @@ async function coletarSinaisPorFilial(filiaisAtivas: string[]) {
     (aTratar || []).forEach((r: any) => { contAtratar[r.filial] = (contAtratar[r.filial] || 0) + 1; });
     Object.keys(porFilial).forEach((f) => { porFilial[f].grupos_duplicados_pendentes = contAtratar[f] || 0; });
 
+    // Contato de outra pessoa (e-mail/telefone de outra matrícula do Mercúrio) — achado em 06/11/2026,
+    // 369 cadastros de uma vez; a RPC repete o critério das correções para isso não voltar escondido.
+    const { data: trocados } = await supabaseAdmin.rpc("crm_contatos_trocados_mercurio");
+    const contTrocados: Record<string, number> = {};
+    (trocados || []).forEach((r: any) => { contTrocados[r.filial] = (contTrocados[r.filial] || 0) + 1; });
+    Object.keys(porFilial).forEach((f) => { porFilial[f].contatos_de_outra_pessoa = contTrocados[f] || 0; });
+
     // Última importação registrada em log_atividade (acao='importacao').
     const { data: logs } = await supabaseAdmin
         .from("log_atividade")
@@ -144,6 +151,9 @@ function avaliarFilial(f: any) {
     // legitimamente pode não ter passado pelo Mercúrio ainda).
     if ((f.total_leads || 0) >= 100 && (f.total_ativo_inativo || 0) === 0) {
         return { nivel: "urgente", motivo: "sem_ativo_inativo", sinais: f };
+    }
+    if ((f.contatos_de_outra_pessoa || 0) > 0) {
+        return { nivel: "atencao", motivo: "contato_de_outra_pessoa", sinais: f };
     }
     if ((f.grupos_duplicados_pendentes || 0) >= 150) {
         return { nivel: "atencao", motivo: "duplicados_altos", sinais: f };
