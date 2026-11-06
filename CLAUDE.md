@@ -11231,3 +11231,13 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
   depois de enviar; reenvio de falhas faz a linha nova herdar o contador (antes a fila se multiplicava). Pendentes da
   varredura: crons sem `x-funil-token` (podem ser acionados com a chave pública), reentrega do webhook no comando do
   admin, listas de `campanha-whatsapp` sem paginação, Kanban com `select('*')`, Relatórios carregando tudo de uma vez.
+- **Varredura (06/11):** classificar-resposta-convite, reengajar-janela-fechando, sugerir-resposta-whatsapp e
+  whatsapp-saude-conta só aceitam chamada com `x-funil-token` (cron lê do Vault, `migracao_crons_token_interno.sql`;
+  deploy com `--no-verify-jwt`). Comando "SIM" do admin: cada mensagem tratada uma vez (`whatsapp_comandos_admin`).
+  Painel de resultados: campanhas "Nova turma …" e "Dia Mundial da Filosofia …" viram uma aba cada, com seletor de
+  escola. Gerenciar Filiais: inativas numa gaveta fechada. Rótulo do painel da coordenação sem o nome da Alice.
+- **Mercúrio (oinabview), mapa de 06/11:** 26 tabelas. Além das já usadas: `turmas_materias` (matéria e instrutor por
+  turma), `sig_materias` (52 matérias por nível/ordem), `cursos_integra_participa` + `sig_cursos_integra` (cursos feitos),
+  `condecoracoes`, `dirigente_funcoes`/`sig_dirigente_funcoes` (funções de voluntário com início/término),
+  `profissoes`, `precos`/`produtos` (preço por unidade), `compaluno` (composição da contribuição), `ficstatus`,
+  `sig_minscr` (meio de inscrição), `unidades` (endereço, diretor, coordenador). O Portal NA já importa a maior parte.
