@@ -11241,3 +11241,9 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
   `condecoracoes`, `dirigente_funcoes`/`sig_dirigente_funcoes` (funções de voluntário com início/término),
   `profissoes`, `precos`/`produtos` (preço por unidade), `compaluno` (composição da contribuição), `ficstatus`,
   `sig_minscr` (meio de inscrição), `unidades` (endereço, diretor, coordenador). O Portal NA já importa a maior parte.
+- **Aviso de spam da Meta (06/11, `migracao_freio_spam_20261106.sql`, JÁ RODADA):** e-mail "Sua conta do WhatsApp
+  Business está violando a política" (conta 4141029446188721 "enviando spam"), com qualidade ainda verde e TIER_250.
+  Causa provável: salto de ~30 para ~400 mensagens/dia em 04-05/11, quase tudo convite frio; em 05/11, 73 falhas 131026
+  (número sem WhatsApp) e 12 retenções 131049 ("healthy ecosystem"). Decisão do usuário: pendentes do dia cancelados
+  (`campanha_fila.status='cancelado'`), DMF Goiânia de 200 para 50/dia, Catalão em espera
+  (`migracao_campanha_dmf_catalao.sql` não aplicada). Não voltar a subir cota sem olhar 131049/131026 dos últimos dias.
