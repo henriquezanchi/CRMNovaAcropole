@@ -572,7 +572,9 @@
         }
         renderizarBarraDiretor();
         var quando = dados.gerado_em ? new Date(dados.gerado_em) : new Date();
-        document.getElementById('atualizado').textContent = 'Números de ' + quando.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        var diaHora = function (d) { return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' às ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); };
+        document.getElementById('atualizado').textContent = 'Números atualizados em ' + diaHora(quando) +
+          (dados.ulisses_em ? ' · Inscrições do Ulisses de ' + diaHora(new Date(dados.ulisses_em)) : '');
         estado.textContent = '';
         document.getElementById('conteudo').hidden = false;
         montar();
