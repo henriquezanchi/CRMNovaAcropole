@@ -11253,3 +11253,9 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
   respondeu); daqui em diante o `whatsapp-webhook` marca na hora. Bloqueada em `campanha_candidatos()` (por telefone)
   e em `TAGS_EXCLUSAO_CAMPANHA_WPP` (Convidar Link/API/Janela Aberta, Disparo Inteligente). O telefone não é apagado
   (serve para ligação); trocar o telefone na gaveta (`salvarTelefoneLead()`) tira a etiqueta.
+- **Varredura (06/11, tarde):** aba Relatórios só consulta o banco no assunto aberto
+  (`CARREGADORES_RELATORIOS_BANCO`/`carregarRelatoriosVisiveis()`, `js/app.js`; o botão de cada assunto em
+  `js/organizacao-interface.js` carrega o que falta); reabrir a aba recarrega o que estiver à vista.
+  `campanha-whatsapp`: listas de 2ª tentativa e o `status` paginam de 1000 em 1000 (`todasAsLinhas()`) — antes,
+  com mais de 1000 2ªs tentativas, quem ficasse fora da 1ª página receberia outra. Kanban com `select('*')` mantido:
+  medido ~5,7 MB pra Jardim América inteira, e a gaveta depende das colunas completas.

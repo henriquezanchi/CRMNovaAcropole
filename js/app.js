@@ -3387,17 +3387,37 @@ function atualizarRelatorios({ completo = true } = {}) {
     renderizarRelatorioTemasEvento();
     renderizarRelatorioMotivosPerda();
     if (!completo) return; // abaixo: relatórios que consultam o banco
-    renderizarRelatorioMatriculasPorMes();
-    if (typeof renderizarCobrancaMensal === 'function') renderizarCobrancaMensal();
-    if (typeof renderizarCiclosTurma === 'function') renderizarCiclosTurma();
-    if (typeof renderizarConciliacaoMercurio === 'function') renderizarConciliacaoMercurio();
-    renderizarComissaoSdrTodasFiliais();
-    if (typeof renderizarAcertosComissao === 'function') renderizarAcertosComissao();
-    if (typeof carregarRelatorioAnualMatriculas === 'function') carregarRelatorioAnualMatriculas();
-    if (typeof renderizarCanalOrigemMercurio === 'function') renderizarCanalOrigemMercurio();
-    renderizarRelatorioComparacaoFiliais();
-    if (typeof carregarRelatoriosWhatsApp === 'function') carregarRelatoriosWhatsApp();
-    if (typeof carregarResumoTrabalho === 'function') carregarResumoTrabalho();
+    relatoriosBancoCarregados.clear();
+    carregarRelatoriosVisiveis();
+}
+
+// Relatórios que consultam o banco, pelo id do bloco na tela. Só roda o que
+// está no assunto aberto (os outros ficam com "hidden", ver
+// js/organizacao-interface.js); o resto carrega quando o assunto é aberto.
+// Abrir a aba de novo (atualizarRelatorios) recarrega tudo que estiver à vista.
+const CARREGADORES_RELATORIOS_BANCO = [
+    ['relatorioMatriculasPorMes', () => renderizarRelatorioMatriculasPorMes()],
+    ['relatorioCobrancaMensal', () => typeof renderizarCobrancaMensal === 'function' && renderizarCobrancaMensal()],
+    ['relatorioCiclosTurma', () => typeof renderizarCiclosTurma === 'function' && renderizarCiclosTurma()],
+    ['relatorioConciliacaoMercurio', () => typeof renderizarConciliacaoMercurio === 'function' && renderizarConciliacaoMercurio()],
+    ['relatorioComissaoSdrTodasFiliais', () => renderizarComissaoSdrTodasFiliais()],
+    ['relatorioAcertosComissao', () => typeof renderizarAcertosComissao === 'function' && renderizarAcertosComissao()],
+    ['relatorioAnualMatriculas', () => typeof carregarRelatorioAnualMatriculas === 'function' && carregarRelatorioAnualMatriculas()],
+    ['relatorioCanalOrigemMercurio', () => typeof renderizarCanalOrigemMercurio === 'function' && renderizarCanalOrigemMercurio()],
+    ['relatorioComparacaoFiliais', () => renderizarRelatorioComparacaoFiliais()],
+    ['relatorioSlaWhatsApp', () => typeof carregarRelatoriosWhatsApp === 'function' && carregarRelatoriosWhatsApp()],
+    ['resumoTrabalhoContainer', () => typeof carregarResumoTrabalho === 'function' && carregarResumoTrabalho()],
+];
+const relatoriosBancoCarregados = new Set();
+
+function carregarRelatoriosVisiveis() {
+    for (const [id, carregar] of CARREGADORES_RELATORIOS_BANCO) {
+        if (relatoriosBancoCarregados.has(id)) continue;
+        const bloco = document.getElementById(id);
+        if (bloco && bloco.closest('[hidden]')) continue; // assunto fechado: carrega ao abrir
+        relatoriosBancoCarregados.add(id);
+        try { carregar(); } catch (e) { console.error('Relatório ' + id + ':', e); }
+    }
 }
 
 // Proxy sobre leadsAtuais, mesmo espírito dos outros relatórios acima —

@@ -73,6 +73,18 @@ async function iniciadasUltimas24h(): Promise<number> {
     return pessoas.size;
 }
 
+// O PostgREST devolve no máximo 1000 linhas por chamada: busca de 1000 em 1000
+// até acabar. A consulta precisa de ordem estável (sempre inclui "id").
+async function todasAsLinhas(montar: () => any): Promise<any[]> {
+    const saida: any[] = [];
+    for (let de = 0; ; de += 1000) {
+        const { data, error } = await montar().range(de, de + 999);
+        if (error) throw new Error(error.message);
+        saida.push(...(data || []));
+        if (!data || data.length < 1000) return saida;
+    }
+}
+
 function primeiroNome(lead: any): string {
     const base = (lead.como_prefere_ser_chamado || String(lead.pessoaNome || "").trim().split(/\s+/)[0] || "").trim();
     return base ? base.charAt(0).toUpperCase() + base.slice(1).toLowerCase() : "tudo bem";
@@ -94,14 +106,15 @@ async function inscritosNoEvento(eventoId: number): Promise<number> {
 async function elegiveisFollowup(c: any, limite: number): Promise<any[]> {
     if (!c.template_followup || limite <= 0) return [];
     const ate = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-    const { data: enviados } = await supabaseAdmin.from("campanha_fila")
+    const enviados = await todasAsLinhas(() => supabaseAdmin.from("campanha_fila")
         .select('"pessoaIdentificador", filial, telefone_chave, grupo, prioridade, enviado_em')
         .eq("campanha_id", c.id).eq("tipo", "convite").eq("status", "enviado").lte("enviado_em", ate)
-        .order("prioridade", { ascending: false }).limit(3000);
-    if (!enviados?.length) return [];
-    const { data: jaTem } = await supabaseAdmin.from("campanha_fila").select('"pessoaIdentificador"')
-        .eq("campanha_id", c.id).eq("tipo", "followup");
-    const comFollowup = new Set((jaTem || []).map((r: any) => r.pessoaIdentificador));
+        .order("prioridade", { ascending: false }).order("id"));
+    if (!enviados.length) return [];
+    // Lista completa: com mais de 1000 2ªs tentativas, quem ficasse fora receberia outra.
+    const jaTem = await todasAsLinhas(() => supabaseAdmin.from("campanha_fila").select('"pessoaIdentificador"')
+        .eq("campanha_id", c.id).eq("tipo", "followup").order("id"));
+    const comFollowup = new Set(jaTem.map((r: any) => r.pessoaIdentificador));
     const saida: any[] = [];
     for (const e of enviados) {
         if (saida.length >= limite) break;
@@ -315,9 +328,9 @@ async function status() {
     const campanhas = await campanhasAtivas();
     const saida: any[] = [];
     for (const c of campanhas) {
-        const { data } = await supabaseAdmin.from("campanha_fila").select("tipo, status").eq("campanha_id", c.id);
+        const data = await todasAsLinhas(() => supabaseAdmin.from("campanha_fila").select("tipo, status").eq("campanha_id", c.id).order("id"));
         const resumo: Record<string, number> = {};
-        for (const r of data || []) resumo[`${r.tipo}:${r.status}`] = (resumo[`${r.tipo}:${r.status}`] || 0) + 1;
+        for (const r of data) resumo[`${r.tipo}:${r.status}`] = (resumo[`${r.tipo}:${r.status}`] || 0) + 1;
         saida.push({ campanha: c.slug, resumo, inscritosEvento: c.evento_id ? await inscritosNoEvento(c.evento_id) : null });
     }
     return { campanhas: saida, limiteMeta: await limiteDiarioMeta(), iniciadas24h: await iniciadasUltimas24h() };

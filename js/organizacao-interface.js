@@ -55,6 +55,7 @@ function organizarInterfaceCrm() {
                 secoes.forEach(s => { s.hidden = s !== secao; });
                 botoes.forEach(b => b.setAttribute('aria-pressed',String(b === botao)));
                 try { sessionStorage.setItem('crm_relatorios_assunto',secao.id); } catch { /* armazenamento indisponível */ }
+                if (typeof carregarRelatoriosVisiveis === 'function' && document.getElementById('tab-relatorios')?.classList.contains('active')) carregarRelatoriosVisiveis();
             });
             botoes.push(botao); navegacao.append(botao);
         });
