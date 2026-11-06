@@ -169,6 +169,7 @@ ${c.config?.instrucoes || "(nenhuma)"}
 - Valores (mensalidade, preço de curso ou evento, material, descontos): informe só o valor que está escrito nos dados acima (descrição do evento, instruções da campanha ou mensalidade cadastrada da escola), copiado exatamente, com "R$". Se o valor perguntado não estiver nos dados, nunca invente nem aproxime: diga, em primeira pessoa, que vai ver isso e já te passa, e marque "precisa_humano": true.
 - Duração, carga horária, frequência das aulas, conteúdo do curso, quem é o professor ou qualquer detalhe que não esteja nos dados acima: não diga. Responda, em primeira pessoa, que vai ver isso e já te passa, e marque "precisa_humano": true.
 - Você fala como a escola ("nós", "eu"), nunca como alguém de fora: nunca diga "a equipe da escola vai te chamar/explicar", porque a pessoa já está falando com a escola. Quando você disse que ia ver algo, quem traz a resposta é uma pessoa nesta mesma conversa, não você: se a pessoa disser "pode sim"/"ok", responda só algo curto como "Combinado! Já te passo.", sem trazer a informação, e marque "precisa_humano": true. Nunca diga que já verificou, confirmou ou consultou alguém: você não consulta ninguém.
+- Problema para se inscrever (o site não abre, dá erro, "não consigo"): você não consegue mexer no site nem inscrever ninguém. Nunca diga que resolveu, corrigiu ou arrumou algo, nem que já fez ou garantiu a inscrição ou a vaga. Se a pessoa mostrar o aviso "Todos os campos são obrigatórios", explique que falta preencher algum campo, inclusive a escolha da unidade (a escola dela), antes de tocar em "Inscrever". Nos outros casos, diga que vai ver isso e já te passa, e marque "precisa_humano": true.
 - Não suponha o que a pessoa já sabe ou já fez (ex.: "como você já conhece o curso") a menos que isso esteja nos dados.
 - Se a pessoa já aceitou ("sim", "pode", "quero") a uma pergunta nossa sobre detalhes ou link, mande o link nesta mensagem; nunca pergunte de novo se pode mandar.
 - Sempre que der os detalhes do evento, inclua o link de inscrição na mesma mensagem (não pergunte "posso mandar o link?") e escreva, com essas palavras, que as vagas são limitadas e por isso é importante garantir a vaga pelo link.
@@ -407,6 +408,10 @@ export function motivoBloqueioResposta(texto: string, linksPermitidos: string[] 
     for (const v of valoresEmCentavos(texto)) if (!permitidosValor.has(v)) return "informou valor que não está cadastrado";
     if (/(confirmei|conferi|verifiquei|consultei|chequei)\b[^.!?\n]{0,30}\b(equipe|escola|secretaria|professor)/i.test(texto)) return "disse que confirmou com a equipe";
     if (/primeira aula[^.!?\n]{0,40}(gratuit|de gra[çc]a|sem custo)/i.test(texto)) return "disse que a primeira aula é gratuita";
+    // O robô não mexe no site nem inscreve ninguém (caso real 06/11: "Consegui resolver aqui!").
+    if (/\b(consegui resolver|resolvi|j[aá] resolv\w*|corrigi|arrumei|consertei)\b/i.test(texto)) return "disse que resolveu um problema";
+    if (/\b(garanto|garanti|reservo|reservei|fiz|fa[çc]o)\b[^.!?\n]{0,25}\b(sua|tua) (vaga|inscri[çc][ãa]o)/i.test(texto)) return "prometeu garantir a vaga ou fazer a inscrição";
+    if (/\b(te inscrevi|inscrevi voc[eê]|vou te inscrever)\b/i.test(texto)) return "disse que fez a inscrição";
     const permitidos = new Set(linksPermitidos.map((l) => (l.match(/eventoId=(\d+)/) || [])[1]).filter(Boolean));
     for (const m of texto.matchAll(/eventoId=(\d+)/g)) if (!permitidos.has(m[1])) return `link de inscrição desconhecido (${m[1]})`;
     return null;
