@@ -5960,8 +5960,11 @@ async function renderizarContatosWpp(filtro = '') {
     lista.scrollTop = rolagem;
 }
 
+// Espera 300 ms depois da última tecla: cada busca relê a lista inteira de conversas.
+let timerBuscaContatosWpp = null;
 function filtrarContatosWpp(valor) {
-    renderizarContatosWpp(valor ?? document.getElementById('wppSearch')?.value ?? '');
+    clearTimeout(timerBuscaContatosWpp);
+    timerBuscaContatosWpp = setTimeout(() => renderizarContatosWpp(valor ?? document.getElementById('wppSearch')?.value ?? ''), 300);
 }
 
 // "x" pra limpar a busca do WhatsApp Unificado (pedido do usuário,

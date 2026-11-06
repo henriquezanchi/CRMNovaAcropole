@@ -6,7 +6,7 @@
 // scraper/lib/supabaseAdmin.js) em cada etapa/turma processada.
 //
 // Depende de: window.supabaseClient (index.html).
-const INTERVALO_POLL_PROGRESSO_MS = 5000;
+const INTERVALO_POLL_PROGRESSO_MS = 60000; // era 5 s; o scraper Playwright está desligado desde 18/10
 // Se a última atualização for mais velha que isso, trata como travado/
 // morto (ex: processo derrubado à força, sem passar pelo handler de
 // cancelamento) e esconde o indicador — nunca fica "rodando" pra sempre.
@@ -53,5 +53,5 @@ async function verificarProgressoScraperMercurio() {
 
 document.addEventListener('DOMContentLoaded', () => {
     verificarProgressoScraperMercurio();
-    setInterval(verificarProgressoScraperMercurio, INTERVALO_POLL_PROGRESSO_MS);
+    setInterval(() => { if (!document.hidden) verificarProgressoScraperMercurio(); }, INTERVALO_POLL_PROGRESSO_MS);
 });

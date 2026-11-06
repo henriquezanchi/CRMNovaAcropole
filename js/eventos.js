@@ -974,7 +974,7 @@ async function buscarLeadParaParticipante() {
     resultsEl.innerHTML = '<div class="global-search-loading"><i class="fa-solid fa-circle-notch fa-spin"></i> Buscando...</div>';
     resultsEl.classList.add('open');
 
-    const termoSeguro = termo.replace(/,/g, ' ');
+    const termoSeguro = termo.replace(/[,()"\\]/g, ' ');
     const { data, error } = await window.supabaseClient
         .from(NOME_TABELA)
         .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero')

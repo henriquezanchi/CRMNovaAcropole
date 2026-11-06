@@ -338,7 +338,8 @@ async function carregarLeads(filial, resetar = true) {
             carregarColunasSecundariasSemPaginacao(filial),
             carregarAtivosInativosSemPaginacao(filial),
         ]);
-        carregarStatusEventosKanban(filial, versao);
+        // Depois das pré-cargas: antes rodava com leadsAtuais vazio e o selo nunca aparecia.
+        preCargasIniciais.then(() => carregarStatusEventosKanban(filial, versao)).catch(() => {});
         atualizarContagemLixeira();
     }
 
@@ -1465,7 +1466,7 @@ async function processarBuscaGlobal() {
     resultsEl.innerHTML = '<div class="global-search-loading"><i class="fa-solid fa-circle-notch fa-spin"></i> Buscando...</div>';
     resultsEl.classList.add('open');
 
-    const termoSeguro = termo.replace(/,/g, ' '); // escapa vírgula (separador do .or() do PostgREST)
+    const termoSeguro = termo.replace(/[,()"\\]/g, ' '); // escapa vírgula (separador do .or() do PostgREST)
     const { data, error } = await window.supabaseClient
         .from(NOME_TABELA)
         .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, pessoaEmail, funil_agencia')
@@ -2061,6 +2062,18 @@ async function abrirRemoverLeadLgpd() {
 // moverLeadsParaColuna() (mesmo payload pra todo mundo), cada lead pode já
 // ter um conjunto de tags diferente — precisa calcular o array de cada um
 // individualmente e mandar um update por lead (em paralelo).
+// Grava uma mudança de etiquetas sem atropelar o que o servidor gravou depois que a
+// tela carregou ("Não Contatar", "Contato Recente", "Campanha: …"): relê as etiquetas
+// do banco, aplica só a mudança pedida e grava. Devolve { tags } ou { error }.
+async function gravarMudancaTags(pessoaId, mudar) {
+    const { data, error: erroLeitura } = await window.supabaseClient.from(NOME_TABELA).select('tags').eq('pessoaIdentificador', String(pessoaId)).maybeSingle();
+    if (erroLeitura) return { error: erroLeitura };
+    const novas = mudar(parseTags(data?.tags).map(t => t.trim()).filter(Boolean));
+    const tags = JSON.stringify(novas);
+    const { error } = await window.supabaseClient.from(NOME_TABELA).update({ tags }).eq('pessoaIdentificador', String(pessoaId));
+    return error ? { error } : { tags };
+}
+
 async function aplicarTagEmMassa(modo) {
     const input = document.getElementById('bulkActionTagInput');
     if (!input || cardsSelecionados.size === 0) return;
@@ -2091,9 +2104,12 @@ async function aplicarTagEmMassa(modo) {
     input.value = '';
     renderizarCards(); // atualização otimista, igual moverLeadsParaColuna()
 
-    const resultados = await Promise.all(atualizacoes.map(({ pessoaIdentificador, tags }) =>
-        window.supabaseClient.from(NOME_TABELA).update({ tags }).eq('pessoaIdentificador', pessoaIdentificador)
-    ));
+    const resultados = await Promise.all(atualizacoes.map(async ({ pessoaIdentificador }) => {
+        const r = await gravarMudancaTags(pessoaIdentificador, (t) => modo === 'add' ? (t.includes(tag) ? t : [...t, tag]) : t.filter(x => x !== tag));
+        const l = leadsAtuais.find(x => String(x.pessoaIdentificador) === pessoaIdentificador);
+        if (l && r.tags) l.tags = r.tags;
+        return r;
+    }));
     const comErro = resultados.filter(r => r.error);
     if (comErro.length > 0) {
         console.error('Erros ao aplicar tag em massa:', comErro.map(r => r.error));
@@ -4831,7 +4847,7 @@ function buscarLeadParaVinculoFamiliar() {
         const termo = input.value.trim();
         if (termo.length < 2) { resultados.innerHTML = ''; return; }
 
-        const termoSeguro = termo.replace(/,/g, ' '); // escapa vírgula (separador do .or() do PostgREST)
+        const termoSeguro = termo.replace(/[,()"\\]/g, ' '); // escapa vírgula (separador do .or() do PostgREST)
         const { data, error } = await window.supabaseClient
             .from(NOME_TABELA)
             .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero')
@@ -5493,10 +5509,12 @@ async function confirmarNovaTag() {
     renderDrawerTags();
     renderizarCards(); // atualiza badge do card + opções de filtro na hora
 
-    const { error: erroTag } = await window.supabaseClient
-        .from(NOME_TABELA)
-        .update({ tags: JSON.stringify(tagsArray) })
-        .eq('pessoaIdentificador', pessoaIdTag);
+    const { error: erroTag, tags: tagsGravadas } = await gravarMudancaTags(pessoaIdTag, (t) => {
+        if (novaTagText === 'Ativo') t = t.filter(x => x !== 'Inativo' && x !== 'Ex-Aluno (Inativo)');
+        else if (novaTagText === 'Inativo') t = t.filter(x => x !== 'Ativo' && x !== 'Aluno Ativo');
+        return t.includes(novaTagText) ? t : [...t, novaTagText];
+    });
+    if (tagsGravadas) { const l = leadsAtuais.find(x => String(x.pessoaIdentificador) === pessoaIdTag); if (l) l.tags = tagsGravadas; if (String(currentLeadId) === pessoaIdTag) renderDrawerTags(); }
     if (erroTag) {
         const l = leadsAtuais.find(x => String(x.pessoaIdentificador) === pessoaIdTag);
         if (l) l.tags = tagsAntesNova;
@@ -5531,10 +5549,8 @@ async function removerTag(index) {
     renderDrawerTags();
     renderizarCards(); // atualiza badge do card + opções de filtro na hora
 
-    const { error } = await window.supabaseClient
-        .from(NOME_TABELA)
-        .update({ tags: JSON.stringify(tagsArray) })
-        .eq('pessoaIdentificador', pessoaId);
+    const { error, tags: tagsGravadas } = await gravarMudancaTags(pessoaId, (t) => t.filter(x => x !== tagRemovida));
+    if (tagsGravadas) { const l = leadsAtuais.find(x => String(x.pessoaIdentificador) === pessoaId); if (l) l.tags = tagsGravadas; if (String(currentLeadId) === pessoaId) renderDrawerTags(); }
     if (error) {
         // Antes a tela mostrava a etiqueta removida mesmo quando o banco recusava.
         const l = leadsAtuais.find(x => String(x.pessoaIdentificador) === pessoaId);
@@ -5555,9 +5571,9 @@ async function desfazerRemocaoTag(pessoaId, tag, index) {
     const tags = parseTags(lead.tags);
     if (tags.includes(tag)) return;
     tags.splice(Math.min(index, tags.length), 0, tag);
-    const { error } = await window.supabaseClient.from(NOME_TABELA).update({ tags: JSON.stringify(tags) }).eq('pessoaIdentificador', pessoaId);
+    const { error, tags: tagsGravadas } = await gravarMudancaTags(pessoaId, (t) => t.includes(tag) ? t : [...t.slice(0, index), tag, ...t.slice(index)]);
     if (error) { avisar('Não foi possível desfazer: ' + error.message, 'erro'); return; }
-    lead.tags = JSON.stringify(tags);
+    lead.tags = tagsGravadas;
     if (String(currentLeadId) === String(pessoaId)) renderDrawerTags();
     renderizarCards();
     registrarLogAtividade('tag_adicionar', { pessoaIds: [String(pessoaId)], detalhes: { tag, origem: 'desfazer' } });

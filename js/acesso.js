@@ -101,7 +101,7 @@ async function popularSeletorNomesAcesso() {
     }
     nomesUsuariosAtivos = data.map(u => u.nome);
     select.innerHTML = '<option value="">Selecione seu nome...</option>' +
-        data.map(u => `<option value="${u.nome.replace(/"/g, '&quot;')}">${u.nome}</option>`).join('');
+        data.map(u => { const n = String(u.nome).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); return `<option value="${n}">${n}</option>`; }).join('');
 }
 
 // Roda antes de qualquer outro script depender do DOM — só CHECA e

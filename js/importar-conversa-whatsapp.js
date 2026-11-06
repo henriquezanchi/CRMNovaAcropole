@@ -457,7 +457,7 @@ function buscarLeadParaVincularConversa() {
         // usuário: "procurar os leads em cada filial pra fazer a
         // atribuição correta"), por isso mostra a filial de cada
         // resultado, pra diferenciar homônimos de unidades diferentes.
-        const termoSeguro = termo.replace(/,/g, ' ');
+        const termoSeguro = termo.replace(/[,()"\\]/g, ' ');
         const { data, error } = await window.supabaseClient
             .from(NOME_TABELA)
             .select('pessoaIdentificador, pessoaNome, pessoaTelefoneDDD, pessoaTelefoneNumero, filial')

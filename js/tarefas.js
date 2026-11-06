@@ -369,7 +369,7 @@ function buscarLeadParaTarefa(termo) {
     termo = termo.trim();
     if (termo.length < 2) { resultsEl.innerHTML = ''; return; }
     debounceBuscaLeadTarefa = setTimeout(async () => {
-        const termoSeguro = termo.replace(/,/g, ' ');
+        const termoSeguro = termo.replace(/[,()"\\]/g, ' ');
         const filialSelecionada = document.getElementById('tarefaFilial').value;
         // Sem filial escolhida (tarefa "Agência") busca em TODAS as
         // filiais — mesmo espírito de casamento cross-filial já usado na
