@@ -175,7 +175,7 @@ const TAGS_QUALIFICACAO_MERCURIO = ['Ativo', 'Aluno Ativo', 'Inativo', 'Ex-Aluno
     'Inativo reaproximando', 'Interesse a confirmar', 'Interesse declarado', 'Interesse declarado: não', 'Retorno: Só 1 Evento', 'Contribuição em Atraso'];
 function ehTagQualificacaoMercurio(tag) {
     const t = String(tag || '').trim();
-    return TAGS_QUALIFICACAO_MERCURIO.includes(t) || /^(Ativo: |Saída: |Temperatura: |Jornada:|Lead Forte)/.test(t)
+    return TAGS_QUALIFICACAO_MERCURIO.includes(t) || /^(Ativo: |Ex-aluno: |Saída: |Temperatura: |Jornada:|Lead Forte)/.test(t)
         || (t.startsWith('Conversa: ') && t !== 'Conversa: Mudou de Cidade')
         || (t.startsWith('Convite: ') && !['Convite: Não Pode Ir', 'Convite: Sem Interesse'].includes(t));
 }

@@ -4350,8 +4350,10 @@ const FAMILIAS_TAG = [
     // reaproximação (evento depois de sair, nos últimos 6 meses).
     {
         label: 'Saída',
-        testar: t => /^Saída: /.test(t) || ['Saída recente', 'Janela de resgate', 'Saída antiga', 'Inativo reaproximando'].includes(t),
+        testar: t => /^(Saída|Ex-aluno): /.test(t) || ['Saída recente', 'Janela de resgate', 'Saída antiga', 'Inativo reaproximando'].includes(t),
         classe: t => {
+            // Ex-aluno de outra escola (requalificação, 06/11/2026): contexto para a abordagem.
+            if (/^Ex-aluno: /.test(t)) return 'tag-convite-info';
             if (t === 'Inativo reaproximando' || t === 'Janela de resgate' || t === 'Saída: Pretende voltar') return 'tag-convite-confirmou';
             if (t === 'Saída: Não contatar' || t === 'Saída: Mudou de cidade' || t === 'Saída recente') return 'tag-convite-negativo';
             return 'tag-convite-neutro';

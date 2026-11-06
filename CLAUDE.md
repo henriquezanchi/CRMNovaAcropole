@@ -11280,3 +11280,19 @@ o contato/histórico da anterior. A causa já estava corrigida; sobrou a sujeira
   `mostrarAvisoContatoMercurio()`, `js/app.js`) quando telefone/e-mail do cadastro não bate com o Mercúrio —
   distingue "pessoa trocou de número" de "o CRM misturou".
 - Nomes: 101 cadastros diferem do Mercúrio só por acento; não é erro.
+
+## Cadastros soltos x Mercúrio, Jataí e "Ex-aluno: <escola>" (06/11/2026)
+
+- Varredura "cadastro sem vínculo com o Mercúrio cujo telefone/e-mail é de uma ficha" (caso real: aluna ativa
+  cadastrada com nome de teste virou lead): 21 da mesma escola; 20 mesclados/vinculados
+  (`migracao_mesclar_soltos_mercurio_20261106*.sql`, função reutilizável `crm_mesclar_cadastros(principal,
+  outros, autor)` em `migracao_mesclar_duplicados_varredura_20261106.sql`, mesma montagem de campos da mesclagem
+  pelo Mercúrio). 123 grupos de duplicados por mesmo contato + mesmo nome (erro de digitação/abreviação)
+  também mesclados no mesmo dia; gênero trocado, família por inicial e nome solto ficaram fora.
+- Jataí não tem `mercurio_unidade` (usa Rio Verde via `filial_cobranca_id`) e por isso NUNCA era
+  requalificada: 21 alunos ativos estavam como lead. `crm_requalificar_leads()` agora inclui escola agrupada
+  (`migracao_requalificacao_escola_agrupada.sql`); eles recebem "Ativo: Rio Verde" pelo critério "ativo em
+  outra filial".
+- Etiqueta "Ex-aluno: <escola>" (`migracao_tag_ex_aluno_outra_escola.sql`): sem ficha na própria escola mas INA
+  em outra, mesmo critério (contato + primeiro nome). Recalculada pela requalificação diária (está em
+  `crm_tag_qualificacao_mercurio`/`ehTagQualificacaoMercurio`). Não exclui de convite; é contexto.
