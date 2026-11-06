@@ -194,7 +194,7 @@ ${c.config?.instrucoes || "(nenhuma)"}
 - Saudação: no mesmo dia em que já falamos com a pessoa (inclusive o convite), a conversa só está continuando, mesmo depois de horas e mesmo que ela comece com "Boa tarde": não use saudação nenhuma ("Bom dia", "Boa tarde", "Boa noite", "Oi", "Olá"). Comece direto pelo assunto; pode usar o nome (ex.: "Regina, o Dia Mundial da Filosofia vai ser..."). Saudação só no aviso RETOMADA (conversa parada de um dia para o outro).
 - No WhatsApp a conversa continua ao longo de dias, sem encerrar nem reiniciar. Nunca anuncie que vai parar, encerrar ou continuar depois ("hoje não posso continuar", "volto amanhã", "vou encerrar por aqui", "amanhã retomamos"). Quando a conversa ficou parada de um dia para o outro (aviso RETOMADA), comece só com a saudação indicada (ex.: "Bom dia!") e continue de onde parou: nada de se apresentar de novo, repetir o convite do zero ou pedir desculpas pela demora. Se a pessoa se despedir, não responda ("resposta": null).
 - Mensagem que você não entendeu (frase truncada, ambígua, sem sentido claro, como "Mais não eu"): não adivinhe o que a pessoa quis dizer. Peça esclarecimento de forma simples, ex.: "Desculpe, não entendi. Pode me explicar?"
-- Tom: acompanhe a energia da pessoa. Resposta curta e neutra ("sim", "pode", "ok") pede resposta calma, sem ser seca: abra com algo simples como "Ótimo, então, ..." e siga com as informações, sem "Que legal!"/"Oba!", sem emoji e com no máximo uma exclamação na mensagem (muitas exclamações sobem o entusiasmo). Entusiasmo só quando a pessoa demonstrar entusiasmo (exclamações, emojis, "adorei", "que bom").
+- Tom: acompanhe a energia da pessoa. Resposta curta e neutra ("sim", "pode", "ok") pede resposta calma, sem ser seca: abra com algo simples como "Ótimo, então, a turma começa dia..." ("Ótimo, então" faz parte da primeira frase: nunca com dois-pontos nem com quebra de linha depois) e siga com as informações, sem "Que legal!"/"Oba!", sem emoji e com no máximo uma exclamação na mensagem (muitas exclamações sobem o entusiasmo). Entusiasmo só quando a pessoa demonstrar entusiasmo (exclamações, emojis, "adorei", "que bom").
 - Nome da pessoa: o convite já usou o nome. Nas respostas, use o nome no máximo uma vez na conversa inteira (de preferência na primeira resposta); depois, não repita. Repetir o nome a cada mensagem soa artificial.
 - Mensagem só de agradecimento, "ok", emoji ou despedida, sem pergunta pendente: "resposta": null (não precisa responder). Mas um "sim", "pode", "quero" respondendo a uma pergunta nossa SEMPRE merece resposta.
 - Quem fala: os convites saem em nome de Henrique, que é homem. Ao falar de si mesmo, use sempre o masculino ("obrigado", "tudo ótimo, obrigado", "fico feliz", "ocupado"), nunca "obrigada".
@@ -346,17 +346,37 @@ export function tirarNomeRepetido(texto: string, nome: string, conversa: string)
 // respondeu "Que legal, Max! 😊"). Se a última mensagem dela é curta e neutra
 // ("sim", "pode", "ok", sem exclamação nem emoji), tira a abertura entusiasmada.
 export function ajustarEntusiasmo(texto: string, conversa: string): string {
+    texto = corrigirAberturaEntao(texto);
     const linhas = conversa.split("\n").filter((l) => l.startsWith("Lead:"));
     const ultima = (linhas[linhas.length - 1] || "").replace(/^Lead:\s*/, "").trim();
     const neutra = ultima.split(/\s+/).filter(Boolean).length <= 4 && !/[!\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(ultima);
     if (!ultima || !neutra) return texto;
-    const t = texto.replace(/^\s*(que legal|que bom|que [óo]timo|[óo]timo|oba|perfeito|maravilha|que alegria)(,?\s+[A-Za-zÀ-ÿ]+)?\s*[!.]*\s*(\u{1F60A}|\u{1F642}|\u{1F64C})?\s*/iu, "");
+    if (/(^|\n)Ótimo, então, /.test(texto)) return umaExclamacao(texto);
+    const t = texto.replace(/^\s*(que legal|que bom|que [óo]timo|[óo]timo|oba|perfeito|maravilha|que alegria)(,?\s+(?!ent[ãa]o\b)[A-Za-zÀ-ÿ]+)?\s*[!.]*\s*(\u{1F60A}|\u{1F642}|\u{1F64C})?\s*/iu, "");
     // Abertura calma no lugar da entusiasmada: "Ótimo, então, o evento é dia..."
     let r = t && t !== texto ? "Ótimo, então, " + t[0].toLowerCase() + t.slice(1) : texto;
-    // No máximo uma exclamação na mensagem; as outras viram ponto final.
+    return umaExclamacao(r);
+}
+
+// No máximo uma exclamação na mensagem; as outras viram ponto final.
+function umaExclamacao(r: string): string {
     let vistas = 0;
-    r = r.replace(/!/g, () => (++vistas === 1 ? "!" : "."));
-    return r;
+    return r.replace(/!/g, () => (++vistas === 1 ? "!" : "."));
+}
+
+// "Ótimo, então" abre a frase seguinte, nunca é um título solto (casos de 06/11:
+// "Ótimo, então:" e "Ótimo, então, :" seguidos de quebra de linha). Junta com a
+// primeira frase: "Ótimo, então, a última turma de 2026 começa...".
+export function corrigirAberturaEntao(texto: string): string {
+    // Pode vir no começo ou logo depois de uma saudação ("Bom dia!" + linha em branco + "Ótimo, então: ...").
+    const m = texto.match(/(^|\n)[ \t]*[óo]timo\s*,?\s*ent[ãa]o\s*[,:.]?\s*/i);
+    if (!m || m.index === undefined) return texto;
+    const antes = texto.slice(0, m.index + m[1].length);
+    const resto = texto.slice(m.index + m[0].length).replace(/^[,:.\s]+/, "");
+    if (!resto) return texto;
+    // Minúscula só no começo de palavra comum ("A turma" -> "a turma"); sigla ou nome próprio fica.
+    const comum = /^(A|O|As|Os|É|Eu|Um|Uma|Antes|Mas|Essa|Esse|Esta|Este|Nossa|Nosso|Hoje|Amanhã|Ela|Ele)(?![A-Za-zÀ-ÿ])/.test(resto);
+    return antes + "Ótimo, então, " + (comum ? resto[0].toLowerCase() + resto.slice(1) : resto);
 }
 
 // Toda atividade divulgada pede inscrição (decisão do usuário, 05/11). Caso real
