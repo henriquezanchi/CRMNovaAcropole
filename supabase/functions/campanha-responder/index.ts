@@ -94,7 +94,7 @@ async function descreverEvento(eventoId: number) {
 
 async function escolasDaRegiao(filiais: string[], hojeISO: string): Promise<{ texto: string; links: string[]; eventos: { nome: string; link: string }[] }> {
     const { data: fs } = await supabaseAdmin.from("filiais")
-        .select("nome, nome_com_preposicao, endereco, link_maps_ulisses").in("nome", filiais);
+        .select("nome, nome_com_preposicao, endereco, link_maps_ulisses, valor_mensalidade").in("nome", filiais);
     const ate = new Date(`${hojeISO}T12:00:00Z`); ate.setUTCDate(ate.getUTCDate() + 45);
     const { data: evs } = await supabaseAdmin.from("eventos")
         .select("filial, nome, tipo, data, hora, link_inscricao")
@@ -106,7 +106,8 @@ async function escolasDaRegiao(filiais: string[], hojeISO: string): Promise<{ te
         const lista = proprios.filter((e: any) => { const k = `${e.nome}|${e.data}`; if (vistos.has(k)) return false; vistos.add(k); return true; })
             .slice(0, 6)
             .map((e: any) => `   - ${dataBR(e.data)}${e.hora ? " " + String(e.hora).slice(0, 5) : ""}: ${e.nome}${e.tipo ? ` (${e.tipo})` : ""}${e.link_inscricao ? ` — inscrição: ${e.link_inscricao}` : ""}`);
-        return `• Nova Acrópole ${f.nome_com_preposicao || f.nome} [${f.nome}]\n   Endereço: ${f.endereco || "não cadastrado (não informe endereço; ofereça o mapa)"} — mapa: ${linkMapsDaFilial(f)}\n   Próximas atividades:\n${lista.length ? lista.join("\n") : "   - nenhuma cadastrada"}`;
+        const mensalidade = Number(f.valor_mensalidade) > 0 ? `\n   Mensalidade do Curso de Filosofia para Viver: ${formatarReais(Number(f.valor_mensalidade))}` : "";
+        return `• Nova Acrópole ${f.nome_com_preposicao || f.nome} [${f.nome}]\n   Endereço: ${f.endereco || "não cadastrado (não informe endereço; ofereça o mapa)"} — mapa: ${linkMapsDaFilial(f)}${mensalidade}\n   Próximas atividades:\n${lista.length ? lista.join("\n") : "   - nenhuma cadastrada"}`;
     }).join("\n");
     return {
         texto,
@@ -165,7 +166,7 @@ ${c.config?.instrucoes || "(nenhuma)"}
 - A inscrição é feita pela própria pessoa no link. Você não inscreve ninguém e não confirma inscrição. Se ela disser que já se inscreveu, agradeça e diga que a esperamos.
 - Perguntas sobre estacionamento, acessibilidade, levar crianças/acompanhantes, duração exata, lanche ou qualquer dado que não está acima: não invente. Diga, em primeira pessoa, que vai ver isso e já responde (ex.: "Vou ver isso pra você e já te respondo!") e marque "precisa_humano": true com o motivo. Levar acompanhante: pode convidar, e o acompanhante também se inscreve pelo link.
 - Horário de término: se não estiver nos dados, nunca invente; diga que vai confirmar e marque "precisa_humano": true.
-- Valores (mensalidade, preço do curso, material, descontos): nunca informe nenhum valor, nem aproximado. Diga, em primeira pessoa, que vai ver isso e já te passa, e que na aula experimental dá para conhecer tudo com calma; marque "precisa_humano": true.
+- Valores (mensalidade, preço de curso ou evento, material, descontos): informe só o valor que está escrito nos dados acima (descrição do evento, instruções da campanha ou mensalidade cadastrada da escola), copiado exatamente, com "R$". Se o valor perguntado não estiver nos dados, nunca invente nem aproxime: diga, em primeira pessoa, que vai ver isso e já te passa, e marque "precisa_humano": true.
 - Duração, carga horária, frequência das aulas, conteúdo do curso, quem é o professor ou qualquer detalhe que não esteja nos dados acima: não diga. Responda, em primeira pessoa, que vai ver isso e já te passa, e marque "precisa_humano": true.
 - Você fala como a escola ("nós", "eu"), nunca como alguém de fora: nunca diga "a equipe da escola vai te chamar/explicar", porque a pessoa já está falando com a escola. Quando você disse que ia ver algo, quem traz a resposta é uma pessoa nesta mesma conversa, não você: se a pessoa disser "pode sim"/"ok", responda só algo curto como "Combinado! Já te passo.", sem trazer a informação, e marque "precisa_humano": true. Nunca diga que já verificou, confirmou ou consultou alguém: você não consulta ninguém.
 - Não suponha o que a pessoa já sabe ou já fez (ex.: "como você já conhece o curso") a menos que isso esteja nos dados.
@@ -173,7 +174,7 @@ ${c.config?.instrucoes || "(nenhuma)"}
 - Sempre que der os detalhes do evento, inclua o link de inscrição na mesma mensagem (não pergunte "posso mandar o link?") e escreva, com essas palavras, que as vagas são limitadas e por isso é importante garantir a vaga pelo link.
 - Inscrição: nunca diga que não precisa se inscrever, reservar ou garantir a vaga. Todas as atividades pedem inscrição pelo link.
 - Outras atividades da lista de escolas (palestras, cursos, aulas experimentais de outras datas): você só conhece nome, data, hora e link. Copie data, hora e link exatamente da linha daquela atividade (nunca troque o link pelo de outro evento, nunca use outra data). Não descreva o conteúdo além do nome, a menos que isso esteja nas instruções da campanha.
-- Entrada: palestras abertas das escolas têm entrada franca (gratuita). Cursos livres, workshops, oficinas e o Curso de Filosofia para Viver não são gratuitos: não fale de valor deles.
+- Entrada: palestras abertas das escolas têm entrada franca (gratuita). Cursos livres, workshops, oficinas e o Curso de Filosofia para Viver não são gratuitos: o valor deles só pode ser dito se estiver nos dados acima.
 - Curso de Filosofia para Viver: o que é gratuito é só a aula experimental. Nunca diga que a primeira aula, o curso ou a matrícula são gratuitos. Se a pessoa não puder ir à aula experimental (viagem, compromisso), diga que vai ver com a direção da escola se ela pode conhecer na primeira aula sem custo, e marque "precisa_humano": true. Nunca prometa que a primeira aula será gratuita.
 - Curso de Filosofia para Viver, formato: aulas uma vez por semana, com 2 horas de duração e intervalo de 20 minutos; o curso dura de 4 a 6 meses.
 - Outras cidades: a Nova Acrópole tem escolas em muitas cidades do Brasil, mas você não tem a lista nem os contatos delas. Nunca afirme que existe (ou que não existe) escola numa cidade específica: diga que ela pode procurar a unidade mais próxima no site acropole.org.br. Nunca ofereça "passar o contato".
@@ -390,8 +391,20 @@ export function corrigirInscricaoOpcional(texto: string): string {
 
 // Trava final antes de enviar: o robô nunca informa valor nem diz que consultou a
 // equipe (ele não consulta ninguém). Devolve o motivo do bloqueio, ou null.
-export function motivoBloqueioResposta(texto: string, linksPermitidos: string[] = []): string | null {
-    if (/R\$\s?\d|\d+(,\d{2})?\s?reais\b/i.test(texto)) return "informou valor em dinheiro";
+// Valores em centavos: "R$ 1.200,50", "R$200", "180 reais" -> 120050 / 20000 / 18000.
+export function valoresEmCentavos(texto: string): number[] {
+    const out: number[] = [];
+    for (const m of texto.matchAll(/R\$\s?(\d{1,3}(?:\.\d{3})*|\d+)(?:,(\d{2}))?|(\d{1,3}(?:\.\d{3})*|\d+)(?:,(\d{2}))?\s?reais\b/gi)) {
+        const inteiro = (m[1] || m[3] || "0").replace(/\./g, "");
+        out.push(Number(inteiro) * 100 + Number(m[2] || m[4] || 0));
+    }
+    return out;
+}
+
+export function motivoBloqueioResposta(texto: string, linksPermitidos: string[] = [], valoresPermitidos: number[] = []): string | null {
+    // Valor só sai se estiver cadastrado (descrição do evento, instruções ou mensalidade da escola).
+    const permitidosValor = new Set(valoresPermitidos);
+    for (const v of valoresEmCentavos(texto)) if (!permitidosValor.has(v)) return "informou valor que não está cadastrado";
     if (/(confirmei|conferi|verifiquei|consultei|chequei)\b[^.!?\n]{0,30}\b(equipe|escola|secretaria|professor)/i.test(texto)) return "disse que confirmou com a equipe";
     if (/primeira aula[^.!?\n]{0,40}(gratuit|de gra[çc]a|sem custo)/i.test(texto)) return "disse que a primeira aula é gratuita";
     const permitidos = new Set(linksPermitidos.map((l) => (l.match(/eventoId=(\d+)/) || [])[1]).filter(Boolean));
@@ -427,11 +440,28 @@ async function decidir(c: any, ev: any, ctx: any, conversa: string, hojeISO: str
         if (typeof d.resposta === "string") d.resposta = corrigirDatasDeAtividades(d.resposta, eventos);
         if (typeof d.resposta === "string") d.resposta = corrigirLinkAulaExperimental(d.resposta, eventos, String(ctx?.lead?.filial || ""));
         if (typeof d.resposta === "string") d.resposta = corrigirDiasDaSemana(d.resposta.replace(/\s—\s/g, ", ").replace(/\*\*/g, "").trim(), hojeISO) || null;
+        d.valores_permitidos = valoresEmCentavos(fixo + "\n" + String(c.config?.instrucoes || ""));
         d.links_permitidos = [...links, ev?.link_inscricao, c.config?.link_convite, ...(String(c.config?.instrucoes || "").match(/https?:\/\/\S+/g) || [])].filter(Boolean);
         return { decisao: d };
     } catch (e) {
         return { erro: "json_invalido: " + String(e), bruto };
     }
+}
+
+function formatarReais(v: number): string {
+    return "R$ " + v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// CallMeBot (WhatsApp pessoal do Henrique): secrets CALLMEBOT_PHONE e CALLMEBOT_APIKEY.
+// Best-effort: sem os secrets, ou se a API falhar, a resposta automática segue normal.
+async function avisarAtendimentoPendente(texto: string): Promise<void> {
+    const fone = Deno.env.get("CALLMEBOT_PHONE"), chave = Deno.env.get("CALLMEBOT_APIKEY");
+    if (!fone || !chave) return;
+    try {
+        const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(fone)}&text=${encodeURIComponent(texto)}&apikey=${encodeURIComponent(chave)}`;
+        const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
+        await r.body?.cancel();
+    } catch (e) { console.warn("CallMeBot:", String(e)); }
 }
 
 async function enviar(corpo: Record<string, unknown>) {
@@ -485,6 +515,7 @@ async function aplicarDecisao(pessoa: string, c: any, ev: any, d: any, filialLea
     if (d.nao_contatar) await alterarTags(pessoa, { adicionar: ["Não Contatar"] });
     if (d.precisa_humano) {
         await alterarTags(pessoa, { adicionar: ["Campanha: Falar com atendente"] });
+        await avisarAtendimentoPendente(`🔔 CRM: ${(c.nome || "Campanha").replace(/^Nova turma do Curso de Filosofia para Viver/i, "Nova turma")}\n${filialLead || ""} — ${d.motivo_humano || "pediu atendimento"}\nResponder no CRM (Mensagens).`);
         await supabaseAdmin.from("leads_inscricoes").update({ lembrete_em: hojeBrasilia(), lembrete_nota: `Campanha ${c.nome}: ${d.motivo_humano || "pediu atendimento"}` })
             .eq("pessoaIdentificador", pessoa);
     }
@@ -573,7 +604,7 @@ async function responder(pessoa: string, mensagemId: number | null, esperaSegund
     }
     const d = r.decisao;
     let status = "sem_resposta";
-    const bloqueio = d.resposta ? motivoBloqueioResposta(d.resposta, d.links_permitidos || []) : null;
+    const bloqueio = d.resposta ? motivoBloqueioResposta(d.resposta, d.links_permitidos || [], d.valores_permitidos || []) : null;
     if (bloqueio) {
         // Trava: não envia, e a conversa vai para atendimento humano (caso real 05/11:
         // o robô inventou "R$ 100,00" e disse que tinha confirmado com a equipe).
