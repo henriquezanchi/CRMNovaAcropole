@@ -485,6 +485,13 @@ Deno.serve(async (req) => {
                 // SÓ de envios que NÃO falharam.
                 if (statusMapeado === "falhou" && msgAtualizada?.pessoaIdentificador) {
                     await recomputarContatoRecente(msgAtualizada.pessoaIdentificador).catch((e) => console.error("Erro recomputando contato recente:", e));
+                    // 131026 "Message undeliverable": o número não recebe WhatsApp. Marca o
+                    // cadastro para os disparos em massa pararem de insistir (06/11/2026).
+                    // O telefone não é apagado (pode servir para ligação).
+                    if ((status.errors ?? []).some((e: any) => String(e?.code) === "131026")) {
+                        await alterarTags(msgAtualizada.pessoaIdentificador, { adicionar: ["WhatsApp não entrega"] })
+                            .catch((e) => console.error("Erro marcando WhatsApp não entrega:", e));
+                    }
                 }
             }
         }

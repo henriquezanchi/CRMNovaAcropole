@@ -3000,7 +3000,7 @@ let conviteApiSegmentoLeads = [];
 // escola/mudou de cidade"). Usado por QUALQUER disparo em massa
 // (Link/API/Janela Aberta/Prioridade Inteligente) — 1 ponto único, não
 // duplicado em cada fluxo. Estas SEMPRE excluem, nunca são opcionais.
-const TAGS_EXCLUSAO_CAMPANHA_WPP = ['Não Contatar', 'Convite: Não Pode Ir', 'Convite: Sem Interesse', 'Contato Recente: 7 dias', 'Conversa: Já é Aluno', 'Conversa: Mudou de Cidade'];
+const TAGS_EXCLUSAO_CAMPANHA_WPP = ['Não Contatar', 'Convite: Não Pode Ir', 'Convite: Sem Interesse', 'Contato Recente: 7 dias', 'Conversa: Já é Aluno', 'Conversa: Mudou de Cidade', 'WhatsApp não entrega'];
 
 // "Contato Recente: 30 dias" (8-30 dias atrás) é OPCIONAL, diferente das
 // acima — pedido do usuário (2026-10-08): "excluir, mas deixa um

@@ -11247,3 +11247,9 @@ página de acompanhamento para os dirigentes. No mesmo dia: Rio Verde e Jataí r
   (número sem WhatsApp) e 12 retenções 131049 ("healthy ecosystem"). Decisão do usuário: pendentes do dia cancelados
   (`campanha_fila.status='cancelado'`), DMF Goiânia de 200 para 50/dia, Catalão em espera
   (`migracao_campanha_dmf_catalao.sql` não aplicada). Não voltar a subir cota sem olhar 131049/131026 dos últimos dias.
+- **"WhatsApp não entrega" (06/11, `migracao_whatsapp_nao_entrega.sql`, JÁ RODADA):** a API da Meta não testa número
+  antes do envio, então o histórico serve de teste. Número que volta com erro 131026 ("Message undeliverable") ganha a
+  etiqueta (família Cadastro): na carga inicial 535 cadastros (498 números; 60 já tinham recebido 2+ envios, nenhum
+  respondeu); daqui em diante o `whatsapp-webhook` marca na hora. Bloqueada em `campanha_candidatos()` (por telefone)
+  e em `TAGS_EXCLUSAO_CAMPANHA_WPP` (Convidar Link/API/Janela Aberta, Disparo Inteligente). O telefone não é apagado
+  (serve para ligação); trocar o telefone na gaveta (`salvarTelefoneLead()`) tira a etiqueta.

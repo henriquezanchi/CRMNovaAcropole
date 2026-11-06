@@ -4409,7 +4409,7 @@ const FAMILIAS_TAG = [
     // lead, até alguém remover a tag manualmente — cor forte (igual
     // "Perdido"), é um bloqueio ativo, não uma classificação neutra.
     { label: 'Não Contatar', testar: t => t === 'Não Contatar', classe: () => 'tag-perdido' },
-    { label: 'Cadastro', testar: t => /^(Sem (Telefone|E-mail)|Conferir Telefone)$/i.test(t), classe: () => 'tag-warning' },
+    { label: 'Cadastro', testar: t => /^(Sem (Telefone|E-mail)|Conferir Telefone|WhatsApp não entrega)$/i.test(t), classe: () => 'tag-warning' },
     { label: 'Engajamento / SDR', testar: t => /(n[ãa]o atende|caixa postal|n[ãa]o responde|inv[áa]lido|no-?show)/i.test(t), classe: () => 'tag-error' },
     { label: 'Objeções', testar: t => /^objeç[ãa]o/i.test(t), classe: () => 'tag-warning' },
     { label: 'Interesses / Origem', testar: t => /^(interesse|busca autoconhecimento|s[áa]bado filos[óo]fico|filosofilme|voluntariado|indicaç[ãa]o de aluno)/i.test(t), classe: () => 'tag-success' },
@@ -5222,10 +5222,14 @@ async function salvarTelefoneLead() {
     const leadIndex = leadsAtuais.findIndex(l => String(l.pessoaIdentificador) === String(currentLeadId));
     if (leadIndex === -1) return;
 
+    const telefoneMudou = String(leadsAtuais[leadIndex].pessoaTelefoneDDD || '') !== String(ddd || '')
+        || String(leadsAtuais[leadIndex].pessoaTelefoneNumero || '') !== String(numero || '');
     leadsAtuais[leadIndex].pessoaTelefoneDDD = ddd;
     leadsAtuais[leadIndex].pessoaTelefoneNumero = numero;
 
     let tagsArray = parseTags(leadsAtuais[leadIndex].tags);
+    // Número novo: a falha de entrega era do número antigo (06/11/2026).
+    if (telefoneMudou) tagsArray = tagsArray.filter(t => t.trim() !== 'WhatsApp não entrega');
     const temTagSemTelefone = tagsArray.some(t => t.trim() === 'Sem Telefone');
     if (numero && temTagSemTelefone) tagsArray = tagsArray.filter(t => t.trim() !== 'Sem Telefone');
     else if (!numero && !temTagSemTelefone) tagsArray = [...tagsArray, 'Sem Telefone'];
