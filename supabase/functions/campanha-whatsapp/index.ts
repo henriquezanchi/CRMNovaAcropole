@@ -113,7 +113,7 @@ async function elegiveisFollowup(c: any, limite: number): Promise<any[]> {
     if (!enviados.length) return [];
     // Lista completa: com mais de 1000 2ªs tentativas, quem ficasse fora receberia outra.
     const jaTem = await todasAsLinhas(() => supabaseAdmin.from("campanha_fila").select('"pessoaIdentificador"')
-        .eq("campanha_id", c.id).eq("tipo", "followup").order("id"));
+        .eq("campanha_id", c.id).eq("tipo", "followup").neq("status", "cancelado").order("id"));
     const comFollowup = new Set(jaTem.map((r: any) => r.pessoaIdentificador));
     const saida: any[] = [];
     for (const e of enviados) {
@@ -186,18 +186,46 @@ async function planejar(c: any, forcar: boolean) {
         grupo: it.grupo, prioridade: it.prioridade, tipo: it.tipo, status: "pendente",
         agendado_para: new Date(inicio.getTime() + k * intervalo).toISOString(),
     }));
-    for (let k = 0; k < linhas.length; k += 500) {
-        const { error: e2 } = await supabaseAdmin.from("campanha_fila").upsert(linhas.slice(k, k + 500), { onConflict: "campanha_id,pessoaIdentificador,tipo", ignoreDuplicates: true });
+    // A fila aceita 1 linha por (campanha, pessoa, tipo). Quem tem linha CANCELADA (ex.: freio de 06/11)
+    // volta a ser candidato; a linha antiga é reaproveitada (volta a "pendente" com o horário novo),
+    // senão o upsert abaixo ignoraria a pessoa em silêncio e a cota do dia se perderia.
+    const reaproveitar = new Map<string, number>();
+    const pessoas = [...new Set(linhas.map((l) => l.pessoaIdentificador))];
+    for (let k = 0; k < pessoas.length; k += 200) {
+        const { data: canc, error: e1 } = await supabaseAdmin.from("campanha_fila").select("id, pessoaIdentificador, tipo")
+            .eq("campanha_id", c.id).eq("status", "cancelado").in("pessoaIdentificador", pessoas.slice(k, k + 200));
+        if (e1) throw new Error("falha_ler_cancelados: " + e1.message);
+        for (const r of canc || []) reaproveitar.set(`${r.pessoaIdentificador}|${r.tipo}`, r.id);
+    }
+    const novas = linhas.filter((l) => !reaproveitar.has(`${l.pessoaIdentificador}|${l.tipo}`));
+    const gravados: Record<string, number> = { convite: 0, followup: 0 };
+    for (const l of linhas) {
+        const id = reaproveitar.get(`${l.pessoaIdentificador}|${l.tipo}`);
+        if (!id) continue;
+        const { data: up, error: e3 } = await supabaseAdmin.from("campanha_fila")
+            .update({ status: "pendente", agendado_para: l.agendado_para, filial: l.filial, telefone_chave: l.telefone_chave,
+                grupo: l.grupo, prioridade: l.prioridade, motivo: null, enviado_em: null, wa_message_id: null })
+            .eq("id", id).eq("status", "cancelado").select("id");
+        if (e3) throw new Error("falha_reaproveitar_fila: " + e3.message);
+        if (up && up.length) gravados[l.tipo]++;
+    }
+    for (let k = 0; k < novas.length; k += 500) {
+        const { data: ins, error: e2 } = await supabaseAdmin.from("campanha_fila")
+            .upsert(novas.slice(k, k + 500), { onConflict: "campanha_id,pessoaIdentificador,tipo", ignoreDuplicates: true })
+            .select("tipo");
         if (e2) throw new Error("falha_gravar_fila: " + e2.message);
+        for (const r of ins || []) gravados[r.tipo]++;
     }
     await supabaseAdmin.from("log_atividade").insert({
         filial: "GLOBAL", acao: "campanha_planejada", autor: "Campanha automática",
-        detalhes: { campanha: c.slug, dia: hoje, convites: conv.length, segunda_tentativa: fol.length, limite_meta: limiteMeta, intervalo_segundos: Math.round(intervalo / 1000), freio },
+        detalhes: { campanha: c.slug, dia: hoje, convites: gravados.convite, segunda_tentativa: gravados.followup,
+            convites_escolhidos: conv.length, segunda_tentativa_escolhida: fol.length, reaproveitados_cancelados: reaproveitar.size,
+            limite_meta: limiteMeta, intervalo_segundos: Math.round(intervalo / 1000), freio },
     });
     // Resumo do banco a convidar, para o painel dos dirigentes (consulta cara, 1x por planejamento).
     const { data: banco } = await supabaseAdmin.rpc("campanha_banco_resumo", { p_campanha: c.id });
     if (banco) await supabaseAdmin.from("campanhas_whatsapp").update({ config: { ...(c.config || {}), banco, banco_em: new Date().toISOString() } }).eq("id", c.id);
-    return { campanha: c.slug, convites: conv.length, segundaTentativa: fol.length, intervaloSegundos: Math.round(intervalo / 1000), limiteMeta, freio };
+    return { campanha: c.slug, convites: gravados.convite, segundaTentativa: gravados.followup, intervaloSegundos: Math.round(intervalo / 1000), limiteMeta, freio };
 }
 
 async function chamarEnvio(corpo: Record<string, unknown>) {
