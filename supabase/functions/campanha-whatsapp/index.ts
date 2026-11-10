@@ -9,6 +9,7 @@
 //   {acao:"enviar"}             envia o que já venceu na fila (cron a cada minuto).
 //   {acao:"modelos"}            lista os modelos aprovados na Meta.
 //   {acao:"status"}             números da campanha.
+//   {acao:"criar_modelo", waba, modelo} cria um modelo na Meta (fica em análise).
 //
 // Limite da Meta: conversas iniciadas por nós com no máximo N pessoas
 // diferentes em 24h corridas (TIER_250 hoje). O planejamento e cada envio
@@ -352,6 +353,20 @@ async function listarModelos() {
     return saida;
 }
 
+// Cria um modelo na Meta (09/11/2026: versões dos convites com botão "Parar mensagens").
+// Corpo: {acao:"criar_modelo", waba, modelo:{name, language, category, components}}.
+async function criarModelo(waba: string, modelo: any) {
+    if (!/^\d+$/.test(String(waba || "")) || !modelo?.name) return { erro: "waba_ou_modelo_invalido" };
+    const r = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${waba}/message_templates`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${Deno.env.get("WHATSAPP_TOKEN")}`, "Content-Type": "application/json" },
+        body: JSON.stringify(modelo),
+    }).then((x) => x.json());
+    await supabaseAdmin.from("log_atividade").insert({ filial: "GLOBAL", acao: "modelo_whatsapp_criado", autor: "Claude (pedido do usuário)",
+        detalhes: { waba, nome: modelo.name, resposta: r } });
+    return r;
+}
+
 async function status() {
     const campanhas = await campanhasAtivas();
     const saida: any[] = [];
@@ -382,6 +397,7 @@ Deno.serve(async (req) => {
         }
         if (corpo.acao === "enviar") return json({ ok: true, enviados: await enviar() });
         if (corpo.acao === "modelos") return json({ ok: true, modelos: await listarModelos() });
+        if (corpo.acao === "criar_modelo") return json({ ok: true, resposta: await criarModelo(corpo.waba, corpo.modelo) });
         if (corpo.acao === "status") return json({ ok: true, ...(await status()) });
         return json({ ok: false, erro: "acao_desconhecida" }, 400);
     } catch (e) {

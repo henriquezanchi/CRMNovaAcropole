@@ -56,6 +56,8 @@ const PEDIDO_NAO_CONTATAR = [
     /(remover|excluir|tirar)\s+(o\s+)?meu\s+(n[uú]mero|contato|telefone)/i,
     /n[ãa]o\s+quero\s+(mais\s+)?receber\s+(mais\s+)?(mensage|contato|convite)/i,
     /n[ãa]o\s+(me\s+)?(contatem|contate|liguem)\s+mais/i,
+    // Palavra sozinha ou botão "Parar mensagens" dos modelos de convite (09/11/2026).
+    /^\s*(pare|parar|sair|stop|cancelar|descadastrar|parar mensagens|parar promo[çc][õo]es)\s*[.!]*\s*$/i,
 ];
 async function registrarPedidoNaoContatar(pessoa: string, texto: string) {
     if (!texto || !PEDIDO_NAO_CONTATAR.some((re) => re.test(texto))) return;
@@ -491,6 +493,11 @@ Deno.serve(async (req) => {
                     if ((status.errors ?? []).some((e: any) => String(e?.code) === "131026")) {
                         await alterarTags(msgAtualizada.pessoaIdentificador, { adicionar: ["WhatsApp não entrega"] })
                             .catch((e) => console.error("Erro marcando WhatsApp não entrega:", e));
+                    }
+                    // 131050: a pessoa parou as mensagens de marketing da empresa no próprio WhatsApp.
+                    if ((status.errors ?? []).some((e: any) => String(e?.code) === "131050")) {
+                        await registrarPedidoNaoContatar(msgAtualizada.pessoaIdentificador, "parar")
+                            .catch((e) => console.error("Erro marcando Não Contatar (131050):", e));
                     }
                 }
             }
