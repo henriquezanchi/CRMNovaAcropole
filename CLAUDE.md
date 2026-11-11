@@ -11296,3 +11296,13 @@ o contato/histórico da anterior. A causa já estava corrigida; sobrou a sujeira
 - Etiqueta "Ex-aluno: <escola>" (`migracao_tag_ex_aluno_outra_escola.sql`): sem ficha na própria escola mas INA
   em outra, mesmo critério (contato + primeiro nome). Recalculada pela requalificação diária (está em
   `crm_tag_qualificacao_mercurio`/`ehTagQualificacaoMercurio`). Não exclui de convite; é contexto.
+
+## Campanhas: 200/dia e escola sem abertura de turma (11/11/2026)
+
+Total combinado: 200 mensagens de campanha por dia (convite + 2ª tentativa): DMF Goiânia 50 (até 12/11), Barra 5,
+turmas (Jardim América 40, Universitário 33, Setor Oeste 15, Goiânia II 15, Catalão 15, Eldorado 12; Alto da Glória
+pausada) e Cidade Jardim 15. Regra combinada: escola sem abertura de turma convida para os eventos dela publicados
+no Ulisses, uma campanha por evento em sequência (`migracao_campanhas_cidade_jardim_eventos.sql`: palestra 21/11,
+depois Café com Filosofia 28/11). Garavelo não tem evento futuro no Ulisses e fica sem campanha. Catalão não está na
+aula experimental compartilhada (Ulisses 24698): o robô indica a palestra de 18/11 (24678). Painel de escola com
+campanha de evento mostra "Campanhas de eventos da escola" em vez de "abertura de turma".

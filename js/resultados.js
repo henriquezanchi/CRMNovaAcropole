@@ -547,7 +547,7 @@
     // + os números da escola), sem abas (pedido do usuário, 05/11).
     if (dados.escola_unica) lista = [{ id: 'campanha', nome: 'Campanha', fn: function () {
       var box = el('div');
-      (dados.campanhas || []).forEach(function (c) { box.appendChild(secaoCampanha(c, true)); });
+      (dados.campanhas || []).forEach(function (c) { box.appendChild(secaoCampanha(c, /^nova turma/i.test((c.campanha && c.campanha.nome) || ''))); });
       box.appendChild(secaoConfigTurma());
       if (dados.escolas) box.appendChild(secaoEscolas(dados.escolas));
       return box;
@@ -583,9 +583,12 @@
         // Link de uma escola: o título é a campanha de abertura de turma e a data dela.
         if (dados.escola_unica) {
           var ct = (dados.campanhas || [])[0], evt = ct && ct.evento;
-          document.querySelector('h1').textContent = 'Campanha de abertura de turma';
-          document.title = 'Campanha de abertura de turma';
-          document.getElementById('rotulo').textContent = nomeEscola(dados.rotulo) + (evt && evt.data ? ' · abertura em ' + dataCurta(evt.data) + (evt.hora ? ', às ' + String(evt.hora).slice(0, 5) : '') : '');
+          // Escola sem abertura de turma convida para os eventos dela no Ulisses (11/11/2026).
+          var ehTurma = !ct || /^nova turma/i.test((ct.campanha && ct.campanha.nome) || '');
+          var titulo = ehTurma ? 'Campanha de abertura de turma' : 'Campanhas de eventos da escola';
+          document.querySelector('h1').textContent = titulo;
+          document.title = titulo;
+          document.getElementById('rotulo').textContent = nomeEscola(dados.rotulo) + (evt && evt.data ? ' · ' + (ehTurma ? 'abertura em ' : 'próximo evento em ') + dataCurta(evt.data) + (evt.hora ? ', às ' + String(evt.hora).slice(0, 5) : '') : '');
         }
         renderizarBarraDiretor();
         var quando = dados.gerado_em ? new Date(dados.gerado_em) : new Date();
