@@ -383,8 +383,36 @@
       ]));
     }
 
+    // Inscritos no Ulisses agrupados pela escola do cadastro (todos os inscritos, não só os
+    // que vieram do convite). Só faz sentido quando o evento reúne mais de uma escola.
+    var porEscolaInsc = {};
+    (c.inscritos || []).forEach(function (x) {
+      var k = x.escola || '';
+      var e = porEscolaInsc[k] || (porEscolaInsc[k] = { t: 0, a: 0, f: 0, v: 0, p: 0 });
+      e.t++; if (x.aluno) e.a++; else e.f++; if (x.via_convite) e.v++; if (x.compareceu === true) e.p++;
+    });
+    var escolasInsc = Object.keys(porEscolaInsc);
+    if (!turma && escolasInsc.length > 1) {
+      var temPresenca = (c.inscritos || []).some(function (x) { return x.compareceu === true || x.compareceu === false; });
+      s.appendChild(el('h3', { texto: 'Inscritos por escola' }));
+      var ti = { t: 0, a: 0, f: 0, v: 0, p: 0 };
+      var linhasInsc = escolasInsc.sort(function (a, b) { return porEscolaInsc[b].t - porEscolaInsc[a].t; }).map(function (k) {
+        var e = porEscolaInsc[k];
+        ti.t += e.t; ti.a += e.a; ti.f += e.f; ti.v += e.v; ti.p += e.p;
+        var cel = [k ? nomeEscola(k) : 'Sem escola no cadastro', num(e.t), num(e.a), num(e.f), num(e.v)];
+        if (temPresenca) cel.push(num(e.p));
+        return { celulas: cel };
+      });
+      var celTot = ['Total', num(ti.t), num(ti.a), num(ti.f), num(ti.v)];
+      if (temPresenca) celTot.push(num(ti.p));
+      linhasInsc.push({ classe: 'total', celulas: celTot });
+      var cabInsc = ['Escola', 'Inscritos', 'Alunos', 'De fora', 'Vieram do convite'];
+      if (temPresenca) cabInsc.push('Presentes');
+      s.appendChild(tabela(cabInsc, linhasInsc, temPresenca ? [1, 2, 3, 4, 5] : [1, 2, 3, 4]));
+    }
+
     if ((c.por_escola || []).length && !(turma && dados.escola_unica)) {
-      s.appendChild(el('h3', { texto: 'Por escola de origem do convidado' }));
+      s.appendChild(el('h3', { texto: 'Convites por escola de origem do convidado' }));
       var tot = { c: 0, r: 0, i: 0 };
       var linhas = c.por_escola.map(function (e) {
         tot.c += e.convidados; tot.r += e.responderam; tot.i += e.inscritos;
