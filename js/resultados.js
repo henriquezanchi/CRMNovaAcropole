@@ -340,7 +340,9 @@
     var s = el('section');
     var ev = c.evento || {}, n = c.numeros || {}, meta = Number(c.campanha && c.campanha.meta_presentes_fora) || 50;
     s.appendChild(el('h2', { texto: (c.campanha && c.campanha.nome) || 'Campanha' }));
-    s.appendChild(el('p', { classe: 'sub', texto: (turma ? 'Abertura em ' : 'Evento em ') + dataCurta(ev.data) + ' às ' + String(ev.hora || '').slice(0, 5) + '. Convites pelo WhatsApp para quem já participou de atividades da Nova Acrópole e ' + (turma ? 'ainda não é aluno.' : 'não é aluno.') }));
+    var semEvento = !ev.data && !turma;
+    if (semEvento) s.appendChild(el('p', { classe: 'sub', texto: 'Conversas de relacionamento pelo WhatsApp com quem já participou de atividades da escola, sem convite para um evento específico.' }));
+    else s.appendChild(el('p', { classe: 'sub', texto: (turma ? 'Abertura em ' : 'Evento em ') + dataCurta(ev.data) + ' às ' + String(ev.hora || '').slice(0, 5) + '. Convites pelo WhatsApp para quem já participou de atividades da Nova Acrópole e ' + (turma ? 'ainda não é aluno.' : 'não é aluno.') }));
 
     var m = el('div', { classe: 'meta' });
     if (turma) { m.appendChild(metaTurma(c)); } else {
@@ -360,7 +362,7 @@
       m.appendChild(barra(ocup, vagas, ocup >= vagas * 0.9 ? 'cheia' : 'amarela'));
     }
     }
-    s.appendChild(m);
+    if (!semEvento) s.appendChild(m);
 
     s.appendChild(el('div', { classe: 'cartoes' }, [
       cartao(num(n.convites_enviados), 'convites enviados', n.agendados ? num(n.agendados) + ' agendados hoje' : ''),
@@ -548,24 +550,26 @@
     // Campanhas da mesma ação em várias escolas (Nova turma, Dia Mundial da Filosofia) viram
     // uma aba só, com a escola escolhida numa lista dentro dela — abas sem barra de rolagem (06/11).
     var grupos = [{ id: "dmf", nome: "Dia Mundial da Filosofia", re: /^dia mundial da filosofia/i, turma: false, base: "Goiânia", itens: [] },
-                  { id: "turmas", nome: "Novas turmas", re: /^nova turma/i, turma: true, base: "", itens: [] }];
+                  { id: "turmas", nome: "Novas turmas", re: /^nova turma/i, turma: true, base: "", itens: [] },
+                  // Demais campanhas (eventos de uma escola, relacionamento) ficam juntas, escolhidas
+                  // pelo nome completo, em vez de uma aba solta para cada (pedido do usuário, 11/11).
+                  { id: "outras", nome: "Outras ações", re: /./, turma: false, base: "", nomeCompleto: true, itens: [] }];
     (dados.campanhas || []).forEach(function (c, i) {
       var nomeC = (c.campanha && c.campanha.nome) || "Campanha";
       var g = grupos.filter(function (x) { return x.re.test(nomeC); })[0];
-      if (g) { g.itens.push(c); return; }
-      lista.push({ id: "c" + i, nome: nomeC, fn: function () { return secaoCampanha(c); } });
+      g.itens.push(c);
     });
     grupos.forEach(function (g) {
       if (!g.itens.length) return;
-      if (g.itens.length === 1) { lista.push({ id: g.id, nome: (g.itens[0].campanha && g.itens[0].campanha.nome) || g.nome, fn: function () { return secaoCampanha(g.itens[0], g.turma); } }); return; }
+      if (g.itens.length === 1 && !g.nomeCompleto) { lista.push({ id: g.id, nome: (g.itens[0].campanha && g.itens[0].campanha.nome) || g.nome, fn: function () { return secaoCampanha(g.itens[0], g.turma); } }); return; }
       lista.push({ id: g.id, nome: g.nome, fn: function () {
         var box = el("div");
-        var nomeEsc = function (c) { var n = (c.campanha && c.campanha.nome) || ""; var p = n.split(" - "); return p.length > 1 ? p.slice(1).join(" - ") : (g.base || n); };
+        var nomeEsc = function (c) { var n = (c.campanha && c.campanha.nome) || ""; if (g.nomeCompleto) return n || "Campanha"; var p = n.split(" - "); return p.length > 1 ? p.slice(1).join(" - ") : (g.base || n); };
         var atual = escolhaGrupo[g.id] || 0; if (atual >= g.itens.length) atual = 0;
         var sel = el("select", { classe: "seletor-escola", "aria-label": "Escola" });
         g.itens.forEach(function (c, i) { var o = el("option", { value: String(i), texto: nomeEsc(c) }); if (i === atual) o.selected = true; sel.appendChild(o); });
         sel.addEventListener("change", function () { escolhaGrupo[g.id] = Number(sel.value); montar(); });
-        box.appendChild(el("label", { classe: "seletor-escola-rotulo" }, ["Escola ", sel]));
+        box.appendChild(el("label", { classe: "seletor-escola-rotulo" }, [g.nomeCompleto ? "Ação " : "Escola ", sel]));
         box.appendChild(secaoCampanha(g.itens[atual], g.turma));
         return box;
       } });
