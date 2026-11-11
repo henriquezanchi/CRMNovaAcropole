@@ -103,6 +103,8 @@ footer { margin-top: 36px; font-size: 13px; color: var(--suave); border-top: 1px
 .fala { padding: 8px 10px; border-radius: 10px; margin: 4px 0; max-width: 90%; white-space: pre-wrap; }
 .fala-pessoa { background: #f1f5f3; }
 .fala-escola { background: #dcf3e8; margin-left: auto; }
+.fala-quem { font-size: 11px; color: #6b7280; margin: 10px 0 0; }
+.fala-quem-escola { text-align: right; }
 .config-turma { background: #fff; border: 1px solid var(--linha); border-radius: 12px; padding: 12px 14px; margin: 10px 0; }
 .config-grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
 .config-grade label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--suave); }

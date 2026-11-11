@@ -65,6 +65,24 @@ async function registrarLog(filial: string, acao: string, autor: string, pessoaI
     if (error) console.warn("log_atividade:", error.message);
 }
 
+// Texto legível de uma mensagem para o diretor (11/11/2026): antes, tudo que
+// não era texto digitado aparecia só como "[template]"/"[imagem]".
+function textoMensagemPainel(m: any): string {
+    const corpo = String(m.corpo_texto || "").trim();
+    const util = corpo && !/^\[(template|mensagem tipo|imagem|áudio|audio|v[íi]deo|documento|figurinha)/i.test(corpo) ? corpo : "";
+    switch (m.tipo) {
+        case "texto": return corpo;
+        case "template": return util ? `Mensagem automática da campanha:
+${util}` : "Mensagem automática da campanha.";
+        case "imagem": return util ? `📷 Foto: ${util}` : "📷 Foto";
+        case "audio": return "🎤 Áudio";
+        case "video": return util ? `🎬 Vídeo: ${util}` : "🎬 Vídeo";
+        case "documento": return util ? `📄 Documento: ${util}` : "📄 Documento";
+        case "sticker": return "Figurinha";
+        default: return util || "Mensagem sem texto";
+    }
+}
+
 Deno.serve(async (req) => {
     const origem = req.headers.get("Origin");
     const h = cabecalhos(origem);
@@ -168,14 +186,15 @@ Deno.serve(async (req) => {
             try { let v: unknown = lead.tags; for (let i = 0; i < 3 && typeof v === "string"; i++) v = JSON.parse(v); if (Array.isArray(v)) tags = v.map(String); } catch { /* */ }
             const { data: mem } = await supabaseAdmin.from("crm_memoria_conversa").select("resumo, proximo_passo, atualizado_em")
                 .eq("pessoa", pid).order("atualizado_em", { ascending: false }).limit(1).maybeSingle();
-            const { data: msgs } = await supabaseAdmin.from("mensagens_whatsapp").select("direcao, corpo_texto, criado_em, tipo")
+            const { data: msgs } = await supabaseAdmin.from("mensagens_whatsapp").select("direcao, corpo_texto, criado_em, tipo, wa_status")
                 .eq("pessoaIdentificador", pid).neq("wa_status", "falhou").order("criado_em", { ascending: false }).limit(6);
             return responder({
                 ok: true, nome: nomeLead,
                 situacao: tags.filter((t) => /^(Campanha: |Não Contatar|Temperatura: |Convite: |Conversa: )/.test(t)),
                 resumo_conversa: mem?.resumo || null, proximo_passo: mem?.proximo_passo || null,
                 anotacoes: lead.resumo_ia || null, ultimo_contato: lead.ultimo_contato_em,
-                ultimas_mensagens: (msgs || []).reverse().map((m: any) => ({ de: m.direcao === "entrada" ? "pessoa" : "escola", texto: m.tipo === "texto" ? String(m.corpo_texto || "") : `[${m.tipo}]`, em: m.criado_em })),
+                ultimas_mensagens: (msgs || []).reverse().map((m: any) => ({ de: m.direcao === "entrada" ? "pessoa" : "escola", texto: textoMensagemPainel(m), em: m.criado_em,
+                    situacao: m.direcao === "saida" ? ({ enviado: "enviada", entregue: "entregue", lido: "lida" } as Record<string, string>)[m.wa_status] || null : null })),
             });
         }
         if (acao === "nao_contatar") {

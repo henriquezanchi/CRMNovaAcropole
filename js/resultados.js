@@ -241,13 +241,30 @@
       var caixa = el('div', { classe: 'folha-caixa' });
       var fechar = el('button', { type: 'button', classe: 'secundario', texto: 'Fechar' }); fechar.addEventListener('click', function () { folha.remove(); });
       caixa.appendChild(el('div', { classe: 'folha-topo' }, [el('strong', { texto: nomeProprio(j.nome) }), fechar]));
-      if ((j.situacao || []).length) caixa.appendChild(el('p', { classe: 'muted', texto: j.situacao.join(' · ') }));
+      // Etiquetas em linguagem do diretor (11/11/2026: "Temperatura: Fria" não explicava nada).
+      var EXPLICA = {
+        'Temperatura: Quente': 'Interesse recente: inscrição ou presença em evento, ou mensagem nas últimas 2 semanas',
+        'Temperatura: Morna': 'Teve contato com a escola nos últimos 6 meses',
+        'Temperatura: Fria': 'Sem contato com a escola nos últimos 6 meses',
+        'Não Contatar': 'Pediu para não ser contatado'
+      };
+      var sit = (j.situacao || []).map(function (t) { return EXPLICA[t] || t.replace(/^Campanha: /, 'Campanha: ').replace(/^Convite: /, 'Resposta ao convite: ').replace(/^Conversa: /, 'Conversa: '); });
+      if (sit.length) caixa.appendChild(el('p', { classe: 'muted', texto: sit.join(' · ') }));
       if (j.resumo_conversa) { caixa.appendChild(el('h4', { texto: 'O que a conversa mostrou' })); caixa.appendChild(el('p', { texto: j.resumo_conversa })); }
       if (j.proximo_passo) caixa.appendChild(el('p', { classe: 'muted', texto: 'Próximo passo: ' + j.proximo_passo }));
       if (j.anotacoes) { caixa.appendChild(el('h4', { texto: 'Anotações da equipe' })); caixa.appendChild(el('p', { classe: 'pre', texto: j.anotacoes })); }
       if ((j.ultimas_mensagens || []).length) {
         caixa.appendChild(el('h4', { texto: 'Últimas mensagens' }));
-        j.ultimas_mensagens.forEach(function (m) { caixa.appendChild(el('p', { classe: 'fala ' + (m.de === 'escola' ? 'fala-escola' : 'fala-pessoa'), texto: m.texto })); });
+        var msgs = j.ultimas_mensagens, respondeu = msgs.some(function (m) { return m.de === 'pessoa'; });
+        var quandoMsg = function (iso) { var d = new Date(iso); return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' às ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); };
+        if (!respondeu) {
+          var ult = msgs[msgs.length - 1];
+          caixa.appendChild(el('p', { classe: 'muted', texto: 'Recebeu ' + (msgs.length > 1 ? 'nossas mensagens' : 'nossa mensagem') + (ult.situacao === 'lida' ? ' e leu' : '') + ', mas ainda não respondeu.' }));
+        }
+        msgs.forEach(function (m) {
+          caixa.appendChild(el('p', { classe: 'fala-quem ' + (m.de === 'escola' ? 'fala-quem-escola' : ''), texto: (m.de === 'escola' ? 'Escola' : nomeProprio(j.nome)) + ' · ' + quandoMsg(m.em) + (m.situacao ? ' · ' + m.situacao : '') }));
+          caixa.appendChild(el('p', { classe: 'fala ' + (m.de === 'escola' ? 'fala-escola' : 'fala-pessoa'), texto: m.texto }));
+        });
       }
       if (!j.resumo_conversa && !j.anotacoes && !(j.ultimas_mensagens || []).length) caixa.appendChild(el('p', { classe: 'muted', texto: 'Ainda não há conversa registrada com esta pessoa.' }));
       folha.textContent = ''; folha.appendChild(caixa);
