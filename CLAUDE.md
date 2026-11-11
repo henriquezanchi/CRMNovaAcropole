@@ -11306,3 +11306,7 @@ no Ulisses, uma campanha por evento em sequência (`migracao_campanhas_cidade_ja
 depois Café com Filosofia 28/11). Garavelo não tem evento futuro no Ulisses e fica sem campanha. Catalão não está na
 aula experimental compartilhada (Ulisses 24698): o robô indica a palestra de 18/11 (24678). Painel de escola com
 campanha de evento mostra "Campanhas de eventos da escola" em vez de "abertura de turma".
+Escola sem turma e sem evento: campanha de relacionamento (`migracao_campanha_relacionamento*.sql`), modelo
+`contato_ulisses` preenchido com o último evento do histórico (`ultimoEventoDoLead()`, campanha-whatsapp), só quem
+teve evento nos últimos 12 meses (`config.ultimo_evento_desde`), sem 2ª tentativa. Garavelo: 15/dia até 30/11
+(Jardim América 32, Universitário 26 para manter 200/dia). Ordem por escola: turma → eventos do Ulisses → relacionamento.
