@@ -313,10 +313,14 @@ function paramsDoModelo(nome: string, c: any, lead: any, filialPrep: string): st
 const ERRO_PAGAMENTO = "131042";
 const MINUTOS_TESTE_PAGAMENTO = 10;
 async function estadoPagamento(): Promise<{ bloqueado: boolean; podeTestar: boolean }> {
-    const { data: ultimo } = await supabaseAdmin.from("mensagens_whatsapp").select("wa_status, wa_status_erro")
+    // Último resultado que diz algo sobre a CONTA: entrega, ou falha por pagamento. Falhas de um
+    // número só (sem WhatsApp, 131026; ecossistema, 131049) não contam — em 11/11 a última falha foi
+    // 131026 e escondeu o 131042 logo antes.
+    const { data: recentes } = await supabaseAdmin.from("mensagens_whatsapp").select("wa_status, wa_status_erro")
         .eq("direcao", "saida").eq("tipo", "template").in("wa_status", ["entregue", "lido", "falhou"])
-        .order("criado_em", { ascending: false }).limit(1).maybeSingle();
-    const bloqueado = !!ultimo && ultimo.wa_status === "falhou" && JSON.stringify(ultimo.wa_status_erro || "").includes(ERRO_PAGAMENTO);
+        .order("criado_em", { ascending: false }).limit(30);
+    const ultimo = (recentes || []).find((m: any) => m.wa_status !== "falhou" || JSON.stringify(m.wa_status_erro || "").includes(ERRO_PAGAMENTO));
+    const bloqueado = !!ultimo && ultimo.wa_status === "falhou";
     if (!bloqueado) return { bloqueado: false, podeTestar: true };
     const { count: recentes } = await supabaseAdmin.from("mensagens_whatsapp").select("id", { count: "exact", head: true })
         .eq("direcao", "saida").eq("tipo", "template").gte("criado_em", new Date(Date.now() - MINUTOS_TESTE_PAGAMENTO * 60_000).toISOString());
