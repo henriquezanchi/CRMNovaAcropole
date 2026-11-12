@@ -152,6 +152,41 @@ async function elegiveisFollowup(c: any, limite: number): Promise<any[]> {
     return saida;
 }
 
+// Divide "total" convites entre as escolas: primeiro um mínimo para cada (se houver gente), depois
+// o resto proporcional ao tamanho do banco de cada escola (maiores restos). Dentro de cada escola,
+// a ordem de prioridade de sempre. "lista" já vem ordenada por prioridade.
+function dividirPorEscola(lista: any[], total: number, minimo: number): any[] {
+    const grupos = new Map<string, any[]>();
+    for (const x of lista) { const k = x.filial || ""; if (!grupos.has(k)) grupos.set(k, []); grupos.get(k)!.push(x); }
+    const escolas = [...grupos.keys()];
+    if (!escolas.length || total <= 0) return [];
+    const cota = new Map<string, number>();
+    const minEfetivo = Math.min(minimo, Math.floor(total / escolas.length));
+    let resto = total;
+    for (const e of escolas) { const v = Math.min(minEfetivo, grupos.get(e)!.length); cota.set(e, v); resto -= v; }
+    while (resto > 0) {
+        const abertas = escolas.filter((e) => grupos.get(e)!.length > cota.get(e)!);
+        if (!abertas.length) break;
+        const banco = abertas.reduce((t, e) => t + grupos.get(e)!.length, 0);
+        const partes = abertas.map((e) => ({ e, ideal: (resto * grupos.get(e)!.length) / banco }));
+        let distribuido = 0;
+        for (const p of partes) {
+            const add = Math.min(Math.floor(p.ideal), grupos.get(p.e)!.length - cota.get(p.e)!);
+            cota.set(p.e, cota.get(p.e)! + add); distribuido += add;
+        }
+        let sobra = resto - distribuido;
+        for (const p of partes.sort((a, b) => (b.ideal % 1) - (a.ideal % 1))) {
+            if (sobra <= 0) break;
+            if (grupos.get(p.e)!.length > cota.get(p.e)!) { cota.set(p.e, cota.get(p.e)! + 1); sobra--; distribuido++; }
+        }
+        if (distribuido === 0) break;
+        resto -= distribuido;
+    }
+    const escolhidos: any[] = [];
+    for (const e of escolas) escolhidos.push(...grupos.get(e)!.slice(0, cota.get(e)!));
+    return escolhidos.sort((a, b) => Number(b.prioridade || 0) - Number(a.prioridade || 0));
+}
+
 async function planejar(c: any, forcar: boolean) {
     const hoje = hojeBrasilia();
     const inicioDia = instanteBrasilia(hoje, c.janela_inicio);
@@ -198,11 +233,19 @@ async function planejar(c: any, forcar: boolean) {
             else if (inscritos >= vagas * 0.9) { convitesQtd = Math.min(convitesQtd, 150); freio = `reduzido: ${inscritos}/${vagas} inscritos`; }
         }
     }
+    // config.cota_por_escola (12/11/2026, DMF): divide os convites entre as escolas, proporcional
+    // ao banco de cada uma, com um mínimo para cada (config.minimo_por_escola). Sem isso, a lista
+    // única por prioridade deixava escolas inteiras sem convite (Garavelo, 12/11).
+    const porEscola = !!c.config?.cota_por_escola;
+    const limiteBusca = porEscola ? Math.max(convitesQtd * 40, 8000) : (excluir.size ? convitesQtd * 4 : convitesQtd);
     const { data: candidatosBrutos, error } = convitesQtd > 0
-        ? await supabaseAdmin.rpc("campanha_candidatos", { p_campanha: c.id, p_limite: excluir.size ? convitesQtd * 4 : convitesQtd })
+        ? await supabaseAdmin.rpc("campanha_candidatos", { p_campanha: c.id, p_limite: limiteBusca })
         : { data: [], error: null };
     if (error) throw new Error("falha_candidatos: " + error.message);
-    const candidatos = (candidatosBrutos || []).filter((x: any) => !excluir.has(x.filial)).slice(0, convitesQtd);
+    const disponiveis = (candidatosBrutos || []).filter((x: any) => !excluir.has(x.filial));
+    const candidatos = porEscola
+        ? dividirPorEscola(disponiveis, convitesQtd, Number(c.config?.minimo_por_escola ?? 10))
+        : disponiveis.slice(0, convitesQtd);
 
     // Intercala 2ªs tentativas e convites e distribui por igual até o fim da janela.
     const itens: any[] = [];
@@ -322,9 +365,9 @@ async function estadoPagamento(): Promise<{ bloqueado: boolean; podeTestar: bool
     const ultimo = (recentes || []).find((m: any) => m.wa_status !== "falhou" || JSON.stringify(m.wa_status_erro || "").includes(ERRO_PAGAMENTO));
     const bloqueado = !!ultimo && ultimo.wa_status === "falhou";
     if (!bloqueado) return { bloqueado: false, podeTestar: true };
-    const { count: recentes } = await supabaseAdmin.from("mensagens_whatsapp").select("id", { count: "exact", head: true })
+    const { count: testesRecentes } = await supabaseAdmin.from("mensagens_whatsapp").select("id", { count: "exact", head: true })
         .eq("direcao", "saida").eq("tipo", "template").gte("criado_em", new Date(Date.now() - MINUTOS_TESTE_PAGAMENTO * 60_000).toISOString());
-    return { bloqueado: true, podeTestar: !recentes };
+    return { bloqueado: true, podeTestar: !testesRecentes };
 }
 async function avisarPagamento(bloqueado: boolean) {
     const acao = bloqueado ? "whatsapp_pagamento_bloqueado" : "whatsapp_pagamento_liberado";
