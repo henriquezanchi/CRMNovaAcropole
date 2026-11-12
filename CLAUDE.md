@@ -11328,3 +11328,9 @@ teve evento nos últimos 12 meses (`config.ultimo_evento_desde`), sem 2ª tentat
   "jaSouAluno" no Ulisses) roda após cada sincronização. Com PIN, o painel confirma "É aluno" + escola ou "Não é
   aluno" (`painel_aluno_confirmado`, ação `marcar_aluno`), que vence a identificação automática.
 - DMF em 12/11: 171 inscrições, 168 pessoas, 91 alunos, 77 de fora, 11 possíveis alunos.
+- Painel (12/11, tarde): lista de contatados com filtros (inscrição, situação, resposta, entrega, escola) e coluna
+  Inscrito (calculada na Edge antes de borrar, por cadastro ou DDD+8 dígitos); toda tabela ordena pelo cabeçalho.
+  Link de várias escolas mostra todos os inscritos do evento (inclusive de escola fora do link); inscrito sem
+  cadastro e não aluno vai para "Sem cadastro no CRM" (antes caía na escola do evento). DMF: 2ª tentativa em 20%.
+  Gatilho `campanha_religar_mesclado` em `crm_leads_mesclados` religa campanha_fila/checagens/respostas_bot ao
+  cadastro que ficou após mesclagem (linhas em branco no painel).
