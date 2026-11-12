@@ -99,9 +99,33 @@ async function campanhasAtivas() {
 }
 
 async function inscritosNoEvento(eventoId: number): Promise<number> {
+    // Lista do Ulisses quando já sincronizada (12/11/2026): conta toda inscrição, inclusive de
+    // quem não tem cadastro na escola do evento; senão, os vínculos do CRM.
+    const { data: ev } = await supabaseAdmin.from("eventos").select("evento_id_ulisses").eq("id", eventoId).maybeSingle();
+    if (ev?.evento_id_ulisses) {
+        const { count: lista } = await supabaseAdmin.from("ulisses_inscricoes_evento").select("email_evento_id", { count: "exact", head: true })
+            .eq("evento_id_ulisses", ev.evento_id_ulisses).is("removido_em", null);
+        if (lista && lista > 0) return lista;
+    }
     const { count } = await supabaseAdmin.from("evento_leads").select("id", { count: "exact", head: true })
         .eq("evento_id", eventoId).eq("origem", "ulisses");
     return count || 0;
+}
+
+// Vagas que ainda restam no evento (null = sem capacidade cadastrada).
+async function vagasRestantes(c: any): Promise<{ restantes: number; inscritos: number; vagas: number } | null> {
+    if (!c?.evento_id) return null;
+    const { data: ev } = await supabaseAdmin.from("eventos").select("capacidade").eq("id", c.evento_id).maybeSingle();
+    const vagas = Number(ev?.capacidade || 0);
+    if (!vagas) return null;
+    const inscritos = await inscritosNoEvento(c.evento_id);
+    return { restantes: vagas - inscritos, inscritos, vagas };
+}
+// config.parar_com_vagas_restantes (ex.: 20, DMF 12/11/2026): nenhum convite novo nem 2ª tentativa
+// quando restarem essa quantidade de vagas ou menos.
+function pararPorVagas(c: any, v: { restantes: number } | null): boolean {
+    const limite = Number(c?.config?.parar_com_vagas_restantes);
+    return !!v && Number.isFinite(limite) && limite > 0 && v.restantes <= limite;
 }
 
 async function elegiveisFollowup(c: any, limite: number): Promise<any[]> {
@@ -155,6 +179,10 @@ async function planejar(c: any, forcar: boolean) {
     const followups = podeFollowup ? await elegiveisFollowup(c, podeConvidar ? tetoFollowup : total) : [];
 
     let convitesQtd = podeConvidar ? Math.min(c.cota_diaria, total - followups.length) : 0;
+    const vagasAgora = await vagasRestantes(c);
+    if (pararPorVagas(c, vagasAgora)) {
+        return { campanha: c.slug, parado: `restam ${vagasAgora!.restantes} vagas (${vagasAgora!.inscritos}/${vagasAgora!.vagas} inscritos)` };
+    }
     // Freio pela lotação: inscritos já sincronizados do Ulisses contra as vagas do evento.
     let freio = "";
     if (c.evento_id && convitesQtd > 0) {
@@ -281,6 +309,7 @@ async function enviar() {
     const limiteMeta = await limiteDiarioMeta();
     let usados = await iniciadasUltimas24h();
     const campanhas = new Map<number, any>();
+    const vagasPorCampanha = new Map<number, any>();
     for (const it of itens) {
         let c = campanhas.get(it.campanha_id);
         if (!c) {
@@ -292,6 +321,11 @@ async function enviar() {
             resultados.push({ id: it.id, status, ...extra });
         };
         if (!c?.ativa) { await finalizar("cancelado", { motivo: "campanha pausada" }); continue; }
+        if (c.config?.parar_com_vagas_restantes) {
+            if (!vagasPorCampanha.has(c.id)) vagasPorCampanha.set(c.id, await vagasRestantes(c));
+            const v = vagasPorCampanha.get(c.id);
+            if (pararPorVagas(c, v)) { await finalizar("cancelado", { motivo: `restam ${v!.restantes} vagas no evento` }); continue; }
+        }
         if (usados >= limiteMeta - MARGEM_LIMITE) {
             // Sem cota agora: volta para a fila e tenta daqui a 15 min.
             await supabaseAdmin.from("campanha_fila").update({ status: "pendente", agendado_para: new Date(Date.now() + 15 * 60_000).toISOString() }).eq("id", it.id);
