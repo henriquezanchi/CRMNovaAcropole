@@ -555,7 +555,11 @@ export async function sincronizarComparecimentoViaApi(filialCrm, filialIdUlisses
                     compareceu: eventoFuturo && ee.compareceu !== true ? null : ee.compareceu === true,
                     inscrito_em: dataInscricaoUlisses(ee), visto_em: new Date().toISOString(), removido_em: null,
                     pessoaIdentificador: leadCandidato ? String(leadCandidato.id) : null,
-                    bruto: { pessoa: { ...pessoa, emailEventos: undefined }, inscricao: { ...ee, evento: ee.evento ? { id: ee.evento.id } : undefined } },
+                    // Só campos úteis: a API manda também CPF, RG e endereço, que nunca entram no CRM.
+                    bruto: {
+                        pessoa: { id: pessoa.id ?? null, jaSouAluno: pessoa.jaSouAluno ?? null, cidade: pessoa.cidade ?? null, uf: pessoa.uf ?? null, ultimaOrigem: pessoa.ultimaOrigem ?? null, interesseCursoFilosofia: pessoa.interesseCursoFilosofia ?? null },
+                        inscricao: { id: ee.id ?? null, data: ee.data ?? null, origem: ee.origem ?? null, jaCadastradoMercurio: ee.jaCadastradoMercurio ?? null, pago: ee.pago ?? null },
+                    },
                 });
             }
 
