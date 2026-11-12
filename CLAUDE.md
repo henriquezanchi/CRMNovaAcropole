@@ -11310,3 +11310,21 @@ Escola sem turma e sem evento: campanha de relacionamento (`migracao_campanha_re
 `contato_ulisses` preenchido com o último evento do histórico (`ultimoEventoDoLead()`, campanha-whatsapp), só quem
 teve evento nos últimos 12 meses (`config.ultimo_evento_desde`), sem 2ª tentativa. Garavelo: 15/dia até 30/11
 (Jardim América 32, Universitário 26 para manter 200/dia). Ordem por escola: turma → eventos do Ulisses → relacionamento.
+
+## Painel do DMF Goiânia com PIN + lista real de inscritos do Ulisses (12/11/2026)
+
+- Link só de campanha: `painel_resultados_links.somente_campanhas` (`migracao_painel_somente_campanhas.sql`) tira a
+  aba Escolas. Link id 14 = "Dia Mundial da Filosofia - Goiânia" (só `dmf-2026`, 8 escolas). Chave e PIN ficam só no
+  banco/com o usuário. PIN agora vale também em link de várias escolas: libera nomes/telefones; ações por pessoa
+  (Não Contatar, observação) continuam só no painel de uma escola.
+- Barra da meta: passando da meta, verde até a meta e dourado no excedente (`barraMeta()`, `js/resultados.js`).
+- O painel contava só inscrições ligadas a cadastro DA ESCOLA DO EVENTO (118 de 171 no DMF). Agora
+  `sincronizarComparecimentoViaApi()` grava toda inscrição em `ulisses_inscricoes_evento`
+  (`migracao_ulisses_inscricoes_evento.sql`; só campos úteis — a API manda CPF/RG/endereço, nunca gravar) e liga
+  ao cadastro de qualquer escola pelo código do Ulisses (`pessoaIdentificador`). `painel_campanha` conta por essa
+  lista quando existe (dedup por telefone/e-mail), senão pelos vínculos `evento_leads`.
+- Aluno x de fora: membro ATI do Mercúrio por telefone/e-mail E mesmo primeiro nome. Varredura de possíveis alunos
+  (`ulisses_sugerir_alunos()`, pg_trgm/unaccent; nome igual, mesmo primeiro+último nome, ou parecido ≥55%, ou
+  "jaSouAluno" no Ulisses) roda após cada sincronização. Com PIN, o painel confirma "É aluno" + escola ou "Não é
+  aluno" (`painel_aluno_confirmado`, ação `marcar_aluno`), que vence a identificação automática.
+- DMF em 12/11: 171 inscrições, 168 pessoas, 91 alunos, 77 de fora, 11 possíveis alunos.
