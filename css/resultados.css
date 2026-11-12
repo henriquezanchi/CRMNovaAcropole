@@ -69,6 +69,9 @@ th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 tr:last-child td { border-bottom: 0; }
 tr.total td { font-weight: 700; background: #fafcfb; }
+th.ordenavel { cursor: pointer; user-select: none; white-space: nowrap; }
+th.ordenavel:hover, th.ordenavel:focus-visible { color: var(--verde, #086357); }
+.seta-ordem { font-size: .8em; }
 .mini { width: 90px; display: inline-block; vertical-align: middle; margin-left: 8px; height: 8px; }
 .selo { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--verde-claro); color: var(--verde); }
 .selo.am { background: var(--amarelo-claro); color: #7a5b00; }

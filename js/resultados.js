@@ -87,21 +87,77 @@
   function cartao(n, r, d) {
     return el('div', { classe: 'cartao' }, [el('div', { classe: 'n', texto: n }), el('div', { classe: 'r', texto: r }), d ? el('div', { classe: 'd', texto: d }) : null]);
   }
-  function tabela(cabecalho, linhas, numericas) {
+  // Chave de ordenação a partir do texto da célula: datas "DD/MM[/AAAA] [HH:MM]" viram AAAAMMDDHHMM,
+  // números ("1.234", "12%") viram número, o resto é texto sem acento. Vazio vai sempre para o fim.
+  function chaveOrdem(v) {
+    var t = (v instanceof Node ? v.textContent : String(v == null ? '' : v)).trim();
+    if (!t) return null;
+    var d = t.match(/^(\d{2})\/(\d{2})(?:\/(\d{4}))?(?:\s+(\d{2}):(\d{2}))?$/);
+    if (d) return Number((d[3] || new Date().getFullYear()) + d[2] + d[1] + (d[4] || '00') + (d[5] || '00'));
+    if (/^-?[\d.]+(,\d+)?\s*%?$/.test(t)) return Number(t.replace(/[.%\s]/g, '').replace(',', '.'));
+    return t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  }
+  function compararChaves(a, b) {
+    if (a === null && b === null) return 0;
+    if (a === null) return 1; if (b === null) return -1;
+    if (typeof a === 'number' && typeof b === 'number') return a - b;
+    return String(a).localeCompare(String(b), 'pt-BR', { numeric: true });
+  }
+  // Cabeçalho clicável ordena a tabela (clicar de novo inverte; linha "Total" fica no fim).
+  // ordem (opcional) = { col, dir, aoOrdenar(col) }: quem chama ordena os dados (listas grandes,
+  // que mostram só os 300 primeiros); sem ordem, a própria tabela reordena as linhas.
+  function tabela(cabecalho, linhas, numericas, ordem) {
     var t = el('table');
     var thead = el('thead'); var tr = el('tr');
-    cabecalho.forEach(function (c, i) { tr.appendChild(el('th', { texto: c, classe: numericas && numericas.indexOf(i) >= 0 ? 'num' : '' })); });
-    thead.appendChild(tr); t.appendChild(thead);
+    var estado = ordem ? { col: ordem.col, dir: ordem.dir } : { col: null, dir: 1 };
     var tb = el('tbody');
-    linhas.forEach(function (l) {
-      var r = el('tr', l.classe ? { classe: l.classe } : null);
-      l.celulas.forEach(function (c, i) {
-        var td = el('td', { classe: numericas && numericas.indexOf(i) >= 0 ? 'num' : '' });
-        if (c instanceof Node) td.appendChild(c); else td.textContent = c == null ? '' : String(c);
-        r.appendChild(td);
+    function desenharCorpo() {
+      tb.textContent = '';
+      var lista = linhas.slice();
+      if (!ordem && estado.col !== null) {
+        var fixas = lista.filter(function (l) { return l.classe === 'total'; });
+        lista = lista.filter(function (l) { return l.classe !== 'total'; });
+        lista.sort(function (a, b) {
+          var ka = chaveOrdem(a.celulas[estado.col]), kb = chaveOrdem(b.celulas[estado.col]);
+          if (ka === null || kb === null) return compararChaves(ka, kb);
+          return compararChaves(ka, kb) * estado.dir;
+        });
+        lista = lista.concat(fixas);
+      }
+      lista.forEach(function (l) {
+        var r = el('tr', l.classe ? { classe: l.classe } : null);
+        l.celulas.forEach(function (c, i) {
+          var td = el('td', { classe: numericas && numericas.indexOf(i) >= 0 ? 'num' : '' });
+          if (c instanceof Node) td.appendChild(c); else td.textContent = c == null ? '' : String(c);
+          r.appendChild(td);
+        });
+        tb.appendChild(r);
       });
-      tb.appendChild(r);
+    }
+    var ths = cabecalho.map(function (c, i) {
+      var th = el('th', { classe: (numericas && numericas.indexOf(i) >= 0 ? 'num ' : '') + 'ordenavel', title: 'Clique para ordenar', tabindex: '0' });
+      th.appendChild(document.createTextNode(c));
+      var seta = el('span', { classe: 'seta-ordem' }); th.appendChild(seta);
+      function clicar() {
+        if (estado.col === i) estado.dir = -estado.dir;
+        else { estado.col = i; estado.dir = (numericas && numericas.indexOf(i) >= 0) || /convite|data|em$/i.test(c) ? -1 : 1; }
+        if (ordem) { ordem.aoOrdenar(estado.col, estado.dir); return; }
+        marcar(); desenharCorpo();
+      }
+      th.addEventListener('click', clicar);
+      th.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); clicar(); } });
+      tr.appendChild(th);
+      return { th: th, seta: seta };
     });
+    function marcar() {
+      ths.forEach(function (h, i) {
+        var ativo = estado.col === i;
+        h.seta.textContent = ativo ? (estado.dir === 1 ? ' ▲' : ' ▼') : '';
+        h.th.setAttribute('aria-sort', ativo ? (estado.dir === 1 ? 'ascending' : 'descending') : 'none');
+      });
+    }
+    thead.appendChild(tr); t.appendChild(thead);
+    marcar(); desenharCorpo();
     t.appendChild(tb);
     return el('div', { classe: 'tabela-wrap' }, [t]);
   }
@@ -156,6 +212,7 @@
     cont.appendChild(el('div', { classe: 'busca' }, [entrada].concat(selects, [info])));
     if (legenda) cont.appendChild(el('p', { classe: 'legenda-icones so-celular', texto: legenda }));
     var area = el('div'); cont.appendChild(area);
+    var ordem = { col: null, dir: 1, aoOrdenar: function (col, dir) { ordem.col = col; ordem.dir = dir; desenhar(); } };
     function desenhar() {
       var q = entrada.value.trim().toLowerCase();
       var filtrados = itens.filter(function (x) {
@@ -164,10 +221,18 @@
       });
       area.textContent = '';
       if (!filtrados.length) { area.appendChild(el('p', { classe: 'muted', texto: vazio })); info.textContent = ''; return; }
+      if (ordem.col !== null) {
+        var chaves = new Map(filtrados.map(function (x) { return [x, chaveOrdem(linhaDe(x)[ordem.col])]; }));
+        filtrados = filtrados.slice().sort(function (a, b) {
+          var ka = chaves.get(a), kb = chaves.get(b);
+          if (ka === null || kb === null) return compararChaves(ka, kb);
+          return compararChaves(ka, kb) * ordem.dir;
+        });
+      }
       var mostrar = filtrados.slice(0, 300);
       var comAcoes = dados.diretor && dados.escola_unica && mostrar.some(function (x) { return x.pid; });
       var linhas = mostrar.map(function (x) { var cel = linhaDe(x); if (comAcoes) cel.push(el('span', { classe: 'acoes-inline' }, acoesPessoa(x))); return { celulas: cel }; });
-      var t = tabela(comAcoes ? colunas.concat(['Ações']) : colunas, linhas); t.classList.add('so-tela-larga'); area.appendChild(t);
+      var t = tabela(comAcoes ? colunas.concat(['Ações']) : colunas, linhas, null, ordem); t.classList.add('so-tela-larga'); area.appendChild(t);
       if (pessoaDe) {
         var lista = el('div', { classe: 'pessoas-lista so-celular' });
         mostrar.forEach(function (x) { lista.appendChild(pessoaDe(x)); });
