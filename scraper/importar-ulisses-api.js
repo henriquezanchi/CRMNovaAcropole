@@ -424,6 +424,36 @@ export async function sincronizarInscricoesFilialViaApi(pageCrm, filialCrm, fili
 // porque já sabemos o `eventoId` exato (nunca precisa reconstruir
 // identidade de evento por nome+data como a versão Playwright precisava).
 // ============================================================
+// Código da pessoa no Ulisses (o mesmo que vira pessoaIdentificador na importação do CSV).
+function idPessoaUlisses(pessoa) {
+    const v = pessoa?.pessoaId ?? pessoa?.pessoa?.id ?? pessoa?.id;
+    return v == null || v === '' ? null : String(v);
+}
+// Data da inscrição, se a API mandar (o nome do campo não é documentado).
+function dataInscricaoUlisses(ee) {
+    for (const k of ['dataCadastro', 'dataInscricao', 'dataCriacao', 'criadoEm', 'createdAt', 'data']) {
+        const v = ee?.[k];
+        if (!v) continue;
+        const d = new Date(typeof v === 'number' ? v : String(v));
+        if (!Number.isNaN(d.getTime()) && d.getFullYear() > 2000) return d.toISOString();
+    }
+    return null;
+}
+// Grava a lista completa de inscritos do evento e marca como removido quem saiu da lista.
+async function gravarListaInscritosUlisses(evento, filialIdUlisses, linhas) {
+    const agora = new Date().toISOString();
+    for (let i = 0; i < linhas.length; i += 200) {
+        const { error } = await supabaseAdmin.from('ulisses_inscricoes_evento').upsert(linhas.slice(i, i + 200), { onConflict: 'email_evento_id' });
+        if (error) { console.warn(`[ulisses-api] Falha ao gravar a lista de inscritos de "${evento.nome}":`, error.message); return; }
+    }
+    const vistos = linhas.map(l => l.email_evento_id);
+    let q = supabaseAdmin.from('ulisses_inscricoes_evento').update({ removido_em: agora })
+        .eq('evento_id_ulisses', evento.evento_id_ulisses).eq('filial_id_ulisses', filialIdUlisses).is('removido_em', null);
+    if (vistos.length) q = q.not('email_evento_id', 'in', `(${vistos.join(',')})`);
+    const { error } = await q;
+    if (error) console.warn(`[ulisses-api] Falha ao marcar inscrições removidas de "${evento.nome}":`, error.message);
+}
+
 export async function sincronizarComparecimentoViaApi(filialCrm, filialIdUlisses) {
     // Só eventos com o eventoId do Ulisses já conhecido (gravado por
     // sincronizarEventosUlissesApi()) — e dentro de uma janela razoável
@@ -485,23 +515,51 @@ export async function sincronizarComparecimentoViaApi(filialCrm, filialIdUlisses
             continue;
         }
         const eventoFuturo = evento.data >= hojeISOFiltro;
-        for (const pessoa of pessoas || []) {
+        const pessoasDoEvento = (pessoas || []).filter(p => (p.emailEventos || []).some(ee => ee.evento?.id === evento.evento_id_ulisses));
+
+        // Cadastro que a pessoa já tem em QUALQUER escola, pelo código do Ulisses (12/11/2026):
+        // antes só se procurava na escola do evento, e quem tinha cadastro em outra escola
+        // (ex.: aluno de Goiânia II inscrito no DMF do Setor Universitário) nunca aparecia.
+        const idsUlisses = [...new Set(pessoasDoEvento.map(idPessoaUlisses).filter(Boolean))];
+        const porIdUlisses = new Map();
+        for (let i = 0; i < idsUlisses.length; i += 200) {
+            const { data: achados, error } = await supabaseAdmin.from('leads_inscricoes')
+                .select('pessoaIdentificador, pessoaNome').in('pessoaIdentificador', idsUlisses.slice(i, i + 200)).is('lixeira_em', null);
+            if (error) console.warn('[ulisses-api] Falha ao buscar cadastros pelo código do Ulisses:', error.message);
+            (achados || []).forEach(l => porIdUlisses.set(String(l.pessoaIdentificador), { id: l.pessoaIdentificador, nome: l.pessoaNome }));
+        }
+
+        const linhasLista = [];
+        for (const pessoa of pessoasDoEvento) {
             const inscricoesDesteEvento = (pessoa.emailEventos || []).filter(ee => ee.evento?.id === evento.evento_id_ulisses);
-            if (inscricoesDesteEvento.length === 0) continue;
+            const idUl = idPessoaUlisses(pessoa);
+            let leadCandidato = idUl ? porIdUlisses.get(idUl) || null : null;
+            if (!leadCandidato) {
+                leadCandidato = normalizarTelefone(pessoa.ddd, pessoa.telefone) ? porTelefone.get(normalizarTelefone(pessoa.ddd, pessoa.telefone)) : null;
+                if (!leadCandidato && pessoa.email) leadCandidato = porEmail.get(pessoa.email.trim().toLowerCase()) || null;
+                if (leadCandidato && !primeiroNomeParecidoUlisses(pessoa.nome, leadCandidato.nome)) {
+                    nomeDivergente++;
+                    console.warn(`[ulisses-api] Vínculo IGNORADO (${filialCrm}) — telefone/e-mail bateu, mas o nome não: API disse "${pessoa.nome}", lead casado é "${leadCandidato.nome}" (id=${leadCandidato.id}). Evento "${evento.nome}".`);
+                    leadCandidato = null;
+                }
+            }
+            const compareceuReal = inscricoesDesteEvento.some(ee => ee.compareceu === true);
 
-            let leadCandidato = normalizarTelefone(pessoa.ddd, pessoa.telefone) ? porTelefone.get(normalizarTelefone(pessoa.ddd, pessoa.telefone)) : null;
-            if (!leadCandidato && pessoa.email) leadCandidato = porEmail.get(pessoa.email.trim().toLowerCase()) || null;
-            if (!leadCandidato) { semLead++; continue; }
-
-            if (!primeiroNomeParecidoUlisses(pessoa.nome, leadCandidato.nome)) {
-                nomeDivergente++;
-                console.warn(`[ulisses-api] Vínculo IGNORADO (${filialCrm}) — telefone/e-mail bateu, mas o nome não: API disse "${pessoa.nome}", lead casado é "${leadCandidato.nome}" (id=${leadCandidato.id}). Evento "${evento.nome}".`);
-                continue;
+            // Lista completa do Ulisses (uma linha por inscrição), usada pelo painel.
+            for (const ee of inscricoesDesteEvento) {
+                if (ee.id == null) continue;
+                linhasLista.push({
+                    email_evento_id: ee.id, evento_id_ulisses: evento.evento_id_ulisses, filial_id_ulisses: filialIdUlisses,
+                    pessoa_id_ulisses: idUl, nome: pessoa.nome || null, email: pessoa.email || null,
+                    ddd: pessoa.ddd != null ? String(pessoa.ddd) : null, telefone: pessoa.telefone != null ? String(pessoa.telefone) : null,
+                    compareceu: eventoFuturo && ee.compareceu !== true ? null : ee.compareceu === true,
+                    inscrito_em: dataInscricaoUlisses(ee), visto_em: new Date().toISOString(), removido_em: null,
+                    pessoaIdentificador: leadCandidato ? String(leadCandidato.id) : null,
+                    bruto: { pessoa: { ...pessoa, emailEventos: undefined }, inscricao: { ...ee, evento: ee.evento ? { id: ee.evento.id } : undefined } },
+                });
             }
 
-            // Mesma regra de sempre: evento futuro nunca confirma
-            // presença sozinho (ver sincronizarComparecimentoNoCrm()).
-            const compareceuReal = inscricoesDesteEvento.some(ee => ee.compareceu === true);
+            if (!leadCandidato) { semLead++; continue; }
             vinculos.push({
                 evento_id: evento.id,
                 pessoaIdentificador: leadCandidato.id,
@@ -509,6 +567,7 @@ export async function sincronizarComparecimentoViaApi(filialCrm, filialIdUlisses
                 futuro: eventoFuturo,
             });
         }
+        await gravarListaInscritosUlisses(evento, filialIdUlisses, linhasLista);
     }
 
     if (vinculos.length === 0) {
