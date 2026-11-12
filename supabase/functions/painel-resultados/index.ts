@@ -292,7 +292,14 @@ Deno.serve(async (req) => {
             const d = r.data;
             if (!d) return d;
             const permitida = (e: string) => !link.filiais || link.filiais.includes(e);
-            let contatados = (d.contatados || []).filter((x: any) => permitida(x.escola));
+            // Contatado já inscrito no Ulisses? Conferido aqui, antes de borrar, pelo cadastro
+            // ou pelo telefone (DDD + 8 últimos dígitos), contra TODOS os inscritos do evento.
+            const chaveTel = (t: unknown) => { const g = String(t || "").replace(/\D/g, ""); return g.length >= 10 ? g.slice(0, 2) + g.slice(-8) : ""; };
+            const inscPid = new Set((d.inscritos || []).map((x: any) => x.pid).filter(Boolean).map(String));
+            const inscTel = new Set((d.inscritos || []).map((x: any) => chaveTel(x.telefone)).filter(Boolean));
+            let contatados = (d.contatados || []).filter((x: any) => permitida(x.escola)).map((x: any) => ({
+                ...x, inscrito: (x.pid != null && inscPid.has(String(x.pid))) || (!!chaveTel(x.telefone) && inscTel.has(chaveTel(x.telefone))),
+            }));
             let inscritos = (d.inscritos || []).filter((x: any) => permitida(x.escola));
             if (!diretor) { contatados = borrarLista(contatados); inscritos = borrarLista(inscritos); }
             return { ...d, contatados, inscritos, por_escola: (d.por_escola || []).filter((x: any) => permitida(x.escola)) };

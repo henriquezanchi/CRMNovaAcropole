@@ -76,6 +76,7 @@ tr.total td { font-weight: 700; background: #fafcfb; }
 .selo.vm { background: #fbe9e5; color: var(--alerta); }
 .busca { display: flex; gap: 10px; align-items: center; margin: 0 0 10px; flex-wrap: wrap; }
 .busca input { border: 1px solid var(--linha); border-radius: 8px; padding: 8px 10px; font: inherit; min-width: 240px; }
+.busca select { border: 1px solid var(--linha); border-radius: 8px; padding: 8px 10px; font: inherit; background: #fff; color: inherit; }
 details { margin-top: 14px; }
 details > summary { cursor: pointer; font-weight: 700; padding: 6px 0; }
 .nota { font-size: 13px; color: var(--suave); margin: 8px 0 0; }
@@ -130,6 +131,7 @@ summary { padding: 10px 0; cursor: pointer; }
   main { padding: 14px 16px 32px; }
   .meta-num { font-size: 28px; }
   .busca input { min-width: 0; width: 100%; }
+  .busca select { flex: 1 1 45%; min-width: 0; }
 }
 /* Confirmar aluno/de fora no painel (12/11/2026) */
 .ctl-aluno { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; margin-top: 2px; }
