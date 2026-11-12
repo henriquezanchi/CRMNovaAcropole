@@ -68,6 +68,22 @@
     b.appendChild(s);
     return b;
   }
+  // Barra da meta: passando da meta, a barra inteira vira o total alcançado; o trecho até a
+  // meta fica verde e o excedente em dourado, com um risco marcando a meta (pedido do usuário, 12/11).
+  function barraMeta(valor, meta) {
+    valor = Number(valor) || 0; meta = Number(meta) || 0;
+    if (!meta || valor <= meta) return barra(valor, meta);
+    var box = el('div');
+    var b = el('div', { classe: 'barra barra-meta-excedida', role: 'img', 'aria-label': num(valor) + ' de meta ' + num(meta) + ': ' + num(valor - meta) + ' acima da meta' });
+    var pMeta = Math.round((meta / valor) * 1000) / 10;
+    var dentro = el('span', { classe: 'trecho-meta' }); dentro.style.width = pMeta + '%';
+    var fora = el('span', { classe: 'trecho-excedente' }); fora.style.width = (100 - pMeta) + '%';
+    var risco = el('i', { classe: 'risco-meta' }); risco.style.left = pMeta + '%';
+    b.appendChild(dentro); b.appendChild(fora); b.appendChild(risco);
+    box.appendChild(b);
+    box.appendChild(el('div', { classe: 'excedente-legenda', texto: '🎉 ' + num(valor - meta) + ' acima da meta (' + Math.round((valor / meta) * 100) + '% da meta)' }));
+    return box;
+  }
   function cartao(n, r, d) {
     return el('div', { classe: 'cartao' }, [el('div', { classe: 'n', texto: n }), el('div', { classe: 'r', texto: r }), d ? el('div', { classe: 'd', texto: d }) : null]);
   }
@@ -134,7 +150,7 @@
       area.textContent = '';
       if (!filtrados.length) { area.appendChild(el('p', { classe: 'muted', texto: vazio })); info.textContent = ''; return; }
       var mostrar = filtrados.slice(0, 300);
-      var comAcoes = dados.diretor && mostrar.some(function (x) { return x.pid; });
+      var comAcoes = dados.diretor && dados.escola_unica && mostrar.some(function (x) { return x.pid; });
       var linhas = mostrar.map(function (x) { var cel = linhaDe(x); if (comAcoes) cel.push(el('span', { classe: 'acoes-inline' }, acoesPessoa(x))); return { celulas: cel }; });
       var t = tabela(comAcoes ? colunas.concat(['Ações']) : colunas, linhas); t.classList.add('so-tela-larga'); area.appendChild(t);
       if (pessoaDe) {
@@ -208,24 +224,24 @@
     var bar = document.getElementById('diretor-bar');
     if (!bar) { bar = el('div', { id: 'diretor-bar', classe: 'diretor-bar' }); document.querySelector('.topo-in > div').appendChild(bar); }
     bar.textContent = '';
-    if (!dados.escola_unica) return;
+    if (!dados.escola_unica && !dados.pin_disponivel && !dados.diretor) return;
     if (dados.diretor) {
       var sair = el('button', { type: 'button', classe: 'secundario', texto: 'Sair' }); sair.addEventListener('click', sairDiretor);
-      bar.appendChild(el('span', { texto: '🔓 Acesso do diretor ativo ' })); bar.appendChild(sair);
+      bar.appendChild(el('span', { texto: dados.escola_unica ? '🔓 Acesso do diretor ativo ' : '🔓 Dados completos liberados ' })); bar.appendChild(sair);
     } else if (dados.pin_disponivel) {
-      var b = el('button', { type: 'button', classe: 'secundario', texto: 'Entrar com o PIN da escola' }); b.addEventListener('click', entrarComPin);
+      var b = el('button', { type: 'button', classe: 'secundario', texto: dados.escola_unica ? 'Entrar com o PIN da escola' : 'Liberar dados com o PIN' }); b.addEventListener('click', entrarComPin);
       bar.appendChild(b); bar.appendChild(el('span', { texto: ' Nomes e telefones aparecem completos com o PIN.' }));
     } else bar.appendChild(el('span', { texto: 'Nomes e telefones aparecem resumidos. O administrador ainda não definiu o PIN desta escola.' }));
   }
   function entrarComPin() {
-    var pin = prompt('PIN da escola (6 números):'); if (pin == null) return;
+    var pin = prompt(dados.escola_unica ? 'PIN da escola (6 números):' : 'PIN de acesso (6 números):'); if (pin == null) return;
     chamar({ acao: 'pin', pin: String(pin).replace(/\D/g, '') }).then(function (j) { guardarSessao(j.sessao, j.expira_em); carregar(); }).catch(function (e) { alert(e.message); });
   }
   function sairDiretor() { chamar({ acao: 'sair' }).catch(function () {}).then(function () { limparSessao(); carregar(); }); }
 
   // Ações do diretor por pessoa: ver a conversa, não contatar, observação.
   function acoesPessoa(x) {
-    if (!x.pid || !dados.diretor) return [];
+    if (!x.pid || !dados.diretor || !dados.escola_unica) return [];
     var ver = el('button', { type: 'button', classe: 'ic ic-acao', title: 'Ver a conversa', 'aria-label': 'Ver a conversa', texto: '🗨️' });
     ver.addEventListener('click', function () { verConversa(x); });
     var nc = el('button', { type: 'button', classe: 'ic ic-acao', title: x.parar ? 'Liberar contato' : 'Marcar: não contatar', texto: x.parar ? '🔓' : '🚫' });
@@ -354,7 +370,7 @@
         el('div', { classe: 'meta-num' }, [num(depois ? forasPresentes : n.inscritos_fora), el('small', { texto: ' / meta de ' + meta + ' presentes' })])]),
       el('div', { classe: 'muted', texto: 'A meta conta presentes de fora; a presença vem da recepção do evento.' })
     ]));
-    m.appendChild(barra(depois ? forasPresentes : n.inscritos_fora, meta));
+    m.appendChild(barraMeta(depois ? forasPresentes : n.inscritos_fora, meta));
     var vagas = Number(ev.vagas) || 0;
     if (vagas) {
       var ocup = Number(n.inscritos_total) || 0;

@@ -47,6 +47,12 @@ h3 { font-size: 16px; margin: 26px 0 10px; font-weight: 700; }
 .barra > span { display: block; height: 100%; background: var(--verde); border-radius: 999px; }
 .barra.amarela > span { background: var(--amarelo); }
 .barra.cheia > span { background: var(--alerta); }
+.barra-meta-excedida { position: relative; display: flex; }
+.barra-meta-excedida > span { display: block; height: 100%; border-radius: 0; }
+.barra-meta-excedida > .trecho-meta { background: var(--verde); }
+.barra-meta-excedida > .trecho-excedente { background: var(--amarelo); }
+.barra-meta-excedida > .risco-meta { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--cartao); }
+.excedente-legenda { margin-top: 6px; font-size: 13px; font-weight: 600; color: #8a6d00; }
 .cartoes { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 10px; }
 .cartao { background: var(--cartao); border: 1px solid var(--linha); border-radius: var(--raio); padding: 14px; }
 .cartao .n { font-size: 26px; font-weight: 800; color: var(--texto); font-variant-numeric: tabular-nums; }

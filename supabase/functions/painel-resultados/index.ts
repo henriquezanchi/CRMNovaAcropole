@@ -99,13 +99,14 @@ Deno.serve(async (req) => {
 
     const hash = await hashChaveEscola(corpo.chave);
     const { data: link } = await supabaseAdmin.from("painel_resultados_links")
-        .select("id, rotulo, filiais, campanhas, expira_em, revogado_em, pin_hash, pin_tentativas, pin_bloqueado_ate").eq("chave_hash", hash).maybeSingle();
+        .select("id, rotulo, filiais, campanhas, somente_campanhas, expira_em, revogado_em, pin_hash, pin_tentativas, pin_bloqueado_ate").eq("chave_hash", hash).maybeSingle();
     if (!link || link.revogado_em || new Date(link.expira_em) < new Date()) {
         return responder({ erro: "Este link expirou, foi revogado ou não é válido. Peça um novo acesso à equipe." }, 401);
     }
     const escolaUnica = Array.isArray(link.filiais) && link.filiais.length === 1;
     const filial: string | null = escolaUnica ? link.filiais[0] : null;
-    const autorDiretor = `Diretor — ${filial || link.rotulo}`;
+    const autorDiretor = escolaUnica ? `Diretor — ${filial}` : `Painel — ${link.rotulo}`;
+    const filialLog = filial || "GLOBAL"; // link de várias escolas (ex.: DMF Goiânia) também pode ter PIN (12/11)
     const acao = typeof corpo.acao === "string" ? corpo.acao : "dados";
 
     // ---- Sessão do diretor (token de 12 h, só o hash fica no banco) ----
@@ -118,7 +119,7 @@ Deno.serve(async (req) => {
 
     // ---- Entrar com o PIN ----
     if (acao === "pin") {
-        if (!escolaUnica || !link.pin_hash) return responder({ ok: false, erro: "Este painel ainda não tem PIN. Peça ao administrador para definir um." }, 400);
+        if (!link.pin_hash) return responder({ ok: false, erro: "Este painel ainda não tem PIN. Peça ao administrador para definir um." }, 400);
         if (link.pin_bloqueado_ate && new Date(link.pin_bloqueado_ate) > new Date()) {
             const min = Math.ceil((new Date(link.pin_bloqueado_ate).getTime() - Date.now()) / 60000);
             return responder({ ok: false, erro: `PIN bloqueado por ${min} min após várias tentativas erradas.` }, 429);
@@ -132,7 +133,7 @@ Deno.serve(async (req) => {
                 pin_tentativas: bloquear ? 0 : tentativas,
                 pin_bloqueado_ate: bloquear ? new Date(Date.now() + MINUTOS_BLOQUEIO_PIN * 60000).toISOString() : null,
             }).eq("id", link.id);
-            if (bloquear) await registrarLog(filial!, "painel_pin_bloqueado", autorDiretor, [], { tentativas, minutos: MINUTOS_BLOQUEIO_PIN });
+            if (bloquear) await registrarLog(filialLog, "painel_pin_bloqueado", autorDiretor, [], { tentativas, minutos: MINUTOS_BLOQUEIO_PIN });
             return responder({ ok: false, erro: bloquear ? `PIN errado ${MAX_TENTATIVAS_PIN} vezes: bloqueado por ${MINUTOS_BLOQUEIO_PIN} min.` : `PIN incorreto. ${MAX_TENTATIVAS_PIN - tentativas} tentativa(s) restante(s).` }, 401);
         }
         const token = tokenAleatorio();
@@ -141,7 +142,7 @@ Deno.serve(async (req) => {
         if (error) return responder({ ok: false, erro: "Não foi possível abrir a sessão agora." }, 503);
         await supabaseAdmin.from("painel_resultados_links").update({ pin_tentativas: 0 }).eq("id", link.id);
         await supabaseAdmin.from("painel_sessoes").delete().lt("expira_em", new Date().toISOString()); // limpeza
-        await registrarLog(filial!, "painel_diretor_entrou", autorDiretor, [], {});
+        await registrarLog(filialLog, "painel_diretor_entrou", autorDiretor, [], {});
         return responder({ ok: true, sessao: token, expira_em: expira });
     }
     if (acao === "sair") {
@@ -230,8 +231,10 @@ Deno.serve(async (req) => {
     // em 04/11/2026). Aqui só se registra o pedido e se lê o último resultado.
     const filiaisOrd = link.filiais ? [...link.filiais].sort() : null;
     const chaveEscolas = `escolas:${filiaisOrd ? filiaisOrd.join("|") : "todas"}:${dias}`;
+    // Link só de campanha (ex.: DMF Goiânia para compartilhar, 12/11): sem a aba Escolas.
+    const somenteCampanhas = !!link.somente_campanhas;
     const pedidos = [
-        { chave: chaveEscolas, tipo: "escolas", filiais: filiaisOrd, dias, slug: null },
+        ...(somenteCampanhas ? [] : [{ chave: chaveEscolas, tipo: "escolas", filiais: filiaisOrd, dias, slug: null }]),
         ...(link.campanhas || []).map((slug: string) => ({ chave: `campanha:${slug}`, tipo: "campanha", slug, filiais: null, dias: null })),
     ];
     try {
@@ -244,11 +247,12 @@ Deno.serve(async (req) => {
         if (error) throw error;
         const porChave = new Map((linhas || []).map((l: any) => [l.chave, l]));
         const escolasLinha: any = porChave.get(chaveEscolas);
-        if (!escolasLinha?.dados) {
+        const faltaCampanha = (link.campanhas || []).some((s: string) => !(porChave.get(`campanha:${s}`) as any)?.dados);
+        if (somenteCampanhas ? faltaCampanha : !escolasLinha?.dados) {
             return responder({ preparando: true, mensagem: "Os números estão sendo preparados. A página atualiza sozinha em instantes." });
         }
         const campanhas = (link.campanhas || []).map((slug: string) => ({ data: (porChave.get(`campanha:${slug}`) as any)?.dados || null }));
-        const geradoEm = [escolasLinha.gerado_em, ...(link.campanhas || []).map((s: string) => (porChave.get(`campanha:${s}`) as any)?.gerado_em)]
+        const geradoEm = [escolasLinha?.gerado_em, ...(link.campanhas || []).map((s: string) => (porChave.get(`campanha:${s}`) as any)?.gerado_em)]
             .filter(Boolean).sort()[0];
         // Última sincronização bem-sucedida das inscrições do Ulisses.
         const { data: ultSync } = await supabaseAdmin.from("status_sincronizacao_automatica").select("executado_em")
@@ -279,8 +283,8 @@ Deno.serve(async (req) => {
                 vagas_por_turma: porEvento.get(e.id)?.vagas_por_turma ?? null, qtd_turmas: porEvento.get(e.id)?.qtd_turmas ?? 1, atualizado_em: porEvento.get(e.id)?.atualizado_em ?? null }));
         }
         return responder({
-            rotulo: link.rotulo, dias, gerado_em: geradoEm, ulisses_em: ultSync?.executado_em ?? null, turmas_config: turmasConfig, escolas: escolasLinha.dados, campanhas: campanhasDados.filter(Boolean), siglas,
-            escola_unica: escolaUnica, diretor, pin_disponivel: escolaUnica && !!link.pin_hash,
+            rotulo: link.rotulo, dias, gerado_em: geradoEm, ulisses_em: ultSync?.executado_em ?? null, turmas_config: turmasConfig, escolas: somenteCampanhas ? null : escolasLinha.dados, campanhas: campanhasDados.filter(Boolean), siglas,
+            escola_unica: escolaUnica, diretor, pin_disponivel: !!link.pin_hash,
         });
     } catch (e) {
         console.error(e);
