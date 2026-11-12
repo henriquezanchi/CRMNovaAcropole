@@ -132,6 +132,13 @@ summary { padding: 10px 0; cursor: pointer; }
   .busca input { min-width: 0; width: 100%; }
 }
 /* Confirmar aluno/de fora no painel (12/11/2026) */
-.controle-aluno { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
-.controle-aluno .mini, button.mini, select.mini { font-size: 12px; padding: 3px 8px; min-height: 0; }
+.ctl-aluno { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; margin-top: 2px; }
+.ctl-aluno select { font: inherit; font-size: 13px; padding: 5px 8px; border: 1px solid var(--linha); border-radius: 8px; background: #fff; color: var(--texto); max-width: 170px; }
+.ctl-aluno button { font: inherit; font-size: 13px; line-height: 1.3; padding: 5px 12px; border-radius: 999px; cursor: pointer; }
+.ctl-aluno button:disabled { opacity: .5; cursor: default; }
+.ctl-sim { background: var(--verde); border: 1px solid var(--verde); color: #fff; font-weight: 600; }
+.ctl-nao, .ctl-corrigir { background: #fff; border: 1px solid var(--linha); color: var(--verde); }
+.ctl-sim:hover { background: var(--verde-esc); } .ctl-nao:hover, .ctl-corrigir:hover { border-color: var(--verde); }
+.ctl-ok { color: var(--verde); font-weight: 600; font-size: 13px; }
+.quebra { display: block; white-space: normal; min-width: 260px; max-width: 460px; }
 .sugestao-aluno { font-size: 12px; margin-top: 2px; }

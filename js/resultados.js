@@ -368,34 +368,42 @@
     if (x.sugestao) { var sp = selo('Possível aluno', 'am'); sp.title = textoSugestao(x.sugestao); return sp; }
     return selo('De fora');
   }
-  function controleAluno(x) {
+  function controleAluno(x, compacto) {
     if (!dados.diretor || !x.uid) return null;
-    var box = el('span', { classe: 'controle-aluno' });
+    var box = el('span', { classe: 'ctl-aluno' });
     function salvar(corpo, botao) {
       botao.disabled = true;
       corpo.acao = 'marcar_aluno'; corpo.uid = x.uid;
-      chamar(corpo).then(function () { box.textContent = '';  box.appendChild(el('span', { classe: 'muted', texto: 'Salvo. Os números atualizam em até 1 minuto.' })); setTimeout(carregar, 60000); })
+      chamar(corpo).then(function () { box.textContent = ''; box.appendChild(el('span', { classe: 'ctl-ok', texto: '✓ Salvo' })); setTimeout(carregar, 60000); })
         .catch(function (e) { botao.disabled = false; alert(e.message); });
     }
-    if (x.confirmado != null) {
-      var desf = el('button', { type: 'button', classe: 'secundario mini', texto: 'Desfazer' });
-      desf.addEventListener('click', function () { salvar({ limpar: true }, desf); });
-      box.appendChild(desf);
-      return box;
+    function abrir() {
+      box.textContent = '';
+      if (x.confirmado != null) {
+        box.appendChild(el('span', { classe: 'muted', texto: 'Confirmado' + (x.confirmado_por ? ' por ' + x.confirmado_por.replace(/^(Painel|Diretor) — /, '') : '') }));
+        var desf = el('button', { type: 'button', classe: 'ctl-nao', texto: 'Desfazer' });
+        desf.addEventListener('click', function () { salvar({ limpar: true }, desf); });
+        box.appendChild(desf);
+        return;
+      }
+      var sel = el('select', { 'aria-label': 'Escola do aluno' });
+      sel.appendChild(el('option', { value: '', texto: 'Escola…' }));
+      (dados.escolas_ativas || []).forEach(function (n) {
+        var o = el('option', { value: n, texto: nomeEscola(n) });
+        if ((x.sugestao && x.sugestao.escola === n) || (x.aluno && x.escola === n)) o.selected = true;
+        sel.appendChild(o);
+      });
+      var sim = el('button', { type: 'button', classe: 'ctl-sim', texto: 'É aluno' });
+      sim.addEventListener('click', function () { if (!sel.value) { alert('Escolha a escola do aluno.'); return; } salvar({ eh_aluno: true, escola: sel.value }, sim); });
+      var nao = el('button', { type: 'button', classe: 'ctl-nao', texto: 'Não é' });
+      nao.addEventListener('click', function () { salvar({ eh_aluno: false }, nao); });
+      box.appendChild(sel); box.appendChild(sim); box.appendChild(nao);
     }
-    var sel = el('select', { 'aria-label': 'Escola do aluno', classe: 'mini' });
-    sel.appendChild(el('option', { value: '', texto: 'Escola…' }));
-    (dados.escolas_ativas || []).forEach(function (n) {
-      var o = el('option', { value: n, texto: nomeEscola(n) });
-      if ((x.sugestao && x.sugestao.escola === n) || (x.aluno && x.escola === n)) o.selected = true;
-      sel.appendChild(o);
-    });
-    var sim = el('button', { type: 'button', classe: 'secundario mini', texto: x.aluno ? 'Confirmar escola' : 'É aluno' });
-    sim.addEventListener('click', function () { if (!sel.value) { alert('Escolha a escola do aluno.'); return; } salvar({ eh_aluno: true, escola: sel.value }, sim); });
-    box.appendChild(sel); box.appendChild(sim);
-    var nao = el('button', { type: 'button', classe: 'secundario mini', texto: 'Não é aluno' });
-    nao.addEventListener('click', function () { salvar({ eh_aluno: false }, nao); });
-    box.appendChild(nao);
+    if (compacto) {
+      var corr = el('button', { type: 'button', classe: 'ctl-corrigir', texto: x.confirmado != null ? 'Confirmado ✎' : 'Corrigir', title: 'Marcar se é aluno e de qual escola' });
+      corr.addEventListener('click', abrir);
+      box.appendChild(corr);
+    } else abrir();
     return box;
   }
 
@@ -492,7 +500,7 @@
     var linhaInsc = function (x) {
       var cel = [nomeProprio(x.nome), x.telefone || '', nomeEscola(x.escola), perfilInscrito(x),
         x.via_convite ? selo('Sim') : '', dataCurta(x.em), x.compareceu === true ? selo('Presente') : (x.compareceu === false ? selo('Faltou', 'vm') : '')];
-      if (dados.diretor) cel.push(controleAluno(x) || '');
+      if (dados.diretor) cel.push(controleAluno(x, true) || '');
       return cel;
     };
     var pessoaInsc = function (x) {
@@ -503,13 +511,13 @@
         x.compareceu === true ? icone('✅', 'Presente') : (x.compareceu === false ? icone('❌', 'Faltou') : null)
       ]);
       if (x.sugestao && !x.aluno) p.appendChild(el('div', { classe: 'muted sugestao-aluno', texto: textoSugestao(x.sugestao) }));
-      var ctl = controleAluno(x); if (ctl) p.appendChild(ctl);
+      var ctl = controleAluno(x, true); if (ctl) p.appendChild(ctl);
       return p;
     };
     var possiveis = (c.inscritos || []).filter(function (x) { return !x.aluno && x.confirmado == null && x.sugestao; });
     if (possiveis.length) {
       var lp = listaComBusca('Possíveis alunos para conferir', possiveis, ['Nome', 'Telefone', 'Parece ser'].concat(dados.diretor ? ['Aluno?'] : []), function (x) {
-        var cel = [nomeProprio(x.nome), x.telefone || '', textoSugestao(x.sugestao)];
+        var cel = [nomeProprio(x.nome), x.telefone || '', el('span', { classe: 'quebra', texto: textoSugestao(x.sugestao) })];
         if (dados.diretor) cel.push(controleAluno(x) || '');
         return cel;
       }, 'Nenhum possível aluno.', pessoaInsc, '❓ possível aluno');
