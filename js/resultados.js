@@ -604,6 +604,9 @@
       var faltam = (c.contatados || []).filter(function (x) {
         if (x.situacao !== 'Campanha: Vai ao evento' && x.situacao !== 'Campanha: Interessado') return false;
         if (x.parar) return false;
+        // Só depois de 24h do interesse: tempo para pensar, conversar com a família e se inscrever.
+        var desde = Date.parse(x.interesse_em || '');
+        if (!(desde && Date.now() - desde >= 24 * 3600 * 1000)) return false;
         if (x.inscrito) return false;
         if (x.pid && inscPid[x.pid]) return false;
         var d = digitos(x.telefone); return !(d && inscTel[d]);
@@ -614,7 +617,7 @@
         }, 'Ninguém nesta situação.', function (x) {
           return pessoa(x, [x.situacao === 'Campanha: Vai ao evento' ? icone('🙋', 'Disse que vai, mas não se inscreveu') : icone('💬', 'Demonstrou interesse')]);
         }, '🙋 disse que vai · 💬 demonstrou interesse · 📞 toque para ver o telefone');
-        li.insertBefore(el('p', { classe: 'muted', texto: 'Pessoas que, na conversa pelo WhatsApp, disseram que vão ou mostraram interesse, mas ainda não aparecem entre os inscritos do Ulisses. Vale um contato por outro meio (ligação, mensagem pessoal) lembrando de fazer a inscrição.' + (dados.diretor ? '' : ' Entre com o PIN para ver nomes e telefones completos.') }), li.children[1]);
+        li.insertBefore(el('p', { classe: 'muted', texto: 'Pessoas que, na conversa pelo WhatsApp, disseram que vão ou mostraram interesse, mas ainda não aparecem entre os inscritos do Ulisses. Só entra aqui quem demonstrou interesse há pelo menos 24 horas, para dar tempo de pensar e fazer a inscrição. Vale um contato por outro meio (ligação, mensagem pessoal) lembrando de fazer a inscrição.' + (dados.diretor ? '' : ' Entre com o PIN para ver nomes e telefones completos.') }), li.children[1]);
         s.appendChild(li);
       }
     }

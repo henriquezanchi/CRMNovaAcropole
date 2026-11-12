@@ -11334,3 +11334,6 @@ teve evento nos últimos 12 meses (`config.ultimo_evento_desde`), sem 2ª tentat
   cadastro e não aluno vai para "Sem cadastro no CRM" (antes caía na escola do evento). DMF: 2ª tentativa em 20%.
   Gatilho `campanha_religar_mesclado` em `crm_leads_mesclados` religa campanha_fila/checagens/respostas_bot ao
   cadastro que ficou após mesclagem (linhas em branco no painel).
+- Interessados ainda não inscritos (lista para os diretores ligarem): só entra quem demonstrou interesse há 24h+
+  (`painel_campanha` devolve `interesse_em` = 1ª vez que o robô marcou vai/talvez/quer_info, senão a 1ª resposta;
+  `migracao_painel_interesse_24h.sql`, JÁ RODADA). Tempo para a pessoa pensar e se inscrever antes da ligação.
