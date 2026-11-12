@@ -552,7 +552,7 @@
       var linhasInsc = escolasInsc.sort(function (a, b) { return porEscolaInsc[b].t - porEscolaInsc[a].t; }).map(function (k) {
         var e = porEscolaInsc[k];
         ti.t += e.t; ti.a += e.a; ti.f += e.f; ti.v += e.v; ti.p += e.p;
-        var cel = [k ? nomeEscola(k) : 'Sem escola no cadastro', num(e.t), num(e.a), num(e.f), num(e.v)];
+        var cel = [k ? nomeEscola(k) : 'Sem cadastro no CRM', num(e.t), num(e.a), num(e.f), num(e.v)];
         if (temPresenca) cel.push(num(e.p));
         return { celulas: cel };
       });
@@ -578,7 +578,7 @@
     var colunasInsc = ['Nome', 'Telefone', 'Escola', 'Perfil', 'Veio do convite', 'Inscrição', 'Presença'];
     if (dados.diretor) colunasInsc = colunasInsc.concat(['Aluno?']);
     var linhaInsc = function (x) {
-      var cel = [nomeProprio(x.nome), x.telefone || '', nomeEscola(x.escola), perfilInscrito(x),
+      var cel = [nomeProprio(x.nome), x.telefone || '', x.escola ? nomeEscola(x.escola) : 'Sem cadastro no CRM', perfilInscrito(x),
         x.via_convite ? selo('Sim') : '', dataCurta(x.em), x.compareceu === true ? selo('Presente') : (x.compareceu === false ? selo('Faltou', 'vm') : '')];
       if (dados.diretor) cel.push(controleAluno(x, true) || '');
       return cel;

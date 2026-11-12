@@ -300,7 +300,13 @@ Deno.serve(async (req) => {
             let contatados = (d.contatados || []).filter((x: any) => permitida(x.escola)).map((x: any) => ({
                 ...x, inscrito: (x.pid != null && inscPid.has(String(x.pid))) || (!!chaveTel(x.telefone) && inscTel.has(chaveTel(x.telefone))),
             }));
-            let inscritos = (d.inscritos || []).filter((x: any) => permitida(x.escola));
+            // Inscrito sem cadastro no CRM e que não é aluno: a função do banco o coloca na escola do
+            // evento; aqui ele vai para "Sem cadastro no CRM", para não inflar a escola do evento.
+            // Link de várias escolas (coordenação, DMF): mostra TODOS os inscritos do evento, mesmo os
+            // cadastrados em escola fora do link (ex.: alguém de Barra inscrito no DMF de Goiânia).
+            const todasEscolas = !escolaUnica;
+            let inscritos = (d.inscritos || []).map((x: any) => (!x.pid && !x.aluno ? { ...x, escola: null, sem_cadastro: true } : x))
+                .filter((x: any) => todasEscolas || permitida(x.escola));
             if (!diretor) { contatados = borrarLista(contatados); inscritos = borrarLista(inscritos); }
             return { ...d, contatados, inscritos, por_escola: (d.por_escola || []).filter((x: any) => permitida(x.escola)) };
         });
