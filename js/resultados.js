@@ -514,6 +514,29 @@
       var ctl = controleAluno(x, true); if (ctl) p.appendChild(ctl);
       return p;
     };
+    // Interessados que ainda não se inscreveram (12/11/2026): disseram que vão ou demonstraram
+    // interesse na conversa com o robô, e não aparecem entre os inscritos do Ulisses. Lista para os
+    // diretores tentarem por outros meios (ligação, contato pessoal).
+    if (!turma) {
+      var digitos = function (t) { return String(t || '').replace(/\D/g, ''); };
+      var inscPid = {}, inscTel = {};
+      (c.inscritos || []).forEach(function (x) { if (x.pid) inscPid[x.pid] = 1; var d = digitos(x.telefone); if (d) inscTel[d] = 1; });
+      var faltam = (c.contatados || []).filter(function (x) {
+        if (x.situacao !== 'Campanha: Vai ao evento' && x.situacao !== 'Campanha: Interessado') return false;
+        if (x.parar) return false;
+        if (x.pid && inscPid[x.pid]) return false;
+        var d = digitos(x.telefone); return !(d && inscTel[d]);
+      }).sort(function (a, b) { return (a.situacao === 'Campanha: Vai ao evento' ? 0 : 1) - (b.situacao === 'Campanha: Vai ao evento' ? 0 : 1); });
+      if (faltam.length) {
+        var li = listaComBusca('Interessados ainda não inscritos', faltam, ['Nome', 'Telefone', 'Escola', 'Disse na conversa', 'Convite'], function (x) {
+          return [nomeProprio(x.nome), x.telefone || '', nomeEscola(x.escola), x.situacao === 'Campanha: Vai ao evento' ? selo('Que vai', 'am') : selo('Interessado'), dataCurta(x.enviado_em)];
+        }, 'Ninguém nesta situação.', function (x) {
+          return pessoa(x, [x.situacao === 'Campanha: Vai ao evento' ? icone('🙋', 'Disse que vai, mas não se inscreveu') : icone('💬', 'Demonstrou interesse')]);
+        }, '🙋 disse que vai · 💬 demonstrou interesse · 📞 toque para ver o telefone');
+        li.insertBefore(el('p', { classe: 'muted', texto: 'Pessoas que, na conversa pelo WhatsApp, disseram que vão ou mostraram interesse, mas ainda não aparecem entre os inscritos do Ulisses. Vale um contato por outro meio (ligação, mensagem pessoal) lembrando de fazer a inscrição.' + (dados.diretor ? '' : ' Entre com o PIN para ver nomes e telefones completos.') }), li.children[1]);
+        s.appendChild(li);
+      }
+    }
     var possiveis = (c.inscritos || []).filter(function (x) { return !x.aluno && x.confirmado == null && x.sugestao; });
     if (possiveis.length) {
       var lp = listaComBusca('Possíveis alunos para conferir', possiveis, ['Nome', 'Telefone', 'Parece ser'].concat(dados.diretor ? ['Aluno?'] : []), function (x) {
