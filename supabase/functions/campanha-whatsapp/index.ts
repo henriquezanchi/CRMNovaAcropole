@@ -176,7 +176,11 @@ async function planejar(c: any, forcar: boolean) {
     const podeFollowup = hoje > c.inicio && hoje <= c.fim_followup;
     const pctFollowup = Number(c.config?.percentual_maximo_followup ?? 0.4);
     const tetoFollowup = Math.floor(total * pctFollowup);
-    const followups = podeFollowup ? await elegiveisFollowup(c, podeConvidar ? tetoFollowup : total) : [];
+    // config.excluir_filiais (12/11/2026, DMF: parar o Setor Universitário e focar nas demais escolas).
+    const excluir = new Set<string>(Array.isArray(c.config?.excluir_filiais) ? c.config.excluir_filiais : []);
+    const followups = podeFollowup
+        ? (await elegiveisFollowup(c, (podeConvidar ? tetoFollowup : total) * (excluir.size ? 3 : 1))).filter((x: any) => !excluir.has(x.filial)).slice(0, podeConvidar ? tetoFollowup : total)
+        : [];
 
     let convitesQtd = podeConvidar ? Math.min(c.cota_diaria, total - followups.length) : 0;
     const vagasAgora = await vagasRestantes(c);
@@ -194,10 +198,11 @@ async function planejar(c: any, forcar: boolean) {
             else if (inscritos >= vagas * 0.9) { convitesQtd = Math.min(convitesQtd, 150); freio = `reduzido: ${inscritos}/${vagas} inscritos`; }
         }
     }
-    const { data: candidatos, error } = convitesQtd > 0
-        ? await supabaseAdmin.rpc("campanha_candidatos", { p_campanha: c.id, p_limite: convitesQtd })
+    const { data: candidatosBrutos, error } = convitesQtd > 0
+        ? await supabaseAdmin.rpc("campanha_candidatos", { p_campanha: c.id, p_limite: excluir.size ? convitesQtd * 4 : convitesQtd })
         : { data: [], error: null };
     if (error) throw new Error("falha_candidatos: " + error.message);
+    const candidatos = (candidatosBrutos || []).filter((x: any) => !excluir.has(x.filial)).slice(0, convitesQtd);
 
     // Intercala 2ªs tentativas e convites e distribui por igual até o fim da janela.
     const itens: any[] = [];
@@ -301,6 +306,39 @@ function paramsDoModelo(nome: string, c: any, lead: any, filialPrep: string): st
     return [nomeLead];
 }
 
+// Trava de pagamento (12/11/2026): em 11/11 a Meta recusou TODOS os modelos a partir das 13:34
+// com o erro 131042 (problema de pagamento da conta) e a campanha seguiu tentando até as 20h.
+// Se o último modelo com resultado final falhou com 131042, só sai um envio de teste a cada
+// 30 min; o resto volta para a fila. Quando um passar, os envios voltam sozinhos.
+const ERRO_PAGAMENTO = "131042";
+const MINUTOS_TESTE_PAGAMENTO = 10;
+async function estadoPagamento(): Promise<{ bloqueado: boolean; podeTestar: boolean }> {
+    const { data: ultimo } = await supabaseAdmin.from("mensagens_whatsapp").select("wa_status, wa_status_erro")
+        .eq("direcao", "saida").eq("tipo", "template").in("wa_status", ["entregue", "lido", "falhou"])
+        .order("criado_em", { ascending: false }).limit(1).maybeSingle();
+    const bloqueado = !!ultimo && ultimo.wa_status === "falhou" && JSON.stringify(ultimo.wa_status_erro || "").includes(ERRO_PAGAMENTO);
+    if (!bloqueado) return { bloqueado: false, podeTestar: true };
+    const { count: recentes } = await supabaseAdmin.from("mensagens_whatsapp").select("id", { count: "exact", head: true })
+        .eq("direcao", "saida").eq("tipo", "template").gte("criado_em", new Date(Date.now() - MINUTOS_TESTE_PAGAMENTO * 60_000).toISOString());
+    return { bloqueado: true, podeTestar: !recentes };
+}
+async function avisarPagamento(bloqueado: boolean) {
+    const acao = bloqueado ? "whatsapp_pagamento_bloqueado" : "whatsapp_pagamento_liberado";
+    const { data: ult } = await supabaseAdmin.from("log_atividade").select("acao, criado_em")
+        .in("acao", ["whatsapp_pagamento_bloqueado", "whatsapp_pagamento_liberado"]).order("criado_em", { ascending: false }).limit(1).maybeSingle();
+    if (bloqueado ? (ult?.acao === acao && Date.now() - new Date(ult.criado_em).getTime() < 6 * 3600_000) : ult?.acao !== "whatsapp_pagamento_bloqueado") return;
+    await supabaseAdmin.from("log_atividade").insert({ filial: "GLOBAL", acao, autor: "Campanhas WhatsApp", pessoa_ids: [], detalhes: {} });
+    const texto = bloqueado
+        ? "⚠️ Campanhas do WhatsApp PARADAS: a Meta está recusando os modelos por problema de pagamento da conta (erro 131042). Regularize em business.facebook.com > Cobrança. Vou testar um envio a cada 10 min e retomo sozinho quando passar."
+        : "✅ Campanhas do WhatsApp retomadas: os modelos voltaram a ser entregues (problema de pagamento resolvido).";
+    try {
+        await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/lembrete-scraper`, {
+            method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}` },
+            body: JSON.stringify({ texto }),
+        });
+    } catch (e) { console.warn("aviso de pagamento não enviado:", e); }
+}
+
 async function enviar() {
     const { data: itens, error } = await supabaseAdmin.rpc("campanha_assumir_envios", { p_limite: 3 });
     if (error) throw new Error("falha_assumir: " + error.message);
@@ -310,7 +348,18 @@ async function enviar() {
     let usados = await iniciadasUltimas24h();
     const campanhas = new Map<number, any>();
     const vagasPorCampanha = new Map<number, any>();
+    const pagamento = await estadoPagamento();
+    await avisarPagamento(pagamento.bloqueado);
+    let testeLiberado = pagamento.podeTestar;
     for (const it of itens) {
+        if (pagamento.bloqueado) {
+            if (!testeLiberado) {
+                await supabaseAdmin.from("campanha_fila").update({ status: "pendente", agendado_para: new Date(Date.now() + MINUTOS_TESTE_PAGAMENTO * 60_000).toISOString() }).eq("id", it.id);
+                resultados.push({ id: it.id, status: "adiado_pagamento" });
+                continue;
+            }
+            testeLiberado = false; // este é o envio de teste
+        }
         let c = campanhas.get(it.campanha_id);
         if (!c) {
             const { data } = await supabaseAdmin.from("campanhas_whatsapp").select("*").eq("id", it.campanha_id).single();
@@ -321,6 +370,7 @@ async function enviar() {
             resultados.push({ id: it.id, status, ...extra });
         };
         if (!c?.ativa) { await finalizar("cancelado", { motivo: "campanha pausada" }); continue; }
+        if (Array.isArray(c.config?.excluir_filiais) && c.config.excluir_filiais.includes(it.filial)) { await finalizar("cancelado", { motivo: "escola fora desta campanha" }); continue; }
         if (c.config?.parar_com_vagas_restantes) {
             if (!vagasPorCampanha.has(c.id)) vagasPorCampanha.set(c.id, await vagasRestantes(c));
             const v = vagasPorCampanha.get(c.id);
@@ -342,7 +392,8 @@ async function enviar() {
             : new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
         const { count: conversa } = await supabaseAdmin.from("mensagens_whatsapp").select("id", { count: "exact", head: true })
             .eq("pessoaIdentificador", it.pessoaIdentificador).gte("criado_em", it.tipo === "followup" && desde ? antes10min(desde) : (desde || new Date().toISOString()))
-            .in("direcao", it.tipo === "followup" ? ["entrada"] : ["entrada", "saida"]);
+            .in("direcao", it.tipo === "followup" ? ["entrada"] : ["entrada", "saida"])
+            .or("wa_status.is.null,wa_status.neq.falhou"); // envio que falhou não é conversa (reenvio de 12/11)
         if (conversa && conversa > 0) { await finalizar("pulado", { motivo: it.tipo === "followup" ? "respondeu ao convite" : "conversa nos últimos 7 dias" }); continue; }
         if (c.evento_id) {
             const { count: inscrito } = await supabaseAdmin.from("evento_leads").select("id", { count: "exact", head: true })
