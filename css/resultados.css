@@ -131,3 +131,7 @@ summary { padding: 10px 0; cursor: pointer; }
   .meta-num { font-size: 28px; }
   .busca input { min-width: 0; width: 100%; }
 }
+/* Confirmar aluno/de fora no painel (12/11/2026) */
+.controle-aluno { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+.controle-aluno .mini, button.mini, select.mini { font-size: 12px; padding: 3px 8px; min-height: 0; }
+.sugestao-aluno { font-size: 12px; margin-top: 2px; }

@@ -49,7 +49,11 @@ function borrarTelefone(t: unknown): string {
     return `${ddd}${local.charAt(0)}${"•".repeat(Math.max(0, local.length - 4))}${local.slice(-3)}`;
 }
 function borrarLista(lista: any[]): any[] {
-    return (lista || []).map((x) => { const { pid: _pid, ...resto } = x; return { ...resto, nome: borrarNome(x.nome), telefone: borrarTelefone(x.telefone), borrado: true }; });
+    return (lista || []).map((x) => {
+        const { pid: _pid, uid: _uid, ...resto } = x;
+        const sugestao = x.sugestao ? { ...x.sugestao, nome: undefined } : x.sugestao;
+        return { ...resto, sugestao, nome: borrarNome(x.nome), telefone: borrarTelefone(x.telefone), borrado: true };
+    });
 }
 
 async function sha256(texto: string) {
@@ -147,6 +151,31 @@ Deno.serve(async (req) => {
     }
     if (acao === "sair") {
         if (typeof corpo.sessao === "string") await supabaseAdmin.from("painel_sessoes").delete().eq("token_hash", await sha256(corpo.sessao));
+        return responder({ ok: true });
+    }
+
+    // ---- Confirmar "é aluno" / "não é aluno" de um inscrito do Ulisses (12/11/2026) ----
+    if (acao === "marcar_aluno") {
+        if (!diretor) return responder({ ok: false, erro: "Entre com o PIN para isso.", precisa_pin: true }, 401);
+        const uid = String(corpo.uid || "");
+        if (!/^\d{1,15}$/.test(uid)) return responder({ ok: false, erro: "Inscrito inválido." }, 400);
+        const { data: insc } = await supabaseAdmin.from("ulisses_inscricoes_evento").select("nome").eq("pessoa_id_ulisses", uid).limit(1).maybeSingle();
+        if (!insc) return responder({ ok: false, erro: "Inscrito não encontrado." }, 404);
+        if (corpo.limpar === true) {
+            await supabaseAdmin.from("painel_aluno_confirmado").delete().eq("pessoa_id_ulisses", uid);
+        } else {
+            const ehAluno = corpo.eh_aluno === true;
+            let escola: string | null = null;
+            if (ehAluno) {
+                const { data: f } = await supabaseAdmin.from("filiais").select("nome").eq("nome", String(corpo.escola || "")).eq("ativo", true).maybeSingle();
+                if (!f) return responder({ ok: false, erro: "Escolha a escola do aluno." }, 400);
+                escola = f.nome;
+            }
+            const { error } = await supabaseAdmin.from("painel_aluno_confirmado").upsert({ pessoa_id_ulisses: uid, eh_aluno: ehAluno, escola, autor: autorDiretor, link_id: link.id, atualizado_em: new Date().toISOString() });
+            if (error) return responder({ ok: false, erro: "Não foi possível salvar agora." }, 503);
+        }
+        await registrarLog(filialLog, "painel_aluno_confirmado", autorDiretor, [], { inscrito: insc.nome, eh_aluno: corpo.limpar === true ? null : corpo.eh_aluno === true, escola: corpo.escola || null });
+        await supabaseAdmin.from("painel_resultados_cache").update({ gerado_em: null }).like("chave", "campanha:%"); // recalcula na próxima rodada
         return responder({ ok: true });
     }
 
@@ -269,7 +298,7 @@ Deno.serve(async (req) => {
             return { ...d, contatados, inscritos, por_escola: (d.por_escola || []).filter((x: any) => permitida(x.escola)) };
         });
         // Sigla de 3 letras de cada escola (código da unidade no Mercúrio), para as listas.
-        const { data: fs } = await supabaseAdmin.from("filiais").select("nome, mercurio_unidade");
+        const { data: fs } = await supabaseAdmin.from("filiais").select("nome, mercurio_unidade, ativo");
         const siglas = Object.fromEntries((fs || []).map((f: any) => [f.nome, f.mercurio_unidade || String(f.nome).replace(/^Goiânia - /, "").normalize("NFD").replace(/[^A-Za-z]/g, "").slice(0, 3).toUpperCase()]));
         // Aberturas de turma da escola com a configuração do diretor (vagas, turmas, prazo).
         let turmasConfig: any[] = [];
@@ -285,6 +314,7 @@ Deno.serve(async (req) => {
         return responder({
             rotulo: link.rotulo, dias, gerado_em: geradoEm, ulisses_em: ultSync?.executado_em ?? null, turmas_config: turmasConfig, escolas: somenteCampanhas ? null : escolasLinha.dados, campanhas: campanhasDados.filter(Boolean), siglas,
             escola_unica: escolaUnica, diretor, pin_disponivel: !!link.pin_hash,
+            escolas_ativas: diretor ? (fs || []).filter((f: any) => f.ativo && f.mercurio_unidade).map((f: any) => f.nome).sort() : [],
         });
     } catch (e) {
         console.error(e);

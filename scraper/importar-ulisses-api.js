@@ -452,6 +452,9 @@ async function gravarListaInscritosUlisses(evento, filialIdUlisses, linhas) {
     if (vistos.length) q = q.not('email_evento_id', 'in', `(${vistos.join(',')})`);
     const { error } = await q;
     if (error) console.warn(`[ulisses-api] Falha ao marcar inscrições removidas de "${evento.nome}":`, error.message);
+    // Varredura de possíveis alunos (nome parecido com membro ativo do Mercúrio), lida pelo painel.
+    const { error: erroSug } = await supabaseAdmin.rpc('ulisses_sugerir_alunos', { p_evento: evento.evento_id_ulisses });
+    if (erroSug) console.warn(`[ulisses-api] Falha na varredura de possíveis alunos de "${evento.nome}":`, erroSug.message);
 }
 
 export async function sincronizarComparecimentoViaApi(filialCrm, filialIdUlisses) {

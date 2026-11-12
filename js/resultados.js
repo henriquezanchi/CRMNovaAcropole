@@ -352,6 +352,53 @@
 
   function selo(texto, tipo) { return el('span', { classe: 'selo' + (tipo ? ' ' + tipo : ''), texto: texto }); }
 
+  // ---- Aluno ou de fora (12/11/2026) ----
+  // A varredura sugere "possível aluno" (nome parecido com membro ativo do Mercúrio, ou marcou
+  // "já sou aluno" no Ulisses); quem entrou com o PIN confirma e escolhe a escola.
+  function textoSugestao(sg) {
+    if (!sg) return '';
+    var partes = [];
+    if (sg.escola) partes.push((sg.nome ? 'Parece ' + nomeProprio(sg.nome) + ', aluno(a) de ' : 'Parece aluno(a) de ') + nomeEscola(sg.escola) + ' (' + sg.motivo + (sg.semelhanca && sg.motivo === 'nome parecido' ? ', ' + sg.semelhanca + '%' : '') + ')');
+    if (sg.disse_aluno) partes.push('marcou "já sou aluno" na inscrição');
+    return partes.join('; ');
+  }
+  function perfilInscrito(x) {
+    if (x.aluno) return selo(x.confirmado ? 'Aluno (confirmado)' : 'Aluno', 'cz');
+    if (x.confirmado === false) return selo('De fora (confirmado)');
+    if (x.sugestao) { var sp = selo('Possível aluno', 'am'); sp.title = textoSugestao(x.sugestao); return sp; }
+    return selo('De fora');
+  }
+  function controleAluno(x) {
+    if (!dados.diretor || !x.uid) return null;
+    var box = el('span', { classe: 'controle-aluno' });
+    function salvar(corpo, botao) {
+      botao.disabled = true;
+      corpo.acao = 'marcar_aluno'; corpo.uid = x.uid;
+      chamar(corpo).then(function () { box.textContent = '';  box.appendChild(el('span', { classe: 'muted', texto: 'Salvo. Os números atualizam em até 1 minuto.' })); setTimeout(carregar, 60000); })
+        .catch(function (e) { botao.disabled = false; alert(e.message); });
+    }
+    if (x.confirmado != null) {
+      var desf = el('button', { type: 'button', classe: 'secundario mini', texto: 'Desfazer' });
+      desf.addEventListener('click', function () { salvar({ limpar: true }, desf); });
+      box.appendChild(desf);
+      return box;
+    }
+    var sel = el('select', { 'aria-label': 'Escola do aluno', classe: 'mini' });
+    sel.appendChild(el('option', { value: '', texto: 'Escola…' }));
+    (dados.escolas_ativas || []).forEach(function (n) {
+      var o = el('option', { value: n, texto: nomeEscola(n) });
+      if ((x.sugestao && x.sugestao.escola === n) || (x.aluno && x.escola === n)) o.selected = true;
+      sel.appendChild(o);
+    });
+    var sim = el('button', { type: 'button', classe: 'secundario mini', texto: x.aluno ? 'Confirmar escola' : 'É aluno' });
+    sim.addEventListener('click', function () { if (!sel.value) { alert('Escolha a escola do aluno.'); return; } salvar({ eh_aluno: true, escola: sel.value }, sim); });
+    box.appendChild(sel); box.appendChild(sim);
+    var nao = el('button', { type: 'button', classe: 'secundario mini', texto: 'Não é aluno' });
+    nao.addEventListener('click', function () { salvar({ eh_aluno: false }, nao); });
+    box.appendChild(nao);
+    return box;
+  }
+
   function secaoCampanha(c, turma) {
     var s = el('section');
     var ev = c.evento || {}, n = c.numeros || {}, meta = Number(c.campanha && c.campanha.meta_presentes_fora) || 50;
@@ -386,7 +433,7 @@
       cartao(num(n.responderam), 'responderam', pct(n.responderam, n.entregues) + ' dos entregues'),
       cartao(num(n.vao), turma ? 'querem entrar' : 'disseram que vão', num(n.interessados) + ' interessados'),
       cartao(num(n.inscritos_via_convite), 'inscritos após o convite', ''),
-      cartao(num(n.inscritos_total), turma ? 'inscritos na turma' : 'inscritos no Ulisses', num(n.inscritos_alunos) + ' alunos · ' + num(n.inscritos_fora) + ' de fora'),
+      cartao(num(n.inscritos_total), turma ? 'inscritos na turma' : (n.inscricoes_ulisses > n.inscritos_total ? 'pessoas inscritas no Ulisses (' + num(n.inscricoes_ulisses) + ' inscrições)' : 'inscritos no Ulisses'), num(n.inscritos_alunos) + ' alunos · ' + num(n.inscritos_fora) + ' de fora' + (n.possiveis_alunos ? ' · ' + num(n.possiveis_alunos) + ' a conferir' : '')),
       cartao(num(n.nao_vao), turma ? 'não vão agora' : 'não podem ir', num(n.pediram_parar) + ' pediram para não receber'),
       cartao(num(n.segunda_tentativa), 'segunda tentativa', 'para quem não respondeu em 24h')
     ]));
@@ -440,17 +487,37 @@
       s.appendChild(tabela(['Escola', 'Convidados', 'Responderam', 'Taxa', 'Inscritos após convite'], linhas, [1, 2, 3, 4]));
     }
 
-    s.appendChild(listaComBusca(turma ? 'Inscritos na turma' : 'Inscritos no Ulisses', c.inscritos || [], ['Nome', 'Telefone', 'Escola', 'Perfil', 'Veio do convite', 'Inscrição', 'Presença'], function (x) {
-      return [nomeProprio(x.nome), x.telefone || '', nomeEscola(x.escola), x.aluno ? selo('Aluno', 'cz') : selo('De fora'),
+    var colunasInsc = ['Nome', 'Telefone', 'Escola', 'Perfil', 'Veio do convite', 'Inscrição', 'Presença'];
+    if (dados.diretor) colunasInsc = colunasInsc.concat(['Aluno?']);
+    var linhaInsc = function (x) {
+      var cel = [nomeProprio(x.nome), x.telefone || '', nomeEscola(x.escola), perfilInscrito(x),
         x.via_convite ? selo('Sim') : '', dataCurta(x.em), x.compareceu === true ? selo('Presente') : (x.compareceu === false ? selo('Faltou', 'vm') : '')];
-    }, 'Nenhum inscrito ainda.', function (x) {
-      return pessoa(x, [
-        x.aluno ? icone('🎓', 'Aluno') : icone('🙋', 'De fora (não é aluno)'),
+      if (dados.diretor) cel.push(controleAluno(x) || '');
+      return cel;
+    };
+    var pessoaInsc = function (x) {
+      var p = pessoa(x, [
+        x.aluno ? icone('🎓', 'Aluno') : (x.sugestao ? icone('❓', 'Possível aluno: ' + textoSugestao(x.sugestao)) : icone('🙋', 'De fora (não é aluno)')),
         x.via_convite ? icone('📩', 'Inscreveu-se depois do nosso convite') : null,
         x.em ? el('span', { classe: 'ic-data', title: 'Data da inscrição', texto: dataCurta(x.em) }) : null,
         x.compareceu === true ? icone('✅', 'Presente') : (x.compareceu === false ? icone('❌', 'Faltou') : null)
       ]);
-    }, '🎓 aluno · 🙋 de fora · 📩 veio do convite · ✅ presente · ❌ faltou · 📞 toque para ver o telefone'));
+      if (x.sugestao && !x.aluno) p.appendChild(el('div', { classe: 'muted sugestao-aluno', texto: textoSugestao(x.sugestao) }));
+      var ctl = controleAluno(x); if (ctl) p.appendChild(ctl);
+      return p;
+    };
+    var possiveis = (c.inscritos || []).filter(function (x) { return !x.aluno && x.confirmado == null && x.sugestao; });
+    if (possiveis.length) {
+      var lp = listaComBusca('Possíveis alunos para conferir', possiveis, ['Nome', 'Telefone', 'Parece ser'].concat(dados.diretor ? ['Aluno?'] : []), function (x) {
+        var cel = [nomeProprio(x.nome), x.telefone || '', textoSugestao(x.sugestao)];
+        if (dados.diretor) cel.push(controleAluno(x) || '');
+        return cel;
+      }, 'Nenhum possível aluno.', pessoaInsc, '❓ possível aluno');
+      lp.insertBefore(el('p', { classe: 'muted', texto: dados.diretor ? 'Inscritos contados como "de fora" com nome parecido com o de um aluno ativo, ou que marcaram "já sou aluno". Confirme cada um: a contagem de alunos e de público de fora se corrige sozinha.' : 'Inscritos contados como "de fora" que podem ser alunos. Entre com o PIN para confirmar.' }), lp.children[1]);
+      s.appendChild(lp);
+    }
+    s.appendChild(listaComBusca(turma ? 'Inscritos na turma' : 'Inscritos no Ulisses', c.inscritos || [], colunasInsc, linhaInsc, 'Nenhum inscrito ainda.', pessoaInsc,
+      '🎓 aluno · 🙋 de fora · ❓ possível aluno · 📩 veio do convite · ✅ presente · ❌ faltou · 📞 toque para ver o telefone'));
 
     var ENTREGA = { lido: ['Lido', ''], entregue: ['Entregue', 'cz'], enviado: ['Enviado', 'cz'], falhou: ['Não entregue', 'vm'] };
     s.appendChild(listaComBusca('Pessoas contatadas', c.contatados || [], ['Nome', 'Telefone', 'Escola', 'Convite', 'Entrega', 'Respondeu', 'Situação'], function (x) {
