@@ -52,8 +52,8 @@ Deno.serve(async (req) => {
         const body = await req.json();
         if (body && typeof body.filial === "string") filial = body.filial;
         if (body && body.modo !== undefined) {
-            if (body.modo !== "mercurio" && body.modo !== "ulisses_api") {
-                return json({ ok: false, erro: "modo precisa ser 'mercurio' ou 'ulisses_api'" }, 400);
+            if (!["mercurio", "ulisses_api", "ulisses_inscritos"].includes(body.modo)) {
+                return json({ ok: false, erro: "modo precisa ser 'mercurio', 'ulisses_api' ou 'ulisses_inscritos'" }, 400);
             }
             modo = body.modo;
         }

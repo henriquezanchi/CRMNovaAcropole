@@ -457,7 +457,8 @@ async function gravarListaInscritosUlisses(evento, filialIdUlisses, linhas) {
     if (erroSug) console.warn(`[ulisses-api] Falha na varredura de possíveis alunos de "${evento.nome}":`, erroSug.message);
 }
 
-export async function sincronizarComparecimentoViaApi(filialCrm, filialIdUlisses) {
+// opcoes.eventoIdsUlisses: só esses eventos (rodada leve dos inscritos das campanhas, a cada 10 min).
+export async function sincronizarComparecimentoViaApi(filialCrm, filialIdUlisses, opcoes = {}) {
     // Só eventos com o eventoId do Ulisses já conhecido (gravado por
     // sincronizarEventosUlissesApi()) — e dentro de uma janela razoável
     // (mesmo espírito de JANELA_PASSADO_MS: não vale a pena gastar 1
@@ -465,12 +466,14 @@ export async function sincronizarComparecimentoViaApi(filialCrm, filialIdUlisses
     // mais; eventos futuros entram sempre, sem limite).
     const hojeISOFiltro = dataBrasilia(Date.now());
     const desdeISO = dataBrasilia(Date.now() - JANELA_PASSADO_MS);
-    const { data: eventosFilial, error: erroEventos } = await supabaseAdmin
+    let consultaEventos = supabaseAdmin
         .from('eventos')
         .select('id, nome, data, evento_id_ulisses')
         .eq('filial', filialCrm)
         .not('evento_id_ulisses', 'is', null)
         .or(`data.gte.${desdeISO},data.gte.${hojeISOFiltro}`);
+    if (opcoes.eventoIdsUlisses?.length) consultaEventos = consultaEventos.in('evento_id_ulisses', opcoes.eventoIdsUlisses);
+    const { data: eventosFilial, error: erroEventos } = await consultaEventos;
     if (erroEventos) throw new Error('Erro ao buscar eventos da filial: ' + erroEventos.message);
     if (!eventosFilial || eventosFilial.length === 0) {
         return '0 evento(s) com eventoId do Ulisses conhecido (dentro da janela) nesta filial — rode a sincronização de eventos primeiro, ou não há evento recente/futuro.';

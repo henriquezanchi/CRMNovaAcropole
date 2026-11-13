@@ -17,6 +17,7 @@ on:
         options:
           - mercurio
           - ulisses_api
+          - ulisses_inscritos
       filial:
         description: 'Rodar só 1 filial (trecho do nome, ex: "Garavelo") — vazio roda todas'
         required: false
@@ -83,10 +84,11 @@ jobs:
         run: npm install
 
       - name: Instalar navegador (Chromium)
+        if: ${{ github.event.inputs.modo != 'ulisses_inscritos' }}
         run: npx playwright install --with-deps chromium
 
       - name: Mercúrio — login + exportar Ativos e Inativos
-        if: ${{ github.event.inputs.modo != 'ulisses_api' }}
+        if: ${{ github.event.inputs.modo != 'ulisses_api' && github.event.inputs.modo != 'ulisses_inscritos' }}
         env:
           FILTRO_FILIAL: ${{ github.event.inputs.filial }}
         run: node mercurio.js
@@ -102,8 +104,15 @@ jobs:
           PONTE_CHAVE: ${{ secrets.PONTE_CHAVE }}
         run: node sincronizar-ulisses-api-local.mjs
 
+      - name: Ulisses — só inscritos das campanhas ativas (rodada leve, a cada 10 min)
+        if: ${{ github.event.inputs.modo == 'ulisses_inscritos' }}
+        env:
+          PONTE_URL: ${{ secrets.PONTE_URL }}
+          PONTE_CHAVE: ${{ secrets.PONTE_CHAVE }}
+        run: node sincronizar-inscritos-campanhas.mjs
+
       - name: Guardar prints de erro (se algum passo falhou)
-        if: always()
+        if: ${{ always() && github.event.inputs.modo != 'ulisses_inscritos' }}
         uses: actions/upload-artifact@v4
         with:
           name: scraper-debug
@@ -111,7 +120,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Guardar arquivos exportados (CSV/JSON)
-        if: always()
+        if: ${{ always() && github.event.inputs.modo != 'ulisses_inscritos' }}
         uses: actions/upload-artifact@v4
         with:
           name: scraper-exports
