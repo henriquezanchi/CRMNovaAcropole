@@ -11396,3 +11396,10 @@ Edge `recepcao-evento` (`--no-verify-jwt`), migração `migracao_recepcao_evento
   Presentes ("Entregar cartão") → registro `tipo='cartao'` (`cartao_numero`, nome). A segurança lê (`cartao_lido`,
   público, confere assinatura): mostra com quem está, grava `tipo='cartao_lido'` (libera), recolhe e devolve à recepção.
   Sem internet o validador só confere a assinatura. Vincular um cartão que ainda não passou pela segurança só avisa.
+- Mesa da recepção só entrega cartão (13/11/2026): "Chegou"/cadastro abrem direto a tela "Cartão para Fulano"; o QR code
+  na tela só aparece no autoatendimento (tablet). Para o público, "passe" virou "QR code de entrada".
+- Jornada até a entrada (`migracao_recepcao_jornada.sql`, JÁ RODADA): o validador manda cada leitura ao servidor
+  (`passe_validado`, uma linha por QR code; `cartao_lido` com `lido_em`), guardando em fila no aparelho quando está sem
+  internet. `inicio_em` = check-in (QR) ou entrega do cartão. `recepcao_numeros` devolve `jornada` (mediana/p90/máx por
+  tipo de entrada). A aba Números tem também a simulação de filas (`simularEntrada()`, `js/recepcao.js`: triagem →
+  mesas → segurança, 20 rodadas, tempos editáveis). QR de cartão aberto pela câmera vai direto ao validador.
