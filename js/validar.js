@@ -37,13 +37,52 @@
         if (!ok) { mostrar('erro', '✗ PASSE FALSO', [['vl-dica', 'A assinatura não confere. Encaminhe para a recepção.']]); return; }
         var vistos = lerVistos(), id = partes[1].slice(0, 24), antes = vistos[id];
         if (!antes) { vistos[id] = new Date().toISOString(); gravarVistos(vistos); }
-        var linhas = [['vl-nome', dados.n || ''], ['vl-info', dados.t || ''], ['vl-info', 'Check-in: ' + hora(dados.d)]];
+        var linhas = [['vl-info', dados.en || ''], ['vl-nome', dados.n || ''], ['vl-info', dados.t || ''], ['vl-info', 'Check-in: ' + hora(dados.d)]];
         if (antes) {
           linhas.push(['vl-dica', 'Este passe já foi conferido neste celular em ' + hora(antes) + '. Confira se é a mesma pessoa.']);
           mostrar('repetido', '✓ Válido · já conferido', linhas);
         } else mostrar('ok', '✓ PASSE VÁLIDO', linhas);
         contar();
       }, function () { mostrar('erro', '✗ Não foi possível conferir', [['vl-dica', 'Atualize o navegador ou use outro celular.']]); });
+  }
+
+  // ---------- Página do passe (passe.html / /passe#<token>) ----------
+  // O participante abre o próprio passe (lendo o QR na tela da recepção, ou vindo do check-in pelo celular).
+  // Mostra nome, telefone, horário, o selo de válido (assinatura conferida aqui mesmo) e o QR para a segurança.
+  // O desenho do QR vem do servidor uma vez e fica guardado no celular; depois abre sem internet.
+  function iniciarPasse() {
+    var FUNCAO = 'https://eovgljcowblwoxmobeno.supabase.co/functions/v1/recepcao-evento';
+    var guardar = function (k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ok */ } };
+    var ler = function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } };
+    var token = (location.hash || '').replace(/^#/, '');
+    if (token.length < 20) token = ler('meu_passe') || '';
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw-passe.js', { scope: './passe' }).catch(function () { /* ok */ });
+    var st = $('psStatus');
+    function status(classe, texto) { st.className = 'vl-resultado ' + classe; st.textContent = ''; st.appendChild(el('p', 'vl-status', texto)); }
+    var partes = token.split('.');
+    if (partes.length !== 2) { status('vl-espera', 'Nenhum passe neste celular'); $('psDica').textContent = 'Faça o check-in pelo QR code do cartaz ou na recepção.'; return; }
+    var dados, bytes;
+    try { bytes = b64u(partes[0]); dados = JSON.parse(new TextDecoder().decode(bytes)); } catch (e) { status('vl-erro', '✗ Passe ilegível'); return; }
+    crypto.subtle.importKey('jwk', CHAVE_PUBLICA, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
+      .then(function (k) { return crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, k, b64u(partes[1]), bytes); })
+      .then(function (ok) {
+        if (!ok) { status('vl-erro', '✗ Passe inválido'); $('psDica').textContent = 'Procure a recepção.'; return; }
+        status('vl-ok', '✓ Passe válido');
+        guardar('meu_passe', token);
+        $('psEvento').textContent = dados.en || 'Dia Mundial da Filosofia 2026';
+        $('psNome').textContent = dados.n || '';
+        $('psInfo').textContent = (dados.t || '') + ' · check-in ' + hora(dados.d);
+        var svgGuardado = ler('meu_passe_svg_' + partes[1].slice(0, 16));
+        if (svgGuardado) return desenhar(svgGuardado);
+        fetch(FUNCAO, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ acao: 'passe_qr', token: token }) })
+          .then(function (r) { return r.json(); })
+          .then(function (j) { if (j.ok && j.svg) { guardar('meu_passe_svg_' + partes[1].slice(0, 16), j.svg); desenhar(j.svg); } else semQr(); }, semQr);
+      }, function () { status('vl-erro', 'Não foi possível conferir'); });
+    function desenhar(svgTexto) {
+      var svg = new DOMParser().parseFromString(svgTexto, 'image/svg+xml').documentElement;
+      if (svg && svg.nodeName.toLowerCase() === 'svg') { $('psQr').textContent = ''; $('psQr').appendChild(document.importNode(svg, true)); }
+    }
+    function semQr() { $('psDica').textContent = 'Sem internet para desenhar o QR code agora. Mostre esta tela com o selo verde à segurança.'; }
   }
 
   // Leitura com a câmera dentro da página (Chrome/Android). No iPhone, a câmera do sistema abre esta página.
@@ -59,7 +98,7 @@
       requestAnimationFrame(lerQuadro);
     }, function () { requestAnimationFrame(lerQuadro); });
   }
-  $('vlLer').addEventListener('click', function () {
+  if ($('vlLer')) $('vlLer').addEventListener('click', function () {
     if (lendo) { pararCamera(); return; }
     if (!('BarcodeDetector' in window)) { $('vlAviso').textContent = 'Neste celular, use o app da câmera para ler o QR code do passe: ele abre esta página com o resultado.'; return; }
     leitor = leitor || new window.BarcodeDetector({ formats: ['qr_code'] });
@@ -69,6 +108,7 @@
     }, function () { $('vlAviso').textContent = 'Permita o uso da câmera nas configurações do navegador.'; });
   });
 
+  if (document.body.classList.contains('modo-passe')) { iniciarPasse(); return; }
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw-passe.js', { scope: './validar' }).catch(function () { /* ok */ });
   contar();
   if (location.hash.length > 10) validar(location.hash);

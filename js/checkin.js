@@ -25,6 +25,7 @@
   function lerPasses() { try { return JSON.parse(localStorage.getItem(CHAVE_PASSES) || '[]'); } catch (e) { return []; } }
   function guardarPasse(p) {
     var lista = lerPasses().filter(function (x) { return x.token !== p.token; }); lista.unshift(p);
+    try { localStorage.setItem('meu_passe', p.token); } catch (e) { /* ok */ }
     try { localStorage.setItem(CHAVE_PASSES, JSON.stringify(lista.slice(0, 6))); } catch (e) { /* ok */ }
   }
 

@@ -55,6 +55,7 @@
 
   <!-- Chegada: buscar e marcar -->
   <div id="abaBuscar" class="aba">
+    <p class="instrucao"><b>1</b> Diga ou digite o nome ou o celular <b>2</b> Toque em <b>Chegou</b> <b>3</b> Mostre o QR do passe para a pessoa guardar no celular</p>
     <div class="busca-grande">
       <input id="busca" type="search" placeholder="Nome ou celular" autocomplete="off" aria-label="Buscar inscrito">
       <button type="button" id="micBusca" class="mic" aria-label="Buscar por voz" title="Buscar por voz"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg></button>
@@ -66,6 +67,7 @@
 
   <!-- Cadastro de quem chegou sem inscrição -->
   <div id="abaCadastrar" class="aba" hidden>
+    <p class="instrucao">Para quem <b>não se inscreveu</b>. Se aparecer "Talvez já esteja inscrito", toque em <b>É esta pessoa</b>. No fim, mostre o passe para a pessoa guardar.</p>
     <form id="formCadastro" autocomplete="off">
       <label>Nome e sobrenome
         <span class="com-mic"><input id="cadNome" required maxlength="120" autocapitalize="words"><button type="button" class="mic" data-mic="cadNome" aria-label="Falar o nome"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg></button></span>
@@ -99,6 +101,7 @@
 
   <!-- Presentes e registros -->
   <div id="abaPresentes" class="aba" hidden>
+    <p class="instrucao">Quem já chegou. Se a pessoa perdeu o passe, toque em <b>Mostrar passe</b>.</p>
     <div id="problemas"></div>
     <div id="listaPresentes" class="resultados"></div>
   </div>
@@ -124,6 +127,16 @@
     <div id="atendentesSugestoes" class="sugestoes"></div>
     <p class="dica">Digite parte do seu nome e toque nele na lista (membros ativos do Mercúrio).</p>
     <button type="button" id="atendenteUsar" class="btn principal">Começar a atender</button>
+  </div>
+</section>
+
+<!-- Passe de quem acabou de entrar (a pessoa aponta a câmera do celular para guardar) -->
+<section id="painelPasse" class="sobreposicao" hidden>
+  <div class="cartao-pin passe-op">
+    <h2 id="ppTitulo">Passe</h2>
+    <p class="dica">Peça para a pessoa apontar a câmera do celular para este QR code. Ele abre o passe dela, que a segurança vai pedir.</p>
+    <div id="ppQr" class="ck-qr"></div>
+    <button type="button" id="ppFechar" class="btn principal">Pronto</button>
   </div>
 </section>
 

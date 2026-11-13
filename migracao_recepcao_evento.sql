@@ -57,6 +57,8 @@ create index if not exists recepcao_registros_evento on public.recepcao_registro
 -- Lista da porta: inscritos do Ulisses + se é aluno ativo (mesma regra do painel: telefone ou e-mail
 -- e o mesmo primeiro nome) + presença. A tela mostra só os 4 últimos dígitos do celular; os 8 últimos
 -- servem para buscar pelo número inteiro.
+create index if not exists mercurio_pessoas_email_lower on public.mercurio_pessoas (lower(email)) where situacao = 'ATI' and email is not null;
+create index if not exists recepcao_registros_ee on public.recepcao_registros (email_evento_id) where email_evento_id is not null;
 drop function if exists public.recepcao_lista(bigint);
 create or replace function public.recepcao_lista(p_evento_id_ulisses bigint)
 returns table (email_evento_id bigint, nome text, final_tel text, tel8 text, email_mascara text, aluno boolean,
@@ -68,17 +70,20 @@ as $$
            right(regexp_replace(coalesce(u.telefone, ''), '\D', '', 'g'), 4),
            right(regexp_replace(coalesce(u.telefone, ''), '\D', '', 'g'), 8),
            case when u.email like '%@%' then left(u.email, 2) || '…@' || split_part(u.email, '@', 2) end,
-           coalesce(cf.eh_aluno, mp.filial is not null),
-           coalesce(case when cf.eh_aluno then cf.escola end, mp.filial), -- escola só de quem é aluno (Mercúrio)
+           coalesce(cf.eh_aluno, coalesce(mt.filial, me.filial) is not null),
+           coalesce(case when cf.eh_aluno then cf.escola end, mt.filial, me.filial), -- escola só de quem é aluno (Mercúrio)
            u.compareceu, coalesce(u.inscrito_em, u.visto_primeiro_em),
            exists (select 1 from recepcao_registros r where r.email_evento_id = u.email_evento_id and r.tipo = 'inscricao')
     from ulisses_inscricoes_evento u
     left join leads_inscricoes l on l."pessoaIdentificador" = u."pessoaIdentificador"
     left join painel_aluno_confirmado cf on cf.pessoa_id_ulisses = u.pessoa_id_ulisses
+    -- Duas buscas separadas (celular e e-mail), cada uma com índice: com OR a consulta levava 5 s (13/11/2026).
     left join lateral (select m.filial from mercurio_pessoas m where m.situacao = 'ATI'
-        and ((campanha_telefone_chave(u.ddd, u.telefone) is not null and m.tel_chave = campanha_telefone_chave(u.ddd, u.telefone))
-             or (nullif(lower(trim(u.email)), '') is not null and lower(m.email) = lower(trim(u.email))))
-        and split_part(nome_normalizado(m.nome), ' ', 1) = split_part(nome_normalizado(u.nome), ' ', 1) limit 1) mp on true
+        and m.tel_chave = campanha_telefone_chave(u.ddd, u.telefone)
+        and split_part(nome_normalizado(m.nome), ' ', 1) = split_part(nome_normalizado(u.nome), ' ', 1) limit 1) mt on true
+    left join lateral (select m.filial from mercurio_pessoas m where m.situacao = 'ATI'
+        and lower(m.email) = nullif(lower(trim(u.email)), '')
+        and split_part(nome_normalizado(m.nome), ' ', 1) = split_part(nome_normalizado(u.nome), ' ', 1) limit 1) me on true
     where u.evento_id_ulisses = p_evento_id_ulisses and u.removido_em is null
 $$;
 revoke all on function public.recepcao_lista(bigint) from public, anon, authenticated;

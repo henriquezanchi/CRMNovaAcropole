@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#05433b">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://eovgljcowblwoxmobeno.supabase.co; worker-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Meu passe</title>
+<link rel="icon" href="img/logo-nova-acropole.png">
+<link rel="stylesheet" href="css/recepcao.css">
+</head>
+<body class="modo-passe">
+<header class="topo">
+  <img src="img/logo-nova-acropole.png" alt="" class="logo">
+  <div class="topo-txt">
+    <p class="marca">Nova Acrópole</p>
+    <h1>Meu passe</h1>
+  </div>
+</header>
+<main class="tela checkin">
+  <div id="psStatus" class="vl-resultado vl-espera"><p class="vl-status">Conferindo o passe…</p></div>
+  <div class="ck-passe">
+    <div id="psQr" class="ck-qr"></div>
+    <p class="ck-passe-evento" id="psEvento"></p>
+    <p class="ck-passe-nome" id="psNome"></p>
+    <p class="ck-passe-info" id="psInfo"></p>
+  </div>
+  <p class="sub centro" id="psDica">Mostre esta tela à segurança na entrada do evento. Para garantir, tire um print.</p>
+</main>
+<script src="js/validar.js"></script>
+</body>
+</html>

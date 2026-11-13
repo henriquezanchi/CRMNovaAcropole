@@ -1,8 +1,8 @@
 // Guarda o check-in (checkin.html) e o validador da segurança (validar.html) no aparelho para abrirem sem internet
 // (13/11/2026). Rede primeiro; sem rede, a cópia guardada. Registrado com escopo ./checkin e ./validar.
-var CACHE = 'passe-v2';
-var ARQUIVOS = ['checkin.html', 'validar.html', 'js/checkin.js', 'js/validar.js', 'css/recepcao.css', 'img/logo-nova-acropole.png'];
-var APELIDOS = { checkin: 'checkin.html', inscrever: 'checkin.html', validar: 'validar.html' };
+var CACHE = 'passe-v4';
+var ARQUIVOS = ['checkin.html', 'validar.html', 'passe.html', 'js/checkin.js', 'js/validar.js', 'css/recepcao.css', 'img/logo-nova-acropole.png'];
+var APELIDOS = { checkin: 'checkin.html', inscrever: 'checkin.html', validar: 'validar.html', passe: 'passe.html' };
 
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(ARQUIVOS); }).then(function () { return self.skipWaiting(); }));

@@ -221,3 +221,25 @@ body.modo-espelho #acoesTopo, body.modo-espelho #conexao, body.modo-totem #acoes
 .tab-num th { background: var(--verde-claro); color: var(--verde-esc); text-align: left; padding: 8px; font-size: 12px; }
 .tab-num td { padding: 8px; border-top: 1px solid var(--linha); }
 @media (max-width: 520px) { .tab-num { font-size: 12px; } .tab-num th, .tab-num td { padding: 6px 4px; } .abas button { font-size: 12px; } }
+
+/* Passe na tela da recepção, na 2ª tela e no tablet */
+.passe-op { text-align: center; }
+.passe-op .ck-qr svg { max-width: 340px; }
+.espelho-qr svg { max-width: min(60vh, 520px); }
+.totem .ck-qr svg { max-width: 380px; }
+.modo-passe .ck-passe { margin-top: 0; }
+
+/* Instrução curta no alto de cada aba (sem treinamento: a tela explica) */
+.instrucao { margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; background: var(--amarelo-claro); color: #5a4500; font-size: 14px; line-height: 1.6; }
+.instrucao b { font-weight: 800; }
+.instrucao b:not(:first-child) { margin-left: 6px; }
+
+.ck-passe-evento { margin: 12px 0 0; font-size: 13px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--turq, #009485); }
+
+/* Topo no celular: botões numa segunda linha, sem apertar o nome do evento */
+@media (max-width: 520px) {
+  .topo { flex-wrap: wrap; row-gap: 8px; }
+  .topo .marca { display: none; }
+  .acoes-topo { order: 3; width: 100%; }
+  .acoes-topo .btn-topo { flex: 1; }
+}

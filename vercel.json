@@ -28,6 +28,10 @@
     {
       "source": "/inscrever",
       "destination": "/checkin.html"
+    },
+    {
+      "source": "/passe",
+      "destination": "/passe.html"
     }
   ]
 }

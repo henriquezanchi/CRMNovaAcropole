@@ -57,8 +57,9 @@ async function marcarNoUlisses(emailEventoId: number, compareceu: boolean) {
 // ---- Passe do check-in (13/11/2026) ----
 // QR code com nome, telefone e horário, assinado com ECDSA P-256 (chave privada no segredo PASSE_CHAVE_PRIVADA).
 // O validador da segurança (validar.html) confere a assinatura com a chave pública, sem internet.
-const URL_VALIDAR = "https://crm-nova-acropole.vercel.app/validar#";
+const URL_VALIDAR = "https://crm-nova-acropole.vercel.app/passe#";
 let chavePasse: CryptoKey | null = null;
+const nomesEvento: Record<string, string> = {};
 const b64u = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 function telefoneBonito(ddd: string, tel: string) {
     const t = digitos(tel).slice(-9);
@@ -70,7 +71,12 @@ async function emitirPasse(link: any, dados: { nome: string; ddd?: string; telef
     // Aceita o JWK direto ou em base64 (mais fácil de gravar com `supabase secrets set`).
     if (!chavePasse) chavePasse = await crypto.subtle.importKey("jwk", JSON.parse(jwk.trim().startsWith("{") ? jwk : atob(jwk.trim())),
         { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
-    const corpo = { v: 1, ev: link.evento_id_ulisses, d: dados.em || new Date().toISOString(), n: nomeProprio(dados.nome || ""),
+    if (!nomesEvento[link.evento_id]) {
+        const { data: ev } = await supabaseAdmin.from("eventos").select("nome, data").eq("id", link.evento_id).maybeSingle();
+        const titulo = nomeProprio(String(ev?.nome || "").split(" - ")[0]).replace(/(Da|De|Do|Das|Dos|E)/g, (m) => m.toLowerCase());
+        nomesEvento[link.evento_id] = ev?.data ? `${titulo} · ${String(ev.data).slice(8, 10)}/${String(ev.data).slice(5, 7)}` : titulo;
+    }
+    const corpo = { v: 1, ev: link.evento_id_ulisses, en: nomesEvento[link.evento_id], d: dados.em || new Date().toISOString(), n: nomeProprio(dados.nome || ""),
         t: telefoneBonito(dados.ddd || "", dados.telefone || ""), r: dados.ref };
     const bytes = new TextEncoder().encode(JSON.stringify(corpo));
     const assinatura = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, chavePasse, bytes));
@@ -78,6 +84,26 @@ async function emitirPasse(link: any, dados: { nome: string; ddd?: string; telef
     const url = URL_VALIDAR + token;
     const svg = await QRCode.toString(url, { type: "svg", errorCorrectionLevel: "M", margin: 1, color: { dark: "#05433b", light: "#ffffff" } });
     return { token, url, svg, nome: corpo.n, telefone: corpo.t, em: corpo.d };
+}
+
+// Desenha o QR de um passe (a página /passe guarda o desenho no celular da pessoa). Só para passes com assinatura válida.
+let chavePasseVerif: CryptoKey | null = null;
+async function passeQr(corpo: any) {
+    const token = String(corpo.token || "").slice(0, 2000);
+    const [a, b] = token.split(".");
+    const jwk = Deno.env.get("PASSE_CHAVE_PRIVADA");
+    if (!a || !b || !jwk) return responder({ ok: false, erro: "Passe inválido." }, 400);
+    if (!chavePasseVerif) {
+        const priv = JSON.parse(jwk.trim().startsWith("{") ? jwk : atob(jwk.trim()));
+        chavePasseVerif = await crypto.subtle.importKey("jwk", { kty: priv.kty, crv: priv.crv, x: priv.x, y: priv.y },
+            { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+    }
+    const de64 = (t: string) => Uint8Array.from(atob(t.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((t.length + 3) % 4)), (c) => c.charCodeAt(0));
+    let ok = false;
+    try { ok = await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, chavePasseVerif, de64(b), de64(a)); } catch { ok = false; }
+    if (!ok) return responder({ ok: false, erro: "Passe inválido." }, 400);
+    const svg = await QRCode.toString(URL_VALIDAR + token, { type: "svg", errorCorrectionLevel: "M", margin: 1, color: { dark: "#05433b", light: "#ffffff" } });
+    return responder({ ok: true, svg });
 }
 
 function primeiroNomeBate(digitado: string, nomeCompleto: string) {
@@ -230,6 +256,7 @@ Deno.serve(async (req) => {
     // Só funciona na janela do evento. Pede celular + primeiro nome e só marca se os dois baterem com a mesma
     // inscrição; a resposta nunca diz qual dos dois não bateu (não revela quem está inscrito).
     if (acao === "auto_info" || acao === "auto_checkin" || acao === "auto_inscrever") return await autoCheckin(acao, corpo);
+    if (acao === "passe_qr") return await passeQr(corpo);
     const chave = String(corpo.chave || "");
     if (!/^[A-Za-z0-9_-]{10,}$/.test(chave)) return responder({ ok: false, erro: "Link inválido." }, 400);
 
@@ -285,7 +312,7 @@ Deno.serve(async (req) => {
         if (acao === "presenca") {
             const clientId = corpo.client_id, eeId = Number(corpo.email_evento_id), comp = corpo.compareceu !== false;
             if (!uuidOk(clientId) || !eeId) return responder({ ok: false, erro: "Pedido inválido." }, 400);
-            const { data: insc } = await supabaseAdmin.from("ulisses_inscricoes_evento").select("nome, pessoaIdentificador")
+            const { data: insc } = await supabaseAdmin.from("ulisses_inscricoes_evento").select("nome, pessoaIdentificador, ddd, telefone")
                 .eq("email_evento_id", eeId).eq("evento_id_ulisses", link.evento_id_ulisses).maybeSingle();
             if (!insc) return responder({ ok: false, erro: "Inscrição não encontrada neste evento.", definitivo: true }, 404);
             const novo = await registrar({
@@ -301,7 +328,9 @@ Deno.serve(async (req) => {
             try { await marcarNoUlisses(eeId, comp); }
             catch (e) { await concluir(clientId, "erro", { erro: (e as Error).message }); return responder({ ok: false, erro: (e as Error).message }, 502); }
             await concluir(clientId, "ok", { erro: null });
-            return responder({ ok: true });
+            // Todo mundo mostra o passe à segurança, inclusive quem passou pela mesa.
+            const passe = comp ? await emitirPasse(link, { nome: insc.nome || "", ddd: insc.ddd || "", telefone: insc.telefone || "", ref: `i${eeId}` }).catch(() => null) : null;
+            return responder({ ok: true, passe });
         }
 
         // Painel de números da recepção (chegadas por horário, canais, perfil, comparecimento).
@@ -461,7 +490,8 @@ Deno.serve(async (req) => {
                     veio_com: texto(corpo.veio_com), interesse_curso: typeof corpo.interesse_curso === "boolean" ? corpo.interesse_curso : null,
                     criado_no_aparelho: texto(corpo.criado_no_aparelho, 40),
                 });
-                return responder({ ok: true, reservado: true, repetido: nova === null });
+                const passeR = await emitirPasse(link, { nome, ddd, telefone: tel, ref: `c${String(clientId).slice(0, 8)}` }).catch(() => null);
+                return responder({ ok: true, reservado: true, repetido: nova === null, passe: passeR });
             }
 
             const novo = await registrar({
@@ -521,7 +551,8 @@ Deno.serve(async (req) => {
                 return responder({ ok: false, inscrito: true, email_evento_id: eeId, erro: "Inscrição feita. A presença falhou: marque de novo pela lista." }, 502);
             }
             await concluir(clientId, "ok", { email_evento_id: eeId, erro: null });
-            return responder({ ok: true, email_evento_id: eeId });
+            const passeI = await emitirPasse(link, { nome, ddd, telefone: tel, ref: `i${eeId}` }).catch(() => null);
+            return responder({ ok: true, email_evento_id: eeId, passe: passeI });
         }
 
         return responder({ ok: false, erro: "Ação desconhecida." }, 400);

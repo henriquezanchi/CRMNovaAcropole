@@ -422,6 +422,7 @@
     todos.forEach(function (p) {
       area.appendChild(el('div', { classe: 'pessoa presente' + (p.pendente ? ' pendente' : '') }, [
         el('div', { classe: 'nome', texto: p.nome }),
+        passesGuardados[p.nome] ? el('div', { classe: 'acao' }, [el('button', { type: 'button', classe: 'chip ativo', texto: 'Mostrar passe', onclick: function () { mostrarPasse(p.nome, passesGuardados[p.nome].svg); } })]) : null,
         el('div', { classe: 'info' }, [
           p.porta || p.na_porta ? el('span', { classe: 'selo fora', texto: p.semEmail ? 'reservado na porta (sem e-mail)' : 'inscrito na porta' }) : null,
           p.aluno ? el('span', { classe: 'selo', texto: 'Aluno' }) : (p.porta ? null : el('span', { classe: 'selo fora', texto: 'De fora' })),
@@ -450,7 +451,10 @@
       if (j._status === 401 && j.precisa_pin) { mostrarPin('Sua sessão expirou. Entre de novo; nada do que foi marcado se perde.'); return; }
       if (j.ok) {
         tirar(item); esperaFila = 0;
+        if (j.passe) receberPasse(j.passe, item);
         if (item.acao === 'presenca' && lista) lista.inscritos.forEach(function (x) { if (x.email_evento_id === item.dados.email_evento_id) x.compareceu = item.dados.compareceu; });
+        // Reserva sem e-mail entra na conta na hora (a lista do servidor chega em seguida).
+        if (item.acao === 'inscrever' && j.reservado && lista && !j.repetido) lista.reservas = (lista.reservas || []).concat([{ client_id: item.dados.client_id, nome: item.dados.nome }]);
         if (item.acao === 'inscrever') atualizarLista();
       } else if (j.definitivo || j.inscrito || (j._status >= 400 && j._status < 500 && j._status !== 429)) {
         tirar(item);
@@ -468,6 +472,28 @@
       setTimeout(enviarFila, esperaFila);
     });
   }
+  // Passe devolvido pelo servidor: mostra na tela (atendente / tablet) e na 2ª tela. Se chegou atrasado
+  // (fila que ficou presa sem internet), só guarda: dá para mostrar depois pela aba Presentes.
+  var passesGuardados = ler('passes', {});
+  function svgDe(texto) {
+    var svg = new DOMParser().parseFromString(texto || '', 'image/svg+xml').documentElement;
+    return svg && svg.nodeName.toLowerCase() === 'svg' ? document.importNode(svg, true) : null;
+  }
+  function receberPasse(passe, item) {
+    passesGuardados[passe.nome] = { svg: passe.svg, url: passe.url, em: passe.em }; gravar('passes', passesGuardados);
+    var recente = Date.now() - new Date(item.dados.criado_no_aparelho || 0).getTime() < 3 * 60000;
+    if (recente) mostrarPasse(passe.nome, passe.svg);
+    if (!$('abaPresentes').hidden) desenharPresentes();
+  }
+  function mostrarPasse(nome, svgTexto) {
+    espelhar({ tipo: 'passe', nome: nome, svg: svgTexto });
+    if (document.body.classList.contains('modo-totem')) return totemPasse(nome, svgTexto);
+    $('ppTitulo').textContent = 'Passe de ' + String(nome).split(' ')[0];
+    $('ppQr').textContent = ''; var s = svgDe(svgTexto); if (s) $('ppQr').appendChild(s);
+    $('painelPasse').hidden = false;
+  }
+  $('ppFechar').addEventListener('click', function () { $('painelPasse').hidden = true; espelhar({ tipo: 'espera' }); if (!$('abaBuscar').hidden) $('busca').focus(); });
+
   function tirar(item) { var i = fila.indexOf(item); if (i >= 0) fila.splice(i, 1); }
   function nomeDe(id) { var p = ((lista && lista.inscritos) || []).filter(function (x) { return x.email_evento_id === id; })[0]; return p ? p.nome : ''; }
 
@@ -522,6 +548,12 @@
         area.appendChild(campo('Celular (WhatsApp)', telefoneBonito(d.ddd, d.tel), '—'));
         area.appendChild(campo('E-mail', d.email, '(opcional)'));
         area.appendChild(el('p', { classe: 'rodape', texto: 'Algo errado? Avise quem está atendendo você.' }));
+      } else if (m.tipo === 'passe') {
+        area.textContent = '';
+        area.appendChild(el('h2', { texto: 'Seu passe, ' + nomeProprio(String(m.nome || '').split(' ')[0]) }));
+        var q = el('div', { classe: 'ck-qr espelho-qr' }); var sv = svgDe(m.svg); if (sv) q.appendChild(sv); area.appendChild(q);
+        area.appendChild(el('p', { classe: 'rodape', texto: 'Aponte a câmera do seu celular para guardar o passe. A segurança vai pedir na entrada.' }));
+        timer = setTimeout(espera, 60000);
       } else if (m.tipo === 'boasvindas') {
         area.textContent = '';
         area.appendChild(el('p', { classe: 'grande', texto: 'Boas-vindas, ' + nomeProprio(String(m.nome || '').split(' ')[0]) + '!' }));
@@ -670,6 +702,15 @@
       el('button', { type: 'button', classe: 'btn principal', texto: 'Confirmar inscrição e check-in', onclick: enviar }),
       el('button', { type: 'button', classe: 'btn secundario', texto: 'Voltar', onclick: totemInicio })
     ], 180000);
+  }
+  function totemPasse(nome, svgTexto) {
+    var q = el('div', { classe: 'ck-qr' }); var s = svgDe(svgTexto); if (s) q.appendChild(s);
+    totemTela([
+      el('h2', { texto: 'Seu passe, ' + nomeProprio(String(nome).split(' ')[0]) }),
+      el('p', { classe: 'sub', texto: 'Aponte a câmera do seu celular para este QR code e guarde o passe: a segurança vai pedir na entrada.' }),
+      q,
+      el('button', { type: 'button', classe: 'btn principal', texto: 'Pronto', onclick: totemInicio })
+    ], 45000);
   }
   function totemSucesso(nome, texto) {
     totemTela([
