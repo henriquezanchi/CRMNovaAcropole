@@ -195,25 +195,20 @@ Deno.serve(async (req) => {
             return responder({ ok: true, pessoas });
         }
 
-        // Nome de quem está atendendo: membros ativos no Mercúrio (a equipe da recepção é de voluntários).
+        // Nome de quem está atendendo: SÓ membros ativos do Mercúrio. Regra do usuário (13/11/2026): ninguém que
+        // atende está fora do Mercúrio; não procurar na base do CRM nem nas contas do CRM.
         if (acao === "buscar_equipe") {
             const partes = normalizarNome(String(corpo.termo || "")).split(" ").filter((p) => p.length >= 2).slice(0, 3);
             if (!partes.length) return responder({ ok: true, pessoas: [] });
-            // Membros ativos do Mercúrio + contas do CRM (equipe da agência, que não está no Mercúrio).
             let q = supabaseAdmin.from("mercurio_pessoas").select("nome, filial").eq("situacao", "ATI").limit(300);
             for (const p of partes) q = q.ilike("nome", `%${p}%`);
-            let qu = supabaseAdmin.from("usuarios_crm").select("nome").eq("ativo", true).neq("nome", "Scraper Automatico").limit(10);
-            for (const p of partes) qu = qu.ilike("nome", `%${p}%`);
-            const [{ data }, { data: usuarios }] = await Promise.all([q, qu]);
+            const { data } = await q;
             // Primeiro quem tem as palavras digitadas no começo do nome (ex.: "Ana" acha Ana Paula antes de Mariana).
             const pontos = (nome: string) => {
                 const pal = normalizarNome(nome).split(" ");
                 return partes.reduce((t, p) => t + (pal[0] === p ? 4 : pal.includes(p) ? 3 : pal.some((x) => x.startsWith(p)) ? 2 : 1), 0);
             };
-            const lista = [
-                ...(usuarios || []).map((u: any) => ({ nome: nomeProprio(u.nome || ""), filial: "equipe do CRM" })),
-                ...(data || []).map((m: any) => ({ nome: nomeProprio(m.nome || ""), filial: m.filial })),
-            ].sort((a, b) => pontos(b.nome) - pontos(a.nome) || a.nome.localeCompare(b.nome)).slice(0, 8);
+            const lista = (data || []).map((m: any) => ({ nome: nomeProprio(m.nome || ""), filial: m.filial })).sort((a, b) => pontos(b.nome) - pontos(a.nome) || a.nome.localeCompare(b.nome)).slice(0, 8);
             return responder({ ok: true, pessoas: lista });
         }
 

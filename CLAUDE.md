@@ -11368,6 +11368,8 @@ Edge `recepcao-evento` (`--no-verify-jwt`), migração `migracao_recepcao_evento
   dígitos do celular. Não achou: inscrição na hora. Sair = "Equipe" + PIN (hash guardado no aparelho no login).
 - Sem login individual: depois do PIN da equipe, "Quem está atendendo?" (busca o nome nos membros ativos do Mercúrio,
   `buscar_equipe`; nomes recentes ficam no aparelho para trocar com 1 toque). O nome vai em cada ação (`autor`).
+  REGRA DO USUÁRIO (13/11/2026): quem atende é SEMPRE membro do Mercúrio. A busca de atendentes procura SÓ em
+  `mercurio_pessoas` (ATI); nunca na base de leads nem nas contas do CRM (`usuarios_crm`).
 - Inscrição na porta SEM e-mail não vai ao Ulisses (que exige e-mail; evita e-mail inventado): fica
   `recepcao_registros.status='reservado'`, conta como presente e ocupa vaga (limite `eventos.capacidade`). Depois do
   evento, pedir o e-mail por WhatsApp e completar a inscrição.
