@@ -11359,3 +11359,10 @@ Edge `recepcao-evento` (`--no-verify-jwt`), migração `migracao_recepcao_evento
 - Sem internet: o service worker guarda a página; lista em localStorage; ações numa fila com `client_id` (único em
   `recepcao_registros`, reenvio nunca duplica). Voz pelo reconhecimento do navegador (Chrome precisa de internet para voz).
 - `recepcao_registros` guarda também "veio com quem" e "quer informação do curso" (pergunta só para quem é de fora).
+- Cadastro na porta: confere em segundo plano se a pessoa já está inscrita (lista do aparelho por nome/celular e,
+  com internet, ação `verificar`, que lê o Ulisses ao vivo e já grava a inscrição nova em `ulisses_inscricoes_evento`).
+  `buscar_base` junta a mesma pessoa cadastrada em várias escolas (mesmo celular ou e-mail + primeiro nome).
+- 2ª tela: `recepcao.html#<chave>&tela=participante` (botão "2ª tela"), recebe o cadastro digitado por
+  BroadcastChannel no mesmo navegador (funciona sem internet).
+- Autoatendimento (botão no topo): o participante busca pelo celular ou nome; por nome confirma com os 4 últimos
+  dígitos do celular. Não achou: inscrição na hora. Sair = "Equipe" + PIN (hash guardado no aparelho no login).

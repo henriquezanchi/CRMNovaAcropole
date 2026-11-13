@@ -19,6 +19,10 @@
     <p class="marca">Nova Acrópole · Recepção</p>
     <h1 id="titulo">Recepção do evento</h1>
   </div>
+  <div id="acoesTopo" class="acoes-topo" hidden>
+    <button type="button" id="btnSegundaTela" class="btn-topo" title="Abrir uma tela para o participante acompanhar o cadastro">2ª tela</button>
+    <button type="button" id="btnTotem" class="btn-topo" title="Transformar este aparelho em autoatendimento">Autoatendimento</button>
+  </div>
   <span id="conexao" class="conexao" role="status" aria-live="polite"></span>
 </header>
 
@@ -91,6 +95,17 @@
     <div id="problemas"></div>
     <div id="listaPresentes" class="resultados"></div>
   </div>
+</section>
+
+<!-- Segunda tela (participante acompanha o cadastro) -->
+<section id="telaEspelho" class="espelho" hidden>
+  <div id="espelhoConteudo" class="espelho-in"></div>
+</section>
+
+<!-- Autoatendimento -->
+<section id="telaTotem" class="totem" hidden>
+  <div id="totemConteudo" class="totem-in"></div>
+  <button type="button" id="totemSair" class="totem-sair">Equipe</button>
 </section>
 
 <div id="aviso" class="aviso" role="status" aria-live="polite" hidden></div>

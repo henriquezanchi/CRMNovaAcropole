@@ -117,3 +117,41 @@ button:focus-visible { outline: 3px solid var(--amarelo); outline-offset: 2px; }
 .ja-inscrito { margin: 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-weight: 600; color: #7a5b00; }
 .ja-inscrito:not(:empty) { background: var(--amarelo-claro); padding: 10px; border-radius: 10px; }
 .vazio { grid-column: 1 / -1; }
+
+/* Botões do topo (13/11/2026) */
+.acoes-topo { display: flex; gap: 6px; }
+.btn-topo { border: 1px solid rgba(255,255,255,.4); background: transparent; color: #fff; border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.btn-topo:hover { background: rgba(255,255,255,.12); }
+@media (max-width: 520px) { #btnSegundaTela { display: none; } .btn-topo { padding: 5px 9px; font-size: 12px; } }
+
+/* Busca no Ulisses ao vivo durante o cadastro */
+.ja-inscrito .achado { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; width: 100%; background: #fff; border-radius: 8px; padding: 8px 10px; color: var(--texto); }
+.ja-inscrito .achado strong { flex: 1; min-width: 160px; }
+.conferindo { color: var(--suave); font-size: 13px; font-weight: 500; }
+
+/* Segunda tela: o participante confere os próprios dados */
+body.modo-espelho .topo, body.modo-totem .topo { position: static; }
+body.modo-espelho #acoesTopo, body.modo-espelho #conexao, body.modo-totem #acoesTopo { display: none !important; }
+.espelho { min-height: calc(100vh - 60px); display: flex; align-items: center; justify-content: center; padding: 4vh 6vw; }
+.espelho-in { width: 100%; max-width: 1100px; text-align: center; }
+.espelho h2 { font-size: clamp(28px, 4.5vw, 58px); margin: 0 0 3vh; color: var(--verde-esc); font-weight: 900; }
+.espelho .campo { background: #fff; border-radius: 18px; padding: 2.2vh 3vw; margin: 1.6vh 0; text-align: left; box-shadow: 0 2px 10px rgba(0,0,0,.06); }
+.espelho .campo span { display: block; font-size: clamp(14px, 1.6vw, 22px); color: var(--suave); font-weight: 600; }
+.espelho .campo strong { display: block; font-size: clamp(26px, 4vw, 54px); font-weight: 800; min-height: 1.2em; word-break: break-word; }
+.espelho .campo strong.vazio-campo { color: #c4ceca; font-weight: 600; }
+.espelho .rodape { margin-top: 3vh; font-size: clamp(16px, 2vw, 26px); color: var(--suave); }
+.espelho .grande { font-size: clamp(40px, 7vw, 96px); font-weight: 900; color: var(--verde); margin: 0; }
+.espelho .medio { font-size: clamp(22px, 3vw, 40px); color: var(--texto); margin: 2vh 0 0; }
+
+/* Autoatendimento */
+.totem { min-height: calc(100vh - 60px); display: flex; justify-content: center; padding: 4vh 5vw 10vh; }
+.totem-in { width: 100%; max-width: 720px; display: grid; gap: 18px; align-content: start; }
+.totem h2 { font-size: clamp(28px, 5vw, 46px); margin: 2vh 0 0; color: var(--verde-esc); font-weight: 900; text-align: center; }
+.totem p.sub { text-align: center; color: var(--suave); font-size: clamp(16px, 2.4vw, 22px); margin: 0; }
+.totem input { font-size: clamp(22px, 3.4vw, 30px); padding: 18px; }
+.totem .btn { font-size: clamp(19px, 2.8vw, 24px); min-height: 64px; }
+.totem .escolha-nome { display: grid; gap: 10px; }
+.totem .escolha-nome button { text-align: left; border: 2px solid var(--linha); background: #fff; border-radius: 14px; padding: 16px 18px; font-size: clamp(18px, 2.8vw, 24px); font-weight: 700; cursor: pointer; }
+.totem .escolha-nome button:hover { border-color: var(--verde); }
+.totem .grande { font-size: clamp(36px, 7vw, 72px); font-weight: 900; color: var(--verde); text-align: center; margin: 6vh 0 0; }
+.totem-sair { position: fixed; right: 12px; bottom: 12px; border: 0; background: transparent; color: #b8c4c0; font-size: 12px; cursor: pointer; padding: 8px; }

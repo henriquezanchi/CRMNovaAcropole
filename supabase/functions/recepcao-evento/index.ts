@@ -153,16 +153,65 @@ Deno.serve(async (req) => {
         // Procura na base do CRM quem chegou sem inscrição, para preencher o cadastro sem digitar.
         if (acao === "buscar_base") {
             const termo = normalizarNome(String(corpo.termo || ""));
+            const dig = digitos(corpo.termo);
             const partes = termo.split(" ").filter((p) => p.length >= 2).slice(0, 4);
-            if (!partes.length) return responder({ ok: true, pessoas: [] });
             let q = supabaseAdmin.from("leads_inscricoes").select('"pessoaIdentificador", "pessoaNome", "pessoaTelefoneDDD", "pessoaTelefoneNumero", "pessoaEmail", filial')
-                .is("lixeira_em", null).limit(12);
-            for (const p of partes) q = q.ilike("pessoaNome", `%${p}%`);
+                .is("lixeira_em", null).limit(30);
+            if (dig.length >= 8) q = q.ilike("pessoaTelefoneNumero", `%${dig.slice(-8)}`);
+            else if (partes.length) for (const p of partes) q = q.ilike("pessoaNome", `%${p}%`);
+            else return responder({ ok: true, pessoas: [] });
             const { data } = await q;
-            return responder({ ok: true, pessoas: (data || []).map((l: any) => ({
-                pid: l.pessoaIdentificador, nome: l.pessoaNome, filial: l.filial,
-                final_tel: digitos(l.pessoaTelefoneNumero).slice(-4), tem_tel: !!digitos(l.pessoaTelefoneNumero), tem_email: !!l.pessoaEmail,
-            })) });
+            // A mesma pessoa cadastrada em mais de uma escola vira uma opção só (mesmo celular ou e-mail e o
+            // mesmo primeiro nome). Fica o cadastro mais completo; as escolas aparecem juntas.
+            const grupos = new Map<string, any>();
+            for (const l of data || []) {
+                const t8 = digitos(l.pessoaTelefoneNumero).slice(-8);
+                const email = String(l.pessoaEmail || "").trim().toLowerCase();
+                const primeiro = normalizarNome(l.pessoaNome || "").split(" ")[0];
+                const chaves = [t8.length === 8 ? `t:${t8}:${primeiro}` : "", email ? `e:${email}:${primeiro}` : ""].filter(Boolean);
+                let g = chaves.map((k) => grupos.get(k)).find(Boolean);
+                const nota = (t8 ? 2 : 0) + (email ? 1 : 0);
+                if (!g) g = { pid: l.pessoaIdentificador, nome: l.pessoaNome, filiais: [], final_tel: t8.slice(-4), tem_tel: !!t8, tem_email: !!email, nota };
+                else if (nota > g.nota) Object.assign(g, { pid: l.pessoaIdentificador, nome: l.pessoaNome, final_tel: t8.slice(-4), tem_tel: !!t8, tem_email: !!email, nota });
+                if (l.filial && !g.filiais.includes(l.filial)) g.filiais.push(l.filial);
+                for (const k of chaves) grupos.set(k, g);
+                if (!chaves.length) grupos.set(`p:${l.pessoaIdentificador}`, g);
+            }
+            const pessoas = [...new Set(grupos.values())].slice(0, 8)
+                .map((g) => ({ pid: g.pid, nome: g.nome, filial: g.filiais.join(", "), final_tel: g.final_tel, tem_tel: g.tem_tel, tem_email: g.tem_email }));
+            return responder({ ok: true, pessoas });
+        }
+
+        // Confere direto no Ulisses (lista ao vivo) se quem está sendo cadastrado já está inscrito.
+        // Pega também inscrições feitas depois da última sincronização e já deixa a linha pronta para marcar presença.
+        if (acao === "verificar") {
+            const nome = normalizarNome(String(corpo.nome || ""));
+            const t8 = digitos(corpo.telefone).slice(-8);
+            const email = String(corpo.email || "").trim().toLowerCase();
+            const tokens = nome.split(" ").filter((t) => t.length >= 2 && !["DA", "DE", "DO", "DAS", "DOS"].includes(t));
+            if (tokens.length < 2 && t8.length < 8 && !email.includes("@")) return responder({ ok: true, achados: [] });
+            const pessoas = await filtrarEmails(supabaseAdmin, link.evento_id_ulisses, link.filial_id_ulisses);
+            const achados: any[] = [];
+            for (const p of pessoas || []) {
+                const ee = (p.emailEventos || []).filter((x: any) => x?.evento?.id === link.evento_id_ulisses && x.id != null).sort((a: any, b: any) => b.id - a.id)[0];
+                if (!ee) continue;
+                const nomeP = normalizarNome(p.nome || "").split(" ");
+                const porTel = t8.length === 8 && digitos(p.telefone).slice(-8) === t8;
+                const porEmail = email.includes("@") && String(p.email || "").trim().toLowerCase() === email;
+                const porNome = tokens.length >= 2 && tokens.every((t) => nomeP.some((n) => n === t || (t.length >= 5 && n.startsWith(t.slice(0, -1)))));
+                if (!porTel && !porEmail && !porNome) continue;
+                achados.push({ email_evento_id: ee.id, nome: String(p.nome || "").trim(), final_tel: digitos(p.telefone).slice(-4),
+                    compareceu: ee.compareceu === true, motivo: porTel ? "celular" : porEmail ? "e-mail" : "nome", p });
+            }
+            if (achados.length) {
+                await supabaseAdmin.from("ulisses_inscricoes_evento").upsert(achados.map((a) => ({
+                    email_evento_id: a.email_evento_id, evento_id_ulisses: link.evento_id_ulisses, filial_id_ulisses: link.filial_id_ulisses,
+                    pessoa_id_ulisses: a.p.id != null ? String(a.p.id) : null, nome: a.nome, email: a.p.email || null,
+                    ddd: a.p.ddd != null ? String(a.p.ddd) : null, telefone: a.p.telefone != null ? String(a.p.telefone) : null,
+                    visto_em: new Date().toISOString(), removido_em: null,
+                })), { onConflict: "email_evento_id", ignoreDuplicates: true });
+            }
+            return responder({ ok: true, achados: achados.slice(0, 5).map(({ p: _p, ...r }) => r) });
         }
 
         if (acao === "inscrever") {

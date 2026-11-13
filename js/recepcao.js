@@ -7,7 +7,10 @@
 (function () {
   'use strict';
   var FUNCAO = 'https://eovgljcowblwoxmobeno.supabase.co/functions/v1/recepcao-evento';
-  var chave = (location.hash || '').replace(/^#/, '');
+  // #<chave>[&tela=participante] — a segunda tela usa o mesmo link com "&tela=participante".
+  var partesHash = (location.hash || '').replace(/^#/, '').split('&');
+  var chave = partesHash[0];
+  var ehEspelho = partesHash.indexOf('tela=participante') > 0;
   var pref = 'rc_' + chave.slice(0, 12) + '_';
   var $ = function (id) { return document.getElementById(id); };
 
@@ -19,6 +22,15 @@
   var fila = ler('fila', []);              // ações a enviar
   var problemas = ler('problemas', []);    // ações recusadas de vez
   var online = navigator.onLine;
+
+  // Segunda tela: a janela do participante recebe o que está sendo digitado (mesmo navegador, funciona sem internet).
+  var canal = 'BroadcastChannel' in window ? new BroadcastChannel('rc-' + chave.slice(0, 12)) : null;
+  function espelhar(msg) { if (canal && !ehEspelho) canal.postMessage(msg); }
+  function sha256(t) {
+    return crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)).then(function (b) {
+      return Array.prototype.map.call(new Uint8Array(b), function (x) { return (x + 256).toString(16).slice(1); }).join('');
+    });
+  }
 
   function uuid() {
     if (crypto.randomUUID) return crypto.randomUUID();
@@ -78,8 +90,10 @@
     try { localStorage.setItem('rc_apelido', apelido); } catch (e) { /* ok */ }
     $('pinErro').textContent = 'Entrando…';
     sessao = null;
-    chamar({ acao: 'pin', pin: $('pinValor').value, apelido: apelido }).then(function (j) {
+    var pinDigitado = $('pinValor').value;
+    chamar({ acao: 'pin', pin: pinDigitado, apelido: apelido }).then(function (j) {
       if (!j.ok) { $('pinErro').textContent = j.erro || 'Não foi possível entrar.'; return; }
+      sha256(chave + ':' + pinDigitado).then(function (h) { gravar('pinHash', h); });
       sessao = { token: j.sessao, expira: j.expira_em }; gravar('sessao', sessao);
       $('pinValor').value = '';
       iniciar();
@@ -211,6 +225,7 @@
     enfileirar('presenca', { email_evento_id: p.id, compareceu: compareceu });
     if (compareceu) {
       aviso('✓ ' + p.nome.split(' ')[0] + ' marcado(a) como presente');
+      espelhar({ tipo: 'boasvindas', nome: p.nome });
       if (!p.aluno) { anotando = p.id; desenharResultados(); return; }
       proximo();
     } else { aviso('Presença desfeita: ' + p.nome); desenharResultados(); }
@@ -267,34 +282,77 @@
 
   // ---------- Cadastro na porta ----------
   var pidEscolhido = null, pessoaBase = null, timerBase;
-  function verificarJaInscrito() {
-    var achados = buscar($('cadNome').value, inscritos()).slice(0, 3);
-    var area = $('cadVinculo'); area.textContent = '';
-    if (!achados.length || $('cadNome').value.trim().split(/\s+/).length < 2) return;
-    area.appendChild(document.createTextNode('Talvez já esteja inscrito(a): '));
-    achados.forEach(function (p) {
-      area.appendChild(el('button', { type: 'button', classe: 'chip', texto: p.nome + (p.presente ? ' ✓' : ''), onclick: function () {
-        abrirAba('buscar'); $('busca').value = p.nome; desenharResultados();
-      } }));
-    });
+  // Antes de inscrever, confere se a pessoa já está inscrita: na lista do aparelho (nome, celular) e,
+  // com internet, direto no Ulisses (pega quem se inscreveu depois da última atualização da lista).
+  var timerVerificar, verificacaoAtual = 0;
+  function dadosCadastro() {
+    return { nome: $('cadNome').value.trim(), ddd: $('cadDdd').value.replace(/\D/g, ''), tel: $('cadTel').value.replace(/\D/g, ''),
+      email: $('cadEmail').value.trim(), veio_com: $('cadVeioCom').value.trim() };
   }
-  function sugerirBase() {
+  function verificarJaInscrito() {
+    var d = dadosCadastro();
+    espelhar({ tipo: 'cadastro', dados: d });
+    var achados = [], vistos = {};
+    var add = function (p, motivo) { if (!vistos[p.id]) { vistos[p.id] = 1; achados.push({ p: p, motivo: motivo }); } };
+    var todos = inscritos();
+    if (d.tel.length >= 8) todos.filter(function (p) { return p.tel8 && p.tel8 === d.tel.slice(-8); }).forEach(function (p) { add(p, 'mesmo celular'); });
+    if (d.nome.split(/\s+/).length >= 2) buscar(d.nome, todos).slice(0, 3).forEach(function (p) { add(p, 'nome parecido'); });
+    desenharJaInscrito(achados, false);
+    clearTimeout(timerVerificar);
+    var temBase = d.nome.split(/\s+/).length >= 2 || d.tel.length >= 8 || /@.+\./.test(d.email);
+    if (!temBase || !online || !sessao) return;
+    var minha = ++verificacaoAtual;
+    timerVerificar = setTimeout(function () {
+      desenharJaInscrito(achados, true);
+      chamar({ acao: 'verificar', nome: d.nome, telefone: d.tel, email: d.email }).then(function (j) {
+        if (minha !== verificacaoAtual) return;
+        (j.achados || []).forEach(function (a) {
+          var x = ((lista && lista.inscritos) || []).filter(function (i) { return i.email_evento_id === a.email_evento_id; })[0];
+          if (!x && lista) { lista.inscritos.push({ email_evento_id: a.email_evento_id, nome: a.nome, final_tel: a.final_tel, tel8: '', compareceu: a.compareceu }); gravar('lista', lista); }
+          var p = inscritos().filter(function (i) { return i.id === a.email_evento_id; })[0];
+          if (p) add(p, 'no Ulisses (' + a.motivo + ')');
+        });
+        desenharJaInscrito(achados, false);
+      }, function () { if (minha === verificacaoAtual) desenharJaInscrito(achados, false); });
+    }, 700);
+  }
+  function desenharJaInscrito(achados, conferindo) {
+    var area = $('cadVinculo'); area.textContent = '';
+    if (achados.length) area.appendChild(el('span', { texto: 'Talvez já esteja inscrito(a):' }));
+    achados.slice(0, 4).forEach(function (a) {
+      var p = a.p;
+      area.appendChild(el('div', { classe: 'achado' }, [
+        el('strong', { texto: p.nome }),
+        el('span', { texto: (p.final_tel ? 'cel. final ' + p.final_tel + ' · ' : '') + a.motivo }),
+        p.presente ? el('span', { classe: 'ok-presente', texto: '✓ já presente' }) :
+          el('button', { type: 'button', classe: 'chip ativo', texto: 'É esta pessoa: marcar presença', onclick: function () {
+            enfileirar('presenca', { email_evento_id: p.id, compareceu: true });
+            espelhar({ tipo: 'boasvindas', nome: p.nome });
+            aviso('✓ ' + p.nome.split(' ')[0] + ' já estava inscrito(a): presença marcada');
+            limparCadastro(); abrirAba('buscar'); $('busca').value = ''; desenharResultados();
+          } })
+      ]));
+    });
+    if (conferindo) area.appendChild(el('span', { classe: 'conferindo', texto: 'Conferindo no Ulisses…' }));
+  }
+  function sugerirBase(termoCelular) {
     clearTimeout(timerBase);
-    var termo = $('cadNome').value.trim();
+    var termo = typeof termoCelular === 'string' ? termoCelular : $('cadNome').value.trim();
     var area = $('sugestoesBase');
-    if (termo.length < 5 || termo.split(/\s+/).length < 2 || !online || !sessao) { area.textContent = ''; return; }
+    var porCelular = termo.replace(/\D/g, '').length >= 8;
+    if ((!porCelular && (termo.length < 5 || termo.split(/\s+/).length < 2)) || !online || !sessao) { area.textContent = ''; return; }
     timerBase = setTimeout(function () {
       chamar({ acao: 'buscar_base', termo: termo }).then(function (j) {
         area.textContent = '';
         if (!j.ok || !(j.pessoas || []).length) return;
         area.appendChild(el('span', { classe: 'dica', texto: 'Já temos cadastro dessa pessoa? Toque para usar o celular e o e-mail que já estão no CRM:' }));
         j.pessoas.slice(0, 5).forEach(function (p) {
-          var b = el('button', { type: 'button', texto: nomeProprio(p.nome) + ' · ' + String(p.filial || '').replace(/^Goiânia - /, '') + (p.final_tel ? ' · cel. final ' + p.final_tel : '') + (p.tem_email ? ' · tem e-mail' : ''),
+          var b = el('button', { type: 'button', texto: nomeProprio(p.nome) + ' · ' + String(p.filial || '').replace(/Goiânia - /g, '') + (p.final_tel ? ' · cel. final ' + p.final_tel : '') + (p.tem_email ? ' · tem e-mail' : ''),
             onclick: function () {
               var mesmo = pidEscolhido === p.pid;
               pidEscolhido = mesmo ? null : p.pid; pessoaBase = mesmo ? null : p;
               area.querySelectorAll('button').forEach(function (x) { x.classList.remove('escolhida'); });
-              if (!mesmo) { b.classList.add('escolhida'); $('cadNome').value = nomeProprio(p.nome); }
+              if (!mesmo) { b.classList.add('escolhida'); $('cadNome').value = nomeProprio(p.nome); verificarJaInscrito(); }
               $('cadTel').placeholder = pessoaBase && pessoaBase.tem_tel ? 'usar o do cadastro (final ' + pessoaBase.final_tel + ')' : '99999-9999';
             } });
           area.appendChild(b);
@@ -303,6 +361,14 @@
     }, 450);
   }
   $('cadNome').addEventListener('input', function () { pidEscolhido = null; pessoaBase = null; $('cadTel').placeholder = '99999-9999'; sugerirBase(); verificarJaInscrito(); });
+  ['cadTel', 'cadDdd', 'cadEmail', 'cadVeioCom'].forEach(function (id) { $(id).addEventListener('input', verificarJaInscrito); });
+  // Celular digitado sem nome também procura na base do CRM.
+  $('cadTel').addEventListener('input', function () { if ($('cadTel').value.replace(/\D/g, '').length >= 8 && !$('cadNome').value.trim()) sugerirBase($('cadTel').value); });
+  function limparCadastro() {
+    $('formCadastro').reset(); $('cadDdd').value = '62'; $('cadMsg').textContent = '';
+    $('sugestoesBase').textContent = ''; $('cadVinculo').textContent = ''; pidEscolhido = null; pessoaBase = null;
+    espelhar({ tipo: 'espera' });
+  }
 
   $('formCadastro').addEventListener('submit', function (ev) {
     ev.preventDefault();
@@ -318,8 +384,8 @@
       veio_com: $('cadVeioCom').value.trim() || null, interesse_curso: inter === 'sim' ? true : inter === 'nao' ? false : null };
     enfileirar('inscrever', dados);
     aviso('✓ ' + nome.split(' ')[0] + ' cadastrado(a)' + (online ? '' : ' (envia quando a internet voltar)'));
-    $('formCadastro').reset(); $('cadDdd').value = ddd || '62'; msg.textContent = '';
-    $('sugestoesBase').textContent = ''; $('cadVinculo').textContent = ''; pidEscolhido = null; pessoaBase = null;
+    espelhar({ tipo: 'boasvindas', nome: nome });
+    limparCadastro(); $('cadDdd').value = ddd || '62';
     abrirAba('buscar'); $('busca').value = ''; desenharResultados();
   });
 
@@ -405,6 +471,214 @@
     if (!$('abaPresentes').hidden) desenharPresentes();
   }
 
+  // ---------- Segunda tela (participante confere o cadastro) ----------
+  function telefoneBonito(ddd, tel) {
+    if (!tel) return '';
+    var t = tel.slice(-9);
+    var meio = t.length === 9 ? t.slice(0, 5) + '-' + t.slice(5) : t.length === 8 ? t.slice(0, 4) + '-' + t.slice(4) : t;
+    return (ddd ? '(' + ddd + ') ' : '') + meio;
+  }
+  function iniciarEspelho() {
+    document.body.classList.add('modo-espelho');
+    $('telaPin').hidden = true; $('telaPrincipal').hidden = true; $('telaEspelho').hidden = false;
+    if (lista && lista.evento && lista.evento.nome) $('titulo').textContent = nomeProprio(lista.evento.nome.split(' - ')[0]);
+    var area = $('espelhoConteudo'), timer;
+    var nomeEvento = $('titulo').textContent;
+    function espera() {
+      area.textContent = '';
+      area.appendChild(el('p', { classe: 'grande', texto: 'Boas-vindas!' }));
+      area.appendChild(el('p', { classe: 'medio', texto: nomeEvento }));
+    }
+    function campo(rotulo, valor, vazio) {
+      return el('div', { classe: 'campo' }, [el('span', { texto: rotulo }), el('strong', { classe: valor ? '' : 'vazio-campo', texto: valor || vazio })]);
+    }
+    espera();
+    if (!canal) { area.appendChild(el('p', { classe: 'rodape', texto: 'Este navegador não permite a segunda tela. Use o Chrome ou o Edge.' })); return; }
+    canal.onmessage = function (e) {
+      var m = e.data || {};
+      clearTimeout(timer);
+      if (m.tipo === 'cadastro') {
+        var d = m.dados || {};
+        if (!d.nome && !d.tel && !d.email) { espera(); return; }
+        area.textContent = '';
+        area.appendChild(el('h2', { texto: 'Confira seus dados' }));
+        area.appendChild(campo('Nome', nomeProprio(d.nome), 'digitando…'));
+        area.appendChild(campo('Celular (WhatsApp)', telefoneBonito(d.ddd, d.tel), '—'));
+        area.appendChild(campo('E-mail', d.email, '(opcional)'));
+        area.appendChild(el('p', { classe: 'rodape', texto: 'Algo errado? Avise quem está atendendo você.' }));
+      } else if (m.tipo === 'boasvindas') {
+        area.textContent = '';
+        area.appendChild(el('p', { classe: 'grande', texto: 'Boas-vindas, ' + nomeProprio(String(m.nome || '').split(' ')[0]) + '!' }));
+        area.appendChild(el('p', { classe: 'medio', texto: 'Presença confirmada. Bom evento!' }));
+        timer = setTimeout(espera, 7000);
+      } else espera();
+    };
+  }
+
+  // ---------- Autoatendimento (o participante faz o próprio check-in) ----------
+  var totemTimer;
+  function entrarTotem() {
+    gravar('totem', true);
+    document.body.classList.add('modo-totem');
+    $('telaPrincipal').hidden = true; $('telaTotem').hidden = false;
+    totemInicio();
+  }
+  function sairTotem() {
+    gravar('totem', false);
+    document.body.classList.remove('modo-totem');
+    $('telaTotem').hidden = true; $('telaPrincipal').hidden = false;
+    abrirAba('buscar');
+  }
+  function totemTela(filhos, tempo) {
+    var area = $('totemConteudo'); area.textContent = '';
+    filhos.forEach(function (f) { if (f) area.appendChild(f); });
+    clearTimeout(totemTimer);
+    totemTimer = setTimeout(totemInicio, tempo || 90000); // sem uso, volta ao começo
+    var campo = area.querySelector('input'); if (campo) setTimeout(function () { campo.focus(); }, 50);
+  }
+  function totemInicio() {
+    var entrada = el('input', { placeholder: 'Seu celular ou seu nome', autocomplete: 'off', 'aria-label': 'Celular ou nome' });
+    var mic = el('button', { type: 'button', classe: 'mic', 'aria-label': 'Falar', title: 'Falar' });
+    mic.innerHTML = $('micBusca').innerHTML;
+    mic.addEventListener('click', function () { ouvir(mic, function (t) { entrada.value = t; }); });
+    var seguir = function () { if (entrada.value.trim()) totemProcurar(entrada.value.trim()); };
+    entrada.addEventListener('keydown', function (e) { if (e.key === 'Enter') seguir(); });
+    totemTela([
+      el('h2', { texto: 'Faça seu check-in' }),
+      el('p', { classe: 'sub', texto: 'Digite seu celular com DDD ou seu nome completo.' }),
+      el('div', { classe: 'busca-grande' }, [entrada, mic]),
+      el('button', { type: 'button', classe: 'btn principal', texto: 'Continuar', onclick: seguir }),
+      el('button', { type: 'button', classe: 'btn secundario', texto: 'Ainda não me inscrevi', onclick: function () { totemInscrever(''); } })
+    ], 600000);
+  }
+  function totemProcurar(q) {
+    var dig = q.replace(/\D/g, '');
+    var todos = inscritos();
+    var achados = dig.length >= 8 ? todos.filter(function (p) { return p.tel8 === dig.slice(-8); }) : buscar(q, todos).slice(0, 6);
+    if (achados.length) return totemEscolher(achados, dig.length >= 8);
+    totemTela([el('h2', { texto: 'Procurando sua inscrição…' })]);
+    if (!online || !sessao) return totemNaoAchou(q);
+    chamar({ acao: 'verificar', nome: dig.length >= 8 ? '' : q, telefone: dig }).then(function (j) {
+      var novos = (j.achados || []).map(function (a) {
+        if (lista && !lista.inscritos.some(function (i) { return i.email_evento_id === a.email_evento_id; })) {
+          lista.inscritos.push({ email_evento_id: a.email_evento_id, nome: a.nome, final_tel: a.final_tel, tel8: '', compareceu: a.compareceu }); gravar('lista', lista);
+        }
+        return inscritos().filter(function (i) { return i.id === a.email_evento_id; })[0];
+      }).filter(Boolean);
+      if (novos.length) totemEscolher(novos, dig.length >= 8); else totemNaoAchou(q);
+    }, function () { totemNaoAchou(q); });
+  }
+  function totemEscolher(achados, porCelular) {
+    if (achados.length === 1 && porCelular) return totemConfirmar(achados[0]);
+    totemTela([
+      el('h2', { texto: 'Escolha seu nome' }),
+      el('div', { classe: 'escolha-nome' }, achados.map(function (p) {
+        return el('button', { type: 'button', texto: p.nome, onclick: function () { porCelular ? totemConfirmar(p) : totemDigitos(p, 0); } });
+      })),
+      el('button', { type: 'button', classe: 'btn secundario', texto: 'Meu nome não está aqui', onclick: function () { totemNaoAchou(''); } }),
+      el('button', { type: 'button', classe: 'btn secundario', texto: 'Voltar', onclick: totemInicio })
+    ]);
+  }
+  // Quem buscou pelo nome confirma com os 4 últimos números do celular (ninguém faz check-in de outra pessoa).
+  function totemDigitos(p, erros) {
+    if (!p.final_tel) return totemConfirmar(p);
+    var ent = el('input', { inputmode: 'numeric', maxlength: '4', placeholder: '_ _ _ _', 'aria-label': 'Últimos 4 números do celular' });
+    var ok = function () {
+      if (ent.value.replace(/\D/g, '') === p.final_tel) return totemConfirmar(p);
+      if (erros >= 2) return totemTela([el('h2', { texto: 'Não conseguimos confirmar' }), el('p', { classe: 'sub', texto: 'Procure a equipe da recepção, que vai ajudar você.' }),
+        el('button', { type: 'button', classe: 'btn principal', texto: 'Voltar ao início', onclick: totemInicio })], 15000);
+      totemDigitos(p, erros + 1);
+    };
+    ent.addEventListener('keydown', function (e) { if (e.key === 'Enter') ok(); });
+    totemTela([
+      el('h2', { texto: p.nome.split(' ')[0] + ', confirme' }),
+      el('p', { classe: 'sub', texto: erros ? 'Não confere. Tente de novo: os 4 últimos números do seu celular.' : 'Digite os 4 últimos números do seu celular.' }),
+      ent,
+      el('button', { type: 'button', classe: 'btn principal', texto: 'Confirmar', onclick: ok }),
+      el('button', { type: 'button', classe: 'btn secundario', texto: 'Voltar', onclick: totemInicio })
+    ]);
+  }
+  function totemConfirmar(p) {
+    if (p.presente) return totemSucesso(p.nome, 'Seu check-in já estava feito. Bom evento!');
+    enfileirar('presenca', { email_evento_id: p.id, compareceu: true });
+    espelhar({ tipo: 'boasvindas', nome: p.nome });
+    if (p.aluno) return totemSucesso(p.nome);
+    var resposta = function (v) { enfileirar('anotar', { email_evento_id: p.id, interesse_curso: v }); totemSucesso(p.nome); };
+    totemTela([
+      el('p', { classe: 'grande', texto: '✓ Check-in feito!' }),
+      el('h2', { texto: 'Quer receber informações sobre o Curso de Filosofia?' }),
+      el('button', { type: 'button', classe: 'btn principal', texto: 'Sim, quero', onclick: function () { resposta(true); } }),
+      el('button', { type: 'button', classe: 'btn secundario', texto: 'Agora não', onclick: function () { resposta(false); } })
+    ], 20000);
+  }
+  function totemNaoAchou(q) {
+    totemTela([
+      el('h2', { texto: 'Não encontramos sua inscrição' }),
+      el('p', { classe: 'sub', texto: 'Sem problema: faça agora, leva menos de um minuto.' }),
+      el('button', { type: 'button', classe: 'btn principal', texto: 'Fazer minha inscrição', onclick: function () { totemInscrever(q); } }),
+      el('button', { type: 'button', classe: 'btn secundario', texto: 'Tentar de novo', onclick: totemInicio })
+    ]);
+  }
+  function totemInscrever(q) {
+    var dig = String(q || '').replace(/\D/g, '');
+    var nome = el('input', { placeholder: 'Nome e sobrenome', autocapitalize: 'words', maxlength: '120', value: dig ? '' : nomeProprio(q || '') });
+    var ddd = el('input', { inputmode: 'numeric', maxlength: '2', value: dig.length >= 10 ? dig.slice(-11, -9) || dig.slice(-10, -8) : '62' });
+    var tel = el('input', { inputmode: 'tel', maxlength: '15', placeholder: 'Celular (WhatsApp)', value: dig.length >= 8 ? dig.slice(dig.length >= 10 ? 2 : 0) : '' });
+    var email = el('input', { type: 'email', inputmode: 'email', maxlength: '120', placeholder: 'E-mail (opcional)', autocapitalize: 'off' });
+    var interesse = null;
+    var chips = ['Sim', 'Não'].map(function (t) {
+      var c = el('button', { type: 'button', classe: 'chip', texto: t, onclick: function () {
+        interesse = t === 'Sim'; chips.forEach(function (x) { x.classList.remove('ativo'); }); c.classList.add('ativo');
+      } });
+      return c;
+    });
+    var msg = el('p', { classe: 'erro', role: 'alert' });
+    var enviar = function () {
+      var n = nomeProprio(nome.value), dd = ddd.value.replace(/\D/g, ''), t = tel.value.replace(/\D/g, ''), e = email.value.trim();
+      if (n.split(' ').length < 2) { msg.textContent = 'Escreva seu nome e sobrenome.'; return; }
+      if (dd.length !== 2 || t.length < 8) { msg.textContent = 'Escreva seu celular com DDD.'; return; }
+      if (e && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) { msg.textContent = 'Confira o e-mail.'; return; }
+      var ja = inscritos().filter(function (p) { return p.tel8 && p.tel8 === t.slice(-8); })[0];
+      if (ja) return totemConfirmar(ja); // já estava inscrito com esse celular
+      enfileirar('inscrever', { nome: n, ddd: dd, telefone: t, email: e, interesse_curso: interesse });
+      espelhar({ tipo: 'boasvindas', nome: n });
+      totemSucesso(n);
+    };
+    totemTela([
+      el('h2', { texto: 'Sua inscrição' }),
+      nome,
+      el('div', { classe: 'linha2' }, [ddd, tel]),
+      email,
+      el('div', { classe: 'anotar' }, [el('div', { classe: 'linha' }, [el('span', { texto: 'Quer receber informações sobre o Curso de Filosofia?' })].concat(chips))]),
+      msg,
+      el('button', { type: 'button', classe: 'btn principal', texto: 'Confirmar inscrição e check-in', onclick: enviar }),
+      el('button', { type: 'button', classe: 'btn secundario', texto: 'Voltar', onclick: totemInicio })
+    ], 180000);
+  }
+  function totemSucesso(nome, texto) {
+    totemTela([
+      el('p', { classe: 'grande', texto: 'Boas-vindas, ' + nomeProprio(String(nome).split(' ')[0]) + '!' }),
+      el('p', { classe: 'sub', texto: texto || 'Check-in feito. Bom evento!' })
+    ], 6000);
+  }
+  $('totemSair').addEventListener('click', function () {
+    var pin = prompt('PIN da equipe para sair do autoatendimento:');
+    if (!pin) return;
+    sha256(chave + ':' + pin.replace(/\D/g, '')).then(function (h) {
+      if (h === ler('pinHash', '')) sairTotem(); else aviso('PIN incorreto.');
+    });
+  });
+  $('btnTotem').addEventListener('click', function () {
+    if (!ler('pinHash', '')) { aviso('Entre de novo com o PIN para ativar o autoatendimento.'); return; }
+    if (confirm('Transformar este aparelho em autoatendimento? Para voltar, toque em "Equipe" no canto e digite o PIN.')) entrarTotem();
+  });
+  $('btnSegundaTela').addEventListener('click', function () {
+    var w = window.open(location.href.split('#')[0] + '#' + chave + '&tela=participante', 'rc_participante', 'popup,width=1000,height=760');
+    if (!w) { aviso('O navegador bloqueou a janela. Permita pop-ups para este site.'); return; }
+    aviso('Arraste a janela para a segunda tela e aperte F11 para tela cheia.');
+    setTimeout(verificarJaInscrito, 800);
+  });
+
   // ---------- abas ----------
   function abrirAba(nome) {
     document.querySelectorAll('.abas button').forEach(function (b) { b.setAttribute('aria-selected', String(b.getAttribute('data-aba') === nome)); });
@@ -416,19 +690,21 @@
 
   // ---------- início ----------
   function iniciar() {
-    $('telaPin').hidden = true; $('telaPrincipal').hidden = false;
+    $('telaPin').hidden = true; $('telaPrincipal').hidden = false; $('acoesTopo').hidden = false;
     redesenhar(); atualizarLista(); enviarFila();
     abrirAba('buscar');
+    if (ler('totem', false)) entrarTotem();
   }
-  window.addEventListener('online', function () { marcarConexao(true); enviarFila(); atualizarLista(); });
+  window.addEventListener('online', function () { marcarConexao(true); if (!ehEspelho) { enviarFila(); atualizarLista(); } });
   window.addEventListener('offline', function () { marcarConexao(false); });
-  setInterval(function () { if (!document.hidden) { atualizarLista(); enviarFila(); } }, 15000);
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) { atualizarLista(); enviarFila(); } });
-  window.addEventListener('beforeunload', function (e) { if (fila.length) { e.preventDefault(); e.returnValue = ''; } });
+  setInterval(function () { if (!document.hidden && !ehEspelho) { atualizarLista(); enviarFila(); } }, 15000);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden && !ehEspelho) { atualizarLista(); enviarFila(); } });
+  window.addEventListener('beforeunload', function (e) { if (!ehEspelho && fila.length) { e.preventDefault(); e.returnValue = ''; } });
 
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw-recepcao.js', { scope: './recepcao' }).catch(function () { /* sem cache offline */ });
 
   desenharConexao();
+  if (ehEspelho) { iniciarEspelho(); return; }
   if (!/^[A-Za-z0-9_-]{20,}$/.test(chave)) { mostrarPin('Link incompleto: abra pelo link completo que você recebeu.'); return; }
   if (sessao && new Date(sessao.expira) > new Date()) iniciar(); else mostrarPin();
 })();
