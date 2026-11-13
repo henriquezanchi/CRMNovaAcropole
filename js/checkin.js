@@ -106,7 +106,7 @@
 
   // Passe já guardado neste celular: abre direto (funciona sem internet).
   var guardados = lerPasses();
-  if (guardados.length && !paraInscrever) mostrarPasse(guardados[0], 'Seu passe do evento.');
+  if (guardados.length && !paraInscrever) mostrarPasse(guardados[0], 'Seu QR code de entrada.');
 
   chamar({ acao: 'auto_info' }).then(function (j) {
     if (!j.ok) { $('ckMsg').textContent = j.erro || 'Link inválido.'; return; }

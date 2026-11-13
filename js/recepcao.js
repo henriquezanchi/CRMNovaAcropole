@@ -585,9 +585,9 @@
         area.appendChild(el('p', { classe: 'rodape', texto: 'Algo errado? Avise quem está atendendo você.' }));
       } else if (m.tipo === 'passe') {
         area.textContent = '';
-        area.appendChild(el('h2', { texto: 'Seu passe, ' + nomeProprio(String(m.nome || '').split(' ')[0]) }));
+        area.appendChild(el('h2', { texto: 'Seu QR code de entrada, ' + nomeProprio(String(m.nome || '').split(' ')[0]) }));
         var q = el('div', { classe: 'ck-qr espelho-qr' }); var sv = svgDe(m.svg); if (sv) q.appendChild(sv); area.appendChild(q);
-        area.appendChild(el('p', { classe: 'rodape', texto: 'Aponte a câmera do seu celular para guardar o passe. A segurança vai pedir na entrada.' }));
+        area.appendChild(el('p', { classe: 'rodape', texto: 'Aponte a câmera do seu celular para guardar o QR code. A segurança vai pedir na entrada.' }));
         timer = setTimeout(espera, 60000);
       } else if (m.tipo === 'boasvindas') {
         area.textContent = '';
@@ -741,8 +741,8 @@
   function totemPasse(nome, svgTexto) {
     var q = el('div', { classe: 'ck-qr' }); var s = svgDe(svgTexto); if (s) q.appendChild(s);
     totemTela([
-      el('h2', { texto: 'Seu passe, ' + nomeProprio(String(nome).split(' ')[0]) }),
-      el('p', { classe: 'sub', texto: 'Aponte a câmera do seu celular para este QR code e guarde o passe: a segurança vai pedir na entrada.' }),
+      el('h2', { texto: 'Seu QR code de entrada, ' + nomeProprio(String(nome).split(' ')[0]) }),
+      el('p', { classe: 'sub', texto: 'Aponte a câmera do seu celular para este QR code e guarde-o: a segurança vai pedir na entrada.' }),
       q,
       el('button', { type: 'button', classe: 'btn principal', texto: 'Pronto', onclick: totemInicio })
     ], 45000);

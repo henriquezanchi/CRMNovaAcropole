@@ -55,7 +55,7 @@
 
   <!-- Chegada: buscar e marcar -->
   <div id="abaBuscar" class="aba">
-    <p class="instrucao"><b>1</b> Diga ou digite o nome ou o celular <b>2</b> Toque em <b>Chegou</b> <b>3</b> Mostre o QR do passe para a pessoa guardar no celular</p>
+    <p class="instrucao"><b>1</b> Diga ou digite o nome ou o celular <b>2</b> Toque em <b>Chegou</b> <b>3</b> Entregue um cartão de entrada e digite o número</p>
     <div class="busca-grande">
       <input id="busca" type="search" placeholder="Nome ou celular" autocomplete="off" aria-label="Buscar inscrito">
       <button type="button" id="micBusca" class="mic" aria-label="Buscar por voz" title="Buscar por voz"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg></button>
@@ -67,7 +67,7 @@
 
   <!-- Cadastro de quem chegou sem inscrição -->
   <div id="abaCadastrar" class="aba" hidden>
-    <p class="instrucao">Para quem <b>não se inscreveu</b>. Se aparecer "Talvez já esteja inscrito", toque em <b>É esta pessoa</b>. No fim, mostre o passe para a pessoa guardar.</p>
+    <p class="instrucao">Para quem <b>não se inscreveu</b>. Se aparecer "Talvez já esteja inscrito", toque em <b>É esta pessoa</b>. No fim, entregue um cartão de entrada.</p>
     <form id="formCadastro" autocomplete="off">
       <label>Nome e sobrenome
         <span class="com-mic"><input id="cadNome" required maxlength="120" autocapitalize="words"><button type="button" class="mic" data-mic="cadNome" aria-label="Falar o nome"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg></button></span>
@@ -101,7 +101,7 @@
 
   <!-- Presentes e registros -->
   <div id="abaPresentes" class="aba" hidden>
-    <p class="instrucao">Quem já chegou. Se a pessoa perdeu o passe, toque em <b>Mostrar passe</b>.</p>
+    <p class="instrucao">Quem já chegou. Para entregar ou trocar o cartão de alguém, toque no botão do cartão.</p>
     <div id="problemas"></div>
     <div id="listaPresentes" class="resultados"></div>
   </div>

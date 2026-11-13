@@ -28,13 +28,13 @@
     var token = String(texto || '').trim();
     var i = token.indexOf('#'); if (i >= 0) token = token.slice(i + 1);
     var partes = token.split('.');
-    if (partes.length !== 2) { mostrar('erro', '✗ Não é um passe válido', [['vl-dica', 'O QR code lido não é um passe deste evento.']]); return; }
+    if (partes.length !== 2) { mostrar('erro', '✗ Não é um passe válido', [['vl-dica', 'Este QR code não é de entrada deste evento.']]); return; }
     var dados, bytes;
-    try { bytes = b64u(partes[0]); dados = JSON.parse(new TextDecoder().decode(bytes)); } catch (e) { mostrar('erro', '✗ Passe ilegível', []); return; }
+    try { bytes = b64u(partes[0]); dados = JSON.parse(new TextDecoder().decode(bytes)); } catch (e) { mostrar('erro', '✗ QR code ilegível', []); return; }
     (chave ? Promise.resolve(chave) : crypto.subtle.importKey('jwk', CHAVE_PUBLICA, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']).then(function (k) { chave = k; return k; }))
       .then(function (k) { return crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, k, b64u(partes[1]), bytes); })
       .then(function (ok) {
-        if (!ok) { mostrar('erro', '✗ PASSE FALSO', [['vl-dica', 'A assinatura não confere. Encaminhe para a recepção.']]); return; }
+        if (!ok) { mostrar('erro', '✗ QR CODE FALSO', [['vl-dica', 'A assinatura não confere. Encaminhe para a recepção.']]); return; }
         // Cartão de entrada (poucos, reutilizáveis): a recepção vincula o número a uma pessoa; a segurança lê,
         // recolhe e devolve à recepção. A leitura libera o cartão. Com internet, mostra com quem ele está.
         if (dados.c) { lerCartao(dados, token); contar(); return; }
@@ -42,9 +42,9 @@
         if (!antes) { vistos[id] = new Date().toISOString(); gravarVistos(vistos); }
         var linhas = [['vl-info', dados.en || ''], ['vl-nome', dados.n || ''], ['vl-info', dados.t || ''], ['vl-info', 'Check-in: ' + hora(dados.d)]];
         if (antes) {
-          linhas.push(['vl-dica', 'Este passe já foi conferido neste celular em ' + hora(antes) + '. Confira se é a mesma pessoa.']);
+          linhas.push(['vl-dica', 'Este QR code já foi conferido neste celular em ' + hora(antes) + '. Confira se é a mesma pessoa.']);
           mostrar('repetido', '✓ Válido · já conferido', linhas);
-        } else mostrar('ok', '✓ PASSE VÁLIDO', linhas);
+        } else mostrar('ok', '✓ QR CODE VÁLIDO', linhas);
         contar();
       }, function () { mostrar('erro', '✗ Não foi possível conferir', [['vl-dica', 'Atualize o navegador ou use outro celular.']]); });
   }
@@ -81,14 +81,14 @@
     var st = $('psStatus');
     function status(classe, texto) { st.className = 'vl-resultado ' + classe; st.textContent = ''; st.appendChild(el('p', 'vl-status', texto)); }
     var partes = token.split('.');
-    if (partes.length !== 2) { status('vl-espera', 'Nenhum passe neste celular'); $('psDica').textContent = 'Faça o check-in pelo QR code do cartaz ou na recepção.'; return; }
+    if (partes.length !== 2) { status('vl-espera', 'Nenhum QR code de entrada neste celular'); $('psDica').textContent = 'Faça o check-in pelo QR code do cartaz ou na recepção.'; return; }
     var dados, bytes;
-    try { bytes = b64u(partes[0]); dados = JSON.parse(new TextDecoder().decode(bytes)); } catch (e) { status('vl-erro', '✗ Passe ilegível'); return; }
+    try { bytes = b64u(partes[0]); dados = JSON.parse(new TextDecoder().decode(bytes)); } catch (e) { status('vl-erro', '✗ QR code ilegível'); return; }
     crypto.subtle.importKey('jwk', CHAVE_PUBLICA, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
       .then(function (k) { return crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, k, b64u(partes[1]), bytes); })
       .then(function (ok) {
-        if (!ok) { status('vl-erro', '✗ Passe inválido'); $('psDica').textContent = 'Procure a recepção.'; return; }
-        status('vl-ok', '✓ Passe válido');
+        if (!ok) { status('vl-erro', '✗ QR code inválido'); $('psDica').textContent = 'Procure a recepção.'; return; }
+        status('vl-ok', '✓ QR code válido');
         guardar('meu_passe', token);
         $('psEvento').textContent = dados.en || 'Dia Mundial da Filosofia 2026';
         $('psNome').textContent = dados.c ? 'Cartão de entrada nº ' + dados.c : (dados.n || '');
