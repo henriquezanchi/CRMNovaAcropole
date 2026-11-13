@@ -164,3 +164,8 @@ summary { padding: 10px 0; cursor: pointer; }
 /* Data e hora da última atualização, bem visível (13/11/2026) */
 .atualizado { flex-basis: 100%; font-size: 13px; font-weight: 600; color: var(--verde); }
 .atualizado:empty { display: none; }
+
+/* Telefone que abre o WhatsApp (13/11/2026) */
+.link-whats { color: var(--verde, #086357); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.link-whats::before { content: "💬 "; font-size: 0.85em; }
+.link-whats:hover { text-decoration: underline; }

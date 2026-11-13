@@ -84,6 +84,12 @@
     box.appendChild(el('div', { classe: 'excedente-legenda', texto: '🎉 ' + num(valor - meta) + ' acima da meta (' + Math.round((valor / meta) * 100) + '% da meta)' }));
     return box;
   }
+  // Telefone vira link do WhatsApp (13/11/2026, pedido do usuário). Telefone borrado (sem PIN) fica só texto.
+  function linkWhats(tel) {
+    var d = String(tel || '').replace(/\D/g, '');
+    if (d.length < 10 || d.length > 11) return tel || '';
+    return el('a', { href: 'https://wa.me/55' + d, target: '_blank', rel: 'noopener', classe: 'link-whats', title: 'Abrir no WhatsApp', texto: tel });
+  }
   function cartao(n, r, d) {
     return el('div', { classe: 'cartao' }, [el('div', { classe: 'n', texto: n }), el('div', { classe: 'r', texto: r }), d ? el('div', { classe: 'd', texto: d }) : null]);
   }
@@ -204,6 +210,16 @@
 
   // filtros (opcional): [{ rotulo, opcoes: [{ rotulo, teste(x) }] }] — um <select> por filtro,
   // a 1ª opção é sempre "Todos". Cada opção mostra quantas pessoas cabem nela.
+  // Filtro "Escola" para uma lista (só aparece com 2+ escolas). Sem escola = "Sem cadastro no CRM".
+  function filtroEscolaDe(itens) {
+    var escolas = [];
+    itens.forEach(function (x) { var k = x.escola || ''; if (escolas.indexOf(k) < 0) escolas.push(k); });
+    if (escolas.length < 2) return null;
+    escolas.sort(function (a, b) { return !a ? 1 : !b ? -1 : nomeEscola(a).localeCompare(nomeEscola(b)); });
+    return [{ rotulo: 'Escola', opcoes: escolas.map(function (e) {
+      return { rotulo: e ? nomeEscola(e) : 'Sem cadastro no CRM', teste: function (x) { return (x.escola || '') === e; } };
+    }) }];
+  }
   function listaComBusca(titulo, itens, colunas, linhaDe, vazio, pessoaDe, legenda, filtros) {
     // Fechada por padrão: no celular as listas abertas deixavam a página com ~15 telas.
     var cont = el('details');
@@ -267,9 +283,8 @@
         if (i === 0) { c.appendChild(el('strong', { texto: v instanceof Node ? v.textContent : String(v == null ? '' : v) })); return; }
         if (v == null || v === '' || (v instanceof Node && !v.textContent)) return;
         var linha = el('div', { classe: 'cartao-linha' });
-        if (/telefone/i.test(rot) && !(v instanceof Node)) {
-          var dig = String(v).replace(/\D/g, '');
-          var a = el('a', { href: 'tel:+55' + dig, texto: String(v) }); linha.appendChild(a);
+        if (/telefone/i.test(rot)) {
+          var w = v instanceof Node ? v.cloneNode(true) : linkWhats(v); linha.appendChild(w instanceof Node ? w : document.createTextNode(String(v)));
         } else {
           linha.appendChild(el('span', { classe: 'muted', texto: rot + ': ' }));
           if (v instanceof Node) linha.appendChild(v.cloneNode(true)); else linha.appendChild(document.createTextNode(String(v)));
@@ -300,8 +315,8 @@
     else if (x.telefone) {
       var bt = el('button', { type: 'button', classe: 'ic ic-tel', title: 'Mostrar telefone', 'aria-label': 'Mostrar telefone', texto: '📞' });
       bt.addEventListener('click', function () {
-        var a = el('a', { href: 'tel:+55' + String(x.telefone).replace(/\D/g, ''), classe: 'pessoa-tel', texto: x.telefone });
-        bt.replaceWith(a);
+        var a = linkWhats(x.telefone);
+        bt.replaceWith(a instanceof Node ? a : el('span', { classe: 'pessoa-tel', texto: x.telefone }));
       });
       ics.appendChild(bt);
     }
@@ -589,7 +604,7 @@
     var colunasInsc = ['Nome', 'Telefone', 'Escola', 'Perfil', 'Veio do convite', 'Inscrição', 'Presença'];
     if (dados.diretor) colunasInsc = colunasInsc.concat(['Aluno?']);
     var linhaInsc = function (x) {
-      var cel = [nomeProprio(x.nome), x.telefone || '', x.escola ? nomeEscola(x.escola) : 'Sem cadastro no CRM', perfilInscrito(x),
+      var cel = [nomeProprio(x.nome), linkWhats(x.telefone), x.escola ? nomeEscola(x.escola) : 'Sem cadastro no CRM', perfilInscrito(x),
         x.via_convite ? selo('Sim') : '', dataCurta(x.em), x.compareceu === true ? selo('Presente') : (x.compareceu === false ? selo('Faltou', 'vm') : '')];
       if (dados.diretor) cel.push(controleAluno(x, true) || '');
       return cel;
@@ -624,10 +639,10 @@
       }).sort(function (a, b) { return (a.situacao === 'Campanha: Vai ao evento' ? 0 : 1) - (b.situacao === 'Campanha: Vai ao evento' ? 0 : 1); });
       if (faltam.length) {
         var li = listaComBusca('Interessados ainda não inscritos', faltam, ['Nome', 'Telefone', 'Escola', 'Disse na conversa', 'Convite'], function (x) {
-          return [nomeProprio(x.nome), x.telefone || '', nomeEscola(x.escola), x.situacao === 'Campanha: Vai ao evento' ? selo('Que vai', 'am') : selo('Interessado'), dataCurta(x.enviado_em)];
+          return [nomeProprio(x.nome), linkWhats(x.telefone), nomeEscola(x.escola), x.situacao === 'Campanha: Vai ao evento' ? selo('Que vai', 'am') : selo('Interessado'), dataCurta(x.enviado_em)];
         }, 'Ninguém nesta situação.', function (x) {
           return pessoa(x, [x.situacao === 'Campanha: Vai ao evento' ? icone('🙋', 'Disse que vai, mas não se inscreveu') : icone('💬', 'Demonstrou interesse')]);
-        }, '🙋 disse que vai · 💬 demonstrou interesse · 📞 toque para ver o telefone');
+        }, '🙋 disse que vai · 💬 demonstrou interesse · 📞 toque para ver o telefone', filtroEscolaDe(faltam));
         li.insertBefore(el('p', { classe: 'muted', texto: 'Pessoas que, na conversa pelo WhatsApp, disseram que vão ou mostraram interesse, mas ainda não aparecem entre os inscritos do Ulisses. Só entra aqui quem demonstrou interesse há pelo menos 24 horas, para dar tempo de pensar e fazer a inscrição. Vale um contato por outro meio (ligação, mensagem pessoal) lembrando de fazer a inscrição.' + (dados.diretor ? '' : ' Entre com o PIN para ver nomes e telefones completos.') }), li.children[1]);
         s.appendChild(li);
       }
@@ -635,10 +650,10 @@
     var possiveis = (c.inscritos || []).filter(function (x) { return !x.aluno && x.confirmado == null && x.sugestao; });
     if (possiveis.length) {
       var lp = listaComBusca('Possíveis alunos para conferir', possiveis, ['Nome', 'Telefone', 'Parece ser'].concat(dados.diretor ? ['Aluno?'] : []), function (x) {
-        var cel = [nomeProprio(x.nome), x.telefone || '', el('span', { classe: 'quebra', texto: textoSugestao(x.sugestao) })];
+        var cel = [nomeProprio(x.nome), linkWhats(x.telefone), el('span', { classe: 'quebra', texto: textoSugestao(x.sugestao) })];
         if (dados.diretor) cel.push(controleAluno(x) || '');
         return cel;
-      }, 'Nenhum possível aluno.', pessoaInsc, '❓ possível aluno');
+      }, 'Nenhum possível aluno.', pessoaInsc, '❓ possível aluno', filtroEscolaDe(possiveis));
       lp.insertBefore(el('p', { classe: 'muted', texto: dados.diretor ? 'Inscritos contados como "de fora" com nome parecido com o de um aluno ativo, ou que marcaram "já sou aluno". Confirme cada um: a contagem de alunos e de público de fora se corrige sozinha.' : 'Inscritos contados como "de fora" que podem ser alunos. Entre com o PIN para confirmar.' }), lp.children[1]);
       s.appendChild(lp);
     }
@@ -683,7 +698,7 @@
     s.appendChild(listaComBusca('Pessoas contatadas', contatados, ['Nome', 'Telefone', 'Escola', 'Convite', 'Entrega', 'Respondeu', 'Situação', 'Inscrito'], function (x) {
       var e = ENTREGA[x.entrega] || [x.entrega || '', 'cz'];
       var sit = x.parar ? selo('Pediu para não receber', 'vm') : x.situacao ? selo(String(x.situacao).replace('Campanha: ', ''), /Não vai/.test(x.situacao) ? 'cz' : (/Vai/.test(x.situacao) ? '' : 'am')) : '';
-      return [nomeProprio(x.nome), x.telefone || '', nomeEscola(x.escola), dataHora(x.enviado_em), selo(e[0], e[1]), x.respondeu ? 'Sim' : '', sit, x.inscrito ? selo('Inscrito') : ''];
+      return [nomeProprio(x.nome), linkWhats(x.telefone), nomeEscola(x.escola), dataHora(x.enviado_em), selo(e[0], e[1]), x.respondeu ? 'Sim' : '', sit, x.inscrito ? selo('Inscrito') : ''];
     }, 'Nenhum convite enviado ainda.', function (x) {
       var ENT = { enviado: ['✓', 'Enviado', 'ic-cinza'], entregue: ['✓✓', 'Entregue', 'ic-cinza'], lido: ['✓✓', 'Lido', 'ic-azul'], falhou: ['⚠', 'Não entregue', 'ic-verm'] };
       var en = ENT[x.entrega];
