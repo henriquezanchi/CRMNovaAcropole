@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#05433b">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://eovgljcowblwoxmobeno.supabase.co; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Recepção do evento</title>
+<link rel="icon" href="img/logo-nova-acropole.png">
+<link rel="manifest" href="recepcao.webmanifest">
+<link rel="stylesheet" href="css/recepcao.css">
+</head>
+<body>
+<header class="topo">
+  <img src="img/logo-nova-acropole.png" alt="" class="logo">
+  <div class="topo-txt">
+    <p class="marca">Nova Acrópole · Recepção</p>
+    <h1 id="titulo">Recepção do evento</h1>
+  </div>
+  <span id="conexao" class="conexao" role="status" aria-live="polite"></span>
+</header>
+
+<!-- Entrada com PIN -->
+<section id="telaPin" class="tela" hidden>
+  <form id="formPin" class="cartao-pin" autocomplete="off">
+    <h2>Entrar na recepção</h2>
+    <label>Seu nome <input id="pinApelido" maxlength="40" placeholder="Ex.: Ana" autocomplete="given-name"></label>
+    <label>PIN (6 dígitos) <input id="pinValor" inputmode="numeric" pattern="[0-9]*" maxlength="6" required autocomplete="one-time-code"></label>
+    <button type="submit" class="btn principal">Entrar</button>
+    <p id="pinErro" class="erro" role="alert"></p>
+  </form>
+</section>
+
+<!-- Recepção -->
+<section id="telaPrincipal" class="tela" hidden>
+  <div class="placar" aria-live="polite">
+    <div><strong id="nPresentes">0</strong><span>presentes</span></div>
+    <div><strong id="nInscritos">0</strong><span>inscritos</span></div>
+    <div><strong id="nPorta">0</strong><span>inscritos na porta</span></div>
+    <div id="caixaPendentes" class="pendentes"><strong id="nPendentes">0</strong><span>a enviar</span></div>
+  </div>
+
+  <nav class="abas" role="tablist">
+    <button type="button" role="tab" data-aba="buscar" aria-selected="true">Chegada</button>
+    <button type="button" role="tab" data-aba="cadastrar" aria-selected="false">Cadastrar</button>
+    <button type="button" role="tab" data-aba="presentes" aria-selected="false">Presentes</button>
+  </nav>
+
+  <!-- Chegada: buscar e marcar -->
+  <div id="abaBuscar" class="aba">
+    <div class="busca-grande">
+      <input id="busca" type="search" placeholder="Nome ou celular" autocomplete="off" aria-label="Buscar inscrito">
+      <button type="button" id="micBusca" class="mic" aria-label="Buscar por voz" title="Buscar por voz"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg></button>
+    </div>
+    <p id="dicaVoz" class="dica"></p>
+    <div id="resultados" class="resultados"></div>
+    <button type="button" id="irCadastrar" class="btn secundario largo">Não achei: cadastrar na porta</button>
+  </div>
+
+  <!-- Cadastro de quem chegou sem inscrição -->
+  <div id="abaCadastrar" class="aba" hidden>
+    <form id="formCadastro" autocomplete="off">
+      <label>Nome e sobrenome
+        <span class="com-mic"><input id="cadNome" required maxlength="120" autocapitalize="words"><button type="button" class="mic" data-mic="cadNome" aria-label="Falar o nome"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg></button></span>
+      </label>
+      <p id="cadVinculo" class="ja-inscrito"></p>
+      <div id="sugestoesBase" class="sugestoes"></div>
+      <div class="linha2">
+        <label class="ddd">DDD <input id="cadDdd" inputmode="numeric" maxlength="2" value="62"></label>
+        <label class="cel">Celular (WhatsApp) <input id="cadTel" inputmode="tel" maxlength="15" placeholder="99999-9999"></label>
+      </div>
+      <label>E-mail (opcional) <input id="cadEmail" type="email" inputmode="email" maxlength="120" autocapitalize="off"></label>
+      <label>Veio com alguém? Quem? (opcional)
+        <span class="com-mic"><input id="cadVeioCom" maxlength="120"><button type="button" class="mic" data-mic="cadVeioCom" aria-label="Falar"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg></button></span>
+      </label>
+      <fieldset class="escolha">
+        <legend>Quer receber informações sobre o curso?</legend>
+        <label><input type="radio" name="cadInteresse" value="sim"> Sim</label>
+        <label><input type="radio" name="cadInteresse" value="nao"> Não</label>
+        <label><input type="radio" name="cadInteresse" value="" checked> Não perguntei</label>
+      </fieldset>
+      <button type="submit" class="btn principal largo">Inscrever e marcar presença</button>
+      <p id="cadMsg" class="erro" role="alert"></p>
+    </form>
+  </div>
+
+  <!-- Presentes e registros -->
+  <div id="abaPresentes" class="aba" hidden>
+    <div id="problemas"></div>
+    <div id="listaPresentes" class="resultados"></div>
+  </div>
+</section>
+
+<div id="aviso" class="aviso" role="status" aria-live="polite" hidden></div>
+<script src="js/recepcao.js"></script>
+</body>
+</html>

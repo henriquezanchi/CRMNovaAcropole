@@ -11343,3 +11343,19 @@ teve evento nos últimos 12 meses (`config.ultimo_evento_desde`), sem 2ª tentat
   Brasília, só com campanha ativa). `painel_cache_atualizar()` recalcula todas as chaves de campanha a cada minuto
   (`migracao_painel_cache_campanhas_rapido.sql`). O painel mostra "Inscrições do Ulisses atualizadas em …"
   (máximo de `ulisses_inscricoes_evento.visto_em`).
+
+## Recepção do evento com presença no Ulisses (13/11/2026)
+
+Página `recepcao.html#<chave>` (+ `js/recepcao.js`, `css/recepcao.css`, `sw-recepcao.js`, `recepcao.webmanifest`) para a
+equipe da porta. Acesso por link + PIN de 6 dígitos (`recepcao_links`, só hashes; sessão de 16 h em `recepcao_sessoes`).
+Edge `recepcao-evento` (`--no-verify-jwt`), migração `migracao_recepcao_evento.sql` (JÁ RODADA).
+- Lista = `recepcao_lista(evento_id_ulisses)` sobre `ulisses_inscricoes_evento` (aluno pela mesma regra do painel;
+  mostra só os 4 últimos dígitos do celular, `tel8` serve só para a busca).
+- Presença: `POST /facade/compareceu/{emailEventoId}/{true|false}`. Inscrição na porta: `POST /salvarInscricaoV2`
+  (chamada pública do formulário, `produtoId` = `filiaisEventos[].produtos[0].id` de `GET /evento/{id}`; DMF 2026 = 28015),
+  `pontoConversao: "recepcao"`, `utmSource: "crm-recepcao"`; depois `filtrarEmails` acha o `emailEventoId` e marca presença.
+  Chamadas ao Ulisses pela ponte da Cloudflare (`PONTE_URL`/`PONTE_CHAVE` também são segredos do Supabase desde 13/11)
+  via `_shared/ulisses.ts`.
+- Sem internet: o service worker guarda a página; lista em localStorage; ações numa fila com `client_id` (único em
+  `recepcao_registros`, reenvio nunca duplica). Voz pelo reconhecimento do navegador (Chrome precisa de internet para voz).
+- `recepcao_registros` guarda também "veio com quem" e "quer informação do curso" (pergunta só para quem é de fora).
