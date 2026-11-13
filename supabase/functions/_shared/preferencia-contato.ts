@@ -28,6 +28,11 @@ export function motivoIntegridadeContato(valor: unknown): string {
  return Array.isArray(tags)&&tags.includes('Contato em conferência') ? 'Contato em conferência: o telefone pode pertencer a outra pessoa. Confira a fonte antes de enviar.' : '';
 }
 
+// Confirmação enviada uma única vez a quem pediu para parar (13/11/2026, pedido do usuário).
+// É a única mensagem que passa pela trava de "Não Contatar", e só com este texto exato.
+export const TEXTO_CONFIRMACAO_NAO_CONTATAR =
+ 'Tudo bem, obrigado por nos avisar. Respeitamos a sua privacidade: seu número foi retirado da nossa lista e você não vai mais receber nossas mensagens.\n\nSe um dia quiser saber das atividades da Nova Acrópole, é só nos escrever por aqui.';
+
 export function temTagNaoContatar(valor:unknown):boolean {
  try{for(let i=0;i<4&&typeof valor==='string';i++)valor=JSON.parse(valor);}catch{return true;}
  return Array.isArray(valor)&&valor.some(t=>String(t).trim().normalize('NFC').toLowerCase()==='não contatar');

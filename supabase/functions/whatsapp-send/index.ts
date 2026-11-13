@@ -8,7 +8,7 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin, NOME_TABELA_LEADS, NOME_TABELA_MENSAGENS } from "../_shared/supabaseAdmin.ts";
 import { alterarTags } from "../_shared/tags.ts";
 import { montarNumeroE164 } from "../_shared/telefone.ts";
-import { motivoBloqueioContato, motivoIntegridadeContato, temTagNaoContatar } from "../_shared/preferencia-contato.ts";
+import { motivoBloqueioContato, motivoIntegridadeContato, temTagNaoContatar, TEXTO_CONFIRMACAO_NAO_CONTATAR } from "../_shared/preferencia-contato.ts";
 import { motivoRascunhoAgente } from "../_shared/rascunho-agente.mjs";
 import { aplicarReacao } from "../_shared/reacoes.ts";
 
@@ -127,7 +127,15 @@ Deno.serve(async (req) => {
         const envioCampanha = !parabens && (origemEnvio === 'campanha' || tipo === 'template');
         const inscritoUlisses = envioCampanha && lead.acompanhamento?.contato !== 'permitido' ? await temInscricaoUlisses(pessoaIdentificador, lead.historico_eventos) : false;
         const bloqueioContato = motivoBloqueioContato(lead.acompanhamento, envioCampanha, Date.now(), inscritoUlisses) || (temTagNaoContatar(lead.tags)?'Pedido de não contato registrado.':'');
-        if (bloqueioContato && tipo !== 'reacao') return json({ ok: false, erro: 'preferencia_contato', detalhe: { message: bloqueioContato } }, 409);
+        // Exceção única: a confirmação de saída (texto fixo) para quem pediu para parar nos últimos 10 min.
+        let confirmacaoSaida = false;
+        if (bloqueioContato && tipo === 'texto' && texto === TEXTO_CONFIRMACAO_NAO_CONTATAR) {
+            const desde = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+            const { count: recentes } = await supabaseAdmin.from(NOME_TABELA_MENSAGENS).select('id', { count: 'exact', head: true })
+                .eq('pessoaIdentificador', pessoaIdentificador).eq('direcao', 'entrada').gte('criado_em', desde);
+            confirmacaoSaida = !!recentes;
+        }
+        if (bloqueioContato && tipo !== 'reacao' && !confirmacaoSaida) return json({ ok: false, erro: 'preferencia_contato', detalhe: { message: bloqueioContato } }, 409);
         if(corpoReq.rascunhoAgente){
             const motivo=await motivoRascunhoAgente(supabaseAdmin,corpoReq.rascunhoAgente,pessoaIdentificador,lead.filial,lead);
             if(motivo)return json({ok:false,erro:'rascunho_desatualizado',detalhe:{message:motivo}},409);

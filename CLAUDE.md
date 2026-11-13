@@ -11445,3 +11445,7 @@ DMF cancelada (44 convites + 11 2ªs tentativas) e `cota_diaria` do `dmf-2026` =
 - `whatsapp-saude-conta` lê o limite pelo campo novo `whatsapp_business_manager_messaging_limit` (o antigo
   `messaging_limit_tier` foi descontinuado), com o antigo como reserva; grava a fonte em `detalhe.limite_fonte`.
   `limiteDoTier()` aceita o limite só como número.
+- Confirmação de saída (13/11): quem pede para parar (texto ou botão "Parar mensagens"; antes só texto digitado era
+  lido) recebe UMA mensagem fixa (`TEXTO_CONFIRMACAO_NAO_CONTATAR`, `_shared/preferencia-contato.ts`) agradecendo e
+  confirmando a retirada da lista. `whatsapp-send` só deixa esse texto exato passar pela trava de "Não Contatar", e só
+  se a pessoa escreveu nos últimos 10 min. Não sai no aviso 131050 (marketing parado pelo próprio WhatsApp).

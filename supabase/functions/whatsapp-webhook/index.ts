@@ -11,6 +11,7 @@ import { candidatosNumeroBR, numeroBateComAdmin, separarFromMeta } from "../_sha
 import { aplicarReacao } from "../_shared/reacoes.ts";
 import { baixarEArmazenarMidiaRecebida } from "../_shared/midia.ts";
 import { tratarComandoAdmin } from "../_shared/comandoAdmin.ts";
+import { TEXTO_CONFIRMACAO_NAO_CONTATAR } from "../_shared/preferencia-contato.ts";
 
 const APP_SECRET = Deno.env.get("WHATSAPP_APP_SECRET")!;
 const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN")!;
@@ -59,7 +60,7 @@ const PEDIDO_NAO_CONTATAR = [
     // Palavra sozinha ou botão "Parar mensagens" dos modelos de convite (09/11/2026).
     /^\s*(pare|parar|sair|stop|cancelar|descadastrar|parar mensagens|parar promo[çc][õo]es)\s*[.!]*\s*$/i,
 ];
-async function registrarPedidoNaoContatar(pessoa: string, texto: string) {
+async function registrarPedidoNaoContatar(pessoa: string, texto: string, confirmar = false) {
     if (!texto || !PEDIDO_NAO_CONTATAR.some((re) => re.test(texto))) return;
     try {
         const { data: lead } = await supabaseAdmin.from(NOME_TABELA_LEADS).select("tags, filial").eq("pessoaIdentificador", pessoa).maybeSingle();
@@ -72,6 +73,16 @@ async function registrarPedidoNaoContatar(pessoa: string, texto: string) {
             filial: lead.filial || "GLOBAL", acao: "pedido_nao_contatar_detectado", autor: "Recebimento do WhatsApp",
             pessoa_ids: [pessoa], detalhes: { trecho: texto.slice(0, 200) },
         });
+        // Agradece e confirma uma única vez (só quando a pessoa escreveu ou tocou no botão;
+        // nunca no aviso 131050, em que ela parou o marketing pelo próprio WhatsApp).
+        if (confirmar) {
+            const r = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/whatsapp-send`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ pessoaIdentificador: pessoa, tipo: "texto", texto: TEXTO_CONFIRMACAO_NAO_CONTATAR, atendenteNome: "Confirmação automática" }),
+            }).then((x) => x.json()).catch((e) => ({ ok: false, erro: String(e) }));
+            if (!r?.ok) console.warn("Confirmação de saída não enviada:", JSON.stringify(r).slice(0, 300));
+        }
     } catch (e) { console.warn("Falha ao registrar pedido de não contato:", (e as Error).message); }
 }
 
@@ -437,8 +448,9 @@ Deno.serve(async (req) => {
                 }, { onConflict: "wa_message_id", ignoreDuplicates: true });
 
                 if (error) console.error("Erro ao gravar mensagem recebida:", error);
-                if (!error && match?.pessoaIdentificador && msg.type === "text") {
-                    await registrarPedidoNaoContatar(match.pessoaIdentificador, extrairTexto(msg));
+                // Texto digitado ou toque em botão ("Parar mensagens", 13/11/2026).
+                if (!error && match?.pessoaIdentificador && ["text", "button", "interactive"].includes(msg.type)) {
+                    await registrarPedidoNaoContatar(match.pessoaIdentificador, extrairTexto(msg), true);
                 }
                 // Campanha com resposta automática (04/11/2026): quem foi convidado e
                 // respondeu recebe resposta do robô em até 1 minuto no horário
