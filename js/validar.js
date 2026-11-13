@@ -37,8 +37,13 @@
         if (!ok) { mostrar('erro', '✗ PASSE FALSO', [['vl-dica', 'A assinatura não confere. Encaminhe para a recepção.']]); return; }
         var vistos = lerVistos(), id = partes[1].slice(0, 24), antes = vistos[id];
         if (!antes) { vistos[id] = new Date().toISOString(); gravarVistos(vistos); }
-        var linhas = [['vl-info', dados.en || ''], ['vl-nome', dados.n || ''], ['vl-info', dados.t || ''], ['vl-info', 'Check-in: ' + hora(dados.d)]];
-        if (antes) {
+        // Cartão de entrada pré-impresso (entregue pela recepção): não tem nome, tem número. A segurança recolhe.
+        var linhas = dados.c ? [['vl-info', dados.en || ''], ['vl-nome', 'Cartão de entrada nº ' + dados.c], ['vl-info', 'Recolha o cartão.']]
+          : [['vl-info', dados.en || ''], ['vl-nome', dados.n || ''], ['vl-info', dados.t || ''], ['vl-info', 'Check-in: ' + hora(dados.d)]];
+        if (antes && dados.c) {
+          // Cartão é recolhido na entrada: lido de novo é cartão reaproveitado.
+          mostrar('erro', '✗ Cartão já usado', [['vl-nome', 'Cartão nº ' + dados.c], ['vl-dica', 'Este cartão já entrou às ' + hora(antes) + '. Não aceite: encaminhe para a recepção.']]);
+        } else if (antes) {
           linhas.push(['vl-dica', 'Este passe já foi conferido neste celular em ' + hora(antes) + '. Confira se é a mesma pessoa.']);
           mostrar('repetido', '✓ Válido · já conferido', linhas);
         } else mostrar('ok', '✓ PASSE VÁLIDO', linhas);
@@ -70,8 +75,8 @@
         status('vl-ok', '✓ Passe válido');
         guardar('meu_passe', token);
         $('psEvento').textContent = dados.en || 'Dia Mundial da Filosofia 2026';
-        $('psNome').textContent = dados.n || '';
-        $('psInfo').textContent = (dados.t || '') + ' · check-in ' + hora(dados.d);
+        $('psNome').textContent = dados.c ? 'Cartão de entrada nº ' + dados.c : (dados.n || '');
+        $('psInfo').textContent = dados.c ? 'Entregue este cartão à segurança.' : (dados.t || '') + ' · check-in ' + hora(dados.d);
         var svgGuardado = ler('meu_passe_svg_' + partes[1].slice(0, 16));
         if (svgGuardado) return desenhar(svgGuardado);
         fetch(FUNCAO, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ acao: 'passe_qr', token: token }) })
