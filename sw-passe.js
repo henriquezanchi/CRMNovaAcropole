@@ -1,0 +1,27 @@
+// Guarda o check-in (checkin.html) e o validador da segurança (validar.html) no aparelho para abrirem sem internet
+// (13/11/2026). Rede primeiro; sem rede, a cópia guardada. Registrado com escopo ./checkin e ./validar.
+var CACHE = 'passe-v1';
+var ARQUIVOS = ['checkin.html', 'validar.html', 'js/checkin.js', 'js/validar.js', 'css/recepcao.css', 'img/logo-nova-acropole.png'];
+var APELIDOS = { checkin: 'checkin.html', validar: 'validar.html' };
+
+self.addEventListener('install', function (e) {
+  e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(ARQUIVOS); }).then(function () { return self.skipWaiting(); }));
+});
+self.addEventListener('activate', function (e) {
+  e.waitUntil(caches.keys().then(function (ks) {
+    return Promise.all(ks.filter(function (k) { return k.indexOf('passe-') === 0 && k !== CACHE; }).map(function (k) { return caches.delete(k); }));
+  }).then(function () { return self.clients.claim(); }));
+});
+self.addEventListener('fetch', function (e) {
+  var url = new URL(e.request.url);
+  if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
+  var caminho = url.pathname.replace(/^\//, '');
+  caminho = APELIDOS[caminho] || caminho;
+  if (ARQUIVOS.indexOf(caminho) < 0) return;
+  e.respondWith(
+    fetch(e.request).then(function (r) {
+      if (r.ok) { var copia = r.clone(); caches.open(CACHE).then(function (c) { c.put(caminho, copia); }); }
+      return r;
+    }).catch(function () { return caches.match(caminho); })
+  );
+});

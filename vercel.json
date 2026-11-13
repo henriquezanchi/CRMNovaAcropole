@@ -20,6 +20,10 @@
     {
       "source": "/checkin",
       "destination": "/checkin.html"
+    },
+    {
+      "source": "/validar",
+      "destination": "/validar.html"
     }
   ]
 }

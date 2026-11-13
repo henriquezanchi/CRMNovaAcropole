@@ -174,3 +174,28 @@ body.modo-espelho #acoesTopo, body.modo-espelho #conexao, body.modo-totem #acoes
 .ck-inscrever .btn { display: block; text-align: center; text-decoration: none; }
 .ck-grande { font-size: 40px; font-weight: 900; color: var(--verde); text-align: center; margin: 12vh 0 8px; }
 #passoOk .sub { text-align: center; font-size: 19px; }
+
+/* Passe do check-in e validador da segurança (13/11/2026) */
+.abas.abas2 { grid-template-columns: 1fr 1fr; position: static; margin-top: 14px; }
+.checkin form h2 { margin-top: 0; }
+.ck-opcao { display: flex; gap: 10px; align-items: flex-start; font-weight: 600; color: var(--texto); }
+.ck-opcao input { width: auto; margin-top: 3px; }
+.centro { text-align: center; }
+.ck-passe { background: #fff; border-radius: 18px; padding: 18px; margin: 16px 0; text-align: center; box-shadow: 0 2px 12px rgba(0,0,0,.08); border-top: 6px solid var(--amarelo); }
+.ck-qr svg { width: 100%; max-width: 300px; height: auto; display: block; margin: 0 auto; }
+.ck-passe-nome { font-size: 22px; font-weight: 900; color: var(--verde-esc); margin: 10px 0 2px; }
+.ck-passe-info { margin: 0; color: var(--suave); font-weight: 600; }
+.ck-grande { margin-top: 3vh; }
+.validar { max-width: 560px; }
+.vl-resultado { border-radius: 18px; padding: 22px 18px; text-align: center; margin: 8px 0 14px; color: #fff; }
+.vl-resultado p { margin: 4px 0; }
+.vl-espera { background: #fff; color: var(--texto); }
+.vl-ok { background: #0b7a4a; }
+.vl-repetido { background: #b07d00; }
+.vl-erro { background: var(--alerta); }
+.vl-status { font-size: 26px; font-weight: 900; }
+.vl-nome { font-size: 24px; font-weight: 800; }
+.vl-info { font-size: 17px; font-weight: 600; opacity: .95; }
+.vl-dica { font-size: 14px; opacity: .9; }
+.vl-espera .vl-dica { color: var(--suave); }
+.vl-camera video { width: 100%; border-radius: 14px; background: #000; max-height: 50vh; object-fit: cover; }

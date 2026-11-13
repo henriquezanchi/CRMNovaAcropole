@@ -10,6 +10,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { chamarUlisses, filtrarEmails } from "../_shared/ulisses.ts";
+import QRCode from "npm:qrcode@1.5.4";
 
 const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
@@ -53,6 +54,30 @@ async function marcarNoUlisses(emailEventoId: number, compareceu: boolean) {
     await supabaseAdmin.from("ulisses_inscricoes_evento").update({ compareceu, visto_em: new Date().toISOString() }).eq("email_evento_id", emailEventoId);
 }
 
+// ---- Passe do check-in (13/11/2026) ----
+// QR code com nome, telefone e horário, assinado com ECDSA P-256 (chave privada no segredo PASSE_CHAVE_PRIVADA).
+// O validador da segurança (validar.html) confere a assinatura com a chave pública, sem internet.
+const URL_VALIDAR = "https://crm-nova-acropole.vercel.app/validar#";
+let chavePasse: CryptoKey | null = null;
+const b64u = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+function telefoneBonito(ddd: string, tel: string) {
+    const t = digitos(tel).slice(-9);
+    return (ddd ? `(${ddd}) ` : "") + (t.length === 9 ? `${t.slice(0, 5)}-${t.slice(5)}` : t.length === 8 ? `${t.slice(0, 4)}-${t.slice(4)}` : t);
+}
+async function emitirPasse(link: any, dados: { nome: string; ddd?: string; telefone?: string; ref: string; em?: string }) {
+    const jwk = Deno.env.get("PASSE_CHAVE_PRIVADA");
+    if (!jwk) return null; // sem a chave, segue sem passe (o check-in vale do mesmo jeito)
+    if (!chavePasse) chavePasse = await crypto.subtle.importKey("jwk", JSON.parse(jwk), { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
+    const corpo = { v: 1, ev: link.evento_id_ulisses, d: dados.em || new Date().toISOString(), n: nomeProprio(dados.nome || ""),
+        t: telefoneBonito(dados.ddd || "", dados.telefone || ""), r: dados.ref };
+    const bytes = new TextEncoder().encode(JSON.stringify(corpo));
+    const assinatura = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, chavePasse, bytes));
+    const token = `${b64u(bytes)}.${b64u(assinatura)}`;
+    const url = URL_VALIDAR + token;
+    const svg = await QRCode.toString(url, { type: "svg", errorCorrectionLevel: "M", margin: 1, color: { dark: "#05433b", light: "#ffffff" } });
+    return { token, url, svg, nome: corpo.n, telefone: corpo.t, em: corpo.d };
+}
+
 function primeiroNomeBate(digitado: string, nomeCompleto: string) {
     const a = normalizarNome(digitado).split(" ")[0] || "", b = normalizarNome(nomeCompleto).split(" ")[0] || "";
     if (!a || !b) return false;
@@ -78,6 +103,8 @@ async function autoCheckin(acao: string, corpo: any) {
     const inscricao = `https://inscricao.acropolebrasil.com.br/?eventoId=${link.evento_id_ulisses}&layout=recepcao&utm_source=autocheckin`;
     if (acao === "auto_info") return responder({ ok: true, evento: ev, aberto, abre_em: link.autocheckin_inicio, inscricao });
     if (!aberto) return responder({ ok: false, erro: "O check-in pelo celular funciona só no dia e no horário do evento.", fechado: true }, 403);
+
+    if (acao === "auto_inscrever") return await autoInscrever(link, corpo);
 
     const tel = digitos(corpo.celular), t8 = tel.slice(-8), nome = String(corpo.nome || "").slice(0, 60);
     if (t8.length < 8 || !normalizarNome(nome)) return responder({ ok: false, erro: "Informe seu celular com DDD e seu primeiro nome." }, 400);
@@ -105,7 +132,9 @@ async function autoCheckin(acao: string, corpo: any) {
     }
     if (!alvo) return responder({ ok: false, nao_encontrado: true, erro: "Não encontramos sua inscrição com esse celular e nome.", inscricao }, 404);
     const primeiro = nomeProprio(String(alvo.nome).split(" ")[0] || "");
-    if (alvo.compareceu === true) return responder({ ok: true, ja_feito: true, nome: primeiro });
+    const dddCel = tel.replace(/^55(?=\d{10,11}$)/, "").slice(0, 2);
+    const passeDe = () => emitirPasse(link, { nome: alvo.nome, ddd: dddCel, telefone: tel, ref: `i${alvo.email_evento_id}` }).catch(() => null);
+    if (alvo.compareceu === true) return responder({ ok: true, ja_feito: true, nome: primeiro, passe: await passeDe() });
 
     const clientId = crypto.randomUUID();
     await registrar({
@@ -118,7 +147,75 @@ async function autoCheckin(acao: string, corpo: any) {
         return responder({ ok: false, erro: "Não conseguimos confirmar agora. Tente de novo em instantes ou fale com a recepção." }, 502);
     }
     await concluir(clientId, "ok");
-    return responder({ ok: true, nome: primeiro });
+    return responder({ ok: true, nome: primeiro, passe: await passeDe() });
+}
+
+// Quem se inscreve pelo QR code no local já está no evento: inscrição + presença + passe de uma vez.
+// Sem e-mail: vaga reservada no CRM (não vai ao Ulisses), como na recepção.
+async function autoInscrever(link: any, corpo: any) {
+    let nome = String(corpo.nome || "").trim().slice(0, 120);
+    const tel = digitos(corpo.celular).replace(/^55(?=\d{10,11}$)/, ""), email = String(corpo.email || "").trim().toLowerCase();
+    if (normalizarNome(nome).split(" ").length < 2) return responder({ ok: false, erro: "Escreva seu nome e sobrenome." }, 400);
+    if (tel.length < 10 || tel.length > 11) return responder({ ok: false, erro: "Escreva seu celular com DDD." }, 400);
+    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return responder({ ok: false, erro: "Confira o e-mail." }, 400);
+    nome = nomeProprio(nome);
+    const ddd = tel.slice(0, 2), numero = tel.slice(2), t8 = tel.slice(-8);
+
+    // Já inscrito com esse celular e esse primeiro nome? Faz só o check-in.
+    const { data: ja } = await supabaseAdmin.from("ulisses_inscricoes_evento").select("email_evento_id, nome, compareceu")
+        .eq("evento_id_ulisses", link.evento_id_ulisses).is("removido_em", null).like("telefone", `%${t8}`);
+    const mesmo = (ja || []).find((x: any) => primeiroNomeBate(nome, x.nome || ""));
+    if (mesmo) return await autoCheckin("auto_checkin", { publico: corpo.publico, celular: tel, nome });
+
+    const clientId = crypto.randomUUID();
+    const autor = "Inscrição pelo celular (QR)";
+    if (!email) {
+        const [{ data: evCap }, { count: nI }, { count: nR }] = await Promise.all([
+            supabaseAdmin.from("eventos").select("capacidade").eq("id", link.evento_id).maybeSingle(),
+            supabaseAdmin.from("ulisses_inscricoes_evento").select("email_evento_id", { count: "exact", head: true }).eq("evento_id_ulisses", link.evento_id_ulisses).is("removido_em", null),
+            supabaseAdmin.from("recepcao_registros").select("id", { count: "exact", head: true }).eq("evento_id_ulisses", link.evento_id_ulisses).eq("tipo", "inscricao").eq("status", "reservado"),
+        ]);
+        const cap = Number(evCap?.capacidade) || 0;
+        if (cap && (nI || 0) + (nR || 0) >= cap) return responder({ ok: false, erro: "As vagas acabaram. Para entrar, informe seu e-mail ou fale com a recepção." }, 409);
+        await registrar({ client_id: clientId, link_id: link.id, evento_id_ulisses: link.evento_id_ulisses, tipo: "inscricao", status: "reservado",
+            nome, ddd, telefone: numero, autor, interesse_curso: typeof corpo.interesse_curso === "boolean" ? corpo.interesse_curso : null });
+        return responder({ ok: true, nome: nome.split(" ")[0], reservado: true, passe: await emitirPasse(link, { nome, ddd, telefone: numero, ref: `c${clientId.slice(0, 8)}` }).catch(() => null) });
+    }
+
+    await registrar({ client_id: clientId, link_id: link.id, evento_id_ulisses: link.evento_id_ulisses, tipo: "inscricao",
+        nome, ddd, telefone: numero, email, autor, interesse_curso: typeof corpo.interesse_curso === "boolean" ? corpo.interesse_curso : null });
+    try {
+        await chamarUlisses(supabaseAdmin, "/salvarInscricaoV2", { method: "POST", autenticar: false, corpo: {
+            nome, ddd, telefone: numero, email, receberInformativo: true, produtoId: link.produto_id_ulisses, produtosId: [link.produto_id_ulisses],
+            pontoConversao: "recepcao", landingPage: false, atualizar: false, utmSource: "autocheckin", utmMedium: "qr-local",
+            utmCampaign: link.campanha_slug || null, pagamento: {}, pagamentoV2: {} } });
+    } catch (e) {
+        await concluir(clientId, "erro", { erro: (e as Error).message });
+        return responder({ ok: false, erro: "Não conseguimos registrar sua inscrição agora. Fale com a recepção." }, 502);
+    }
+    let eeId: number | null = null, achado: any = null;
+    for (let i = 0; i < 3 && !eeId; i++) {
+        if (i) await new Promise((r) => setTimeout(r, 2000));
+        for (const p of await filtrarEmails(supabaseAdmin, link.evento_id_ulisses, link.filial_id_ulisses).catch(() => [])) {
+            const bate = digitos(p.telefone).slice(-8) === t8 || String(p.email || "").trim().toLowerCase() === email;
+            if (!bate) continue;
+            for (const ee of p.emailEventos || []) if (ee?.evento?.id === link.evento_id_ulisses && ee.id != null && (!eeId || ee.id > eeId)) { eeId = ee.id; achado = p; }
+        }
+    }
+    if (eeId) {
+        await supabaseAdmin.from("ulisses_inscricoes_evento").upsert({
+            email_evento_id: eeId, evento_id_ulisses: link.evento_id_ulisses, filial_id_ulisses: link.filial_id_ulisses,
+            pessoa_id_ulisses: achado?.id != null ? String(achado.id) : null, nome: achado?.nome || nome, email: achado?.email || email,
+            ddd, telefone: numero, compareceu: null, inscrito_em: new Date().toISOString(), visto_em: new Date().toISOString(), removido_em: null,
+            bruto: { inscricao: { id: eeId, origem: { pontoConversao: "recepcao", utmSource: "autocheckin" } } },
+        }, { onConflict: "email_evento_id" });
+        try { await marcarNoUlisses(eeId, true); await concluir(clientId, "ok", { email_evento_id: eeId }); }
+        catch (e) { await concluir(clientId, "erro", { email_evento_id: eeId, erro: "Inscrito, presença falhou: " + (e as Error).message }); }
+    } else {
+        await concluir(clientId, "erro", { erro: "Inscrito no Ulisses, inscrição ainda não encontrada para marcar presença." });
+    }
+    // A inscrição foi feita; o passe sai mesmo se a presença ficar para a recepção conferir.
+    return responder({ ok: true, nome: nome.split(" ")[0], passe: await emitirPasse(link, { nome, ddd, telefone: numero, ref: eeId ? `i${eeId}` : `c${clientId.slice(0, 8)}` }).catch(() => null) });
 }
 
 Deno.serve(async (req) => {
@@ -130,7 +227,7 @@ Deno.serve(async (req) => {
     // ---- Check-in pelo próprio celular (QR code no local, sem PIN) ----
     // Só funciona na janela do evento. Pede celular + primeiro nome e só marca se os dois baterem com a mesma
     // inscrição; a resposta nunca diz qual dos dois não bateu (não revela quem está inscrito).
-    if (acao === "auto_info" || acao === "auto_checkin") return await autoCheckin(acao, corpo);
+    if (acao === "auto_info" || acao === "auto_checkin" || acao === "auto_inscrever") return await autoCheckin(acao, corpo);
     const chave = String(corpo.chave || "");
     if (!/^[A-Za-z0-9_-]{10,}$/.test(chave)) return responder({ ok: false, erro: "Link inválido." }, 400);
 

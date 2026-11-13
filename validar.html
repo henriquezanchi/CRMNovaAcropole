@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#05433b">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Validar passe</title>
+<link rel="icon" href="img/logo-nova-acropole.png">
+<link rel="stylesheet" href="css/recepcao.css">
+</head>
+<body>
+<header class="topo">
+  <img src="img/logo-nova-acropole.png" alt="" class="logo">
+  <div class="topo-txt">
+    <p class="marca">Nova Acrópole · Segurança</p>
+    <h1>Validar passe</h1>
+  </div>
+  <span id="vlContagem" class="conexao" title="Passes conferidos neste aparelho">0</span>
+</header>
+<main class="tela validar">
+  <div id="vlResultado" class="vl-resultado vl-espera">
+    <p class="vl-status">Aponte para o QR code do passe</p>
+    <p class="vl-dica">Toque em "Ler QR code" ou use a câmera do celular. Funciona sem internet.</p>
+  </div>
+  <div id="vlCamera" class="vl-camera" hidden>
+    <video id="vlVideo" playsinline muted></video>
+  </div>
+  <button type="button" id="vlLer" class="btn principal largo">Ler QR code</button>
+  <p id="vlAviso" class="dica"></p>
+</main>
+<script src="js/validar.js"></script>
+</body>
+</html>

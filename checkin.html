@@ -6,7 +6,7 @@
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex,nofollow">
 <meta name="theme-color" content="#05433b">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://eovgljcowblwoxmobeno.supabase.co; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://eovgljcowblwoxmobeno.supabase.co; worker-src 'self'; base-uri 'none'; form-action 'none'">
 <title>Check-in</title>
 <link rel="icon" href="img/logo-nova-acropole.png">
 <link rel="stylesheet" href="css/recepcao.css">
@@ -21,22 +21,42 @@
 </header>
 <main class="tela checkin">
   <section id="passoForm">
-    <h2>Faça seu check-in</h2>
-    <p class="sub">Informe o celular e o primeiro nome que você usou na inscrição.</p>
+    <nav class="abas abas2" role="tablist">
+      <button type="button" role="tab" data-modo="checkin" aria-selected="true">Já me inscrevi</button>
+      <button type="button" role="tab" data-modo="inscrever" aria-selected="false">Ainda não me inscrevi</button>
+    </nav>
+
     <form id="formCheckin" autocomplete="on">
-      <label>Celular com DDD <input id="ckCelular" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="(62) 99999-9999" required maxlength="20"></label>
-      <label>Primeiro nome <input id="ckNome" autocomplete="given-name" autocapitalize="words" placeholder="Ex.: Maria" required maxlength="60"></label>
+      <h2>Faça seu check-in</h2>
+      <p class="sub">Informe o celular e o primeiro nome que você usou na inscrição.</p>
+      <label>Celular com DDD <input id="ckCelular" class="cel" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="(62) 99999-9999" maxlength="20"></label>
+      <label>Primeiro nome <input id="ckNome" autocomplete="given-name" autocapitalize="words" placeholder="Ex.: Maria" maxlength="60"></label>
       <button type="submit" class="btn principal largo" id="ckBotao">Fazer check-in</button>
       <p id="ckMsg" class="erro" role="alert"></p>
     </form>
-    <div id="ckInscrever" class="ck-inscrever" hidden>
-      <p>Ainda não se inscreveu? Faça a inscrição agora e depois volte aqui para o check-in.</p>
-      <a id="ckLinkInscricao" class="btn secundario largo" href="#" target="_blank" rel="noopener">Fazer minha inscrição</a>
-    </div>
+
+    <form id="formInscrever" autocomplete="on" hidden>
+      <h2>Inscreva-se agora</h2>
+      <p class="sub">Sua inscrição já vale como check-in.</p>
+      <label>Nome e sobrenome <input id="inNome" autocomplete="name" autocapitalize="words" maxlength="120"></label>
+      <label>Celular com DDD (WhatsApp) <input id="inCelular" class="cel" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="(62) 99999-9999" maxlength="20"></label>
+      <label>E-mail <input id="inEmail" type="email" inputmode="email" autocomplete="email" autocapitalize="off" maxlength="120"></label>
+      <label class="ck-opcao"><input id="inInteresse" type="checkbox"> Quero receber informações sobre o Curso de Filosofia</label>
+      <button type="submit" class="btn principal largo" id="inBotao">Inscrever e fazer check-in</button>
+      <p id="inMsg" class="erro" role="alert"></p>
+    </form>
   </section>
-  <section id="passoOk" hidden>
-    <p class="ck-grande" id="ckBoasVindas">Boas-vindas!</p>
-    <p class="sub" id="ckOkTexto">Check-in feito. Bom evento!</p>
+
+  <section id="passoPasse" hidden>
+    <p class="ck-grande" id="psBoasVindas">Boas-vindas!</p>
+    <p class="sub centro" id="psTexto">Check-in feito. Bom evento!</p>
+    <div class="ck-passe">
+      <div id="psQr" class="ck-qr"></div>
+      <p class="ck-passe-nome" id="psNome"></p>
+      <p class="ck-passe-info" id="psInfo"></p>
+    </div>
+    <p class="sub centro">Este é o seu passe. Se a segurança pedir, mostre esta tela. Para garantir, tire um print.</p>
+    <button type="button" id="psOutro" class="btn secundario largo">Fazer check-in de outra pessoa</button>
   </section>
 </main>
 <script src="js/checkin.js"></script>

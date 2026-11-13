@@ -11379,3 +11379,8 @@ Edge `recepcao-evento` (`--no-verify-jwt`), migração `migracao_recepcao_evento
   `recepcao_links.autocheckin_inicio/fim`; exige celular + primeiro nome da MESMA inscrição (tolera 1 letra) e a
   resposta nunca diz qual dos dois não bateu. Não achou: link para o formulário do Ulisses (`utm_source=autocheckin`).
   Registros com autor "Check-in pelo celular (QR)".
+- Passe do check-in (13/11/2026): check-in ou inscrição pelo celular (`auto_inscrever` também marca presença: quem
+  se inscreve pelo QR do local já está no evento) devolvem um passe com QR code (nome, telefone, horário) assinado
+  com ECDSA P-256 (segredo `PASSE_CHAVE_PRIVADA`, JWK; sem ele o check-in funciona mas sai sem passe). O QR abre
+  `validar.html#<token>`; o validador da segurança (`/validar`, `js/validar.js`, chave pública embutida) confere a
+  assinatura sem internet e avisa passe já conferido naquele aparelho. `sw-passe.js` guarda checkin/validar offline.
