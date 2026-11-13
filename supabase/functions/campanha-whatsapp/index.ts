@@ -41,6 +41,8 @@ function somarDias(dataISO: string, dias: number): string {
 
 function limiteDoTier(tier: string | null): number {
     const t = String(tier || "").toUpperCase();
+    // Campo novo da Meta (whatsapp_business_manager_messaging_limit) pode vir só com o número.
+    if (/^\d+$/.test(t)) return Number(t);
     if (t.includes("UNLIMITED")) return 100000;
     if (t.includes("100K")) return 100000;
     if (t.includes("10K")) return 10000;
@@ -53,6 +55,76 @@ async function limiteDiarioMeta(): Promise<number> {
     const { data } = await supabaseAdmin.from("whatsapp_saude_conta")
         .select("messaging_limit_tier").order("verificado_em", { ascending: false }).limit(1).maybeSingle();
     return limiteDoTier(data?.messaging_limit_tier ?? null);
+}
+
+// ---------------------------------------------------------------------------
+// Qualidade da conta (13/11/2026, a conta ficou amarela às 14h30 depois de dias
+// com 300-400 mensagens). A Meta calcula a qualidade pelos últimos 7 dias, pelos
+// bloqueios, denúncias, silenciamentos e arquivamentos. O agendador agora freia:
+//   verde    -> teto normal;
+//   amarelo  -> 30% do teto e nenhuma 2ª tentativa;
+//   vermelho -> para tudo;
+//   5+ retenções da Meta (131049) nas últimas 3h -> para até baixar.
+// ---------------------------------------------------------------------------
+const FATOR_AMARELO = 0.3;
+const RETENCOES_PARA_PARAR = 5;
+const HORAS_RETENCOES = 3;
+// Mensagem genérica de apresentação para quem não respondeu é o que mais gera bloqueio.
+const MODELOS_PROIBIDOS_FOLLOWUP = new Set(["contato_inicial"]);
+
+type Qualidade = { nivel: "verde" | "amarelo" | "vermelho" | "desconhecido"; fator: number; semFollowup: boolean; pausar: boolean; motivo: string; retencoes: number };
+
+async function estadoQualidade(): Promise<Qualidade> {
+    const { data } = await supabaseAdmin.from("whatsapp_saude_conta")
+        .select("quality_rating, status").order("verificado_em", { ascending: false }).limit(1).maybeSingle();
+    const q = String(data?.quality_rating || "").toUpperCase();
+    const desde = new Date(Date.now() - HORAS_RETENCOES * 3600 * 1000).toISOString();
+    const { count: retencoes } = await supabaseAdmin.from("mensagens_whatsapp").select("id", { count: "exact", head: true })
+        .eq("direcao", "saida").eq("wa_status", "falhou").gte("criado_em", desde)
+        .filter("wa_status_erro", "cs", JSON.stringify([{ code: 131049 }]));
+    const r = retencoes || 0;
+    const amarelo = q === "YELLOW" || q === "MEDIUM";
+    if (data?.status && data.status !== "CONNECTED") return { nivel: "vermelho", fator: 0, semFollowup: true, pausar: true, motivo: `número ${data.status}`, retencoes: r };
+    if (q === "RED" || q === "LOW") return { nivel: "vermelho", fator: 0, semFollowup: true, pausar: true, motivo: "qualidade vermelha", retencoes: r };
+    if (r >= RETENCOES_PARA_PARAR) return { nivel: amarelo ? "amarelo" : "verde", fator: 0, semFollowup: true, pausar: true, motivo: `${r} retenções da Meta nas últimas ${HORAS_RETENCOES}h`, retencoes: r };
+    if (amarelo) return { nivel: "amarelo", fator: FATOR_AMARELO, semFollowup: true, pausar: false, motivo: "qualidade amarela", retencoes: r };
+    return { nivel: q ? "verde" : "desconhecido", fator: 1, semFollowup: false, pausar: false, motivo: "", retencoes: r };
+}
+
+// Teto diário somando todas as campanhas (campanha_parametros). Rampa: começa em 100; com 3 dias
+// seguidos de qualidade verde sobe 25 por dia até o limite da Meta; fora do verde volta a no máximo 100.
+async function tetoDoDia(limiteMeta: number, qualidade: Qualidade, ajustar: boolean): Promise<{ teto: number; efetivo: number }> {
+    const { data: p } = await supabaseAdmin.from("campanha_parametros").select("*").eq("id", 1).maybeSingle();
+    let teto = Number(p?.teto_diario ?? 100);
+    const hoje = hojeBrasilia();
+    if (ajustar && p && p.teto_ajustado_em !== hoje) {
+        if (qualidade.nivel === "verde") {
+            const dias = Number(p.dias_verde_para_subir || 3);
+            const desde = new Date(Date.now() - dias * 24 * 3600 * 1000).toISOString();
+            const { data: linhas } = await supabaseAdmin.from("whatsapp_saude_conta").select("quality_rating, verificado_em")
+                .gte("verificado_em", desde).order("verificado_em");
+            const lista = linhas || [];
+            const tudoVerde = lista.length > 0 && lista.every((l: any) => ["GREEN", "HIGH"].includes(String(l.quality_rating || "").toUpperCase()));
+            const cobreJanela = lista.length > 0 && new Date(lista[0].verificado_em).getTime() <= new Date(desde).getTime() + 2 * 3600 * 1000;
+            if (tudoVerde && cobreJanela) teto = Math.min(teto + Number(p.passo_rampa || 25), limiteMeta - MARGEM_LIMITE);
+        } else {
+            teto = Math.min(teto, Number(p.teto_inicial || 100));
+        }
+        await supabaseAdmin.from("campanha_parametros").update({ teto_diario: teto, teto_ajustado_em: hoje, atualizado_em: new Date().toISOString() }).eq("id", 1);
+    }
+    const efetivo = qualidade.pausar ? 0 : Math.floor(Math.min(teto, limiteMeta - MARGEM_LIMITE) * qualidade.fator);
+    return { teto, efetivo };
+}
+
+function followupPermitido(c: any, qualidade: Qualidade): boolean {
+    return !!c.template_followup && !MODELOS_PROIBIDOS_FOLLOWUP.has(c.template_followup) && !qualidade.semFollowup;
+}
+
+async function enviadosHojeCampanhas(): Promise<number> {
+    const inicio = instanteBrasilia(hojeBrasilia(), "00:00").toISOString();
+    const { count } = await supabaseAdmin.from("campanha_fila").select("id", { count: "exact", head: true })
+        .eq("status", "enviado").gte("enviado_em", inicio);
+    return count || 0;
 }
 
 // Pessoas diferentes que receberam modelo nosso nas últimas 24h (falha da
@@ -132,7 +204,7 @@ async function elegiveisFollowup(c: any, limite: number): Promise<any[]> {
     if (!c.template_followup || limite <= 0) return [];
     const ate = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
     const enviados = await todasAsLinhas(() => supabaseAdmin.from("campanha_fila")
-        .select('"pessoaIdentificador", filial, telefone_chave, grupo, prioridade, enviado_em')
+        .select('"pessoaIdentificador", filial, telefone_chave, grupo, prioridade, enviado_em, wa_message_id')
         .eq("campanha_id", c.id).eq("tipo", "convite").eq("status", "enviado").lte("enviado_em", ate)
         .order("prioridade", { ascending: false }).order("id"));
     if (!enviados.length) return [];
@@ -144,6 +216,11 @@ async function elegiveisFollowup(c: any, limite: number): Promise<any[]> {
     for (const e of enviados) {
         if (saida.length >= limite) break;
         if (comFollowup.has(e.pessoaIdentificador)) continue;
+        // Só quem LEU o convite (13/11/2026): insistir com quem nem abriu tende a virar bloqueio.
+        if (!e.wa_message_id) continue;
+        const { data: msg } = await supabaseAdmin.from("mensagens_whatsapp").select("wa_status")
+            .eq("wa_message_id", e.wa_message_id).maybeSingle();
+        if (msg?.wa_status !== "lido") continue;
         const { count } = await supabaseAdmin.from("mensagens_whatsapp").select("id", { count: "exact", head: true })
             .eq("pessoaIdentificador", e.pessoaIdentificador).eq("direcao", "entrada").gte("criado_em", antes10min(e.enviado_em));
         if (count && count > 0) continue;
@@ -187,7 +264,7 @@ function dividirPorEscola(lista: any[], total: number, minimo: number): any[] {
     return escolhidos.sort((a, b) => Number(b.prioridade || 0) - Number(a.prioridade || 0));
 }
 
-async function planejar(c: any, forcar: boolean) {
+async function planejar(c: any, forcar: boolean, qualidade: Qualidade, teto: { teto: number; efetivo: number }) {
     const hoje = hojeBrasilia();
     const inicioDia = instanteBrasilia(hoje, c.janela_inicio);
     const fimDia = instanteBrasilia(hoje, c.janela_fim);
@@ -205,10 +282,11 @@ async function planejar(c: any, forcar: boolean) {
     const { count: outrasHoje } = await supabaseAdmin.from("campanha_fila").select("id", { count: "exact", head: true })
         .neq("campanha_id", c.id).gte("agendado_para", inicioDia.toISOString()).lte("agendado_para", fimDia.toISOString())
         .neq("status", "cancelado");
-    const total = Math.max(0, Math.min(c.cota_diaria, limiteMeta - MARGEM_LIMITE - (outrasHoje || 0)) - (jaPlanejados || 0));
+    // Teto do dia (somando todas as campanhas) já reduzido pela qualidade da conta.
+    const total = Math.max(0, Math.min(c.cota_diaria, Math.min(limiteMeta - MARGEM_LIMITE, teto.efetivo) - (outrasHoje || 0)) - (jaPlanejados || 0));
 
     const podeConvidar = hoje >= c.inicio && hoje <= c.fim_convites;
-    const podeFollowup = hoje > c.inicio && hoje <= c.fim_followup;
+    const podeFollowup = hoje > c.inicio && hoje <= c.fim_followup && followupPermitido(c, qualidade);
     const pctFollowup = Number(c.config?.percentual_maximo_followup ?? 0.4);
     const tetoFollowup = Math.floor(total * pctFollowup);
     // config.excluir_filiais (12/11/2026, DMF: parar o Setor Universitário e focar nas demais escolas).
@@ -297,7 +375,8 @@ async function planejar(c: any, forcar: boolean) {
         filial: "GLOBAL", acao: "campanha_planejada", autor: "Campanha automática",
         detalhes: { campanha: c.slug, dia: hoje, convites: gravados.convite, segunda_tentativa: gravados.followup,
             convites_escolhidos: conv.length, segunda_tentativa_escolhida: fol.length, reaproveitados_cancelados: reaproveitar.size,
-            limite_meta: limiteMeta, intervalo_segundos: Math.round(intervalo / 1000), freio },
+            limite_meta: limiteMeta, intervalo_segundos: Math.round(intervalo / 1000), freio,
+            qualidade: qualidade.nivel, freio_qualidade: qualidade.motivo || null, teto_dia: teto.teto, teto_efetivo: teto.efetivo },
     });
     // Resumo do banco a convidar, para o painel dos dirigentes (consulta cara, 1x por planejamento).
     const { data: banco } = await supabaseAdmin.rpc("campanha_banco_resumo", { p_campanha: c.id });
@@ -393,6 +472,9 @@ async function enviar() {
     if (!itens?.length) return resultados;
     const limiteMeta = await limiteDiarioMeta();
     let usados = await iniciadasUltimas24h();
+    const qualidade = await estadoQualidade();
+    const teto = await tetoDoDia(limiteMeta, qualidade, false);
+    let enviadosHoje = await enviadosHojeCampanhas();
     const campanhas = new Map<number, any>();
     const vagasPorCampanha = new Map<number, any>();
     const pagamento = await estadoPagamento();
@@ -422,6 +504,21 @@ async function enviar() {
             if (!vagasPorCampanha.has(c.id)) vagasPorCampanha.set(c.id, await vagasRestantes(c));
             const v = vagasPorCampanha.get(c.id);
             if (pararPorVagas(c, v)) { await finalizar("cancelado", { motivo: `restam ${v!.restantes} vagas no evento` }); continue; }
+        }
+        if (qualidade.pausar) {
+            // Freio da qualidade: volta para a fila e confere de novo em 1 hora.
+            await supabaseAdmin.from("campanha_fila").update({ status: "pendente", agendado_para: new Date(Date.now() + 60 * 60_000).toISOString() }).eq("id", it.id);
+            resultados.push({ id: it.id, status: "adiado_qualidade", motivo: qualidade.motivo });
+            continue;
+        }
+        if (it.tipo === "followup" && !followupPermitido(c, qualidade)) {
+            await finalizar("cancelado", { motivo: qualidade.semFollowup ? `sem 2ª tentativa: ${qualidade.motivo}` : "modelo de 2ª tentativa não permitido" });
+            continue;
+        }
+        if (enviadosHoje >= teto.efetivo) {
+            // Teto do dia atingido (ou reduzido pela qualidade). Cancelado volta a ser candidato amanhã.
+            await finalizar("cancelado", { motivo: `teto do dia atingido (${teto.efetivo}${qualidade.motivo ? ", " + qualidade.motivo : ""})` });
+            continue;
         }
         if (usados >= limiteMeta - MARGEM_LIMITE) {
             // Sem cota agora: volta para a fila e tenta daqui a 15 min.
@@ -465,6 +562,7 @@ async function enviar() {
         });
         if (envio.ok) {
             usados++;
+            enviadosHoje++;
             await finalizar("enviado", { enviado_em: momentoEnvio, wa_message_id: envio.dados?.wa_message_id ?? null });
             if (c.evento_id && it.tipo === "convite") {
                 await supabaseAdmin.from("evento_leads").upsert(
@@ -515,6 +613,12 @@ async function listarModelos() {
 // Corpo: {acao:"criar_modelo", waba, modelo:{name, language, category, components}}.
 async function criarModelo(waba: string, modelo: any) {
     if (!/^\d+$/.test(String(waba || "")) || !modelo?.name) return { erro: "waba_ou_modelo_invalido" };
+    // Saída fácil (13/11/2026): quem quer parar responde SAIR em vez de bloquear; o webhook já
+    // marca "Não Contatar" sozinho. Todo modelo novo de marketing ganha o rodapé, se não tiver.
+    if (Array.isArray(modelo.components) && !modelo.components.some((x: any) => String(x?.type).toUpperCase() === "FOOTER")
+        && String(modelo.category || "MARKETING").toUpperCase() === "MARKETING") {
+        modelo = { ...modelo, components: [...modelo.components, { type: "FOOTER", text: "Para não receber mais, responda SAIR" }] };
+    }
     const r = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${waba}/message_templates`, {
         method: "POST",
         headers: { Authorization: `Bearer ${Deno.env.get("WHATSAPP_TOKEN")}`, "Content-Type": "application/json" },
@@ -534,7 +638,10 @@ async function status() {
         for (const r of data) resumo[`${r.tipo}:${r.status}`] = (resumo[`${r.tipo}:${r.status}`] || 0) + 1;
         saida.push({ campanha: c.slug, resumo, inscritosEvento: c.evento_id ? await inscritosNoEvento(c.evento_id) : null });
     }
-    return { campanhas: saida, limiteMeta: await limiteDiarioMeta(), iniciadas24h: await iniciadasUltimas24h() };
+    const limiteMeta = await limiteDiarioMeta();
+    const qualidade = await estadoQualidade();
+    return { campanhas: saida, limiteMeta, iniciadas24h: await iniciadasUltimas24h(), qualidade,
+        teto: await tetoDoDia(limiteMeta, qualidade, false), enviadosHoje: await enviadosHojeCampanhas() };
 }
 
 // Margem de segurança ao procurar resposta a um envio: o horário gravado pode
@@ -550,8 +657,10 @@ Deno.serve(async (req) => {
     try {
         if (corpo.acao === "planejar") {
             const saida = [];
-            for (const c of await campanhasAtivas()) saida.push(await planejar(c, Boolean(corpo.forcar)));
-            return json({ ok: true, planejado: saida });
+            const qualidade = await estadoQualidade();
+            const teto = await tetoDoDia(await limiteDiarioMeta(), qualidade, true);
+            for (const c of await campanhasAtivas()) saida.push(await planejar(c, Boolean(corpo.forcar), qualidade, teto));
+            return json({ ok: true, qualidade, teto, planejado: saida });
         }
         if (corpo.acao === "enviar") return json({ ok: true, enviados: await enviar() });
         if (corpo.acao === "modelos") return json({ ok: true, modelos: await listarModelos() });

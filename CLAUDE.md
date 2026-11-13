@@ -11425,3 +11425,23 @@ Edge `recepcao-evento` (`--no-verify-jwt`), migração `migracao_recepcao_evento
   - Só para teste: `teste_falha_ulisses: true` com atendente "Teste do Sistema" simula o Ulisses fora do ar.
   - NÃO testado de verdade: inscrição com e-mail no Ulisses (`salvarInscricaoV2` cria registro que não dá para apagar);
     se falhar no evento, cai na vaga reservada.
+
+## Freio pela qualidade da conta do WhatsApp (13/11/2026)
+
+A conta ficou amarela às 14h30 de 13/11 (dias com 300–400 saídas; 18 retenções 131049 em 12/11). Fila restante do
+DMF cancelada (44 convites + 11 2ªs tentativas) e `cota_diaria` do `dmf-2026` = 0. Mudanças em `campanha-whatsapp`:
+- `estadoQualidade()`: verde = normal; amarelo = 30% do teto e sem 2ª tentativa; vermelho ou número não conectado =
+  para; 5+ retenções 131049 nas últimas 3 h = para (itens voltam à fila 1 h depois). Vale no planejar e em cada envio.
+- Teto diário somando todas as campanhas em `campanha_parametros` (`migracao_campanha_qualidade_conta.sql`, JÁ RODADA):
+  começa em 100; com 3 dias seguidos só verde sobe 25 por dia até o limite da Meta; fora do verde volta a no máx. 100.
+  Ajuste 1x/dia no planejamento. Item acima do teto é cancelado (volta a ser candidato no dia seguinte).
+- 2ª tentativa só para quem LEU o convite e nunca com `contato_inicial` (`MODELOS_PROIBIDOS_FOLLOWUP`). Hoje todas
+  as campanhas usam `contato_inicial` na 2ª tentativa, então não há 2ª tentativa até haver outro modelo.
+- `campanha_candidatos()`: +1.000.000 de prioridade para quem já escreveu pelo WhatsApp ou foi a evento do Ulisses
+  nos últimos 12 meses; cadastro antigo sem contato vai para o fim.
+- `criar_modelo` acrescenta o rodapé "Para não receber mais, responda SAIR" em modelo de marketing sem rodapé.
+  Mas a API de criação de modelos é recusada nesta WABA ("This API is not supported for this WhatsApp Business
+  Account", 10/11): modelos são criados à mão no WhatsApp Manager.
+- `whatsapp-saude-conta` lê o limite pelo campo novo `whatsapp_business_manager_messaging_limit` (o antigo
+  `messaging_limit_tier` foi descontinuado), com o antigo como reserva; grava a fonte em `detalhe.limite_fonte`.
+  `limiteDoTier()` aceita o limite só como número.

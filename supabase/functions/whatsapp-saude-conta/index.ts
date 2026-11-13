@@ -15,7 +15,25 @@ import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
 const GRAPH_VERSION = Deno.env.get("WHATSAPP_GRAPH_API_VERSION") ?? "v21.0";
 const TOKEN = Deno.env.get("WHATSAPP_TOKEN")!;
 const PHONE_ID_DEFAULT = Deno.env.get("WHATSAPP_PHONE_NUMBER_ID_DEFAULT")!;
-const CAMPOS = "display_phone_number,verified_name,status,quality_rating,messaging_limit_tier,name_status";
+// messaging_limit_tier foi descontinuado pela Meta (13/11/2026): o limite agora vem em
+// whatsapp_business_manager_messaging_limit. Pedido à parte e sem travar a consulta
+// principal; se o campo novo não vier, usa o antigo enquanto ele ainda responder.
+const CAMPOS = "display_phone_number,verified_name,status,quality_rating,name_status";
+const CAMPO_LIMITE_NOVO = "whatsapp_business_manager_messaging_limit";
+const CAMPO_LIMITE_ANTIGO = "messaging_limit_tier";
+
+async function lerCampo(phoneId: string, campo: string): Promise<string | null> {
+    try {
+        const resp = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${phoneId}?fields=${campo}`, {
+            headers: { Authorization: `Bearer ${TOKEN}` },
+        });
+        const data = await resp.json();
+        if (!resp.ok || data?.error) return null;
+        const v = data?.[campo];
+        if (v == null) return null;
+        return typeof v === "string" ? v : String(v?.tier ?? v?.value ?? JSON.stringify(v));
+    } catch { return null; }
+}
 const DIAS_HISTORICO = 30;
 
 function json(body: unknown, status = 200) {
@@ -56,6 +74,8 @@ async function consultarNumero(phoneId: string) {
             return { ok: false, problema: `a Meta recusou a consulta: ${msg}`, detalhe: data };
         }
         const problema = descreverProblema(data.status ?? null, data.quality_rating ?? null);
+        const limiteNovo = await lerCampo(phoneId, CAMPO_LIMITE_NOVO);
+        const limite = limiteNovo ?? await lerCampo(phoneId, CAMPO_LIMITE_ANTIGO);
         return {
             ok: !problema,
             problema,
@@ -63,9 +83,9 @@ async function consultarNumero(phoneId: string) {
             nome: data.verified_name ?? null,
             status: data.status ?? null,
             quality_rating: data.quality_rating ?? null,
-            messaging_limit_tier: data.messaging_limit_tier ?? null,
+            messaging_limit_tier: limite,
             name_status: data.name_status ?? null,
-            detalhe: data,
+            detalhe: { ...data, limite_fonte: limiteNovo ? CAMPO_LIMITE_NOVO : (limite ? CAMPO_LIMITE_ANTIGO : null) },
         };
     } catch (e) {
         // Falha de rede nossa não é problema da conta — não grava como problema.
