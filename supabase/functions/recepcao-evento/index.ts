@@ -200,7 +200,7 @@ Deno.serve(async (req) => {
             const partes = normalizarNome(String(corpo.termo || "")).split(" ").filter((p) => p.length >= 2).slice(0, 3);
             if (!partes.length) return responder({ ok: true, pessoas: [] });
             // Membros ativos do Mercúrio + contas do CRM (equipe da agência, que não está no Mercúrio).
-            let q = supabaseAdmin.from("mercurio_pessoas").select("nome, filial").eq("situacao", "ATI").limit(60);
+            let q = supabaseAdmin.from("mercurio_pessoas").select("nome, filial").eq("situacao", "ATI").limit(300);
             for (const p of partes) q = q.ilike("nome", `%${p}%`);
             let qu = supabaseAdmin.from("usuarios_crm").select("nome").eq("ativo", true).neq("nome", "Scraper Automatico").limit(10);
             for (const p of partes) qu = qu.ilike("nome", `%${p}%`);
