@@ -59,7 +59,7 @@ Deno.serve(async (req) => {
     try { corpo = await req.json(); } catch { return responder({ ok: false, erro: "Pedido inválido." }, 400); }
     const acao = String(corpo.acao || "");
     const chave = String(corpo.chave || "");
-    if (!/^[A-Za-z0-9_-]{20,}$/.test(chave)) return responder({ ok: false, erro: "Link inválido." }, 400);
+    if (!/^[A-Za-z0-9_-]{10,}$/.test(chave)) return responder({ ok: false, erro: "Link inválido." }, 400);
 
     const { data: link } = await supabaseAdmin.from("recepcao_links").select("*").eq("chave_hash", await sha256(chave)).maybeSingle();
     if (!link || link.revogado_em || new Date(link.expira_em) < new Date()) return responder({ ok: false, erro: "Link inválido ou expirado." }, 403);

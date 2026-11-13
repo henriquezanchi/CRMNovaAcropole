@@ -760,6 +760,6 @@
 
   desenharConexao();
   if (ehEspelho) { iniciarEspelho(); return; }
-  if (!/^[A-Za-z0-9_-]{20,}$/.test(chave)) { mostrarPin('Link incompleto: abra pelo link completo que você recebeu.'); return; }
+  if (!/^[A-Za-z0-9_-]{10,}$/.test(chave)) { mostrarPin('Link incompleto: abra pelo link completo que você recebeu.'); return; }
   if (sessao && new Date(sessao.expira) > new Date()) iniciar(); else mostrarPin();
 })();
