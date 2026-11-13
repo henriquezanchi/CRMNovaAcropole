@@ -35,20 +35,36 @@
       .then(function (k) { return crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, k, b64u(partes[1]), bytes); })
       .then(function (ok) {
         if (!ok) { mostrar('erro', '✗ PASSE FALSO', [['vl-dica', 'A assinatura não confere. Encaminhe para a recepção.']]); return; }
+        // Cartão de entrada (poucos, reutilizáveis): a recepção vincula o número a uma pessoa; a segurança lê,
+        // recolhe e devolve à recepção. A leitura libera o cartão. Com internet, mostra com quem ele está.
+        if (dados.c) { lerCartao(dados, token); contar(); return; }
         var vistos = lerVistos(), id = partes[1].slice(0, 24), antes = vistos[id];
         if (!antes) { vistos[id] = new Date().toISOString(); gravarVistos(vistos); }
-        // Cartão de entrada pré-impresso (entregue pela recepção): não tem nome, tem número. A segurança recolhe.
-        var linhas = dados.c ? [['vl-info', dados.en || ''], ['vl-nome', 'Cartão de entrada nº ' + dados.c], ['vl-info', 'Recolha o cartão.']]
-          : [['vl-info', dados.en || ''], ['vl-nome', dados.n || ''], ['vl-info', dados.t || ''], ['vl-info', 'Check-in: ' + hora(dados.d)]];
-        if (antes && dados.c) {
-          // Cartão é recolhido na entrada: lido de novo é cartão reaproveitado.
-          mostrar('erro', '✗ Cartão já usado', [['vl-nome', 'Cartão nº ' + dados.c], ['vl-dica', 'Este cartão já entrou às ' + hora(antes) + '. Não aceite: encaminhe para a recepção.']]);
-        } else if (antes) {
+        var linhas = [['vl-info', dados.en || ''], ['vl-nome', dados.n || ''], ['vl-info', dados.t || ''], ['vl-info', 'Check-in: ' + hora(dados.d)]];
+        if (antes) {
           linhas.push(['vl-dica', 'Este passe já foi conferido neste celular em ' + hora(antes) + '. Confira se é a mesma pessoa.']);
           mostrar('repetido', '✓ Válido · já conferido', linhas);
         } else mostrar('ok', '✓ PASSE VÁLIDO', linhas);
         contar();
       }, function () { mostrar('erro', '✗ Não foi possível conferir', [['vl-dica', 'Atualize o navegador ou use outro celular.']]); });
+  }
+
+  function lerCartao(dados, token) {
+    var base = [['vl-info', dados.en || ''], ['vl-nome', 'Cartão de entrada nº ' + dados.c]];
+    var fim = ['vl-dica', 'Recolha o cartão e devolva à recepção.'];
+    mostrar('ok', '✓ CARTÃO VÁLIDO', base.concat([['vl-info', 'Conferindo com quem está…'], fim]));
+    var ctl = window.AbortController ? new AbortController() : null;
+    var tempo = setTimeout(function () { if (ctl) ctl.abort(); }, 6000);
+    fetch('https://eovgljcowblwoxmobeno.supabase.co/functions/v1/recepcao-evento', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ acao: 'cartao_lido', token: token }), signal: ctl ? ctl.signal : undefined })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        clearTimeout(tempo);
+        if (j.ok && j.vinculado) mostrar('ok', '✓ CARTÃO VÁLIDO', base.concat([['vl-nome', j.nome], ['vl-info', 'Entregue pela recepção às ' + hora(j.vinculado_em)], fim]));
+        else if (j.ok) mostrar('repetido', '✓ Válido · sem nome', base.concat([['vl-dica', j.ja_lido_em ? 'Este cartão já passou aqui às ' + hora(j.ja_lido_em) + (j.nome_anterior ? ' (' + j.nome_anterior + ')' : '') + ' e a recepção não o entregou de novo. Confira com a recepção.' : 'A recepção ainda não registrou com quem está este cartão. Pergunte o nome e confira com a recepção.'], fim]));
+        else throw new Error();
+      })
+      .catch(function () { clearTimeout(tempo); mostrar('ok', '✓ CARTÃO VÁLIDO', base.concat([['vl-info', 'Sem internet: não foi possível ver o nome.'], fim])); });
   }
 
   // ---------- Página do passe (passe.html / /passe#<token>) ----------

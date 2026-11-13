@@ -86,8 +86,42 @@ async function emitirPasse(link: any, dados: { nome: string; ddd?: string; telef
     return { token, url, svg, nome: corpo.n, telefone: corpo.t, em: corpo.d };
 }
 
-// Desenha o QR de um passe (a página /passe guarda o desenho no celular da pessoa). Só para passes com assinatura válida.
+// Confere a assinatura de um passe/cartão e devolve o conteúdo (ou null).
 let chavePasseVerif: CryptoKey | null = null;
+async function lerTokenAssinado(tokenBruto: unknown): Promise<any | null> {
+    const token = String(tokenBruto || "").slice(0, 2000);
+    const [a, b] = token.split(".");
+    const jwk = Deno.env.get("PASSE_CHAVE_PRIVADA");
+    if (!a || !b || !jwk) return null;
+    if (!chavePasseVerif) {
+        const priv = JSON.parse(jwk.trim().startsWith("{") ? jwk : atob(jwk.trim()));
+        chavePasseVerif = await crypto.subtle.importKey("jwk", { kty: priv.kty, crv: priv.crv, x: priv.x, y: priv.y },
+            { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+    }
+    const de64 = (t: string) => Uint8Array.from(atob(t.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((t.length + 3) % 4)), (c) => c.charCodeAt(0));
+    try {
+        if (!(await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, chavePasseVerif, de64(b), de64(a)))) return null;
+        return JSON.parse(new TextDecoder().decode(de64(a)));
+    } catch { return null; }
+}
+
+// Segurança leu um cartão de entrada: devolve quem está com ele e libera o cartão para a recepção usar de novo.
+async function cartaoLido(corpo: any) {
+    const dados = await lerTokenAssinado(corpo.token);
+    const num = dados ? Number(dados.c) : 0;
+    if (!num || !dados.ev) return responder({ ok: false, erro: "Cartão inválido." }, 400);
+    const { data: ult } = await supabaseAdmin.from("recepcao_registros").select("tipo, nome, link_id, criado_em")
+        .eq("evento_id_ulisses", dados.ev).eq("cartao_numero", num).order("criado_em", { ascending: false }).limit(1).maybeSingle();
+    if (!ult) return responder({ ok: true, numero: num, vinculado: false });
+    if (ult.tipo === "cartao_lido") return responder({ ok: true, numero: num, vinculado: false, ja_lido_em: ult.criado_em, nome_anterior: ult.nome });
+    await supabaseAdmin.from("recepcao_registros").insert({
+        client_id: crypto.randomUUID(), link_id: ult.link_id, evento_id_ulisses: dados.ev, tipo: "cartao_lido", status: "ok",
+        cartao_numero: num, nome: ult.nome, autor: "Segurança (validador)",
+    });
+    return responder({ ok: true, numero: num, vinculado: true, nome: ult.nome, vinculado_em: ult.criado_em });
+}
+
+// Desenha o QR de um passe (a página /passe guarda o desenho no celular da pessoa). Só para passes com assinatura válida.
 async function passeQr(corpo: any) {
     const token = String(corpo.token || "").slice(0, 2000);
     const [a, b] = token.split(".");
@@ -257,6 +291,7 @@ Deno.serve(async (req) => {
     // inscrição; a resposta nunca diz qual dos dois não bateu (não revela quem está inscrito).
     if (acao === "auto_info" || acao === "auto_checkin" || acao === "auto_inscrever") return await autoCheckin(acao, corpo);
     if (acao === "passe_qr") return await passeQr(corpo);
+    if (acao === "cartao_lido") return await cartaoLido(corpo);
     const chave = String(corpo.chave || "");
     if (!/^[A-Za-z0-9_-]{10,}$/.test(chave)) return responder({ ok: false, erro: "Link inválido." }, 400);
 
@@ -307,6 +342,24 @@ Deno.serve(async (req) => {
             if (error) throw new Error(error.message);
             const reservas = (regs || []).filter((r: any) => r.tipo === "inscricao" && r.status === "reservado").map((r: any) => ({ client_id: r.client_id, nome: r.nome, autor: r.autor, criado_em: r.criado_em }));
             return responder({ ok: true, evento: ev, rotulo: link.rotulo, inscritos, reservas, capacidade: ev?.capacidade ?? null, registros: regs || [], agora: new Date().toISOString() });
+        }
+
+        // ---- Cartão de entrada entregue a quem não tem celular (número impresso no cartão) ----
+        if (acao === "cartao") {
+            const clientId = corpo.client_id, num = Math.trunc(Number(corpo.cartao));
+            if (!uuidOk(clientId) || !(num >= 1 && num <= 999)) return responder({ ok: false, erro: "Número de cartão inválido.", definitivo: true }, 400);
+            const nome = texto(corpo.nome, 120);
+            if (!nome) return responder({ ok: false, erro: "Falta o nome de quem recebeu o cartão.", definitivo: true }, 400);
+            const { data: ult } = await supabaseAdmin.from("recepcao_registros").select("tipo, nome")
+                .eq("evento_id_ulisses", link.evento_id_ulisses).eq("cartao_numero", num).order("criado_em", { ascending: false }).limit(1).maybeSingle();
+            const novo = await registrar({
+                client_id: clientId, link_id: link.id, evento_id_ulisses: link.evento_id_ulisses, tipo: "cartao", status: "ok",
+                cartao_numero: num, nome, email_evento_id: Number(corpo.email_evento_id) || null, autor,
+                criado_no_aparelho: texto(corpo.criado_no_aparelho, 40),
+            });
+            // Aviso (não bloqueia): o cartão ainda estava com outra pessoa que não passou pela segurança.
+            const emUso = novo !== null && ult && ult.tipo === "cartao" && ult.nome !== nome ? ult.nome : null;
+            return responder({ ok: true, numero: num, em_uso_por: emUso });
         }
 
         if (acao === "presenca") {

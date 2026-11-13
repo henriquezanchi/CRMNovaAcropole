@@ -11388,3 +11388,11 @@ Edge `recepcao-evento` (`--no-verify-jwt`), migração `migracao_recepcao_evento
   (alunos/de fora), chegadas a cada 15 min por canal (Recepção, Autoatendimento do tablet, QR check-in, QR
   inscrição), perfil de cada canal, comparecimento por perfil (aluno / convidado pela campanha / outros) e por
   antecedência da inscrição, escolas. Canal sai do `autor` do registro (o tablet grava "Autoatendimento (tablet)").
+- Passe também na recepção e no tablet (13/11/2026): presença/inscrição devolvem `passe` (QR para a pessoa guardar no
+  celular, página `passe.html`/`/passe#token`, desenho do QR por `passe_qr`). `recepcao_lista` reescrita com 2 laterais
+  indexadas (telefone / e-mail): de 5 s para ~40 ms.
+- Cartões de entrada reutilizáveis (`migracao_recepcao_cartoes.sql`, JÁ RODADA): 24 cartões impressos numerados, QR
+  assinado `{ev, en, c}`. Quem não tem celular recebe um cartão; a recepção digita o número na tela do passe ou em
+  Presentes ("Entregar cartão") → registro `tipo='cartao'` (`cartao_numero`, nome). A segurança lê (`cartao_lido`,
+  público, confere assinatura): mostra com quem está, grava `tipo='cartao_lido'` (libera), recolhe e devolve à recepção.
+  Sem internet o validador só confere a assinatura. Vincular um cartão que ainda não passou pela segurança só avisa.

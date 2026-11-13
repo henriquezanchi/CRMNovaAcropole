@@ -239,6 +239,7 @@
     if (compareceu) {
       aviso('✓ ' + p.nome.split(' ')[0] + ' marcado(a) como presente');
       espelhar({ tipo: 'boasvindas', nome: p.nome });
+      if (!navigator.onLine) mostrarPasse(p.nome, null, p.id);
       if (!p.aluno) { anotando = p.id; desenharResultados(); return; }
       proximo();
     } else { aviso('Presença desfeita: ' + p.nome); desenharResultados(); }
@@ -398,6 +399,7 @@
     enfileirar('inscrever', dados);
     aviso('✓ ' + nome.split(' ')[0] + (email || (pessoaBase && pessoaBase.tem_email) ? ' cadastrado(a)' : ' com vaga reservada (sem e-mail)') + (online ? '' : ' (envia quando a internet voltar)'));
     espelhar({ tipo: 'boasvindas', nome: nome });
+    if (!navigator.onLine && !document.body.classList.contains('modo-totem')) mostrarPasse(nome, null, null);
     limparCadastro(); $('cadDdd').value = ddd || '62';
     abrirAba('buscar'); $('busca').value = ''; desenharResultados();
   });
@@ -422,7 +424,13 @@
     todos.forEach(function (p) {
       area.appendChild(el('div', { classe: 'pessoa presente' + (p.pendente ? ' pendente' : '') }, [
         el('div', { classe: 'nome', texto: p.nome }),
-        passesGuardados[p.nome] ? el('div', { classe: 'acao' }, [el('button', { type: 'button', classe: 'chip ativo', texto: 'Mostrar passe', onclick: function () { mostrarPasse(p.nome, passesGuardados[p.nome].svg); } })]) : null,
+            el('div', { classe: 'acao' }, [
+          passesGuardados[p.nome] ? el('button', { type: 'button', classe: 'chip ativo', texto: 'Mostrar passe', onclick: function () { mostrarPasse(p.nome, passesGuardados[p.nome].svg, p.id || null); } }) : null,
+          el('button', { type: 'button', classe: 'chip', texto: cartoesVinculados[p.nome] ? 'Cartão nº ' + cartoesVinculados[p.nome] : 'Entregar cartão', onclick: function () {
+            var n = window.prompt('Número do cartão de entrada entregue a ' + p.nome.split(' ')[0] + ':', cartoesVinculados[p.nome] || '');
+            if (n !== null) vincularCartao(p.nome, p.id || null, n);
+          } })
+        ]),
         el('div', { classe: 'info' }, [
           p.porta || p.na_porta ? el('span', { classe: 'selo fora', texto: p.semEmail ? 'reservado na porta (sem e-mail)' : 'inscrito na porta' }) : null,
           p.aluno ? el('span', { classe: 'selo', texto: 'Aluno' }) : (p.porta ? null : el('span', { classe: 'selo fora', texto: 'De fora' })),
@@ -456,6 +464,7 @@
         // Reserva sem e-mail entra na conta na hora (a lista do servidor chega em seguida).
         if (item.acao === 'inscrever' && j.reservado && lista && !j.repetido) lista.reservas = (lista.reservas || []).concat([{ client_id: item.dados.client_id, nome: item.dados.nome }]);
         if (item.acao === 'inscrever') atualizarLista();
+        if (item.acao === 'cartao' && j.em_uso_por) aviso('⚠ O cartão nº ' + j.numero + ' estava com ' + j.em_uso_por + ', que não passou pela segurança. Agora está com ' + item.dados.nome.split(' ')[0] + '.');
       } else if (j.definitivo || j.inscrito || (j._status >= 400 && j._status < 500 && j._status !== 429)) {
         tirar(item);
         problemas.push({ nome: item.dados.nome || nomeDe(item.dados.email_evento_id), erro: j.erro || 'Recusado pelo servidor.' }); gravar('problemas', problemas);
@@ -482,16 +491,41 @@
   function receberPasse(passe, item) {
     passesGuardados[passe.nome] = { svg: passe.svg, url: passe.url, em: passe.em }; gravar('passes', passesGuardados);
     var recente = Date.now() - new Date(item.dados.criado_no_aparelho || 0).getTime() < 3 * 60000;
-    if (recente) mostrarPasse(passe.nome, passe.svg);
+    if (recente) mostrarPasse(passe.nome, passe.svg, item.dados.email_evento_id || null);
     if (!$('abaPresentes').hidden) desenharPresentes();
   }
-  function mostrarPasse(nome, svgTexto) {
-    espelhar({ tipo: 'passe', nome: nome, svg: svgTexto });
-    if (document.body.classList.contains('modo-totem')) return totemPasse(nome, svgTexto);
+  // svgTexto vazio = sem internet: a tela abre mesmo assim para a recepção entregar um cartão.
+  var passeAtual = null;
+  function mostrarPasse(nome, svgTexto, eeId) {
+    var totem = document.body.classList.contains('modo-totem');
+    if (svgTexto) espelhar({ tipo: 'passe', nome: nome, svg: svgTexto });
+    if (totem) return svgTexto ? totemPasse(nome, svgTexto) : null;
+    var mesmo = passeAtual && passeAtual.nome === nome && !$('painelPasse').hidden;
+    passeAtual = { nome: nome, eeId: eeId || (passeAtual && mesmo ? passeAtual.eeId : null) };
     $('ppTitulo').textContent = 'Passe de ' + String(nome).split(' ')[0];
     $('ppQr').textContent = ''; var s = svgDe(svgTexto); if (s) $('ppQr').appendChild(s);
+    $('ppSemQr').hidden = !!s;
+    if (!mesmo) $('ppCartaoNum').value = cartoesVinculados[nome] ? String(cartoesVinculados[nome]) : '';
     $('painelPasse').hidden = false;
   }
+  // ---------- cartões de entrada (poucos, reutilizáveis) ----------
+  // A recepção entrega um cartão numerado a quem não tem celular; a segurança lê, recolhe e devolve.
+  var cartoesVinculados = ler('cartoes', {});
+  function vincularCartao(nome, eeId, numTexto) {
+    var num = parseInt(String(numTexto || '').replace(/\D/g, ''), 10);
+    if (!(num >= 1 && num <= 999)) { aviso('Digite o número impresso no cartão.'); return false; }
+    var outro = Object.keys(cartoesVinculados).filter(function (n) { return n !== nome && cartoesVinculados[n] === num; })[0];
+    if (outro) delete cartoesVinculados[outro];
+    cartoesVinculados[nome] = num; gravar('cartoes', cartoesVinculados);
+    enfileirar('cartao', { cartao: num, nome: nome, email_evento_id: eeId || null });
+    aviso('✓ Cartão nº ' + num + ' com ' + String(nome).split(' ')[0] + '. Ele(a) entrega à segurança.');
+    if (!$('abaPresentes').hidden) desenharPresentes();
+    return true;
+  }
+  $('ppCartaoOk').addEventListener('click', function () {
+    if (passeAtual && vincularCartao(passeAtual.nome, passeAtual.eeId, $('ppCartaoNum').value)) $('ppFechar').click();
+  });
+  $('ppCartaoNum').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('ppCartaoOk').click(); } });
   $('ppFechar').addEventListener('click', function () { $('painelPasse').hidden = true; espelhar({ tipo: 'espera' }); if (!$('abaBuscar').hidden) $('busca').focus(); });
 
   function tirar(item) { var i = fila.indexOf(item); if (i >= 0) fila.splice(i, 1); }

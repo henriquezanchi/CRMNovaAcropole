@@ -243,3 +243,9 @@ body.modo-espelho #acoesTopo, body.modo-espelho #conexao, body.modo-totem #acoes
   .acoes-topo { order: 3; width: 100%; }
   .acoes-topo .btn-topo { flex: 1; }
 }
+
+/* Cartão de entrada (poucos, reutilizáveis): número digitado na tela do passe */
+.pp-cartao { margin-top: 14px; padding-top: 12px; border-top: 1px dashed #c9d3d1; }
+.pp-cartao-linha { display: flex; gap: 8px; justify-content: center; }
+.pp-cartao-linha input { width: 90px; font-size: 22px; font-weight: 800; text-align: center; padding: 8px; border: 2px solid var(--verde); border-radius: 10px; }
+body.modo-totem .pp-cartao { display: none; }
