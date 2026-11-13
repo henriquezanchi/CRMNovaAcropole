@@ -631,8 +631,15 @@
       lp.insertBefore(el('p', { classe: 'muted', texto: dados.diretor ? 'Inscritos contados como "de fora" com nome parecido com o de um aluno ativo, ou que marcaram "já sou aluno". Confirme cada um: a contagem de alunos e de público de fora se corrige sozinha.' : 'Inscritos contados como "de fora" que podem ser alunos. Entre com o PIN para confirmar.' }), lp.children[1]);
       s.appendChild(lp);
     }
+    // Filtro por escola na lista completa (13/11/2026). Inscrito sem cadastro no CRM fica em opção própria.
+    var escolasListaInsc = [];
+    (c.inscritos || []).forEach(function (x) { var k = x.escola || ''; if (escolasListaInsc.indexOf(k) < 0) escolasListaInsc.push(k); });
+    escolasListaInsc.sort(function (a, b) { return !a ? 1 : !b ? -1 : nomeEscola(a).localeCompare(nomeEscola(b)); });
+    var filtrosInsc = escolasListaInsc.length > 1 ? [{ rotulo: 'Escola', opcoes: escolasListaInsc.map(function (e) {
+      return { rotulo: e ? nomeEscola(e) : 'Sem cadastro no CRM', teste: function (x) { return (x.escola || '') === e; } };
+    }) }] : null;
     s.appendChild(listaComBusca(turma ? 'Inscritos na turma' : 'Inscritos no Ulisses', c.inscritos || [], colunasInsc, linhaInsc, 'Nenhum inscrito ainda.', pessoaInsc,
-      '🎓 aluno · 🙋 de fora · ❓ possível aluno · 📩 veio do convite · ✅ presente · ❌ faltou · 📞 toque para ver o telefone'));
+      '🎓 aluno · 🙋 de fora · ❓ possível aluno · 📩 veio do convite · ✅ presente · ❌ faltou · 📞 toque para ver o telefone', filtrosInsc));
 
     var ENTREGA = { lido: ['Lido', ''], entregue: ['Entregue', 'cz'], enviado: ['Enviado', 'cz'], falhou: ['Não entregue', 'vm'] };
     var contatados = c.contatados || [];
