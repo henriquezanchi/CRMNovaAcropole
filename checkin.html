@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#05433b">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://eovgljcowblwoxmobeno.supabase.co; base-uri 'none'; form-action 'none'">
+<title>Check-in</title>
+<link rel="icon" href="img/logo-nova-acropole.png">
+<link rel="stylesheet" href="css/recepcao.css">
+</head>
+<body class="pagina-checkin">
+<header class="topo">
+  <img src="img/logo-nova-acropole.png" alt="" class="logo">
+  <div class="topo-txt">
+    <p class="marca">Nova Acrópole</p>
+    <h1 id="titulo">Check-in</h1>
+  </div>
+</header>
+<main class="tela checkin">
+  <section id="passoForm">
+    <h2>Faça seu check-in</h2>
+    <p class="sub">Informe o celular e o primeiro nome que você usou na inscrição.</p>
+    <form id="formCheckin" autocomplete="on">
+      <label>Celular com DDD <input id="ckCelular" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="(62) 99999-9999" required maxlength="20"></label>
+      <label>Primeiro nome <input id="ckNome" autocomplete="given-name" autocapitalize="words" placeholder="Ex.: Maria" required maxlength="60"></label>
+      <button type="submit" class="btn principal largo" id="ckBotao">Fazer check-in</button>
+      <p id="ckMsg" class="erro" role="alert"></p>
+    </form>
+    <div id="ckInscrever" class="ck-inscrever" hidden>
+      <p>Ainda não se inscreveu? Faça a inscrição agora e depois volte aqui para o check-in.</p>
+      <a id="ckLinkInscricao" class="btn secundario largo" href="#" target="_blank" rel="noopener">Fazer minha inscrição</a>
+    </div>
+  </section>
+  <section id="passoOk" hidden>
+    <p class="ck-grande" id="ckBoasVindas">Boas-vindas!</p>
+    <p class="sub" id="ckOkTexto">Check-in feito. Bom evento!</p>
+  </section>
+</main>
+<script src="js/checkin.js"></script>
+</body>
+</html>

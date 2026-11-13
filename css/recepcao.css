@@ -163,3 +163,14 @@ body.modo-espelho #acoesTopo, body.modo-espelho #conexao, body.modo-totem #acoes
 .recentes { display: flex; flex-wrap: wrap; gap: 8px; }
 .recentes:empty { display: none; }
 .recentes button { border: 1.5px solid var(--verde); background: var(--verde-claro); color: var(--verde-esc); border-radius: 999px; padding: 10px 16px; font-weight: 700; font-size: 16px; cursor: pointer; }
+
+/* Check-in pelo próprio celular (checkin.html) */
+.checkin { max-width: 520px; }
+.checkin h2 { font-size: 28px; font-weight: 900; color: var(--verde-esc); margin: 18px 0 6px; }
+.checkin .sub { color: var(--suave); margin: 0 0 16px; }
+.checkin form { display: grid; gap: 14px; background: #fff; border-radius: var(--raio); padding: 18px; }
+.ck-inscrever { margin-top: 16px; background: var(--amarelo-claro); border-radius: var(--raio); padding: 16px; }
+.ck-inscrever p { margin: 0; font-weight: 600; color: #6b5000; }
+.ck-inscrever .btn { display: block; text-align: center; text-decoration: none; }
+.ck-grande { font-size: 40px; font-weight: 900; color: var(--verde); text-align: center; margin: 12vh 0 8px; }
+#passoOk .sub { text-align: center; font-size: 19px; }

@@ -11374,3 +11374,8 @@ Edge `recepcao-evento` (`--no-verify-jwt`), migração `migracao_recepcao_evento
   `recepcao_registros.status='reservado'`, conta como presente e ocupa vaga (limite `eventos.capacidade`). Depois do
   evento, pedir o e-mail por WhatsApp e completar a inscrição.
 - Escola na tela só quando vem do Mercúrio (aluno/ex-aluno), nunca a filial do cadastro do CRM.
+- Check-in pelo próprio celular: `checkin.html#<código público>` (endereço `/checkin`, QR code em cartaz no local).
+  Ações públicas `auto_info`/`auto_checkin` no `recepcao-evento` (sem PIN): só na janela
+  `recepcao_links.autocheckin_inicio/fim`; exige celular + primeiro nome da MESMA inscrição (tolera 1 letra) e a
+  resposta nunca diz qual dos dois não bateu. Não achou: link para o formulário do Ulisses (`utm_source=autocheckin`).
+  Registros com autor "Check-in pelo celular (QR)".

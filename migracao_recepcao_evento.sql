@@ -88,3 +88,9 @@ revoke all on function public.recepcao_lista(bigint) from public, anon, authenti
 alter table public.recepcao_registros drop constraint if exists recepcao_registros_status_check;
 alter table public.recepcao_registros add constraint recepcao_registros_status_check
     check (status in ('pendente', 'ok', 'erro', 'reservado'));
+
+-- 13/11/2026: check-in pelo próprio celular (QR code no local). Link público com código próprio (só o hash),
+-- válido só na janela do evento. A pessoa informa celular + primeiro nome; só marca se os dois baterem.
+alter table public.recepcao_links add column if not exists codigo_publico_hash text unique;
+alter table public.recepcao_links add column if not exists autocheckin_inicio timestamptz;
+alter table public.recepcao_links add column if not exists autocheckin_fim timestamptz;

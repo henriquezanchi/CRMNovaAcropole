@@ -53,11 +53,84 @@ async function marcarNoUlisses(emailEventoId: number, compareceu: boolean) {
     await supabaseAdmin.from("ulisses_inscricoes_evento").update({ compareceu, visto_em: new Date().toISOString() }).eq("email_evento_id", emailEventoId);
 }
 
+function primeiroNomeBate(digitado: string, nomeCompleto: string) {
+    const a = normalizarNome(digitado).split(" ")[0] || "", b = normalizarNome(nomeCompleto).split(" ")[0] || "";
+    if (!a || !b) return false;
+    if (a === b) return true;
+    if (a.length < 4 || Math.abs(a.length - b.length) > 1) return false;
+    let dif = 0; // tolera 1 letra trocada/faltando (Thiago/Tiago, Luis/Luiz)
+    for (let i = 0, j = 0; i < a.length || j < b.length; ) {
+        if (a[i] === b[j]) { i++; j++; continue; }
+        if (++dif > 1) return false;
+        if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; }
+    }
+    return true;
+}
+
+async function autoCheckin(acao: string, corpo: any) {
+    const codigo = String(corpo.publico || "");
+    if (!/^[A-Za-z0-9_-]{10,}$/.test(codigo)) return responder({ ok: false, erro: "Link inválido." }, 400);
+    const { data: link } = await supabaseAdmin.from("recepcao_links").select("*").eq("codigo_publico_hash", await sha256(codigo)).maybeSingle();
+    if (!link || link.revogado_em) return responder({ ok: false, erro: "Link inválido." }, 403);
+    const { data: ev } = await supabaseAdmin.from("eventos").select("nome, data, hora, link_inscricao").eq("id", link.evento_id).maybeSingle();
+    const agora = new Date();
+    const aberto = link.autocheckin_inicio && link.autocheckin_fim && agora >= new Date(link.autocheckin_inicio) && agora <= new Date(link.autocheckin_fim);
+    const inscricao = `https://inscricao.acropolebrasil.com.br/?eventoId=${link.evento_id_ulisses}&layout=recepcao&utm_source=autocheckin`;
+    if (acao === "auto_info") return responder({ ok: true, evento: ev, aberto, abre_em: link.autocheckin_inicio, inscricao });
+    if (!aberto) return responder({ ok: false, erro: "O check-in pelo celular funciona só no dia e no horário do evento.", fechado: true }, 403);
+
+    const tel = digitos(corpo.celular), t8 = tel.slice(-8), nome = String(corpo.nome || "").slice(0, 60);
+    if (t8.length < 8 || !normalizarNome(nome)) return responder({ ok: false, erro: "Informe seu celular com DDD e seu primeiro nome." }, 400);
+
+    // Inscrições do evento com esse celular: primeiro na lista já sincronizada; senão, direto no Ulisses
+    // (pega quem acabou de se inscrever pelo QR code do cartaz).
+    const { data: locais } = await supabaseAdmin.from("ulisses_inscricoes_evento").select("email_evento_id, nome, telefone, compareceu, pessoaIdentificador")
+        .eq("evento_id_ulisses", link.evento_id_ulisses).is("removido_em", null).like("telefone", `%${t8}`);
+    let alvo = (locais || []).find((x: any) => primeiroNomeBate(nome, x.nome || ""));
+    if (!alvo) {
+        const pessoas = await filtrarEmails(supabaseAdmin, link.evento_id_ulisses, link.filial_id_ulisses).catch(() => []);
+        for (const p of pessoas || []) {
+            if (digitos(p.telefone).slice(-8) !== t8 || !primeiroNomeBate(nome, p.nome || "")) continue;
+            const ee = (p.emailEventos || []).filter((x: any) => x?.evento?.id === link.evento_id_ulisses && x.id != null).sort((a: any, b: any) => b.id - a.id)[0];
+            if (!ee) continue;
+            await supabaseAdmin.from("ulisses_inscricoes_evento").upsert({
+                email_evento_id: ee.id, evento_id_ulisses: link.evento_id_ulisses, filial_id_ulisses: link.filial_id_ulisses,
+                pessoa_id_ulisses: p.id != null ? String(p.id) : null, nome: String(p.nome || "").trim(), email: p.email || null,
+                ddd: p.ddd != null ? String(p.ddd) : null, telefone: p.telefone != null ? String(p.telefone) : null,
+                visto_em: new Date().toISOString(), removido_em: null,
+            }, { onConflict: "email_evento_id", ignoreDuplicates: true });
+            alvo = { email_evento_id: ee.id, nome: String(p.nome || "").trim(), compareceu: ee.compareceu === true, pessoaIdentificador: null };
+            break;
+        }
+    }
+    if (!alvo) return responder({ ok: false, nao_encontrado: true, erro: "Não encontramos sua inscrição com esse celular e nome.", inscricao }, 404);
+    const primeiro = nomeProprio(String(alvo.nome).split(" ")[0] || "");
+    if (alvo.compareceu === true) return responder({ ok: true, ja_feito: true, nome: primeiro });
+
+    const clientId = crypto.randomUUID();
+    await registrar({
+        client_id: clientId, link_id: link.id, evento_id_ulisses: link.evento_id_ulisses, tipo: "presenca",
+        email_evento_id: alvo.email_evento_id, nome: alvo.nome, pessoa_identificador: alvo.pessoaIdentificador, autor: "Check-in pelo celular (QR)",
+    });
+    try { await marcarNoUlisses(alvo.email_evento_id, true); }
+    catch (e) {
+        await concluir(clientId, "erro", { erro: (e as Error).message });
+        return responder({ ok: false, erro: "Não conseguimos confirmar agora. Tente de novo em instantes ou fale com a recepção." }, 502);
+    }
+    await concluir(clientId, "ok");
+    return responder({ ok: true, nome: primeiro });
+}
+
 Deno.serve(async (req) => {
     if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
     let corpo: any = {};
     try { corpo = await req.json(); } catch { return responder({ ok: false, erro: "Pedido inválido." }, 400); }
     const acao = String(corpo.acao || "");
+
+    // ---- Check-in pelo próprio celular (QR code no local, sem PIN) ----
+    // Só funciona na janela do evento. Pede celular + primeiro nome e só marca se os dois baterem com a mesma
+    // inscrição; a resposta nunca diz qual dos dois não bateu (não revela quem está inscrito).
+    if (acao === "auto_info" || acao === "auto_checkin") return await autoCheckin(acao, corpo);
     const chave = String(corpo.chave || "");
     if (!/^[A-Za-z0-9_-]{10,}$/.test(chave)) return responder({ ok: false, erro: "Link inválido." }, 400);
 
