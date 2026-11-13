@@ -67,7 +67,9 @@ function telefoneBonito(ddd: string, tel: string) {
 async function emitirPasse(link: any, dados: { nome: string; ddd?: string; telefone?: string; ref: string; em?: string }) {
     const jwk = Deno.env.get("PASSE_CHAVE_PRIVADA");
     if (!jwk) return null; // sem a chave, segue sem passe (o check-in vale do mesmo jeito)
-    if (!chavePasse) chavePasse = await crypto.subtle.importKey("jwk", JSON.parse(jwk), { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
+    // Aceita o JWK direto ou em base64 (mais fácil de gravar com `supabase secrets set`).
+    if (!chavePasse) chavePasse = await crypto.subtle.importKey("jwk", JSON.parse(jwk.trim().startsWith("{") ? jwk : atob(jwk.trim())),
+        { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
     const corpo = { v: 1, ev: link.evento_id_ulisses, d: dados.em || new Date().toISOString(), n: nomeProprio(dados.nome || ""),
         t: telefoneBonito(dados.ddd || "", dados.telefone || ""), r: dados.ref };
     const bytes = new TextEncoder().encode(JSON.stringify(corpo));
@@ -300,6 +302,13 @@ Deno.serve(async (req) => {
             catch (e) { await concluir(clientId, "erro", { erro: (e as Error).message }); return responder({ ok: false, erro: (e as Error).message }, 502); }
             await concluir(clientId, "ok", { erro: null });
             return responder({ ok: true });
+        }
+
+        // Painel de números da recepção (chegadas por horário, canais, perfil, comparecimento).
+        if (acao === "numeros") {
+            const { data, error } = await supabaseAdmin.rpc("recepcao_numeros", { p_evento_id_ulisses: link.evento_id_ulisses });
+            if (error) throw new Error(error.message);
+            return responder({ ok: true, numeros: data, agora: new Date().toISOString() });
         }
 
         // Só leitura: confere se o caminho até o Ulisses (ponte + acesso) está de pé.

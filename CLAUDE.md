@@ -11384,3 +11384,7 @@ Edge `recepcao-evento` (`--no-verify-jwt`), migração `migracao_recepcao_evento
   com ECDSA P-256 (segredo `PASSE_CHAVE_PRIVADA`, JWK; sem ele o check-in funciona mas sai sem passe). O QR abre
   `validar.html#<token>`; o validador da segurança (`/validar`, `js/validar.js`, chave pública embutida) confere a
   assinatura sem internet e avisa passe já conferido naquele aparelho. `sw-passe.js` guarda checkin/validar offline.
+- Aba "Números" da recepção (`recepcao_numeros(evento)`, `migracao_recepcao_painel.sql`, JÁ RODADA): presentes
+  (alunos/de fora), chegadas a cada 15 min por canal (Recepção, Autoatendimento do tablet, QR check-in, QR
+  inscrição), perfil de cada canal, comparecimento por perfil (aluno / convidado pela campanha / outros) e por
+  antecedência da inscrição, escolas. Canal sai do `autor` do registro (o tablet grava "Autoatendimento (tablet)").

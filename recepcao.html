@@ -50,6 +50,7 @@
     <button type="button" role="tab" data-aba="buscar" aria-selected="true">Chegada</button>
     <button type="button" role="tab" data-aba="cadastrar" aria-selected="false">Cadastrar</button>
     <button type="button" role="tab" data-aba="presentes" aria-selected="false">Presentes</button>
+    <button type="button" role="tab" data-aba="numeros" aria-selected="false">Números</button>
   </nav>
 
   <!-- Chegada: buscar e marcar -->
@@ -89,6 +90,11 @@
       <button type="submit" class="btn principal largo">Inscrever e marcar presença</button>
       <p id="cadMsg" class="erro" role="alert"></p>
     </form>
+  </div>
+
+  <!-- Números do evento (painel) -->
+  <div id="abaNumeros" class="aba" hidden>
+    <div id="painelNumeros" class="painel-numeros"><p class="vazio">Carregando…</p></div>
   </div>
 
   <!-- Presentes e registros -->

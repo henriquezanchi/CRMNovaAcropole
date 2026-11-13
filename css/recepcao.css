@@ -199,3 +199,25 @@ body.modo-espelho #acoesTopo, body.modo-espelho #conexao, body.modo-totem #acoes
 .vl-dica { font-size: 14px; opacity: .9; }
 .vl-espera .vl-dica { color: var(--suave); }
 .vl-camera video { width: 100%; border-radius: 14px; background: #000; max-height: 50vh; object-fit: cover; }
+
+/* Aba Números (painel da recepção) */
+.abas { grid-template-columns: repeat(4, 1fr); }
+.abas.abas2 { grid-template-columns: 1fr 1fr; }
+.painel-numeros h3 { margin: 22px 0 8px; font-size: 17px; font-weight: 800; color: var(--verde-esc); }
+.num-cartoes { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.num-cartao { background: #fff; border-radius: 12px; padding: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
+.num-cartao strong { display: block; font-size: 26px; font-weight: 900; color: var(--verde); }
+.num-cartao span { display: block; font-weight: 700; font-size: 13px; }
+.num-cartao small { color: var(--suave); font-size: 12px; }
+.num-graf { display: flex; gap: 6px; align-items: flex-end; height: 200px; background: #fff; border-radius: 12px; padding: 12px 10px 6px; overflow-x: auto; }
+.num-col { flex: 1 0 34px; display: flex; flex-direction: column; align-items: center; height: 100%; }
+.num-barra { flex: 1; width: 70%; display: flex; flex-direction: column-reverse; }
+.num-seg { width: 100%; }
+.num-val { font-size: 12px; font-weight: 700; }
+.num-rot { font-size: 11px; color: var(--suave); margin-top: 4px; }
+.num-legenda { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 13px; }
+.num-legenda i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.tab-num { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; font-size: 14px; margin-bottom: 8px; }
+.tab-num th { background: var(--verde-claro); color: var(--verde-esc); text-align: left; padding: 8px; font-size: 12px; }
+.tab-num td { padding: 8px; border-top: 1px solid var(--linha); }
+@media (max-width: 520px) { .tab-num { font-size: 12px; } .tab-num th, .tab-num td { padding: 6px 4px; } .abas button { font-size: 12px; } }

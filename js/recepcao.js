@@ -433,7 +433,9 @@
 
   // ---------- fila de envio ----------
   function enfileirar(acao, dados) {
-    dados.client_id = uuid(); dados.criado_no_aparelho = new Date().toISOString(); dados.atendente = atendente;
+    dados.client_id = uuid(); dados.criado_no_aparelho = new Date().toISOString();
+    // No autoatendimento quem registra é a própria pessoa: canal próprio no painel de números.
+    dados.atendente = document.body.classList.contains('modo-totem') ? 'Autoatendimento (tablet)' : atendente;
     fila.push({ acao: acao, dados: dados, tentativas: 0 });
     gravar('fila', fila); desenharPlacar(); enviarFila();
   }
@@ -732,11 +734,82 @@
   $('chipAtendente').addEventListener('click', abrirAtendente);
   $('painelAtendente').addEventListener('click', function (e) { if (e.target === $('painelAtendente') && atendente) $('painelAtendente').hidden = true; });
 
+  // ---------- Números do evento ----------
+  // Chegadas a cada 15 min por canal, perfil de cada canal, comparecimento por perfil/antecedência e escolas.
+  var CORES_CANAL = { 'Recepção (atendente)': '#086357', 'Autoatendimento (tablet)': '#009485', 'QR check-in': '#FFCA00', 'QR inscrição': '#F39300' };
+  var timerNumeros;
+  function pct(a, b) { return b ? Math.round(100 * a / b) + '%' : '—'; }
+  function tabelaNum(cab, linhas) {
+    var t = el('table', { classe: 'tab-num' });
+    t.appendChild(el('tr', {}, cab.map(function (c) { return el('th', { texto: c }); })));
+    linhas.forEach(function (l) { t.appendChild(el('tr', {}, l.map(function (c) { return el('td', { texto: String(c) }); }))); });
+    return t;
+  }
+  function carregarNumeros() {
+    clearTimeout(timerNumeros);
+    if (!online || !sessao) { $('painelNumeros').textContent = ''; $('painelNumeros').appendChild(el('p', { classe: 'vazio', texto: 'Os números precisam de internet.' })); return; }
+    chamar({ acao: 'numeros' }).then(function (j) {
+      if (j.ok) desenharNumeros(j.numeros || {}, j.agora);
+      if (!$('abaNumeros').hidden) timerNumeros = setTimeout(carregarNumeros, 30000);
+    }, function () { timerNumeros = setTimeout(carregarNumeros, 30000); });
+  }
+  function desenharNumeros(n, agora) {
+    var area = $('painelNumeros'); area.textContent = '';
+    var r = n.resumo || {};
+    var cartoes = [['Presentes', r.presentes, pct(r.presentes, r.inscritos) + ' dos inscritos'], ['Alunos', r.presentes_alunos, ''], ['De fora', r.presentes_fora, ''],
+      ['Inscritos na porta', r.inscritos_na_porta, (r.reservados_sem_email || 0) + ' sem e-mail'], ['Vieram acompanhados', r.veio_acompanhado, ''],
+      ['Querem info do curso', r.querem_info_curso, (r.nao_querem_info || 0) + ' não querem'], ['Marcados no Ulisses', r.marcados_no_ulisses, 'fora desta página']];
+    area.appendChild(el('div', { classe: 'num-cartoes' }, cartoes.map(function (c) {
+      return el('div', { classe: 'num-cartao' }, [el('strong', { texto: String(c[1] || 0) }), el('span', { texto: c[0] }), c[2] ? el('small', { texto: c[2] }) : null]);
+    })));
+    var hor = n.por_horario || [];
+    area.appendChild(el('h3', { texto: 'Chegadas a cada 15 minutos' }));
+    if (!hor.length) area.appendChild(el('p', { classe: 'vazio', texto: 'Ainda não há chegadas.' }));
+    else {
+      var max = Math.max.apply(null, hor.map(function (h) { return h.total; }));
+      var pico = hor.filter(function (h) { return h.total === max; })[0];
+      area.appendChild(el('p', { classe: 'dica', texto: 'Horário de maior movimento: ' + pico.faixa + ' (' + max + ' chegadas).' }));
+      var graf = el('div', { classe: 'num-graf' });
+      hor.forEach(function (h) {
+        var barra = el('div', { classe: 'num-barra', title: h.faixa + ': ' + h.total });
+        Object.keys(h.canais || {}).forEach(function (c) {
+          var seg = el('div', { classe: 'num-seg', title: c + ': ' + h.canais[c] });
+          seg.style.height = (100 * h.canais[c] / max) + '%'; seg.style.background = CORES_CANAL[c] || '#5b6b67';
+          barra.appendChild(seg);
+        });
+        graf.appendChild(el('div', { classe: 'num-col' }, [el('span', { classe: 'num-val', texto: String(h.total) }), barra, el('span', { classe: 'num-rot', texto: h.faixa })]));
+      });
+      area.appendChild(graf);
+      area.appendChild(el('div', { classe: 'num-legenda' }, Object.keys(CORES_CANAL).map(function (c) {
+        var q = el('i'); q.style.background = CORES_CANAL[c]; return el('span', {}, [q, c]);
+      })));
+    }
+    var can = n.por_canal || [];
+    area.appendChild(el('h3', { texto: 'Por onde cada pessoa entrou' }));
+    if (can.length) area.appendChild(tabelaNum(['Canal', 'Pessoas', 'Alunos', 'De fora', 'Convidados pela campanha', 'Inscritos na hora', 'Querem info'],
+      can.map(function (c) { return [c.canal, c.total, c.alunos, c.fora, c.convidados, c.na_porta, c.querem_info]; })));
+    else area.appendChild(el('p', { classe: 'vazio', texto: 'Sem registros ainda.' }));
+    var comp = n.comparecimento || {};
+    area.appendChild(el('h3', { texto: 'Quem se inscreveu e veio' }));
+    area.appendChild(tabelaNum(['Perfil', 'Inscritos', 'Presentes', 'Comparecimento'],
+      (comp.por_perfil || []).map(function (c) { return [c.perfil, c.inscritos, c.presentes, pct(c.presentes, c.inscritos)]; })));
+    area.appendChild(tabelaNum(['Inscrição feita', 'Inscritos', 'Presentes', 'Comparecimento'],
+      (comp.por_antecedencia || []).map(function (c) { return [c.faixa, c.inscritos, c.presentes, pct(c.presentes, c.inscritos)]; })));
+    var esc = n.por_escola || [];
+    if (esc.length) {
+      area.appendChild(el('h3', { texto: 'Presentes por escola' }));
+      area.appendChild(tabelaNum(['Escola', 'Presentes'], esc.map(function (e) { return [String(e.escola).replace(/^Goiânia - /, ''), e.presentes]; })));
+    }
+    area.appendChild(el('p', { classe: 'dica', texto: 'Atualiza sozinho a cada 30 segundos. Última atualização: ' + new Date(agora || Date.now()).toLocaleTimeString('pt-BR') + '.' }));
+  }
+
   // ---------- abas ----------
   function abrirAba(nome) {
     document.querySelectorAll('.abas button').forEach(function (b) { b.setAttribute('aria-selected', String(b.getAttribute('data-aba') === nome)); });
     $('abaBuscar').hidden = nome !== 'buscar'; $('abaCadastrar').hidden = nome !== 'cadastrar'; $('abaPresentes').hidden = nome !== 'presentes';
+    $('abaNumeros').hidden = nome !== 'numeros';
     if (nome === 'presentes') desenharPresentes();
+    if (nome === 'numeros') carregarNumeros();
     if (nome === 'buscar') setTimeout(function () { $('busca').focus(); }, 30);
   }
   document.querySelectorAll('.abas button').forEach(function (b) { b.addEventListener('click', function () { abrirAba(b.getAttribute('data-aba')); }); });
