@@ -881,7 +881,7 @@
     var area = $('painelNumeros'); area.textContent = '';
     var r = n.resumo || {};
     var cartoes = [['Presentes', r.presentes, pct(r.presentes, r.inscritos) + ' dos inscritos'], ['Alunos', r.presentes_alunos, ''], ['De fora', r.presentes_fora, ''],
-      ['Inscritos na porta', r.inscritos_na_porta, (r.reservados_sem_email || 0) + ' sem e-mail'], ['Vieram acompanhados', r.veio_acompanhado, ''],
+      ['Inscritos na porta', r.inscritos_na_porta, (r.reservados_sem_email || 0) + ' com vaga reservada'], ['Vieram acompanhados', r.veio_acompanhado, ''],
       ['Querem info do curso', r.querem_info_curso, (r.nao_querem_info || 0) + ' não querem'], ['Marcados no Ulisses', r.marcados_no_ulisses, 'fora desta página'],
       ['Passaram pela segurança', n.validacoes, 'QR codes e cartões lidos']];
     area.appendChild(el('div', { classe: 'num-cartoes' }, cartoes.map(function (c) {

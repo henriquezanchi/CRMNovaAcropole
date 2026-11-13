@@ -19,7 +19,10 @@ ins as (
 reg as (
     select distinct on (coalesce(r.email_evento_id::text, r.client_id::text))
            coalesce(r.email_evento_id::text, r.client_id::text) chave, r.email_evento_id, r.tipo, r.status,
-           r.criado_em, r.veio_com, r.interesse_curso,
+           -- Hora da chegada: a do aparelho (vale para o que foi feito sem internet e enviado depois), se for plausível.
+           case when r.criado_no_aparelho between r.criado_em - interval '12 hours' and r.criado_em + interval '5 minutes'
+                then r.criado_no_aparelho else r.criado_em end criado_em,
+           r.veio_com, r.interesse_curso,
            case when r.autor like 'Check-in pelo celular%' then 'QR check-in'
                 when r.autor like 'Inscrição pelo celular%' then 'QR inscrição'
                 when r.autor like '%Autoatendimento%' then 'Autoatendimento (tablet)'

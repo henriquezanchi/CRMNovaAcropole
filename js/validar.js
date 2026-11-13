@@ -49,7 +49,7 @@
     var token = String(texto || '').trim();
     var i = token.indexOf('#'); if (i >= 0) token = token.slice(i + 1);
     var partes = token.split('.');
-    if (partes.length !== 2) { mostrar('erro', '✗ QR code não reconhecido', [['vl-dica', 'Este QR code não é de entrada deste evento.']]); return; }
+    if (partes.length !== 2) { mostrar('erro', '✗ QR code não reconhecido', [['vl-dica', 'Este não é um QR code de entrada. Peça o QR code que aparece depois do check-in, ou o cartão de entrada. Sem nenhum dos dois: recepção.']]); return; }
     var dados, bytes;
     try { bytes = b64u(partes[0]); dados = JSON.parse(new TextDecoder().decode(bytes)); } catch (e) { mostrar('erro', '✗ QR code ilegível', []); return; }
     (chave ? Promise.resolve(chave) : crypto.subtle.importKey('jwk', CHAVE_PUBLICA, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']).then(function (k) { chave = k; return k; }))

@@ -111,6 +111,10 @@
   chamar({ acao: 'auto_info' }).then(function (j) {
     if (!j.ok) { $('ckMsg').textContent = j.erro || 'Link inválido.'; return; }
     if (j.evento && j.evento.nome) $('titulo').textContent = nomeEvento(j.evento.nome);
-    if (!j.aberto) { $('ckMsg').textContent = 'O check-in pelo celular abre no dia e no horário do evento.'; $('inMsg').textContent = $('ckMsg').textContent; }
+    if (!j.aberto) {
+      var ab = j.abre_em ? new Date(j.abre_em) : null, quando = 'no dia e no horário do evento';
+      if (ab && !isNaN(ab) && ab > new Date()) quando = 'às ' + ab.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) + ' de ' + ab.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+      $('ckMsg').textContent = 'O check-in pelo celular abre ' + quando + '. Antes disso, procure a recepção.'; $('inMsg').textContent = $('ckMsg').textContent;
+    }
   }, function () { /* sem internet: segue com o que tem */ });
 })();

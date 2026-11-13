@@ -11403,3 +11403,25 @@ Edge `recepcao-evento` (`--no-verify-jwt`), migração `migracao_recepcao_evento
   internet. `inicio_em` = check-in (QR) ou entrega do cartão. `recepcao_numeros` devolve `jornada` (mediana/p90/máx por
   tipo de entrada). A aba Números tem também a simulação de filas (`simularEntrada()`, `js/recepcao.js`: triagem →
   mesas → segurança, 20 rodadas, tempos editáveis). QR de cartão aberto pela câmera vai direto ao validador.
+- Recepção robusta (13/11/2026, `migracao_recepcao_robusta.sql`, JÁ RODADA), depois de revisão do código e bateria
+  de 64 testes de erro no servidor + testes de tela com e sem internet:
+  - **A porta não espera pelo Ulisses.** `recepcao_registros` é a fonte da verdade. Presença/check-in gravam na hora e
+    avisam o Ulisses com limite de 7 s (`marcarOuAdiar`); se ele falhar, o registro fica `pendente` e é reenviado
+    sozinho (`reconciliarUlisses`, em segundo plano a cada pedido de lista, no máximo 1x/30 s; ação `reconciliar` e
+    botão "Enviar agora" na aba Números). Inscrição com e-mail que não chega ao Ulisses vira vaga `reservado` com o
+    e-mail guardado (completar depois do evento; conferir no Ulisses por e-mail antes de inscrever de novo).
+    Pedido repetido (mesmo `client_id`) nunca inscreve nem marca duas vezes.
+  - `recepcao_lista.compareceu` = último gesto da porta (presença/desfazer/inscrição), senão o valor do Ulisses: a
+    sincronização de 10 em 10 min não "desmarca" quem acabou de chegar.
+  - Economia: `recepcao_versao` (o aparelho manda a versão e recebe só "igual", ~90 bytes, se nada mudou; lista
+    completa ~15 KB compactados só quando muda e a cada 10 min); consulta a cada 60 s; a mesa manda `sem_passe`
+    (servidor não desenha QR); lista de inscritos do Ulisses com memória de 20 s. Fila do aparelho: 1 pedido por vez,
+    item com erro do servidor vai para o fim (não trava), sem conexão tenta de novo com intervalo até 30 s.
+  - Tablet: o QR code só aparece depois da pergunta do curso; sem internet, manda pegar cartão na recepção.
+  - Validador: QR lido de novo em menos de 1 min = mesma entrada; QR já lido em outro celular da segurança aparece
+    amarelo (servidor devolve `primeira_em`); cartão sem número digitado = "pode liberar"; aparelho que já abriu o
+    validador (`vl_modo`) abre nele qualquer QR lido pela câmera (iPhone). Cartões aceitos: 1 a 36 (`MAX_CARTAO`).
+  - Service workers com limite de 3 s para a rede (internet lenta abre a cópia guardada).
+  - Só para teste: `teste_falha_ulisses: true` com atendente "Teste do Sistema" simula o Ulisses fora do ar.
+  - NÃO testado de verdade: inscrição com e-mail no Ulisses (`salvarInscricaoV2` cria registro que não dá para apagar);
+    se falhar no evento, cai na vaga reservada.
