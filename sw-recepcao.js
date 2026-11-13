@@ -1,7 +1,7 @@
 // Guarda a página da recepção no aparelho para abrir sem internet (13/11/2026).
 // Rede primeiro (pega a versão nova quando há conexão); sem rede, usa a cópia guardada.
 // Só cuida dos arquivos da própria página; as chamadas ao servidor não passam por aqui.
-var CACHE = 'recepcao-v3';
+var CACHE = 'recepcao-v4';
 var ARQUIVOS = ['recepcao.html', 'js/recepcao.js', 'css/recepcao.css', 'img/logo-nova-acropole.png', 'recepcao.webmanifest'];
 
 self.addEventListener('install', function (e) {
