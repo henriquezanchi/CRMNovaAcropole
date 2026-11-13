@@ -11337,3 +11337,9 @@ teve evento nos últimos 12 meses (`config.ultimo_evento_desde`), sem 2ª tentat
 - Interessados ainda não inscritos (lista para os diretores ligarem): só entra quem demonstrou interesse há 24h+
   (`painel_campanha` devolve `interesse_em` = 1ª vez que o robô marcou vai/talvez/quer_info, senão a 1ª resposta;
   `migracao_painel_interesse_24h.sql`, JÁ RODADA). Tempo para a pessoa pensar e se inscrever antes da ligação.
+- Inscritos do Ulisses a cada 10 min (13/11): modo `ulisses_inscritos` no workflow
+  (`scraper/sincronizar-inscritos-campanhas.mjs`, ~1 min, sem navegador) só para os eventos das campanhas ativas
+  que ainda não passaram; cron `ulisses-inscritos-campanhas` (`migracao_ulisses_inscritos_10min.sql`, 06h–23h50
+  Brasília, só com campanha ativa). `painel_cache_atualizar()` recalcula todas as chaves de campanha a cada minuto
+  (`migracao_painel_cache_campanhas_rapido.sql`). O painel mostra "Inscrições do Ulisses atualizadas em …"
+  (máximo de `ulisses_inscricoes_evento.visto_em`).

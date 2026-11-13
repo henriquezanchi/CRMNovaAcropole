@@ -161,3 +161,6 @@ summary { padding: 10px 0; cursor: pointer; }
 .ctl-ok { color: var(--verde); font-weight: 600; font-size: 13px; }
 .quebra { display: block; white-space: normal; min-width: 260px; max-width: 460px; }
 .sugestao-aluno { font-size: 12px; margin-top: 2px; }
+/* Data e hora da última atualização, bem visível (13/11/2026) */
+.atualizado { flex-basis: 100%; font-size: 13px; font-weight: 600; color: var(--verde); }
+.atualizado:empty { display: none; }

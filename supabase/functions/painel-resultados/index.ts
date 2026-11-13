@@ -286,6 +286,10 @@ Deno.serve(async (req) => {
         // Última sincronização bem-sucedida das inscrições do Ulisses.
         const { data: ultSync } = await supabaseAdmin.from("status_sincronizacao_automatica").select("executado_em")
             .eq("sistema", "ulisses").eq("sucesso", true).order("executado_em", { ascending: false }).limit(1).maybeSingle();
+        // Lista de inscritos dos eventos das campanhas, atualizada a cada 10 min (sincronizar-inscritos-campanhas.mjs).
+        const { data: ultLista } = await supabaseAdmin.from("ulisses_inscricoes_evento").select("visto_em")
+            .order("visto_em", { ascending: false }).limit(1).maybeSingle();
+        const ulissesEm = [ultSync?.executado_em, ultLista?.visto_em].filter(Boolean).sort().pop() ?? null;
         // Link restrito a escolas: a lista da campanha só mostra pessoas dessas
         // escolas. Sem sessão do diretor, nomes e telefones vão borrados.
         const campanhasDados = campanhas.map((r: any) => {
@@ -325,7 +329,7 @@ Deno.serve(async (req) => {
                 vagas_por_turma: porEvento.get(e.id)?.vagas_por_turma ?? null, qtd_turmas: porEvento.get(e.id)?.qtd_turmas ?? 1, atualizado_em: porEvento.get(e.id)?.atualizado_em ?? null }));
         }
         return responder({
-            rotulo: link.rotulo, dias, gerado_em: geradoEm, ulisses_em: ultSync?.executado_em ?? null, turmas_config: turmasConfig, escolas: somenteCampanhas ? null : escolasLinha.dados, campanhas: campanhasDados.filter(Boolean), siglas,
+            rotulo: link.rotulo, dias, gerado_em: geradoEm, ulisses_em: ulissesEm, turmas_config: turmasConfig, escolas: somenteCampanhas ? null : escolasLinha.dados, campanhas: campanhasDados.filter(Boolean), siglas,
             escola_unica: escolaUnica, diretor, pin_disponivel: !!link.pin_hash,
             escolas_ativas: diretor ? (fs || []).filter((f: any) => f.ativo && f.mercurio_unidade).map((f: any) => f.nome).sort() : [],
         });
