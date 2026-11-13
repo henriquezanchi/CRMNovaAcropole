@@ -11,6 +11,7 @@
   var codigo = partes[0];
   var $ = function (id) { return document.getElementById(id); };
   var CHAVE_PASSES = 'ck_passes_' + codigo.slice(0, 10);
+  var paraInscrever = /\/inscrever/.test(location.pathname) || partes.indexOf('inscrever') > 0;
 
   function chamar(corpo) {
     corpo.publico = codigo;
@@ -96,14 +97,15 @@
     }, function () { ocupado($('inBotao'), false, 'Inscrever e fazer check-in'); $('inMsg').textContent = semConexao; });
   });
 
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw-passe.js', { scope: './checkin' }).catch(function () { /* ok */ });
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw-passe.js', { scope: paraInscrever ? './inscrever' : './checkin' }).catch(function () { /* ok */ });
 
   if (!/^[A-Za-z0-9_-]{10,}$/.test(codigo)) { $('ckMsg').textContent = 'Link incompleto. Aponte a câmera para o QR Code de novo.'; $('ckBotao').disabled = true; $('inBotao').disabled = true; return; }
-  modo(partes.indexOf('inscrever') > 0 ? 'inscrever' : 'checkin');
+  // /inscrever#<código> (cartaz "Ainda não está inscrito?") abre direto na inscrição; #<código>&inscrever também vale.
+  modo(paraInscrever ? 'inscrever' : 'checkin');
 
   // Passe já guardado neste celular: abre direto (funciona sem internet).
   var guardados = lerPasses();
-  if (guardados.length) mostrarPasse(guardados[0], 'Seu passe do evento.');
+  if (guardados.length && !paraInscrever) mostrarPasse(guardados[0], 'Seu passe do evento.');
 
   chamar({ acao: 'auto_info' }).then(function (j) {
     if (!j.ok) { $('ckMsg').textContent = j.erro || 'Link inválido.'; return; }

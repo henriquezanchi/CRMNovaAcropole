@@ -24,6 +24,10 @@
     {
       "source": "/validar",
       "destination": "/validar.html"
+    },
+    {
+      "source": "/inscrever",
+      "destination": "/checkin.html"
     }
   ]
 }
