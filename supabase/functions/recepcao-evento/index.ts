@@ -93,18 +93,21 @@ Deno.serve(async (req) => {
     if (!sessao || sessao.link_id !== link.id || new Date(sessao.expira_em) < new Date()) {
         return responder({ ok: false, erro: "Entre com o PIN.", precisa_pin: true }, 401);
     }
-    const autor = `Recepção${sessao.apelido ? " — " + sessao.apelido : ""}`;
+    // Quem está atendendo vem em cada ação (a recepção troca de pessoa sem sair da página).
+    const atendente = texto(corpo.atendente, 60) || sessao.apelido || "";
+    const autor = `Recepção${atendente ? " — " + atendente : ""}`;
 
     try {
         if (acao === "lista") {
             const [{ data: ev }, { data: inscritos, error }, { data: regs }] = await Promise.all([
-                supabaseAdmin.from("eventos").select("nome, data, hora").eq("id", link.evento_id).maybeSingle(),
+                supabaseAdmin.from("eventos").select("nome, data, hora, capacidade").eq("id", link.evento_id).maybeSingle(),
                 supabaseAdmin.rpc("recepcao_lista", { p_evento_id_ulisses: link.evento_id_ulisses }),
                 supabaseAdmin.from("recepcao_registros").select("client_id, tipo, email_evento_id, nome, status, erro, veio_com, interesse_curso, autor, criado_em")
                     .eq("evento_id_ulisses", link.evento_id_ulisses).order("criado_em", { ascending: false }).limit(400),
             ]);
             if (error) throw new Error(error.message);
-            return responder({ ok: true, evento: ev, rotulo: link.rotulo, inscritos, registros: regs || [], agora: new Date().toISOString() });
+            const reservas = (regs || []).filter((r: any) => r.tipo === "inscricao" && r.status === "reservado").map((r: any) => ({ client_id: r.client_id, nome: r.nome, autor: r.autor, criado_em: r.criado_em }));
+            return responder({ ok: true, evento: ev, rotulo: link.rotulo, inscritos, reservas, capacidade: ev?.capacidade ?? null, registros: regs || [], agora: new Date().toISOString() });
         }
 
         if (acao === "presenca") {
@@ -171,15 +174,35 @@ Deno.serve(async (req) => {
                 const chaves = [t8.length === 8 ? `t:${t8}:${primeiro}` : "", email ? `e:${email}:${primeiro}` : ""].filter(Boolean);
                 let g = chaves.map((k) => grupos.get(k)).find(Boolean);
                 const nota = (t8 ? 2 : 0) + (email ? 1 : 0);
-                if (!g) g = { pid: l.pessoaIdentificador, nome: l.pessoaNome, filiais: [], final_tel: t8.slice(-4), tem_tel: !!t8, tem_email: !!email, nota };
+                if (!g) g = { pid: l.pessoaIdentificador, nome: l.pessoaNome, pids: [], final_tel: t8.slice(-4), tem_tel: !!t8, tem_email: !!email, nota };
                 else if (nota > g.nota) Object.assign(g, { pid: l.pessoaIdentificador, nome: l.pessoaNome, final_tel: t8.slice(-4), tem_tel: !!t8, tem_email: !!email, nota });
-                if (l.filial && !g.filiais.includes(l.filial)) g.filiais.push(l.filial);
+                if (!g.pids.includes(l.pessoaIdentificador)) g.pids.push(l.pessoaIdentificador);
                 for (const k of chaves) grupos.set(k, g);
                 if (!chaves.length) grupos.set(`p:${l.pessoaIdentificador}`, g);
             }
-            const pessoas = [...new Set(grupos.values())].slice(0, 8)
-                .map((g) => ({ pid: g.pid, nome: g.nome, filial: g.filiais.join(", "), final_tel: g.final_tel, tem_tel: g.tem_tel, tem_email: g.tem_email }));
+            // Escola só quando vem do Mercúrio (aluno ou ex-aluno): a escola de um cadastro do CRM/Ulisses não diz nada.
+            const unicos = [...new Set(grupos.values())].slice(0, 8);
+            const todosPids = unicos.flatMap((g) => g.pids);
+            const { data: mp } = todosPids.length
+                ? await supabaseAdmin.from("mercurio_pessoas").select("pessoa_identificador, filial, situacao").in("pessoa_identificador", todosPids)
+                : { data: [] };
+            const pessoas = unicos.map((g) => {
+                const fichas = (mp || []).filter((m: any) => g.pids.includes(m.pessoa_identificador));
+                const ativa = fichas.find((m: any) => m.situacao === "ATI");
+                const escola = ativa ? `aluno(a) de ${ativa.filial}` : fichas[0] ? `ex-aluno(a) de ${fichas[0].filial}` : "";
+                return { pid: g.pid, nome: g.nome, filial: escola, final_tel: g.final_tel, tem_tel: g.tem_tel, tem_email: g.tem_email };
+            });
             return responder({ ok: true, pessoas });
+        }
+
+        // Nome de quem está atendendo: membros ativos no Mercúrio (a equipe da recepção é de voluntários).
+        if (acao === "buscar_equipe") {
+            const partes = normalizarNome(String(corpo.termo || "")).split(" ").filter((p) => p.length >= 2).slice(0, 3);
+            if (!partes.length) return responder({ ok: true, pessoas: [] });
+            let q = supabaseAdmin.from("mercurio_pessoas").select("nome, filial").eq("situacao", "ATI").limit(8);
+            for (const p of partes) q = q.ilike("nome", `%${p}%`);
+            const { data } = await q;
+            return responder({ ok: true, pessoas: (data || []).map((m: any) => ({ nome: nomeProprio(m.nome || ""), filial: m.filial })) });
         }
 
         // Confere direto no Ulisses (lista ao vivo) se quem está sendo cadastrado já está inscrito.
@@ -233,6 +256,27 @@ Deno.serve(async (req) => {
             if (ddd.length !== 2 || tel.length < 8) return responder({ ok: false, erro: "Informe o celular com DDD.", definitivo: true }, 400);
             if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return responder({ ok: false, erro: "E-mail inválido.", definitivo: true }, 400);
             nome = nomeProprio(nome);
+
+            // Sem e-mail (13/11/2026): o Ulisses exige e-mail, e pedir na porta leva a e-mails inventados. A pessoa fica
+            // reservada no CRM (ocupa vaga, conta como presente) e o e-mail é pedido depois por WhatsApp.
+            if (!email) {
+                const [{ data: evCap }, { count: nInscritos }, { count: nReservas }] = await Promise.all([
+                    supabaseAdmin.from("eventos").select("capacidade").eq("id", link.evento_id).maybeSingle(),
+                    supabaseAdmin.from("ulisses_inscricoes_evento").select("email_evento_id", { count: "exact", head: true }).eq("evento_id_ulisses", link.evento_id_ulisses).is("removido_em", null),
+                    supabaseAdmin.from("recepcao_registros").select("id", { count: "exact", head: true }).eq("evento_id_ulisses", link.evento_id_ulisses).eq("tipo", "inscricao").eq("status", "reservado"),
+                ]);
+                const cap = Number(evCap?.capacidade) || 0;
+                if (cap && (nInscritos || 0) + (nReservas || 0) >= cap) {
+                    return responder({ ok: false, erro: "As vagas acabaram: só dá para entrar com inscrição completa (com e-mail).", definitivo: true }, 409);
+                }
+                const nova = await registrar({
+                    client_id: clientId, link_id: link.id, evento_id_ulisses: link.evento_id_ulisses, tipo: "inscricao", status: "reservado",
+                    nome, ddd, telefone: tel, email: null, pessoa_identificador: pid, autor,
+                    veio_com: texto(corpo.veio_com), interesse_curso: typeof corpo.interesse_curso === "boolean" ? corpo.interesse_curso : null,
+                    criado_no_aparelho: texto(corpo.criado_no_aparelho, 40),
+                });
+                return responder({ ok: true, reservado: true, repetido: nova === null });
+            }
 
             const novo = await registrar({
                 client_id: clientId, link_id: link.id, evento_id_ulisses: link.evento_id_ulisses, tipo: "inscricao",

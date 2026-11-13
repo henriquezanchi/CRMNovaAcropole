@@ -22,6 +22,9 @@
   var fila = ler('fila', []);              // ações a enviar
   var problemas = ler('problemas', []);    // ações recusadas de vez
   var online = navigator.onLine;
+  // Quem está atendendo neste aparelho (sem login). Vai em cada ação, para saber quem registrou.
+  var atendente = '';
+  try { atendente = localStorage.getItem('rc_atendente') || ''; } catch (e) { /* ok */ }
 
   // Segunda tela: a janela do participante recebe o que está sendo digitado (mesmo navegador, funciona sem internet).
   var canal = 'BroadcastChannel' in window ? new BroadcastChannel('rc-' + chave.slice(0, 12)) : null;
@@ -63,6 +66,7 @@
     var ctrl = new AbortController();
     var t = setTimeout(function () { ctrl.abort(); }, 25000);
     corpo.chave = chave; if (sessao) corpo.sessao = sessao.token;
+    if (!corpo.atendente && atendente) corpo.atendente = atendente;
     return fetch(FUNCAO, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(corpo), signal: ctrl.signal })
       .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { j._status = r.status; return j; }); })
       .then(function (j) { marcarConexao(true); return j; }, function (e) { marcarConexao(false); throw e; })
@@ -81,13 +85,11 @@
   function mostrarPin(msg) {
     $('telaPrincipal').hidden = true; $('telaPin').hidden = false;
     $('pinErro').textContent = msg || '';
-    $('pinApelido').value = localStorage.getItem('rc_apelido') || '';
     setTimeout(function () { $('pinValor').focus(); }, 50);
   }
   $('formPin').addEventListener('submit', function (ev) {
     ev.preventDefault();
-    var apelido = $('pinApelido').value.trim();
-    try { localStorage.setItem('rc_apelido', apelido); } catch (e) { /* ok */ }
+    var apelido = atendente;
     $('pinErro').textContent = 'Entrando…';
     sessao = null;
     var pinDigitado = $('pinValor').value;
@@ -115,12 +117,23 @@
     });
   }
   function inscricoesNaFila() { return fila.filter(function (f) { return f.acao === 'inscrever'; }); }
+  function reservas() { return (lista && lista.reservas) || []; }
+  function vagasRestantes() {
+    var cap = lista && Number(lista.capacidade);
+    if (!cap) return null;
+    return cap - ((lista.inscritos || []).length + reservas().length + inscricoesNaFila().length);
+  }
 
   function desenharPlacar() {
     var todos = inscritos();
-    $('nInscritos').textContent = todos.length + inscricoesNaFila().length;
-    $('nPresentes').textContent = todos.filter(function (x) { return x.presente; }).length + inscricoesNaFila().length;
-    $('nPorta').textContent = todos.filter(function (x) { return x.na_porta; }).length + inscricoesNaFila().length;
+    var extra = inscricoesNaFila().length + reservas().length;
+    $('nInscritos').textContent = todos.length + extra;
+    $('nPresentes').textContent = todos.filter(function (x) { return x.presente; }).length + extra;
+    $('nPorta').textContent = todos.filter(function (x) { return x.na_porta; }).length + extra;
+    var vr = vagasRestantes();
+    $('cadSemEmail').textContent = vr !== null && vr <= 0
+      ? 'As vagas acabaram: só dá para inscrever com e-mail (inscrição completa no Ulisses).'
+      : 'Sem e-mail? Pode deixar em branco: a vaga fica reservada' + (vr !== null ? ' (restam ' + vr + ')' : '') + ' e pedimos o e-mail depois pelo WhatsApp. Não invente e-mail.';
     desenharConexao();
   }
 
@@ -347,7 +360,7 @@
         if (!j.ok || !(j.pessoas || []).length) return;
         area.appendChild(el('span', { classe: 'dica', texto: 'Já temos cadastro dessa pessoa? Toque para usar o celular e o e-mail que já estão no CRM:' }));
         j.pessoas.slice(0, 5).forEach(function (p) {
-          var b = el('button', { type: 'button', texto: nomeProprio(p.nome) + ' · ' + String(p.filial || '').replace(/Goiânia - /g, '') + (p.final_tel ? ' · cel. final ' + p.final_tel : '') + (p.tem_email ? ' · tem e-mail' : ''),
+          var b = el('button', { type: 'button', texto: [nomeProprio(p.nome), String(p.filial || '').replace(/Goiânia - /g, ''), p.final_tel ? 'cel. final ' + p.final_tel : '', p.tem_email ? 'tem e-mail' : ''].filter(Boolean).join(' · '),
             onclick: function () {
               var mesmo = pidEscolhido === p.pid;
               pidEscolhido = mesmo ? null : p.pid; pessoaBase = mesmo ? null : p;
@@ -383,7 +396,7 @@
     var dados = { nome: nome, ddd: usaCadastro ? '' : ddd, telefone: usaCadastro ? '' : tel, email: email, pid: pidEscolhido,
       veio_com: $('cadVeioCom').value.trim() || null, interesse_curso: inter === 'sim' ? true : inter === 'nao' ? false : null };
     enfileirar('inscrever', dados);
-    aviso('✓ ' + nome.split(' ')[0] + ' cadastrado(a)' + (online ? '' : ' (envia quando a internet voltar)'));
+    aviso('✓ ' + nome.split(' ')[0] + (email || (pessoaBase && pessoaBase.tem_email) ? ' cadastrado(a)' : ' com vaga reservada (sem e-mail)') + (online ? '' : ' (envia quando a internet voltar)'));
     espelhar({ tipo: 'boasvindas', nome: nome });
     limparCadastro(); $('cadDdd').value = ddd || '62';
     abrirAba('buscar'); $('busca').value = ''; desenharResultados();
@@ -401,7 +414,8 @@
       ]));
     });
     var area = $('listaPresentes'); area.textContent = '';
-    var pend = inscricoesNaFila().map(function (f) { return { nome: f.dados.nome, pendente: true, porta: true }; });
+    var pend = inscricoesNaFila().map(function (f) { return { nome: f.dados.nome, pendente: true, porta: true, semEmail: !f.dados.email }; })
+      .concat(reservas().map(function (r) { return { nome: r.nome, porta: true, semEmail: true }; }));
     var pres = inscritos().filter(function (x) { return x.presente; });
     var todos = pend.concat(pres).sort(function (a, b) { return a.nome.localeCompare(b.nome); });
     if (!todos.length) { area.appendChild(el('p', { classe: 'vazio', texto: 'Ninguém marcado ainda.' })); return; }
@@ -409,7 +423,7 @@
       area.appendChild(el('div', { classe: 'pessoa presente' + (p.pendente ? ' pendente' : '') }, [
         el('div', { classe: 'nome', texto: p.nome }),
         el('div', { classe: 'info' }, [
-          p.porta || p.na_porta ? el('span', { classe: 'selo fora', texto: 'inscrito na porta' }) : null,
+          p.porta || p.na_porta ? el('span', { classe: 'selo fora', texto: p.semEmail ? 'reservado na porta (sem e-mail)' : 'inscrito na porta' }) : null,
           p.aluno ? el('span', { classe: 'selo', texto: 'Aluno' }) : (p.porta ? null : el('span', { classe: 'selo fora', texto: 'De fora' })),
           p.pendente ? el('span', { texto: 'enviando…' }) : null
         ])
@@ -419,7 +433,7 @@
 
   // ---------- fila de envio ----------
   function enfileirar(acao, dados) {
-    dados.client_id = uuid(); dados.criado_no_aparelho = new Date().toISOString();
+    dados.client_id = uuid(); dados.criado_no_aparelho = new Date().toISOString(); dados.atendente = atendente;
     fila.push({ acao: acao, dados: dados, tentativas: 0 });
     gravar('fila', fila); desenharPlacar(); enviarFila();
   }
@@ -461,7 +475,7 @@
     return chamar({ acao: 'lista' }).then(function (j) {
       if (j._status === 401 && j.precisa_pin) { mostrarPin('Sua sessão expirou. Entre de novo.'); return; }
       if (!j.ok) return;
-      lista = { inscritos: j.inscritos || [], evento: j.evento, rotulo: j.rotulo, em: j.agora };
+      lista = { inscritos: j.inscritos || [], reservas: j.reservas || [], capacidade: j.capacidade, evento: j.evento, rotulo: j.rotulo, em: j.agora };
       gravar('lista', lista); redesenhar();
     }, function () { /* sem internet: segue com a lista guardada */ });
   }
@@ -679,6 +693,45 @@
     setTimeout(verificarJaInscrito, 800);
   });
 
+  // ---------- quem está atendendo ----------
+  function recentesAtendentes() { try { return JSON.parse(localStorage.getItem('rc_atendentes') || '[]'); } catch (e) { return []; } }
+  function desenharAtendente() { $('chipAtendente').textContent = atendente ? 'Atendendo: ' + atendente.split(' ')[0] : 'Quem atende?'; }
+  function definirAtendente(nome) {
+    nome = nomeProprio(nome);
+    if (nome.length < 2) return;
+    atendente = nome;
+    var rec = recentesAtendentes().filter(function (n) { return n !== nome; }); rec.unshift(nome);
+    try { localStorage.setItem('rc_atendente', nome); localStorage.setItem('rc_atendentes', JSON.stringify(rec.slice(0, 8))); } catch (e) { /* ok */ }
+    $('painelAtendente').hidden = true; desenharAtendente();
+    aviso('Atendendo agora: ' + nome);
+    if (!$('abaBuscar').hidden) $('busca').focus();
+  }
+  function abrirAtendente() {
+    var rec = $('atendentesRecentes'); rec.textContent = '';
+    recentesAtendentes().forEach(function (n) { rec.appendChild(el('button', { type: 'button', texto: n, onclick: function () { definirAtendente(n); } })); });
+    $('atendenteBusca').value = ''; $('atendentesSugestoes').textContent = '';
+    $('painelAtendente').hidden = false;
+    setTimeout(function () { $('atendenteBusca').focus(); }, 50);
+  }
+  var timerEquipe;
+  $('atendenteBusca').addEventListener('input', function () {
+    clearTimeout(timerEquipe);
+    var termo = $('atendenteBusca').value.trim(), area = $('atendentesSugestoes');
+    if (termo.length < 3 || !online || !sessao) { area.textContent = ''; return; }
+    timerEquipe = setTimeout(function () {
+      chamar({ acao: 'buscar_equipe', termo: termo }).then(function (j) {
+        area.textContent = '';
+        (j.pessoas || []).slice(0, 6).forEach(function (p) {
+          area.appendChild(el('button', { type: 'button', texto: p.nome + (p.filial ? ' · ' + String(p.filial).replace(/Goiânia - /g, '') : ''), onclick: function () { definirAtendente(p.nome); } }));
+        });
+      }, function () { area.textContent = ''; });
+    }, 350);
+  });
+  $('atendenteBusca').addEventListener('keydown', function (e) { if (e.key === 'Enter') definirAtendente($('atendenteBusca').value); });
+  $('atendenteUsar').addEventListener('click', function () { definirAtendente($('atendenteBusca').value); });
+  $('chipAtendente').addEventListener('click', abrirAtendente);
+  $('painelAtendente').addEventListener('click', function (e) { if (e.target === $('painelAtendente') && atendente) $('painelAtendente').hidden = true; });
+
   // ---------- abas ----------
   function abrirAba(nome) {
     document.querySelectorAll('.abas button').forEach(function (b) { b.setAttribute('aria-selected', String(b.getAttribute('data-aba') === nome)); });
@@ -693,7 +746,9 @@
     $('telaPin').hidden = true; $('telaPrincipal').hidden = false; $('acoesTopo').hidden = false;
     redesenhar(); atualizarLista(); enviarFila();
     abrirAba('buscar');
+    desenharAtendente();
     if (ler('totem', false)) entrarTotem();
+    else if (!atendente) abrirAtendente();
   }
   window.addEventListener('online', function () { marcarConexao(true); if (!ehEspelho) { enviarFila(); atualizarLista(); } });
   window.addEventListener('offline', function () { marcarConexao(false); });

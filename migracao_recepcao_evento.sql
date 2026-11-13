@@ -69,7 +69,7 @@ as $$
            right(regexp_replace(coalesce(u.telefone, ''), '\D', '', 'g'), 8),
            case when u.email like '%@%' then left(u.email, 2) || '…@' || split_part(u.email, '@', 2) end,
            coalesce(cf.eh_aluno, mp.filial is not null),
-           coalesce(case when cf.eh_aluno then cf.escola end, mp.filial, l.filial),
+           coalesce(case when cf.eh_aluno then cf.escola end, mp.filial), -- escola só de quem é aluno (Mercúrio)
            u.compareceu, coalesce(u.inscrito_em, u.visto_primeiro_em),
            exists (select 1 from recepcao_registros r where r.email_evento_id = u.email_evento_id and r.tipo = 'inscricao')
     from ulisses_inscricoes_evento u
@@ -82,3 +82,9 @@ as $$
     where u.evento_id_ulisses = p_evento_id_ulisses and u.removido_em is null
 $$;
 revoke all on function public.recepcao_lista(bigint) from public, anon, authenticated;
+
+-- 13/11/2026: inscrição na porta sem e-mail não vai para o Ulisses (que exige e-mail): fica "reservado"
+-- no CRM, ocupando vaga, e o e-mail é pedido depois por WhatsApp.
+alter table public.recepcao_registros drop constraint if exists recepcao_registros_status_check;
+alter table public.recepcao_registros add constraint recepcao_registros_status_check
+    check (status in ('pendente', 'ok', 'erro', 'reservado'));

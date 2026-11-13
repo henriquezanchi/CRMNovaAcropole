@@ -20,6 +20,7 @@
     <h1 id="titulo">Recepção do evento</h1>
   </div>
   <div id="acoesTopo" class="acoes-topo" hidden>
+    <button type="button" id="chipAtendente" class="btn-topo atendente" title="Trocar quem está atendendo">Quem atende?</button>
     <button type="button" id="btnSegundaTela" class="btn-topo" title="Abrir uma tela para o participante acompanhar o cadastro">2ª tela</button>
     <button type="button" id="btnTotem" class="btn-topo" title="Transformar este aparelho em autoatendimento">Autoatendimento</button>
   </div>
@@ -30,7 +31,6 @@
 <section id="telaPin" class="tela" hidden>
   <form id="formPin" class="cartao-pin" autocomplete="off">
     <h2>Entrar na recepção</h2>
-    <label>Seu nome <input id="pinApelido" maxlength="40" placeholder="Ex.: Ana" autocomplete="given-name"></label>
     <label>PIN (6 dígitos) <input id="pinValor" inputmode="numeric" pattern="[0-9]*" maxlength="6" required autocomplete="one-time-code"></label>
     <button type="submit" class="btn principal">Entrar</button>
     <p id="pinErro" class="erro" role="alert"></p>
@@ -76,6 +76,7 @@
         <label class="cel">Celular (WhatsApp) <input id="cadTel" inputmode="tel" maxlength="15" placeholder="99999-9999"></label>
       </div>
       <label>E-mail (opcional) <input id="cadEmail" type="email" inputmode="email" maxlength="120" autocapitalize="off"></label>
+      <p id="cadSemEmail" class="dica">Sem e-mail? Pode deixar em branco: a vaga fica reservada e pedimos o e-mail depois pelo WhatsApp. Não invente e-mail.</p>
       <label>Veio com alguém? Quem? (opcional)
         <span class="com-mic"><input id="cadVeioCom" maxlength="120"><button type="button" class="mic" data-mic="cadVeioCom" aria-label="Falar"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg></button></span>
       </label>
@@ -106,6 +107,17 @@
 <section id="telaTotem" class="totem" hidden>
   <div id="totemConteudo" class="totem-in"></div>
   <button type="button" id="totemSair" class="totem-sair">Equipe</button>
+</section>
+
+<!-- Quem está atendendo (sem login: só o nome, para saber quem fez cada registro) -->
+<section id="painelAtendente" class="sobreposicao" hidden>
+  <div class="cartao-pin">
+    <h2>Quem está atendendo?</h2>
+    <div id="atendentesRecentes" class="recentes"></div>
+    <label>Seu nome <input id="atendenteBusca" maxlength="60" placeholder="Digite seu nome" autocomplete="off" autocapitalize="words"></label>
+    <div id="atendentesSugestoes" class="sugestoes"></div>
+    <button type="button" id="atendenteUsar" class="btn principal">Começar a atender</button>
+  </div>
 </section>
 
 <div id="aviso" class="aviso" role="status" aria-live="polite" hidden></div>
