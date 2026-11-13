@@ -108,6 +108,8 @@
     if (partes.length !== 2) { status('vl-espera', 'Nenhum QR code de entrada neste celular'); $('psDica').textContent = 'Faça o check-in pelo QR code do cartaz ou na recepção.'; return; }
     var dados, bytes;
     try { bytes = b64u(partes[0]); dados = JSON.parse(new TextDecoder().decode(bytes)); } catch (e) { status('vl-erro', '✗ QR code ilegível'); return; }
+    // Cartão de entrada impresso: quem lê é a segurança (câmera do celular). Vai direto para o validador.
+    if (dados.c) { location.replace('validar#' + token); return; }
     crypto.subtle.importKey('jwk', CHAVE_PUBLICA, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
       .then(function (k) { return crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, k, b64u(partes[1]), bytes); })
       .then(function (ok) {
