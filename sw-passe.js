@@ -1,6 +1,6 @@
 // Guarda o check-in (checkin.html) e o validador da segurança (validar.html) no aparelho para abrirem sem internet
 // (13/11/2026). Rede primeiro; sem rede, a cópia guardada. Registrado com escopo ./checkin e ./validar.
-var CACHE = 'passe-v9';
+var CACHE = 'passe-v10';
 var ARQUIVOS = ['checkin.html', 'validar.html', 'passe.html', 'js/checkin.js', 'js/validar.js', 'css/recepcao.css', 'img/logo-nova-acropole.png'];
 var APELIDOS = { checkin: 'checkin.html', inscrever: 'checkin.html', validar: 'validar.html', passe: 'passe.html' };
 
@@ -18,10 +18,19 @@ self.addEventListener('fetch', function (e) {
   var caminho = url.pathname.replace(/^\//, '');
   caminho = APELIDOS[caminho] || caminho;
   if (ARQUIVOS.indexOf(caminho) < 0) return;
-  e.respondWith(
+  // Rede primeiro, mas sem esperar para sempre: com internet lenta (3 s sem resposta), abre a cópia guardada
+  // e a versão nova fica guardada para a próxima vez.
+  e.respondWith(new Promise(function (resolver) {
+    var feito = false;
+    var entregar = function (r) { if (!feito && r) { feito = true; resolver(r); } };
+    var relogio = setTimeout(function () { caches.match(caminho).then(entregar); }, 3000);
     fetch(e.request).then(function (r) {
+      clearTimeout(relogio);
       if (r.ok) { var copia = r.clone(); caches.open(CACHE).then(function (c) { c.put(caminho, copia); }); }
-      return r;
-    }).catch(function () { return caches.match(caminho); })
-  );
+      entregar(r);
+    }).catch(function () {
+      clearTimeout(relogio);
+      caches.match(caminho).then(function (c) { entregar(c || Response.error()); });
+    });
+  }));
 });

@@ -418,7 +418,7 @@
     });
     var area = $('listaPresentes'); area.textContent = '';
     var pend = inscricoesNaFila().map(function (f) { return { nome: f.dados.nome, pendente: true, porta: true, semEmail: !f.dados.email }; })
-      .concat(reservas().map(function (r) { return { nome: r.nome, porta: true, semEmail: true }; }));
+      .concat(reservas().map(function (r) { return { nome: r.nome, porta: true, reserva: true }; }));
     var pres = inscritos().filter(function (x) { return x.presente; });
     var todos = pend.concat(pres).sort(function (a, b) { return a.nome.localeCompare(b.nome); });
     if (!todos.length) { area.appendChild(el('p', { classe: 'vazio', texto: 'Ninguém marcado ainda.' })); return; }
@@ -432,7 +432,7 @@
           } })
         ]),
         el('div', { classe: 'info' }, [
-          p.porta || p.na_porta ? el('span', { classe: 'selo fora', texto: p.semEmail ? 'reservado na porta (sem e-mail)' : 'inscrito na porta' }) : null,
+          p.porta || p.na_porta ? el('span', { classe: 'selo fora', texto: p.reserva || p.semEmail ? 'vaga reservada na porta' : 'inscrito na porta' }) : null,
           p.aluno ? el('span', { classe: 'selo', texto: 'Aluno' }) : (p.porta ? null : el('span', { classe: 'selo fora', texto: 'De fora' })),
           p.pendente ? el('span', { texto: 'enviando…' }) : null
         ])
@@ -444,11 +444,14 @@
   function enfileirar(acao, dados) {
     dados.client_id = uuid(); dados.criado_no_aparelho = new Date().toISOString();
     // No autoatendimento quem registra é a própria pessoa: canal próprio no painel de números.
-    dados.atendente = document.body.classList.contains('modo-totem') ? 'Autoatendimento (tablet)' : atendente;
+    var noTotem = document.body.classList.contains('modo-totem');
+    dados.atendente = noTotem ? 'Autoatendimento (tablet)' : atendente;
+    // A mesa entrega cartão: não pede ao servidor o desenho do QR code (menos internet e processamento).
+    if (!noTotem && (acao === 'presenca' || acao === 'inscrever')) dados.sem_passe = true;
     fila.push({ acao: acao, dados: dados, tentativas: 0 });
     gravar('fila', fila); desenharPlacar(); enviarFila();
   }
-  var enviando = false, esperaFila = 0;
+  var enviando = false, esperaFila = 0, falhasSeguidas = 0;
   function enviarFila() {
     if (enviando || !fila.length || !sessao) return;
     enviando = true;
@@ -458,7 +461,7 @@
       enviando = false;
       if (j._status === 401 && j.precisa_pin) { mostrarPin('Sua sessão expirou. Entre de novo; nada do que foi marcado se perde.'); return; }
       if (j.ok) {
-        tirar(item); esperaFila = 0;
+        tirar(item); esperaFila = 0; falhasSeguidas = 0;
         if (j.passe) receberPasse(j.passe, item);
         if (item.acao === 'presenca' && lista) lista.inscritos.forEach(function (x) { if (x.email_evento_id === item.dados.email_evento_id) x.compareceu = item.dados.compareceu; });
         // Reserva sem e-mail entra na conta na hora (a lista do servidor chega em seguida).
@@ -471,13 +474,17 @@
         aviso('⚠ ' + (j.erro || 'Uma ação não foi aceita. Veja em Presentes.'));
         if (j.inscrito) atualizarLista();
       } else {
-        item.tentativas++; esperaFila = Math.min(30000, 3000 * item.tentativas);
+        // Erro passageiro do servidor: este item vai para o fim da fila (não trava os próximos) e nada se perde.
+        item.tentativas++; falhasSeguidas++;
+        if (fila.length > 1) { tirar(item); fila.push(item); }
+        esperaFila = Math.min(30000, 2000 * falhasSeguidas);
       }
       gravar('fila', fila); gravar('lista', lista); redesenhar();
       setTimeout(enviarFila, esperaFila);
     }, function () {
-      enviando = false; item.tentativas++; gravar('fila', fila);
-      esperaFila = Math.min(30000, 4000 * item.tentativas); desenharConexao();
+      // Sem conexão: mantém a ordem e tenta de novo com intervalo crescente (até 30 s), sem gastar internet à toa.
+      enviando = false; item.tentativas++; falhasSeguidas++; gravar('fila', fila);
+      esperaFila = Math.min(30000, 4000 * falhasSeguidas); desenharConexao();
       setTimeout(enviarFila, esperaFila);
     });
   }
@@ -491,8 +498,8 @@
   function receberPasse(passe, item) {
     passesGuardados[passe.nome] = { svg: passe.svg, url: passe.url, em: passe.em }; gravar('passes', passesGuardados);
     var recente = Date.now() - new Date(item.dados.criado_no_aparelho || 0).getTime() < 3 * 60000;
-    // Na recepção a pessoa recebe um cartão (a tela já abriu ao marcar); o passe na tela só no autoatendimento.
-    if (recente && document.body.classList.contains('modo-totem')) mostrarPasse(passe.nome, passe.svg, item.dados.email_evento_id || null);
+    // Na recepção a pessoa recebe um cartão (a tela já abriu ao marcar); o QR code na tela só no autoatendimento.
+    if (recente && document.body.classList.contains('modo-totem')) totemChegouPasse(passe);
     if (!$('abaPresentes').hidden) desenharPresentes();
   }
   // svgTexto vazio = sem internet: a tela abre mesmo assim para a recepção entregar um cartão.
@@ -512,9 +519,11 @@
   // ---------- cartões de entrada (poucos, reutilizáveis) ----------
   // A recepção entrega um cartão numerado a quem não tem celular; a segurança lê, recolhe e devolve.
   var cartoesVinculados = ler('cartoes', {});
+  var MAX_CARTAO = 36; // impressos: 24 (2 folhas); folga para uma 3ª folha
   function vincularCartao(nome, eeId, numTexto) {
     var num = parseInt(String(numTexto || '').replace(/\D/g, ''), 10);
-    if (!(num >= 1 && num <= 999)) { aviso('Digite o número impresso no cartão.'); return false; }
+    if (!(num >= 1)) { aviso('Digite o número impresso no cartão.'); return false; }
+    if (num > MAX_CARTAO) { aviso('⚠ Não existe cartão nº ' + num + '. Os cartões vão de 1 a ' + MAX_CARTAO + '. Confira o número impresso.'); return false; }
     var outro = Object.keys(cartoesVinculados).filter(function (n) { return n !== nome && cartoesVinculados[n] === num; })[0];
     if (outro) delete cartoesVinculados[outro];
     cartoesVinculados[nome] = num; gravar('cartoes', cartoesVinculados);
@@ -533,14 +542,22 @@
   function nomeDe(id) { var p = ((lista && lista.inscritos) || []).filter(function (x) { return x.email_evento_id === id; })[0]; return p ? p.nome : ''; }
 
   // ---------- lista do servidor ----------
-  function atualizarLista() {
-    if (!sessao) return Promise.resolve();
-    return chamar({ acao: 'lista' }).then(function (j) {
+  // O aparelho manda a "versão" da lista que já tem; se nada mudou, o servidor responde só "igual" (poucos bytes).
+  // A lista inteira (uns 15 KB compactados) só vem quando alguém chegou/se inscreveu, e ao menos a cada 10 minutos.
+  var ultimaListaCompleta = 0, pedindoLista = false;
+  function atualizarLista(completa) {
+    if (!sessao || pedindoLista) return Promise.resolve();
+    var corpo = { acao: 'lista' };
+    if (!completa && lista && lista.versao && Date.now() - ultimaListaCompleta < 600000) corpo.versao = lista.versao;
+    pedindoLista = true;
+    return chamar(corpo).then(function (j) {
+      pedindoLista = false;
       if (j._status === 401 && j.precisa_pin) { mostrarPin('Sua sessão expirou. Entre de novo.'); return; }
-      if (!j.ok) return;
-      lista = { inscritos: j.inscritos || [], reservas: j.reservas || [], capacidade: j.capacidade, evento: j.evento, rotulo: j.rotulo, em: j.agora };
+      if (!j.ok || j.igual) return;
+      lista = { inscritos: j.inscritos || [], reservas: j.reservas || [], capacidade: j.capacidade, evento: j.evento, rotulo: j.rotulo, em: j.agora, versao: j.versao || null };
+      ultimaListaCompleta = Date.now();
       gravar('lista', lista); redesenhar();
-    }, function () { /* sem internet: segue com a lista guardada */ });
+    }, function () { pedindoLista = false; /* sem internet: segue com a lista guardada */ });
   }
   function redesenhar() {
     if (lista && lista.evento) $('titulo').textContent = lista.evento.nome ? nomeProprio(lista.evento.nome.split(' - ')[0]) : 'Recepção do evento';
@@ -681,18 +698,45 @@
       el('button', { type: 'button', classe: 'btn secundario', texto: 'Voltar', onclick: totemInicio })
     ]);
   }
+  // O QR code de entrada chega do servidor um instante depois do check-in. Ele só aparece quando a pessoa
+  // terminou de responder; se não chegar (sem internet), a tela manda pegar um cartão na recepção.
+  var totemPasses = {}, totemEsperando = null, totemTimerPasse;
+  function totemChegouPasse(passe) {
+    totemPasses[normalizar(passe.nome)] = passe.svg;
+    if (totemEsperando && totemEsperando === normalizar(passe.nome)) { clearTimeout(totemTimerPasse); totemEsperando = null; totemPasse(passe.nome, passe.svg); }
+  }
+  function totemAguardarPasse(nome, jaFeito) {
+    var k = normalizar(nomeProprio(nome));
+    if (totemPasses[k]) { var svg = totemPasses[k]; delete totemPasses[k]; return totemPasse(nome, svg); }
+    totemEsperando = k;
+    totemTela([
+      el('p', { classe: 'grande', texto: jaFeito ? 'Seu check-in já estava feito!' : '✓ Check-in feito!' }),
+      el('p', { classe: 'sub', texto: 'Preparando seu QR code de entrada…' })
+    ], 60000);
+    clearTimeout(totemTimerPasse);
+    totemTimerPasse = setTimeout(function () {
+      if (totemEsperando !== k) return;
+      totemEsperando = null;
+      totemTela([
+        el('p', { classe: 'grande', texto: 'Boas-vindas, ' + nomeProprio(String(nome).split(' ')[0]) + '!' }),
+        el('h2', { texto: 'Check-in feito. Agora peça seu cartão de entrada na recepção.' }),
+        el('p', { classe: 'sub', texto: 'A segurança pede o cartão na entrada do evento.' }),
+        el('button', { type: 'button', classe: 'btn principal', texto: 'Entendi', onclick: totemInicio })
+      ], 20000);
+    }, 8000);
+  }
   function totemConfirmar(p) {
-    if (p.presente) return totemSucesso(p.nome, 'Seu check-in já estava feito. Bom evento!');
+    // Já presente: marca de novo só para receber o QR code de entrada (não muda nada no Ulisses).
     enfileirar('presenca', { email_evento_id: p.id, compareceu: true });
     espelhar({ tipo: 'boasvindas', nome: p.nome });
-    if (p.aluno) return totemSucesso(p.nome);
-    var resposta = function (v) { enfileirar('anotar', { email_evento_id: p.id, interesse_curso: v }); totemSucesso(p.nome); };
+    if (p.presente || p.aluno) return totemAguardarPasse(p.nome, p.presente);
+    var resposta = function (v) { enfileirar('anotar', { email_evento_id: p.id, interesse_curso: v }); totemAguardarPasse(p.nome); };
     totemTela([
       el('p', { classe: 'grande', texto: '✓ Check-in feito!' }),
       el('h2', { texto: 'Quer receber informações sobre o Curso de Filosofia?' }),
       el('button', { type: 'button', classe: 'btn principal', texto: 'Sim, quero', onclick: function () { resposta(true); } }),
       el('button', { type: 'button', classe: 'btn secundario', texto: 'Agora não', onclick: function () { resposta(false); } })
-    ], 20000);
+    ], 40000);
   }
   function totemNaoAchou(q) {
     totemTela([
@@ -725,7 +769,7 @@
       if (ja) return totemConfirmar(ja); // já estava inscrito com esse celular
       enfileirar('inscrever', { nome: n, ddd: dd, telefone: t, email: e, interesse_curso: interesse });
       espelhar({ tipo: 'boasvindas', nome: n });
-      totemSucesso(n);
+      totemAguardarPasse(n);
     };
     totemTela([
       el('h2', { texto: 'Sua inscrição' }),
@@ -744,6 +788,7 @@
       el('h2', { texto: 'Seu QR code de entrada, ' + nomeProprio(String(nome).split(' ')[0]) }),
       el('p', { classe: 'sub', texto: 'Aponte a câmera do seu celular para este QR code e guarde-o: a segurança vai pedir na entrada.' }),
       q,
+      el('p', { classe: 'sub', texto: 'Sem celular? Peça um cartão de entrada na recepção.' }),
       el('button', { type: 'button', classe: 'btn principal', texto: 'Pronto', onclick: totemInicio })
     ], 45000);
   }
@@ -837,10 +882,22 @@
     var r = n.resumo || {};
     var cartoes = [['Presentes', r.presentes, pct(r.presentes, r.inscritos) + ' dos inscritos'], ['Alunos', r.presentes_alunos, ''], ['De fora', r.presentes_fora, ''],
       ['Inscritos na porta', r.inscritos_na_porta, (r.reservados_sem_email || 0) + ' sem e-mail'], ['Vieram acompanhados', r.veio_acompanhado, ''],
-      ['Querem info do curso', r.querem_info_curso, (r.nao_querem_info || 0) + ' não querem'], ['Marcados no Ulisses', r.marcados_no_ulisses, 'fora desta página']];
+      ['Querem info do curso', r.querem_info_curso, (r.nao_querem_info || 0) + ' não querem'], ['Marcados no Ulisses', r.marcados_no_ulisses, 'fora desta página'],
+      ['Passaram pela segurança', n.validacoes, 'QR codes e cartões lidos']];
     area.appendChild(el('div', { classe: 'num-cartoes' }, cartoes.map(function (c) {
       return el('div', { classe: 'num-cartao' }, [el('strong', { texto: String(c[1] || 0) }), el('span', { texto: c[0] }), c[2] ? el('small', { texto: c[2] }) : null]);
     })));
+    if (n.pendentes_ulisses || n.reservas_com_email) {
+      var txt = [];
+      if (n.pendentes_ulisses) txt.push(n.pendentes_ulisses + ' registro(s) ainda não chegaram ao Ulisses (são reenviados sozinhos)');
+      if (n.reservas_com_email) txt.push(n.reservas_com_email + ' inscrição(ões) com e-mail ficaram como vaga reservada (completar depois do evento)');
+      var linha = el('p', { classe: 'dica', texto: '⚠ ' + txt.join('; ') + '. Ninguém deixa de entrar por isso. ' });
+      if (n.pendentes_ulisses) linha.appendChild(el('button', { type: 'button', classe: 'btn-desfazer', texto: 'Enviar agora', onclick: function () {
+        aviso('Enviando ao Ulisses…');
+        chamar({ acao: 'reconciliar' }).then(function (j) { aviso(j.ok ? 'Enviados: ' + j.enviados + '. Faltam: ' + j.restam + '.' : 'Não foi possível agora.'); carregarNumeros(); }, function () { aviso('Sem internet.'); });
+      } }));
+      area.appendChild(linha);
+    }
     var hor = n.por_horario || [];
     area.appendChild(el('h3', { texto: 'Chegadas a cada 15 minutos' }));
     if (!hor.length) area.appendChild(el('p', { classe: 'vazio', texto: 'Ainda não há chegadas.' }));
@@ -1006,7 +1063,13 @@
   }
   window.addEventListener('online', function () { marcarConexao(true); if (!ehEspelho) { enviarFila(); atualizarLista(); } });
   window.addEventListener('offline', function () { marcarConexao(false); });
-  setInterval(function () { if (!document.hidden && !ehEspelho) { atualizarLista(); enviarFila(); } }, 15000);
+  // A cada 15 s confere a fila de envio (não usa internet se estiver vazia); a lista, a cada 60 s.
+  var tiques = 0;
+  setInterval(function () {
+    if (document.hidden || ehEspelho) return;
+    enviarFila();
+    if (++tiques % 4 === 0) atualizarLista();
+  }, 15000);
   document.addEventListener('visibilitychange', function () { if (!document.hidden && !ehEspelho) { atualizarLista(); enviarFila(); } });
   window.addEventListener('beforeunload', function (e) { if (!ehEspelho && fila.length) { e.preventDefault(); e.returnValue = ''; } });
 

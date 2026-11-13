@@ -60,13 +60,31 @@
         // recolhe e devolve à recepção. A leitura libera o cartão. Com internet, mostra com quem ele está.
         if (dados.c) { lerCartao(dados, token); contar(); return; }
         var vistos = lerVistos(), id = partes[1].slice(0, 24), antes = vistos[id];
-        if (!antes) { vistos[id] = new Date().toISOString(); gravarVistos(vistos); registrarLeitura('passe_validado', token); }
         var linhas = [['vl-info', dados.en || ''], ['vl-nome', dados.n || ''], ['vl-info', dados.t || ''], ['vl-info', 'Check-in: ' + hora(dados.d)]];
+        // Lido de novo em menos de 1 minuto: é a mesma pessoa na frente da segurança (leitura repetida sem querer).
+        if (antes && Date.now() - new Date(antes).getTime() < 60000) { mostrar('ok', '✓ QR CODE VÁLIDO', linhas); contar(); return; }
         if (antes) {
-          linhas.push(['vl-dica', 'Este QR code já foi conferido neste celular em ' + hora(antes) + '. Confira se é a mesma pessoa.']);
-          mostrar('repetido', '✓ Válido · já conferido', linhas);
-        } else mostrar('ok', '✓ QR CODE VÁLIDO', linhas);
+          mostrar('repetido', '✓ Válido · já conferido', linhas.concat([['vl-dica', 'Este QR code já entrou às ' + hora(antes) + ' (lido neste celular). Confira se é a mesma pessoa voltando.']]));
+          contar(); return;
+        }
+        var agoraLido = new Date().toISOString();
+        vistos[id] = agoraLido; gravarVistos(vistos);
+        mostrar('ok', '✓ QR CODE VÁLIDO', linhas);
         contar();
+        // Avisa o servidor. Com internet, ele diz se o mesmo QR code já entrou por outro celular da segurança
+        // (print repassado). Sem internet, a leitura fica guardada e sobe depois.
+        var ctl = window.AbortController ? new AbortController() : null;
+        var tempo = setTimeout(function () { if (ctl) ctl.abort(); }, 5000);
+        fetch(FUNCAO, { method: 'POST', headers: { 'content-type': 'application/json' }, signal: ctl ? ctl.signal : undefined,
+          body: JSON.stringify({ acao: 'passe_validado', token: token, lido_em: agoraLido }) })
+          .then(function (r) { if (r.status >= 500) throw new Error(); return r.json(); })
+          .then(function (j) {
+            clearTimeout(tempo);
+            var primeira = j && j.repetido && j.primeira_em ? new Date(j.primeira_em).getTime() : 0;
+            if (primeira && Math.abs(primeira - new Date(agoraLido).getTime()) > 60000 && vistos[id] === agoraLido && $('vlResultado').textContent.indexOf(dados.n || '\u0000') >= 0) {
+              mostrar('repetido', '✓ Válido · já conferido', linhas.concat([['vl-dica', 'Este QR code já entrou às ' + hora(j.primeira_em) + ' por outro celular da segurança. Confira se é a mesma pessoa voltando.']]));
+            }
+          }, function () { clearTimeout(tempo); var q = lerPendentes(); q.push({ acao: 'passe_validado', token: token, lido_em: agoraLido }); gravarPendentes(q); });
       }, function () { mostrar('erro', '✗ Não foi possível conferir', [['vl-dica', 'Atualize o navegador ou use outro celular.']]); });
   }
 
@@ -82,7 +100,14 @@
       .then(function (j) {
         clearTimeout(tempo);
         if (j.ok && j.vinculado) mostrar('ok', '✓ CARTÃO VÁLIDO', base.concat([['vl-nome', j.nome], ['vl-info', 'Entregue pela recepção às ' + hora(j.vinculado_em)], fim]));
-        else if (j.ok) mostrar('repetido', '✓ Válido · sem nome', base.concat([['vl-dica', j.ja_lido_em ? 'Este cartão já passou aqui às ' + hora(j.ja_lido_em) + (j.nome_anterior ? ' (' + j.nome_anterior + ')' : '') + ' e a recepção não o entregou de novo. Confira com a recepção.' : 'A recepção ainda não registrou com quem está este cartão. Pergunte o nome e confira com a recepção.'], fim]));
+        else if (j.ok && j.ja_lido_em && Date.now() - new Date(j.ja_lido_em).getTime() < 90000) {
+          // Lido duas vezes seguidas sem querer: é a mesma entrada.
+          mostrar('ok', '✓ CARTÃO VÁLIDO', base.concat([j.nome_anterior ? ['vl-nome', j.nome_anterior] : null, fim]));
+        }
+        else if (j.ok) mostrar('repetido', '✓ Cartão válido · sem nome', base.concat([
+          ['vl-info', 'Pode liberar a entrada.'],
+          ['vl-dica', j.ja_lido_em ? 'A recepção entregou este cartão de novo sem digitar o número (última entrada às ' + hora(j.ja_lido_em) + ').' : 'A recepção ainda não digitou o número deste cartão.'],
+          fim]));
         else throw new Error();
       })
       .catch(function () {
@@ -100,6 +125,8 @@
     var guardar = function (k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ok */ } };
     var ler = function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } };
     var token = (location.hash || '').replace(/^#/, '');
+    // Celular da segurança (já abriu o validador): QR code lido pela câmera vai direto para o validador.
+    if (token.length >= 20 && ler('vl_modo') === '1') { location.replace('validar#' + token); return; }
     if (token.length < 20) token = ler('meu_passe') || '';
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw-passe.js', { scope: './passe' }).catch(function () { /* ok */ });
     var st = $('psStatus');
@@ -156,6 +183,7 @@
   });
 
   if (document.body.classList.contains('modo-passe')) { iniciarPasse(); return; }
+  try { localStorage.setItem('vl_modo', '1'); } catch (e) { /* ok */ }
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw-passe.js', { scope: './validar' }).catch(function () { /* ok */ });
   contar();
   if (location.hash.length > 10) validar(location.hash);

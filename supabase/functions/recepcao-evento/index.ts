@@ -45,13 +45,109 @@ async function registrar(linha: Record<string, unknown>) {
     }
     return data?.id ?? null;
 }
-async function concluir(clientId: string, status: "ok" | "erro", extra: Record<string, unknown> = {}) {
+async function concluir(clientId: string, status: "ok" | "erro" | "pendente" | "reservado", extra: Record<string, unknown> = {}) {
     await supabaseAdmin.from("recepcao_registros").update({ status, atualizado_em: new Date().toISOString(), ...extra }).eq("client_id", clientId);
 }
 
 async function marcarNoUlisses(emailEventoId: number, compareceu: boolean) {
     await chamarUlisses(supabaseAdmin, `/facade/compareceu/${emailEventoId}/${compareceu ? "true" : "false"}`, { method: "POST" });
     await supabaseAdmin.from("ulisses_inscricoes_evento").update({ compareceu, visto_em: new Date().toISOString() }).eq("email_evento_id", emailEventoId);
+}
+
+// ---- A porta nunca espera pelo Ulisses (13/11/2026) ----
+// Quem manda na porta é recepcao_registros. A presença é gravada aqui na hora; o Ulisses é avisado em seguida,
+// com tempo limite. Se ele estiver lento ou fora do ar, o registro fica "pendente" e é reenviado sozinho depois
+// (reconciliarUlisses), sem travar a fila dos aparelhos.
+const TEMPO_ULISSES_MS = 7000;
+function comTempo<T>(p: Promise<T>, ms: number): Promise<T> {
+    return new Promise((ok, erro) => {
+        const t = setTimeout(() => erro(new Error("o Ulisses demorou a responder")), ms);
+        p.then((v) => { clearTimeout(t); ok(v); }, (e) => { clearTimeout(t); erro(e); });
+    });
+}
+async function marcarOuAdiar(clientId: string, emailEventoId: number, compareceu: boolean, simularFalha = false): Promise<boolean> {
+    try {
+        if (simularFalha) throw new Error("falha simulada (teste)");
+        await comTempo(marcarNoUlisses(emailEventoId, compareceu), TEMPO_ULISSES_MS);
+        await concluir(clientId, "ok", { erro: null });
+        return true;
+    } catch (e) {
+        await concluir(clientId, "pendente", { erro: "Falta enviar ao Ulisses: " + (e as Error).message });
+        return false;
+    }
+}
+
+// Lista de inscritos do Ulisses com memória curta (20 s): várias mesas conferindo ao mesmo tempo fazem uma chamada só.
+const cacheInscritos: Record<string, { em: number; dados: any[] }> = {};
+async function inscritosUlisses(link: any, fresco = false): Promise<any[]> {
+    const k = `${link.evento_id_ulisses}:${link.filial_id_ulisses}`, c = cacheInscritos[k];
+    if (!fresco && c && Date.now() - c.em < 20000) return c.dados;
+    const dados = await filtrarEmails(supabaseAdmin, link.evento_id_ulisses, link.filial_id_ulisses) || [];
+    cacheInscritos[k] = { em: Date.now(), dados };
+    return dados;
+}
+
+// Reenvia ao Ulisses o que ficou pendente. Roda em segundo plano quando um aparelho pede a lista, no máximo
+// uma vez a cada 30 s por instância e poucas inscrições por vez (não pesa durante o evento).
+let ultimaReconciliacao = 0;
+async function reconciliarUlisses(link: any, forcar = false): Promise<{ enviados: number; restam: number }> {
+    if (!forcar && Date.now() - ultimaReconciliacao < 30000) return { enviados: 0, restam: -1 };
+    ultimaReconciliacao = Date.now();
+    const antes = new Date(Date.now() - (forcar ? 0 : 45000)).toISOString();
+    const { data: pend } = await supabaseAdmin.from("recepcao_registros")
+        .select("id, tipo, email_evento_id, nome, ddd, telefone, email, atualizado_em")
+        .eq("evento_id_ulisses", link.evento_id_ulisses).eq("status", "pendente").in("tipo", ["presenca", "desfazer", "inscricao"])
+        .lt("atualizado_em", antes).order("criado_em", { ascending: true }).limit(60);
+    const linhas = pend || [];
+    if (!linhas.length) return { enviados: 0, restam: 0 };
+    let enviados = 0;
+    try {
+        // Inscrição feita no Ulisses mas ainda não localizada: procura na lista ao vivo.
+        const semId = linhas.filter((l: any) => l.tipo === "inscricao" && !l.email_evento_id && l.email);
+        if (semId.length) {
+            const pessoas = await comTempo(inscritosUlisses(link, true), 12000);
+            for (const l of semId) {
+                const t8 = digitos(l.telefone).slice(-8), email = String(l.email || "").toLowerCase();
+                let eeId: number | null = null, achado: any = null;
+                for (const p of pessoas) {
+                    if (!(t8 && digitos(p.telefone).slice(-8) === t8) && String(p.email || "").trim().toLowerCase() !== email) continue;
+                    for (const ee of p.emailEventos || []) if (ee?.evento?.id === link.evento_id_ulisses && ee.id != null && (!eeId || ee.id > eeId)) { eeId = ee.id; achado = p; }
+                }
+                if (!eeId) continue;
+                await supabaseAdmin.from("ulisses_inscricoes_evento").upsert({
+                    email_evento_id: eeId, evento_id_ulisses: link.evento_id_ulisses, filial_id_ulisses: link.filial_id_ulisses,
+                    pessoa_id_ulisses: achado?.id != null ? String(achado.id) : null, nome: achado?.nome || l.nome, email: achado?.email || l.email,
+                    ddd: l.ddd, telefone: l.telefone, inscrito_em: new Date().toISOString(), visto_em: new Date().toISOString(), removido_em: null,
+                    bruto: { inscricao: { id: eeId, origem: { pontoConversao: "recepcao" } } },
+                }, { onConflict: "email_evento_id", ignoreDuplicates: true });
+                await supabaseAdmin.from("recepcao_registros").update({ email_evento_id: eeId }).eq("id", l.id);
+                l.email_evento_id = eeId;
+            }
+        }
+        // Por inscrição, vale o último gesto da porta (presença ou desfazer).
+        const porInscricao = new Map<number, number[]>();
+        for (const l of linhas) if (l.email_evento_id) porInscricao.set(l.email_evento_id, [...(porInscricao.get(l.email_evento_id) || []), l.id]);
+        for (const [eeId, ids] of porInscricao) {
+            if (enviados >= 8) break;
+            const { data: ult } = await supabaseAdmin.from("recepcao_registros").select("tipo").eq("email_evento_id", eeId)
+                .in("tipo", ["presenca", "desfazer", "inscricao"]).neq("status", "erro").order("criado_em", { ascending: false }).limit(1).maybeSingle();
+            await comTempo(marcarNoUlisses(eeId, ult?.tipo !== "desfazer"), 9000);
+            await supabaseAdmin.from("recepcao_registros").update({ status: "ok", erro: null, atualizado_em: new Date().toISOString() }).in("id", ids);
+            enviados++;
+        }
+    } catch (e) {
+        // Ulisses ainda fora: adia a próxima tentativa destas linhas e segue a vida.
+        await supabaseAdmin.from("recepcao_registros").update({ atualizado_em: new Date().toISOString(), erro: "Falta enviar ao Ulisses: " + (e as Error).message })
+            .in("id", linhas.map((l: any) => l.id)).eq("status", "pendente");
+    }
+    const { count } = await supabaseAdmin.from("recepcao_registros").select("id", { count: "exact", head: true })
+        .eq("evento_id_ulisses", link.evento_id_ulisses).eq("status", "pendente").in("tipo", ["presenca", "desfazer", "inscricao"]);
+    return { enviados, restam: count || 0 };
+}
+function emSegundoPlano(p: Promise<unknown>) {
+    const rt = (globalThis as any).EdgeRuntime;
+    const seguro = p.catch(() => null);
+    if (rt?.waitUntil) rt.waitUntil(seguro);
 }
 
 // ---- Passe do check-in (13/11/2026) ----
@@ -139,12 +235,15 @@ async function passeValidado(corpo: any) {
     const h = (await sha256(token.split(".")[1] || token)).slice(0, 32);
     const clientId = `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
     const ref = String(dados.r || "");
-    await registrar({
+    const novo = await registrar({
         client_id: clientId, link_id: link.id, evento_id_ulisses: dados.ev, tipo: "validado", status: "ok",
         nome: dados.n || null, email_evento_id: ref.startsWith("i") ? Number(ref.slice(1)) || null : null,
         inicio_em: dataOk(dados.d) || null, criado_no_aparelho: dataOk(corpo.lido_em), autor: "Segurança (validador)",
     });
-    return responder({ ok: true });
+    if (novo !== null) return responder({ ok: true });
+    // Já existia: devolve quando foi a primeira leitura (o validador avisa se foi em outro aparelho).
+    const { data: antes } = await supabaseAdmin.from("recepcao_registros").select("criado_no_aparelho, criado_em").eq("client_id", clientId).maybeSingle();
+    return responder({ ok: true, repetido: true, primeira_em: antes?.criado_no_aparelho || antes?.criado_em || null });
 }
 
 // Desenha o QR de um passe (a página /passe guarda o desenho no celular da pessoa). Só para passes com assinatura válida.
@@ -203,7 +302,7 @@ async function autoCheckin(acao: string, corpo: any) {
         .eq("evento_id_ulisses", link.evento_id_ulisses).is("removido_em", null).like("telefone", `%${t8}`);
     let alvo = (locais || []).find((x: any) => primeiroNomeBate(nome, x.nome || ""));
     if (!alvo) {
-        const pessoas = await filtrarEmails(supabaseAdmin, link.evento_id_ulisses, link.filial_id_ulisses).catch(() => []);
+        const pessoas = await comTempo(inscritosUlisses(link), 9000).catch(() => []);
         for (const p of pessoas || []) {
             if (digitos(p.telefone).slice(-8) !== t8 || !primeiroNomeBate(nome, p.nome || "")) continue;
             const ee = (p.emailEventos || []).filter((x: any) => x?.evento?.id === link.evento_id_ulisses && x.id != null).sort((a: any, b: any) => b.id - a.id)[0];
@@ -229,12 +328,7 @@ async function autoCheckin(acao: string, corpo: any) {
         client_id: clientId, link_id: link.id, evento_id_ulisses: link.evento_id_ulisses, tipo: "presenca",
         email_evento_id: alvo.email_evento_id, nome: alvo.nome, pessoa_identificador: alvo.pessoaIdentificador, autor: "Check-in pelo celular (QR)",
     });
-    try { await marcarNoUlisses(alvo.email_evento_id, true); }
-    catch (e) {
-        await concluir(clientId, "erro", { erro: (e as Error).message });
-        return responder({ ok: false, erro: "Não conseguimos confirmar agora. Tente de novo em instantes ou fale com a recepção." }, 502);
-    }
-    await concluir(clientId, "ok");
+    await marcarOuAdiar(clientId, alvo.email_evento_id, true);
     return responder({ ok: true, nome: primeiro, passe: await passeDe() });
 }
 
@@ -278,13 +372,14 @@ async function autoInscrever(link: any, corpo: any) {
             pontoConversao: "recepcao", landingPage: false, atualizar: false, utmSource: "autocheckin", utmMedium: "qr-local",
             utmCampaign: link.campanha_slug || null, pagamento: {}, pagamentoV2: {} } });
     } catch (e) {
-        await concluir(clientId, "erro", { erro: (e as Error).message });
-        return responder({ ok: false, erro: "Não conseguimos registrar sua inscrição agora. Fale com a recepção." }, 502);
+        // Ulisses fora do ar: a pessoa entra do mesmo jeito, com a vaga reservada (o e-mail fica guardado para completar depois).
+        await concluir(clientId, "reservado", { erro: "Inscrição não enviada ao Ulisses: " + (e as Error).message });
+        return responder({ ok: true, nome: nome.split(" ")[0], reservado: true, passe: await emitirPasse(link, { nome, ddd, telefone: numero, ref: `c${clientId.slice(0, 8)}` }).catch(() => null) });
     }
     let eeId: number | null = null, achado: any = null;
-    for (let i = 0; i < 3 && !eeId; i++) {
+    for (let i = 0; i < 2 && !eeId; i++) {
         if (i) await new Promise((r) => setTimeout(r, 2000));
-        for (const p of await filtrarEmails(supabaseAdmin, link.evento_id_ulisses, link.filial_id_ulisses).catch(() => [])) {
+        for (const p of await comTempo(inscritosUlisses(link, true), 9000).catch(() => [])) {
             const bate = digitos(p.telefone).slice(-8) === t8 || String(p.email || "").trim().toLowerCase() === email;
             if (!bate) continue;
             for (const ee of p.emailEventos || []) if (ee?.evento?.id === link.evento_id_ulisses && ee.id != null && (!eeId || ee.id > eeId)) { eeId = ee.id; achado = p; }
@@ -297,10 +392,11 @@ async function autoInscrever(link: any, corpo: any) {
             ddd, telefone: numero, compareceu: null, inscrito_em: new Date().toISOString(), visto_em: new Date().toISOString(), removido_em: null,
             bruto: { inscricao: { id: eeId, origem: { pontoConversao: "recepcao", utmSource: "autocheckin" } } },
         }, { onConflict: "email_evento_id" });
-        try { await marcarNoUlisses(eeId, true); await concluir(clientId, "ok", { email_evento_id: eeId }); }
-        catch (e) { await concluir(clientId, "erro", { email_evento_id: eeId, erro: "Inscrito, presença falhou: " + (e as Error).message }); }
+        await supabaseAdmin.from("recepcao_registros").update({ email_evento_id: eeId }).eq("client_id", clientId);
+        await marcarOuAdiar(clientId, eeId, true);
     } else {
-        await concluir(clientId, "erro", { erro: "Inscrito no Ulisses, inscrição ainda não encontrada para marcar presença." });
+        // Inscrito no Ulisses, mas a lista ainda não mostrou a inscrição: a presença é marcada depois, sozinha.
+        await concluir(clientId, "pendente", { erro: "Inscrito no Ulisses; falta localizar a inscrição para marcar a presença." });
     }
     // A inscrição foi feita; o passe sai mesmo se a presença ficar para a recepção conferir.
     return responder({ ok: true, nome: nome.split(" ")[0], passe: await emitirPasse(link, { nome, ddd, telefone: numero, ref: eeId ? `i${eeId}` : `c${clientId.slice(0, 8)}` }).catch(() => null) });
@@ -360,15 +456,24 @@ Deno.serve(async (req) => {
 
     try {
         if (acao === "lista") {
+            emSegundoPlano(reconciliarUlisses(link));
+            // Versão da lista: se nada mudou desde a última vez deste aparelho, responde só "igual" (poucos bytes).
+            const { data: versao } = await supabaseAdmin.rpc("recepcao_versao", { p_evento_id_ulisses: link.evento_id_ulisses });
+            if (versao && corpo.versao && corpo.versao === versao) return responder({ ok: true, igual: true, versao, agora: new Date().toISOString() });
             const [{ data: ev }, { data: inscritos, error }, { data: regs }] = await Promise.all([
                 supabaseAdmin.from("eventos").select("nome, data, hora, capacidade").eq("id", link.evento_id).maybeSingle(),
                 supabaseAdmin.rpc("recepcao_lista", { p_evento_id_ulisses: link.evento_id_ulisses }),
-                supabaseAdmin.from("recepcao_registros").select("client_id, tipo, email_evento_id, nome, status, erro, veio_com, interesse_curso, autor, criado_em")
-                    .eq("evento_id_ulisses", link.evento_id_ulisses).order("criado_em", { ascending: false }).limit(400),
+                supabaseAdmin.from("recepcao_registros").select("client_id, nome, autor, criado_em")
+                    .eq("evento_id_ulisses", link.evento_id_ulisses).eq("tipo", "inscricao").eq("status", "reservado").order("criado_em", { ascending: false }).limit(400),
             ]);
             if (error) throw new Error(error.message);
-            const reservas = (regs || []).filter((r: any) => r.tipo === "inscricao" && r.status === "reservado").map((r: any) => ({ client_id: r.client_id, nome: r.nome, autor: r.autor, criado_em: r.criado_em }));
-            return responder({ ok: true, evento: ev, rotulo: link.rotulo, inscritos, reservas, capacidade: ev?.capacidade ?? null, registros: regs || [], agora: new Date().toISOString() });
+            return responder({ ok: true, evento: ev, rotulo: link.rotulo, inscritos, reservas: regs || [], capacidade: ev?.capacidade ?? null, versao: versao || null, agora: new Date().toISOString() });
+        }
+
+        // Reenvia agora ao Ulisses o que ficou pendente (botão "Enviar ao Ulisses" / depois do evento).
+        if (acao === "reconciliar") {
+            const r = await reconciliarUlisses(link, true);
+            return responder({ ok: true, ...r });
         }
 
         // ---- Cartão de entrada entregue a quem não tem celular (número impresso no cartão) ----
@@ -401,16 +506,12 @@ Deno.serve(async (req) => {
                 veio_com: texto(corpo.veio_com), interesse_curso: typeof corpo.interesse_curso === "boolean" ? corpo.interesse_curso : null,
                 criado_no_aparelho: texto(corpo.criado_no_aparelho, 40),
             });
-            if (novo === null) {
-                const { data: ja } = await supabaseAdmin.from("recepcao_registros").select("status, erro").eq("client_id", clientId).maybeSingle();
-                if (ja?.status === "ok") return responder({ ok: true, repetido: true });
-            }
-            try { await marcarNoUlisses(eeId, comp); }
-            catch (e) { await concluir(clientId, "erro", { erro: (e as Error).message }); return responder({ ok: false, erro: (e as Error).message }, 502); }
-            await concluir(clientId, "ok", { erro: null });
-            // Todo mundo mostra o passe à segurança, inclusive quem passou pela mesa.
-            const passe = comp ? await emitirPasse(link, { nome: insc.nome || "", ddd: insc.ddd || "", telefone: insc.telefone || "", ref: `i${eeId}` }).catch(() => null) : null;
-            return responder({ ok: true, passe });
+            // Mesmo pedido chegando de novo (reenvio da fila): já está gravado, não repete.
+            if (novo === null) return responder({ ok: true, repetido: true });
+            const noUlisses = await marcarOuAdiar(clientId, eeId, comp, corpo.teste_falha_ulisses === true && /^Teste do Sistema/.test(atendente));
+            // A mesa entrega cartão (sem_passe); o QR code na tela é só para o autoatendimento.
+            const passe = comp && corpo.sem_passe !== true ? await emitirPasse(link, { nome: insc.nome || "", ddd: insc.ddd || "", telefone: insc.telefone || "", ref: `i${eeId}` }).catch(() => null) : null;
+            return responder({ ok: true, passe, pendente_ulisses: !noUlisses });
         }
 
         // Painel de números da recepção (chegadas por horário, canais, perfil, comparecimento).
@@ -436,7 +537,7 @@ Deno.serve(async (req) => {
             if (typeof corpo.interesse_curso === "boolean") mudar.interesse_curso = corpo.interesse_curso;
             const { data: alvo } = await supabaseAdmin.from("recepcao_registros").select("id").eq("email_evento_id", eeId)
                 .in("tipo", ["presenca", "inscricao"]).order("criado_em", { ascending: false }).limit(1).maybeSingle();
-            if (!alvo) return responder({ ok: false, erro: "Marque a presença antes." }, 404);
+            if (!alvo) return responder({ ok: false, erro: "Marque a presença antes." }, 503);
             await supabaseAdmin.from("recepcao_registros").update(mudar).eq("id", alvo.id);
             return responder({ ok: true });
         }
@@ -508,7 +609,7 @@ Deno.serve(async (req) => {
             const email = String(corpo.email || "").trim().toLowerCase();
             const tokens = nome.split(" ").filter((t) => t.length >= 2 && !["DA", "DE", "DO", "DAS", "DOS"].includes(t));
             if (tokens.length < 2 && t8.length < 8 && !email.includes("@")) return responder({ ok: true, achados: [] });
-            const pessoas = await filtrarEmails(supabaseAdmin, link.evento_id_ulisses, link.filial_id_ulisses);
+            const pessoas = await comTempo(inscritosUlisses(link), 10000);
             const achados: any[] = [];
             for (const p of pessoas || []) {
                 const ee = (p.emailEventos || []).filter((x: any) => x?.evento?.id === link.evento_id_ulisses && x.id != null).sort((a: any, b: any) => b.id - a.id)[0];
@@ -570,7 +671,7 @@ Deno.serve(async (req) => {
                     veio_com: texto(corpo.veio_com), interesse_curso: typeof corpo.interesse_curso === "boolean" ? corpo.interesse_curso : null,
                     criado_no_aparelho: texto(corpo.criado_no_aparelho, 40),
                 });
-                const passeR = await emitirPasse(link, { nome, ddd, telefone: tel, ref: `c${String(clientId).slice(0, 8)}` }).catch(() => null);
+                const passeR = corpo.sem_passe === true ? null : await emitirPasse(link, { nome, ddd, telefone: tel, ref: `c${String(clientId).slice(0, 8)}` }).catch(() => null);
                 return responder({ ok: true, reservado: true, repetido: nova === null, passe: passeR });
             }
 
@@ -580,11 +681,14 @@ Deno.serve(async (req) => {
                 veio_com: texto(corpo.veio_com), interesse_curso: typeof corpo.interesse_curso === "boolean" ? corpo.interesse_curso : null,
                 criado_no_aparelho: texto(corpo.criado_no_aparelho, 40),
             });
+            // Mesmo pedido chegando de novo (reenvio da fila): não inscreve duas vezes.
             if (novo === null) {
                 const { data: ja } = await supabaseAdmin.from("recepcao_registros").select("status, email_evento_id").eq("client_id", clientId).maybeSingle();
-                if (ja?.status === "ok") return responder({ ok: true, repetido: true, email_evento_id: ja.email_evento_id });
+                return responder({ ok: true, repetido: true, reservado: ja?.status === "reservado", email_evento_id: ja?.email_evento_id || null });
             }
+            const passeMesa = async (ref: string) => corpo.sem_passe === true ? null : await emitirPasse(link, { nome, ddd, telefone: tel, ref }).catch(() => null);
             try {
+                if (corpo.teste_falha_ulisses === true && /^Teste do Sistema/.test(atendente)) throw new Error("falha simulada (teste)");
                 await chamarUlisses(supabaseAdmin, "/salvarInscricaoV2", {
                     method: "POST", autenticar: false,
                     corpo: {
@@ -596,14 +700,16 @@ Deno.serve(async (req) => {
                     },
                 });
             } catch (e) {
-                await concluir(clientId, "erro", { erro: (e as Error).message });
-                return responder({ ok: false, erro: (e as Error).message }, 502);
+                // Ulisses fora do ar: a pessoa entra do mesmo jeito, com a vaga reservada. O e-mail fica guardado
+                // no registro para completar a inscrição depois do evento.
+                await concluir(clientId, "reservado", { erro: "Inscrição não enviada ao Ulisses: " + (e as Error).message });
+                return responder({ ok: true, reservado: true, ulisses_fora: true, passe: await passeMesa(`c${String(clientId).slice(0, 8)}`) });
             }
             // Acha a inscrição recém-criada para marcar a presença.
             let eeId: number | null = null, pessoaAchada: any = null;
-            for (let tentativa = 0; tentativa < 3 && !eeId; tentativa++) {
+            for (let tentativa = 0; tentativa < 2 && !eeId; tentativa++) {
                 if (tentativa) await new Promise((r) => setTimeout(r, 2000));
-                const pessoas = await filtrarEmails(supabaseAdmin, link.evento_id_ulisses, link.filial_id_ulisses);
+                const pessoas = await comTempo(inscritosUlisses(link, true), 9000).catch(() => [] as any[]);
                 const t8 = tel.slice(-8);
                 for (const p of pessoas || []) {
                     const bateTel = digitos(p.telefone).slice(-8) === t8 && digitos(p.ddd).slice(-2) === ddd;
@@ -615,8 +721,9 @@ Deno.serve(async (req) => {
                 }
             }
             if (!eeId) {
-                await concluir(clientId, "erro", { erro: "Inscrito no Ulisses, mas a presença não pôde ser marcada (inscrição não encontrada ainda)." });
-                return responder({ ok: false, inscrito: true, erro: "Inscrição feita no Ulisses. A presença não foi marcada: procure o nome na lista em 1 minuto." }, 502);
+                // Inscrito no Ulisses, mas a lista ainda não mostrou a inscrição: a presença é marcada depois, sozinha.
+                await concluir(clientId, "pendente", { erro: "Inscrito no Ulisses; falta localizar a inscrição para marcar a presença." });
+                return responder({ ok: true, pendente_ulisses: true, passe: await passeMesa(`c${String(clientId).slice(0, 8)}`) });
             }
             await supabaseAdmin.from("ulisses_inscricoes_evento").upsert({
                 email_evento_id: eeId, evento_id_ulisses: link.evento_id_ulisses, filial_id_ulisses: link.filial_id_ulisses,
@@ -625,14 +732,9 @@ Deno.serve(async (req) => {
                 inscrito_em: new Date().toISOString(), visto_em: new Date().toISOString(), removido_em: null,
                 bruto: { inscricao: { id: eeId, origem: { pontoConversao: "recepcao", utmSource: "crm-recepcao" } } },
             }, { onConflict: "email_evento_id" });
-            try { await marcarNoUlisses(eeId, true); }
-            catch (e) {
-                await concluir(clientId, "erro", { email_evento_id: eeId, erro: "Inscrito, mas a presença falhou: " + (e as Error).message });
-                return responder({ ok: false, inscrito: true, email_evento_id: eeId, erro: "Inscrição feita. A presença falhou: marque de novo pela lista." }, 502);
-            }
-            await concluir(clientId, "ok", { email_evento_id: eeId, erro: null });
-            const passeI = await emitirPasse(link, { nome, ddd, telefone: tel, ref: `i${eeId}` }).catch(() => null);
-            return responder({ ok: true, email_evento_id: eeId, passe: passeI });
+            await supabaseAdmin.from("recepcao_registros").update({ email_evento_id: eeId }).eq("client_id", clientId);
+            const marcou = await marcarOuAdiar(clientId, eeId, true);
+            return responder({ ok: true, email_evento_id: eeId, pendente_ulisses: !marcou, passe: await passeMesa(`i${eeId}`) });
         }
 
         return responder({ ok: false, erro: "Ação desconhecida." }, 400);

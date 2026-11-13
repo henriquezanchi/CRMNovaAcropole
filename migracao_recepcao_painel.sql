@@ -26,14 +26,14 @@ reg as (
                 else 'Recepção (atendente)' end canal,
            case when r.tipo = 'inscricao' then true else false end na_porta
     from recepcao_registros r
-    where r.evento_id_ulisses = p_evento_id_ulisses and r.tipo in ('presenca', 'inscricao') and r.status in ('ok', 'reservado')
+    where r.evento_id_ulisses = p_evento_id_ulisses and r.tipo in ('presenca', 'inscricao') and r.status in ('ok', 'reservado', 'pendente')
     -- A chegada que vale é a mais recente (depois de um "desfazer", a pessoa pode ter entrado por outro canal).
     order by coalesce(r.email_evento_id::text, r.client_id::text), r.criado_em desc
 ),
 -- Quem desfez a presença depois não conta.
 desfeitos as (
     select r.email_evento_id from recepcao_registros r
-    where r.evento_id_ulisses = p_evento_id_ulisses and r.status = 'ok' and r.email_evento_id is not null
+    where r.evento_id_ulisses = p_evento_id_ulisses and r.status in ('ok', 'pendente') and r.email_evento_id is not null
     group by r.email_evento_id
     having max(r.criado_em) filter (where r.tipo = 'desfazer') > coalesce(max(r.criado_em) filter (where r.tipo in ('presenca', 'inscricao')), '-infinity')
 ),
@@ -59,7 +59,7 @@ select jsonb_build_object(
         'veio_acompanhado', (select count(*) from chegadas where veio_com is not null),
         'querem_info_curso', (select count(*) from chegadas where interesse_curso),
         'nao_querem_info', (select count(*) from chegadas where interesse_curso = false),
-        'faltaram', (select count(*) from ins where not compareceu and not exists (select 1 from chegadas c where c.email_evento_id = ins.email_evento_id)),
+        'faltaram', (select count(*) from ins where not coalesce(compareceu, false) and not exists (select 1 from chegadas c where c.email_evento_id = ins.email_evento_id)),
         'primeira', (select min(local_em) from chegadas), 'ultima', (select max(local_em) from chegadas)),
     -- Chegadas a cada 15 minutos, por canal.
     'por_horario', coalesce((select jsonb_agg(jsonb_build_object('faixa', faixa, 'total', total, 'canais', canais) order by faixa) from (
@@ -96,6 +96,9 @@ select jsonb_build_object(
         where seg between 0 and 4 * 3600
         group by entrada) t), '[]'),
     'validacoes', (select count(*) from recepcao_registros r where r.evento_id_ulisses = p_evento_id_ulisses and r.tipo in ('validado', 'cartao_lido')),
+    -- Registros que ainda não chegaram ao Ulisses (reenviados sozinhos) e vagas reservadas a completar depois.
+    'pendentes_ulisses', (select count(*) from recepcao_registros r where r.evento_id_ulisses = p_evento_id_ulisses and r.status = 'pendente' and r.tipo in ('presenca', 'desfazer', 'inscricao')),
+    'reservas_com_email', (select count(*) from recepcao_registros r where r.evento_id_ulisses = p_evento_id_ulisses and r.status = 'reservado' and r.email is not null),
     -- Escolas de origem de quem chegou (só alunos têm escola).
     'por_escola', coalesce((select jsonb_agg(jsonb_build_object('escola', escola, 'presentes', n) order by n desc) from (
         select coalesce(escola, 'De fora') escola, count(*) n from chegadas group by 1) t), '[]')

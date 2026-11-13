@@ -1,7 +1,7 @@
 // Guarda a página da recepção no aparelho para abrir sem internet (13/11/2026).
 // Rede primeiro (pega a versão nova quando há conexão); sem rede, usa a cópia guardada.
 // Só cuida dos arquivos da própria página; as chamadas ao servidor não passam por aqui.
-var CACHE = 'recepcao-v14';
+var CACHE = 'recepcao-v15';
 var ARQUIVOS = ['recepcao.html', 'js/recepcao.js', 'css/recepcao.css', 'img/logo-nova-acropole.png', 'recepcao.webmanifest'];
 
 self.addEventListener('install', function (e) {
@@ -18,10 +18,19 @@ self.addEventListener('fetch', function (e) {
   var caminho = url.pathname.replace(/^\//, '');
   if (caminho === 'recepcao') caminho = 'recepcao.html';
   if (ARQUIVOS.indexOf(caminho) < 0) return;
-  e.respondWith(
+  // Rede primeiro, mas sem esperar para sempre: com internet lenta (3 s sem resposta), abre a cópia guardada
+  // e a versão nova fica guardada para a próxima vez.
+  e.respondWith(new Promise(function (resolver) {
+    var feito = false;
+    var entregar = function (r) { if (!feito && r) { feito = true; resolver(r); } };
+    var relogio = setTimeout(function () { caches.match(caminho).then(entregar); }, 3000);
     fetch(e.request).then(function (r) {
+      clearTimeout(relogio);
       if (r.ok) { var copia = r.clone(); caches.open(CACHE).then(function (c) { c.put(caminho, copia); }); }
-      return r;
-    }).catch(function () { return caches.match(caminho); })
-  );
+      entregar(r);
+    }).catch(function () {
+      clearTimeout(relogio);
+      caches.match(caminho).then(function (c) { entregar(c || Response.error()); });
+    });
+  }));
 });
