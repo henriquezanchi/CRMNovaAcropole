@@ -15,7 +15,7 @@ ins as (
     from recepcao_lista(p_evento_id_ulisses) l
     join ulisses_inscricoes_evento u on u.email_evento_id = l.email_evento_id
 ),
--- Primeira chegada registrada de cada pessoa (inscrição na porta ou presença), com o canal.
+-- Chegada registrada de cada pessoa (inscrição na porta ou presença), com o canal.
 reg as (
     select distinct on (coalesce(r.email_evento_id::text, r.client_id::text))
            coalesce(r.email_evento_id::text, r.client_id::text) chave, r.email_evento_id, r.tipo, r.status,
@@ -27,7 +27,8 @@ reg as (
            case when r.tipo = 'inscricao' then true else false end na_porta
     from recepcao_registros r
     where r.evento_id_ulisses = p_evento_id_ulisses and r.tipo in ('presenca', 'inscricao') and r.status in ('ok', 'reservado')
-    order by coalesce(r.email_evento_id::text, r.client_id::text), r.criado_em
+    -- A chegada que vale é a mais recente (depois de um "desfazer", a pessoa pode ter entrado por outro canal).
+    order by coalesce(r.email_evento_id::text, r.client_id::text), r.criado_em desc
 ),
 -- Quem desfez a presença depois não conta.
 desfeitos as (
