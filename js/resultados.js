@@ -87,6 +87,17 @@
   function cartao(n, r, d) {
     return el('div', { classe: 'cartao' }, [el('div', { classe: 'n', texto: n }), el('div', { classe: 'r', texto: r }), d ? el('div', { classe: 'd', texto: d }) : null]);
   }
+  // Vieram pelo convite (13/11/2026): em evento, quem é convidado quase nunca vai sozinho. Pedido do
+  // usuário: somar uma estimativa de acompanhantes de 75% dos inscritos após o convite, sempre
+  // identificada como estimativa e sem passar do total de outros inscritos.
+  var FATOR_ACOMPANHANTES = 0.75;
+  function cartaoViaConvite(n, semEstimativa) {
+    var via = Number(n.inscritos_via_convite) || 0;
+    if (semEstimativa || !via) return cartao(num(via), 'inscritos após o convite', '');
+    var extra = Math.min(Math.round(via * FATOR_ACOMPANHANTES), Math.max(0, (Number(n.inscritos_total) || 0) - via));
+    return cartao('≈ ' + num(via + extra), 'inscritos após o convite (estimativa)',
+      num(via) + ' confirmados + ~' + num(extra) + ' acompanhantes');
+  }
   // Chave de ordenação a partir do texto da célula: datas "DD/MM[/AAAA] [HH:MM]" viram AAAAMMDDHHMM,
   // números ("1.234", "12%") viram número, o resto é texto sem acento. Vazio vai sempre para o fim.
   function chaveOrdem(v) {
@@ -520,7 +531,7 @@
       cartao(num(n.entregues), 'entregues', pct(n.entregues, n.convites_enviados) + ' dos enviados'),
       cartao(num(n.responderam), 'responderam', pct(n.responderam, n.entregues) + ' dos entregues'),
       cartao(num(n.vao), turma ? 'querem entrar' : 'disseram que vão', num(n.interessados) + ' interessados'),
-      cartao(num(n.inscritos_via_convite), 'inscritos após o convite', ''),
+      cartaoViaConvite(n, turma || semEvento),
       cartao(num(n.inscritos_total), turma ? 'inscritos na turma' : (n.inscricoes_ulisses > n.inscritos_total ? 'pessoas inscritas no Ulisses (' + num(n.inscricoes_ulisses) + ' inscrições)' : 'inscritos no Ulisses'), num(n.inscritos_alunos) + ' alunos · ' + num(n.inscritos_fora) + ' de fora' + (n.possiveis_alunos ? ' · ' + num(n.possiveis_alunos) + ' a conferir' : '')),
       cartao(num(n.nao_vao), turma ? 'não vão agora' : 'não podem ir', num(n.pediram_parar) + ' pediram para não receber'),
       cartao(num(n.segunda_tentativa), 'segunda tentativa', 'para quem não respondeu em 24h')
