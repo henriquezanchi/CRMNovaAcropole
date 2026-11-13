@@ -11449,3 +11449,13 @@ DMF cancelada (44 convites + 11 2ªs tentativas) e `cota_diaria` do `dmf-2026` =
   lido) recebe UMA mensagem fixa (`TEXTO_CONFIRMACAO_NAO_CONTATAR`, `_shared/preferencia-contato.ts`) agradecendo e
   confirmando a retirada da lista. `whatsapp-send` só deixa esse texto exato passar pela trava de "Não Contatar", e só
   se a pessoa escreveu nos últimos 10 min. Não sai no aviso 131050 (marketing parado pelo próprio WhatsApp).
+
+## Cartão da Agenda conta pessoas pela lista do Ulisses (13/11/2026)
+
+O cartão do evento contava fichas de `evento_leads` (`origem='ulisses'`), e quem tem cadastro
+em duas escolas (ficha do Mercúrio numa, do Ulisses na outra) contava 2x — DMF de Barra mostrava
+28 contra 26 no Ulisses/painel. Juntar essas fichas não resolve: `crm_mesclar_cadastros` recusa
+escolas diferentes e a importação do Ulisses recria a ficha. Agora, para evento com
+`evento_id_ulisses`, `carregarResumoParticipantes()` (`js/eventos.js`) usa
+`ulisses_contagem_inscritos(p_eventos)` (`migracao_contagem_inscritos_ulisses.sql`, JÁ RODADA):
+só números, mesma chave de pessoa do painel; a tabela segue fechada para o navegador.

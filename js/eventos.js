@@ -153,6 +153,26 @@ async function carregarResumoParticipantes(eventos) {
         else r.convidadosCrm++;
     });
 
+    // Evento ligado ao Ulisses: "inscritos no Ulisses" vem da lista do próprio Ulisses, contando
+    // pessoas (13/11/2026). Contar fichas do CRM somava 2x quem tem cadastro em duas escolas
+    // (DMF de Barra: 28 no cartão, 26 no Ulisses). Sem a lista sincronizada, fica a contagem antiga.
+    const idsUlisses = eventos.filter(ev => idsNormais.includes(ev.id) && ev.evento_id_ulisses);
+    if (idsUlisses.length) {
+        const { data: cont, error: erroCont } = await window.supabaseClient
+            .rpc('ulisses_contagem_inscritos', { p_eventos: idsUlisses.map(ev => Number(ev.evento_id_ulisses)) });
+        if (erroCont) {
+            console.warn('Não foi possível contar os inscritos do Ulisses.', erroCont);
+        } else {
+            const porUlisses = new Map((cont || []).map(c => [Number(c.evento_id_ulisses), c]));
+            idsUlisses.forEach(ev => {
+                const c = porUlisses.get(Number(ev.evento_id_ulisses));
+                if (!c) return;
+                if (!resumoPorId.has(ev.id)) resumoPorId.set(ev.id, resumoParticipantesVazio());
+                resumoPorId.get(ev.id).inscritosUlisses = c.inscritos;
+            });
+        }
+    }
+
     idsNormais.forEach(id => {
         if (resumoPorId.has(id)) participantesResumoPorEvento.set(id, resumoPorId.get(id));
     });
