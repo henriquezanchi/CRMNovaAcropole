@@ -259,3 +259,5 @@ body.modo-totem .pp-cartao { display: none; }
 .sim-box details { margin: 4px 0 10px; }
 .sim-box summary { cursor: pointer; font-weight: 700; color: var(--verde); }
 .sim-res { margin-top: 12px; }
+
+.sim-res .num-cartao strong { font-size: 22px; white-space: nowrap; }
