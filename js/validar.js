@@ -17,6 +17,27 @@
   function hora(iso) { var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); }
   function el(tag, classe, texto) { var n = document.createElement(tag); if (classe) n.className = classe; if (texto != null) n.textContent = texto; return n; }
 
+  // Cada leitura vai para o servidor (mede a jornada até a entrada). Sem internet fica guardada e sobe depois.
+  var FUNCAO = 'https://eovgljcowblwoxmobeno.supabase.co/functions/v1/recepcao-evento';
+  function lerPendentes() { try { return JSON.parse(localStorage.getItem('vl_pendentes') || '[]'); } catch (e) { return []; } }
+  function gravarPendentes(p) { try { localStorage.setItem('vl_pendentes', JSON.stringify(p.slice(-500))); } catch (e) { /* ok */ } }
+  var enviandoLeituras = false;
+  function enviarLeituras() {
+    var p = lerPendentes();
+    if (enviandoLeituras || !p.length || navigator.onLine === false) return;
+    enviandoLeituras = true;
+    var item = p[0];
+    fetch(FUNCAO, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(item) })
+      .then(function (r) { return r.status; })
+      .then(function (st) {
+        enviandoLeituras = false;
+        if (st < 500) { var q = lerPendentes(); q.shift(); gravarPendentes(q); setTimeout(enviarLeituras, 200); }
+      }, function () { enviandoLeituras = false; });
+  }
+  function registrarLeitura(acao, token) { var p = lerPendentes(); p.push({ acao: acao, token: token, lido_em: new Date().toISOString() }); gravarPendentes(p); enviarLeituras(); }
+  window.addEventListener('online', enviarLeituras);
+  setInterval(enviarLeituras, 30000);
+
   function mostrar(tipo, titulo, linhas) {
     var r = $('vlResultado'); r.className = 'vl-resultado vl-' + tipo; r.textContent = '';
     r.appendChild(el('p', 'vl-status', titulo));
@@ -28,7 +49,7 @@
     var token = String(texto || '').trim();
     var i = token.indexOf('#'); if (i >= 0) token = token.slice(i + 1);
     var partes = token.split('.');
-    if (partes.length !== 2) { mostrar('erro', '✗ Não é um passe válido', [['vl-dica', 'Este QR code não é de entrada deste evento.']]); return; }
+    if (partes.length !== 2) { mostrar('erro', '✗ QR code não reconhecido', [['vl-dica', 'Este QR code não é de entrada deste evento.']]); return; }
     var dados, bytes;
     try { bytes = b64u(partes[0]); dados = JSON.parse(new TextDecoder().decode(bytes)); } catch (e) { mostrar('erro', '✗ QR code ilegível', []); return; }
     (chave ? Promise.resolve(chave) : crypto.subtle.importKey('jwk', CHAVE_PUBLICA, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']).then(function (k) { chave = k; return k; }))
@@ -39,7 +60,7 @@
         // recolhe e devolve à recepção. A leitura libera o cartão. Com internet, mostra com quem ele está.
         if (dados.c) { lerCartao(dados, token); contar(); return; }
         var vistos = lerVistos(), id = partes[1].slice(0, 24), antes = vistos[id];
-        if (!antes) { vistos[id] = new Date().toISOString(); gravarVistos(vistos); }
+        if (!antes) { vistos[id] = new Date().toISOString(); gravarVistos(vistos); registrarLeitura('passe_validado', token); }
         var linhas = [['vl-info', dados.en || ''], ['vl-nome', dados.n || ''], ['vl-info', dados.t || ''], ['vl-info', 'Check-in: ' + hora(dados.d)]];
         if (antes) {
           linhas.push(['vl-dica', 'Este QR code já foi conferido neste celular em ' + hora(antes) + '. Confira se é a mesma pessoa.']);
@@ -56,7 +77,7 @@
     var ctl = window.AbortController ? new AbortController() : null;
     var tempo = setTimeout(function () { if (ctl) ctl.abort(); }, 6000);
     fetch('https://eovgljcowblwoxmobeno.supabase.co/functions/v1/recepcao-evento', { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ acao: 'cartao_lido', token: token }), signal: ctl ? ctl.signal : undefined })
+      body: JSON.stringify({ acao: 'cartao_lido', token: token, lido_em: new Date().toISOString() }), signal: ctl ? ctl.signal : undefined })
       .then(function (r) { return r.json(); })
       .then(function (j) {
         clearTimeout(tempo);
@@ -64,7 +85,10 @@
         else if (j.ok) mostrar('repetido', '✓ Válido · sem nome', base.concat([['vl-dica', j.ja_lido_em ? 'Este cartão já passou aqui às ' + hora(j.ja_lido_em) + (j.nome_anterior ? ' (' + j.nome_anterior + ')' : '') + ' e a recepção não o entregou de novo. Confira com a recepção.' : 'A recepção ainda não registrou com quem está este cartão. Pergunte o nome e confira com a recepção.'], fim]));
         else throw new Error();
       })
-      .catch(function () { clearTimeout(tempo); mostrar('ok', '✓ CARTÃO VÁLIDO', base.concat([['vl-info', 'Sem internet: não foi possível ver o nome.'], fim])); });
+      .catch(function () {
+        clearTimeout(tempo); mostrar('ok', '✓ CARTÃO VÁLIDO', base.concat([['vl-info', 'Sem internet: não foi possível ver o nome.'], fim]));
+        registrarLeitura('cartao_lido', token); // libera o cartão quando a internet voltar
+      });
   }
 
   // ---------- Página do passe (passe.html / /passe#<token>) ----------

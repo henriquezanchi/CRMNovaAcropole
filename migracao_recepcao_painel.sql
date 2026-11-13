@@ -85,6 +85,17 @@ select jsonb_build_object(
                    count(*) n, count(*) filter (where compareceu or exists (select 1 from chegadas c where c.email_evento_id = x.email_evento_id)) p
             from (select ins.*, (select e.data from eventos e where e.evento_id_ulisses = p_evento_id_ulisses limit 1) - (ins_em at time zone 'America/Sao_Paulo')::date d from ins) x
             group by 1, 2) t), '[]')),
+    -- Jornada medida: do check-in (QR code) ou da entrega do cartão até a leitura na segurança.
+    'jornada', coalesce((select jsonb_agg(jsonb_build_object('entrada', entrada, 'pessoas', n, 'mediana_seg', med, 'p90_seg', p90, 'max_seg', mx) order by entrada) from (
+        select entrada, count(*) n, round(percentile_cont(0.5) within group (order by seg)) med,
+               round(percentile_cont(0.9) within group (order by seg)) p90, round(max(seg)) mx
+        from (select case when r.tipo = 'cartao_lido' then 'Cartão (mesa da recepção)' else 'QR code no celular' end entrada,
+                     extract(epoch from (coalesce(r.criado_no_aparelho, r.criado_em) - r.inicio_em)) seg
+              from recepcao_registros r
+              where r.evento_id_ulisses = p_evento_id_ulisses and r.tipo in ('validado', 'cartao_lido') and r.inicio_em is not null) x
+        where seg between 0 and 4 * 3600
+        group by entrada) t), '[]'),
+    'validacoes', (select count(*) from recepcao_registros r where r.evento_id_ulisses = p_evento_id_ulisses and r.tipo in ('validado', 'cartao_lido')),
     -- Escolas de origem de quem chegou (só alunos têm escola).
     'por_escola', coalesce((select jsonb_agg(jsonb_build_object('escola', escola, 'presentes', n) order by n desc) from (
         select coalesce(escola, 'De fora') escola, count(*) n from chegadas group by 1) t), '[]')

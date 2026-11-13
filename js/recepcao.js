@@ -824,6 +824,9 @@
   function carregarNumeros() {
     clearTimeout(timerNumeros);
     if (!online || !sessao) { $('painelNumeros').textContent = ''; $('painelNumeros').appendChild(el('p', { classe: 'vazio', texto: 'Os números precisam de internet.' })); return; }
+    // Não redesenha enquanto alguém mexe na simulação (perderia o que está sendo digitado).
+    var foco = document.activeElement;
+    if (foco && foco.closest && foco.closest('.sim-box')) { timerNumeros = setTimeout(carregarNumeros, 30000); return; }
     chamar({ acao: 'numeros' }).then(function (j) {
       if (j.ok) desenharNumeros(j.numeros || {}, j.agora);
       if (!$('abaNumeros').hidden) timerNumeros = setTimeout(carregarNumeros, 30000);
@@ -876,7 +879,109 @@
       area.appendChild(el('h3', { texto: 'Presentes por escola' }));
       area.appendChild(tabelaNum(['Escola', 'Presentes'], esc.map(function (e) { return [String(e.escola).replace(/^Goiânia - /, ''), e.presentes]; })));
     }
+    desenharJornada(area, n, r);
     area.appendChild(el('p', { classe: 'dica', texto: 'Atualiza sozinho a cada 30 segundos. Última atualização: ' + new Date(agora || Date.now()).toLocaleTimeString('pt-BR') + '.' }));
+  }
+
+  // ---------- Tempo da jornada: medido (segurança) + simulação da fila ----------
+  function mmss(seg) { seg = Math.round(seg || 0); var m = Math.floor(seg / 60), x = seg % 60; return m ? m + ' min ' + (x < 10 ? '0' : '') + x + ' s' : x + ' s'; }
+  var simParams = null;
+  // Tempos de atendimento de uma pessoa real (segundos). O sistema responde em menos de 2 s em cada passo
+  // (medido em 13/11: check-in pelo celular 1,6 s; marcar presença 0,7 s; vincular cartão 0,4 s; leitura 0,2 s).
+  var SIM_TEMPOS = [['triagem', 'Triagem (pergunta e orienta)', 10], ['celular', 'Check-in pelo celular (QR do cartaz)', 60],
+    ['mesaInscrito', 'Mesa: já inscrito (busca, Chegou, cartão)', 35], ['mesaCadastro', 'Mesa: cadastro na hora + cartão', 100],
+    ['caminhada', 'Caminhar da mesa até a segurança', 15], ['segQr', 'Segurança: ler QR code do celular', 6], ['segCartao', 'Segurança: ler e recolher cartão', 8]];
+  function simularEntrada(p) {
+    var seed = 12345;
+    function rnd() { seed |= 0; seed = seed + 0x6D2B79F5 | 0; var t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }
+    function varia(t) { return t * (0.6 + 0.8 * rnd()); }
+    function chegada() { var J = p.janela * 60, c = 0.75, u = rnd(); return u < c ? J * Math.sqrt(u * c) : J - J * Math.sqrt((1 - u) * (1 - c)); }
+    // Fila com vários atendentes, por ordem de chegada.
+    function fila(itens, servidores, campoServ) {
+      var livres = []; for (var i = 0; i < servidores; i++) livres.push(0);
+      itens.slice().sort(function (a, b) { return a._pronto - b._pronto; }).forEach(function (x) {
+        var k = 0; for (var j = 1; j < livres.length; j++) if (livres[j] < livres[k]) k = j;
+        x._ini = Math.max(livres[k], x._pronto); livres[k] = x._ini + x[campoServ]; x._fim = livres[k];
+      });
+    }
+    function maiorFila(itens) {
+      var ev = []; itens.forEach(function (x) { if (x._ini > x._pronto + 0.5) { ev.push([x._pronto, 1]); ev.push([x._ini, -1]); } });
+      ev.sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; }); var c = 0, m = 0; ev.forEach(function (e) { c += e[1]; m = Math.max(m, c); }); return m;
+    }
+    var R = 20, acum = { total: [], porCaminho: {}, filas: { triagem: 0, mesas: 0, seguranca: 0 }, fimApos: 0 };
+    for (var rep = 0; rep < R; rep++) {
+      var gente = [];
+      for (var i = 0; i < p.pessoas; i++) gente.push({ chegou: chegada(), semInscricao: rnd() < p.semInscricao / 100, celular: rnd() < p.celular / 100, sTri: varia(p.t.triagem) });
+      gente.forEach(function (x) { x._pronto = x.chegou; }); fila(gente, p.triagemN || 1, 'sTri');
+      acum.filas.triagem = Math.max(acum.filas.triagem, maiorFila(gente));
+      gente.forEach(function (x) { x.fimTri = x._fim; });
+      var mesa = gente.filter(function (x) { return !x.celular; });
+      mesa.forEach(function (x) { x._pronto = x.fimTri; x.sMesa = varia(x.semInscricao ? p.t.mesaCadastro : p.t.mesaInscrito); });
+      fila(mesa, p.mesas, 'sMesa'); acum.filas.mesas = Math.max(acum.filas.mesas, maiorFila(mesa));
+      gente.forEach(function (x) {
+        x._pronto = x.celular ? x.fimTri + varia(p.t.celular) : x._fim + varia(p.t.caminhada);
+        x.sSeg = varia(x.celular ? p.t.segQr : p.t.segCartao);
+      });
+      fila(gente, p.seguranca, 'sSeg'); acum.filas.seguranca = Math.max(acum.filas.seguranca, maiorFila(gente));
+      var ultChegada = 0, ultEntrada = 0;
+      gente.forEach(function (x) {
+        var dur = x._fim - x.chegou, cam = x.celular ? (x.semInscricao ? 'Inscrição pelo celular' : 'Check-in pelo celular') : (x.semInscricao ? 'Mesa: cadastro na hora' : 'Mesa: já inscrito');
+        acum.total.push(dur); (acum.porCaminho[cam] = acum.porCaminho[cam] || []).push(dur);
+        ultChegada = Math.max(ultChegada, x.chegou); ultEntrada = Math.max(ultEntrada, x._fim);
+      });
+      acum.fimApos = Math.max(acum.fimApos, ultEntrada - ultChegada);
+    }
+    function est(v) { v = v.slice().sort(function (a, b) { return a - b; }); return { n: Math.round(v.length / R), med: v[Math.floor(v.length * 0.5)], p90: v[Math.floor(v.length * 0.9)], max: v[v.length - 1] }; }
+    var out = { total: est(acum.total), caminhos: {}, filas: acum.filas, fimApos: acum.fimApos };
+    Object.keys(acum.porCaminho).sort().forEach(function (k) { out.caminhos[k] = est(acum.porCaminho[k]); });
+    return out;
+  }
+  function desenharJornada(area, n, r) {
+    area.appendChild(el('h3', { texto: 'Tempo da jornada até a entrada' }));
+    var jor = n.jornada || [];
+    if (jor.length) {
+      area.appendChild(el('p', { classe: 'dica', texto: 'Medido: do check-in (ou da entrega do cartão) até a leitura na segurança.' }));
+      area.appendChild(tabelaNum(['Entrada', 'Pessoas', 'Metade em até', '9 em 10 em até', 'Mais demorado'],
+        jor.map(function (j) { return [j.entrada, j.pessoas, mmss(j.mediana_seg), mmss(j.p90_seg), mmss(j.max_seg)]; })));
+    } else area.appendChild(el('p', { classe: 'vazio', texto: 'Medido: aparece quando a segurança começar a ler os QR codes e cartões.' }));
+    var box = el('div', { classe: 'sim-box' }); area.appendChild(box);
+    if (!simParams) {
+      var t = {}; SIM_TEMPOS.forEach(function (x) { t[x[0]] = x[2]; });
+      simParams = { pessoas: Math.max(60, Math.round((r.inscritos || 150) * 0.6) + 20), semInscricao: 15, celular: 40, janela: 60, triagemN: 1, mesas: 3, seguranca: 1, t: t };
+    }
+    desenharSimulacao(box);
+  }
+  function desenharSimulacao(box) {
+    box.textContent = '';
+    var p = simParams;
+    box.appendChild(el('h4', { texto: 'Simulação da entrada (estimativa)' }));
+    box.appendChild(el('p', { classe: 'dica', texto: 'Do momento em que a pessoa chega até entrar no espaço do evento, com filas. Mude os números e toque em Simular.' }));
+    function campo(rot, chave, sub) {
+      var i = el('input', { type: 'number', min: '0', value: String(sub ? p.t[chave] : p[chave]) });
+      i.addEventListener('change', function () { var v = Math.max(0, Number(i.value) || 0); if (sub) p.t[chave] = v; else p[chave] = v; });
+      return el('label', { classe: 'sim-campo' }, [el('span', { texto: rot }), i]);
+    }
+    box.appendChild(el('div', { classe: 'sim-campos' }, [campo('Pessoas chegando', 'pessoas'), campo('% sem inscrição', 'semInscricao'), campo('% fazem check-in pelo celular', 'celular'),
+      campo('Chegadas ao longo de (min)', 'janela'), campo('Pessoas na triagem', 'triagemN'), campo('Mesas de atendimento', 'mesas'), campo('Seguranças lendo QR', 'seguranca')]));
+    box.appendChild(el('details', {}, [el('summary', { texto: 'Tempos de atendimento (segundos)' }), el('div', { classe: 'sim-campos' }, SIM_TEMPOS.map(function (x) { return campo(x[1], x[0], true); }))]));
+    var res = el('div', { classe: 'sim-res' });
+    box.appendChild(el('button', { type: 'button', classe: 'btn principal', texto: 'Simular', onclick: function () { calcular(); } }));
+    box.appendChild(res);
+    function calcular() {
+      if (!(p.pessoas > 0 && p.triagemN > 0 && p.mesas > 0 && p.seguranca > 0 && p.janela > 0)) { res.textContent = 'Preencha pessoas, mesas, seguranças e minutos.'; return; }
+      var s = simularEntrada(p); res.textContent = '';
+      res.appendChild(el('div', { classe: 'num-cartoes' }, [
+        el('div', { classe: 'num-cartao' }, [el('strong', { texto: mmss(s.total.med) }), el('span', { texto: 'jornada típica' }), el('small', { texto: 'metade entra em até' })]),
+        el('div', { classe: 'num-cartao' }, [el('strong', { texto: mmss(s.total.p90) }), el('span', { texto: '9 em cada 10' }), el('small', { texto: 'entram em até' })]),
+        el('div', { classe: 'num-cartao' }, [el('strong', { texto: mmss(s.total.max) }), el('span', { texto: 'pior caso' }), el('small', { texto: 'quem mais esperou' })]),
+        el('div', { classe: 'num-cartao' }, [el('strong', { texto: mmss(s.fimApos) }), el('span', { texto: 'para esvaziar' }), el('small', { texto: 'depois da última chegada' })])]));
+      res.appendChild(tabelaNum(['Caminho', 'Pessoas', 'Metade em até', '9 em 10 em até'],
+        Object.keys(s.caminhos).map(function (k) { var c = s.caminhos[k]; return [k, c.n, mmss(c.med), mmss(c.p90)]; })));
+      res.appendChild(tabelaNum(['Etapa', 'Maior fila (pessoas esperando)'], [['Triagem', s.filas.triagem], ['Mesas', s.filas.mesas], ['Segurança', s.filas.seguranca]]));
+      var f = s.filas, gargalo = f.mesas >= f.seguranca && f.mesas >= f.triagem ? 'as mesas' : f.seguranca >= f.triagem ? 'a segurança' : 'a triagem';
+      res.appendChild(el('p', { classe: 'dica', texto: 'Maior gargalo: ' + gargalo + '. Simulação com 20 rodadas e variação de 40% para mais ou para menos em cada atendimento; o pico das chegadas é perto do início do evento.' }));
+    }
+    calcular();
   }
 
   // ---------- abas ----------

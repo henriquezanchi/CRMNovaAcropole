@@ -110,15 +110,41 @@ async function cartaoLido(corpo: any) {
     const dados = await lerTokenAssinado(corpo.token);
     const num = dados ? Number(dados.c) : 0;
     if (!num || !dados.ev) return responder({ ok: false, erro: "Cartão inválido." }, 400);
-    const { data: ult } = await supabaseAdmin.from("recepcao_registros").select("tipo, nome, link_id, criado_em")
+    const { data: ult } = await supabaseAdmin.from("recepcao_registros").select("tipo, nome, link_id, criado_em, criado_no_aparelho, email_evento_id")
         .eq("evento_id_ulisses", dados.ev).eq("cartao_numero", num).order("criado_em", { ascending: false }).limit(1).maybeSingle();
     if (!ult) return responder({ ok: true, numero: num, vinculado: false });
     if (ult.tipo === "cartao_lido") return responder({ ok: true, numero: num, vinculado: false, ja_lido_em: ult.criado_em, nome_anterior: ult.nome });
     await supabaseAdmin.from("recepcao_registros").insert({
         client_id: crypto.randomUUID(), link_id: ult.link_id, evento_id_ulisses: dados.ev, tipo: "cartao_lido", status: "ok",
-        cartao_numero: num, nome: ult.nome, autor: "Segurança (validador)",
+        cartao_numero: num, nome: ult.nome, email_evento_id: ult.email_evento_id, autor: "Segurança (validador)",
+        inicio_em: ult.criado_no_aparelho || ult.criado_em, criado_no_aparelho: dataOk(corpo.lido_em),
     });
     return responder({ ok: true, numero: num, vinculado: true, nome: ult.nome, vinculado_em: ult.criado_em });
+}
+
+// Data enviada pelo aparelho (horário da leitura); só aceita se for plausível (até 1 dia antes e 5 min no futuro).
+function dataOk(v: unknown) {
+    const t = Date.parse(String(v || ""));
+    return !isNaN(t) && t > Date.now() - 86400000 && t < Date.now() + 300000 ? new Date(t).toISOString() : null;
+}
+
+// Segurança conferiu um QR code de entrada (celular): guarda a leitura para medir a jornada até a entrada.
+// Uma linha por QR code (client_id derivado da assinatura): vários celulares lendo o mesmo não duplicam.
+async function passeValidado(corpo: any) {
+    const token = String(corpo.token || "").slice(0, 2000);
+    const dados = await lerTokenAssinado(token);
+    if (!dados || !dados.ev || dados.c) return responder({ ok: false, erro: "QR code inválido." }, 400);
+    const { data: link } = await supabaseAdmin.from("recepcao_links").select("id").eq("evento_id_ulisses", dados.ev).is("revogado_em", null).limit(1).maybeSingle();
+    if (!link) return responder({ ok: false, erro: "Evento não encontrado." }, 404);
+    const h = (await sha256(token.split(".")[1] || token)).slice(0, 32);
+    const clientId = `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
+    const ref = String(dados.r || "");
+    await registrar({
+        client_id: clientId, link_id: link.id, evento_id_ulisses: dados.ev, tipo: "validado", status: "ok",
+        nome: dados.n || null, email_evento_id: ref.startsWith("i") ? Number(ref.slice(1)) || null : null,
+        inicio_em: dataOk(dados.d) || null, criado_no_aparelho: dataOk(corpo.lido_em), autor: "Segurança (validador)",
+    });
+    return responder({ ok: true });
 }
 
 // Desenha o QR de um passe (a página /passe guarda o desenho no celular da pessoa). Só para passes com assinatura válida.
@@ -292,6 +318,7 @@ Deno.serve(async (req) => {
     if (acao === "auto_info" || acao === "auto_checkin" || acao === "auto_inscrever") return await autoCheckin(acao, corpo);
     if (acao === "passe_qr") return await passeQr(corpo);
     if (acao === "cartao_lido") return await cartaoLido(corpo);
+    if (acao === "passe_validado") return await passeValidado(corpo);
     const chave = String(corpo.chave || "");
     if (!/^[A-Za-z0-9_-]{10,}$/.test(chave)) return responder({ ok: false, erro: "Link inválido." }, 400);
 
