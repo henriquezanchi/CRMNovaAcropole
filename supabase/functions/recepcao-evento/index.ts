@@ -372,7 +372,8 @@ async function autoInscrever(link: any, corpo: any) {
             supabaseAdmin.from("recepcao_registros").select("id", { count: "exact", head: true }).eq("evento_id_ulisses", link.evento_id_ulisses).eq("tipo", "inscricao").eq("status", "reservado"),
         ]);
         const cap = Number(evCap?.capacidade) || 0;
-        if (cap && (nI || 0) + (nR || 0) >= cap) return responder({ ok: false, erro: "As vagas acabaram. Para entrar, informe seu e-mail ou fale com a recepção." }, 409);
+        // 14/11/2026 (pedido do usuário, durante o evento): acima da capacidade a inscrição sem e-mail continua aceita.
+        void cap; void nI; void nR;
         await registrar({ client_id: clientId, link_id: link.id, evento_id_ulisses: link.evento_id_ulisses, tipo: "inscricao", status: "reservado",
             nome, ddd, telefone: numero, autor, interesse_curso: typeof corpo.interesse_curso === "boolean" ? corpo.interesse_curso : null });
         return responder({ ok: true, nome: nome.split(" ")[0], reservado: true, passe: await emitirPasse(link, { nome, ddd, telefone: numero, ref: `c${clientId.slice(0, 8)}` }).catch(() => null) });
@@ -759,9 +760,8 @@ Deno.serve(async (req) => {
                     supabaseAdmin.from("recepcao_registros").select("id", { count: "exact", head: true }).eq("evento_id_ulisses", link.evento_id_ulisses).eq("tipo", "inscricao").eq("status", "reservado"),
                 ]);
                 const cap = Number(evCap?.capacidade) || 0;
-                if (cap && (nInscritos || 0) + (nReservas || 0) >= cap) {
-                    return responder({ ok: false, erro: "As vagas acabaram: só dá para entrar com inscrição completa (com e-mail).", definitivo: true }, 409);
-                }
+                // 14/11/2026 (pedido do usuário, durante o evento): acima da capacidade a inscrição sem e-mail continua aceita.
+                void cap; void nInscritos; void nReservas;
                 const nova = await registrar({
                     client_id: clientId, link_id: link.id, evento_id_ulisses: link.evento_id_ulisses, tipo: "inscricao", status: "reservado",
                     nome, ddd, telefone: tel, email: null, pessoa_identificador: pid, autor,

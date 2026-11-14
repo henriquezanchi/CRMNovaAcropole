@@ -131,9 +131,7 @@
     $('nPresentes').textContent = todos.filter(function (x) { return x.presente; }).length + extra;
     $('nPorta').textContent = todos.filter(function (x) { return x.na_porta; }).length + extra;
     var vr = vagasRestantes();
-    $('cadSemEmail').textContent = vr !== null && vr <= 0
-      ? 'As vagas acabaram: só dá para inscrever com e-mail (inscrição completa no Ulisses).'
-      : 'Sem e-mail? Pode deixar em branco: a vaga fica reservada' + (vr !== null ? ' (restam ' + vr + ')' : '') + ' e pedimos o e-mail depois pelo WhatsApp. Não invente e-mail.';
+    $('cadSemEmail').textContent = 'Sem e-mail? Pode deixar em branco: a vaga fica reservada' + (vr !== null && vr > 0 ? ' (restam ' + vr + ')' : '') + ' e pedimos o e-mail depois pelo WhatsApp. Não invente e-mail.';
     desenharConexao();
   }
 
