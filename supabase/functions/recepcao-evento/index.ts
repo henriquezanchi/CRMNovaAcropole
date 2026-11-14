@@ -402,6 +402,70 @@ async function autoInscrever(link: any, corpo: any) {
     return responder({ ok: true, nome: nome.split(" ")[0], passe: await emitirPasse(link, { nome, ddd, telefone: numero, ref: eeId ? `i${eeId}` : `c${clientId.slice(0, 8)}` }).catch(() => null) });
 }
 
+// ---- Segurança: busca pelo nome (14/11/2026) ----
+// Para quem chegou à entrada sem QR code nem cartão. Pede o PIN da equipe uma vez (sessão de 16 h no aparelho).
+// Mostra só nome, final do celular e se o check-in foi feito; quem não fez vai para a recepção.
+async function linkAtivo() {
+    const { data } = await supabaseAdmin.from("recepcao_links").select("*").is("revogado_em", null)
+        .gt("expira_em", new Date().toISOString()).order("id", { ascending: false }).limit(1).maybeSingle();
+    return data;
+}
+async function validador(acao: string, corpo: any) {
+    if (acao === "validador_pin") {
+        const link = await linkAtivo();
+        if (!link) return responder({ ok: false, erro: "Nenhum evento aberto." }, 404);
+        if (link.pin_bloqueado_ate && new Date(link.pin_bloqueado_ate) > new Date()) return responder({ ok: false, erro: "PIN bloqueado por alguns minutos." }, 429);
+        const pin = digitos(corpo.pin);
+        if (pin.length !== 6 || (await sha256(`${link.id}:${pin}`)) !== link.pin_hash) {
+            const t = (link.pin_tentativas || 0) + 1, bloquear = t >= MAX_TENTATIVAS_PIN;
+            await supabaseAdmin.from("recepcao_links").update({
+                pin_tentativas: bloquear ? 0 : t,
+                pin_bloqueado_ate: bloquear ? new Date(Date.now() + MINUTOS_BLOQUEIO_PIN * 60000).toISOString() : null,
+            }).eq("id", link.id);
+            return responder({ ok: false, erro: bloquear ? `PIN bloqueado por ${MINUTOS_BLOQUEIO_PIN} min.` : "PIN incorreto." }, 401);
+        }
+        const token = [...crypto.getRandomValues(new Uint8Array(32))].map((x) => x.toString(16).padStart(2, "0")).join("");
+        const expira = new Date(Date.now() + HORAS_SESSAO * 3600000).toISOString();
+        await supabaseAdmin.from("recepcao_sessoes").insert({ token_hash: await sha256(token), link_id: link.id, apelido: "Segurança", expira_em: expira });
+        await supabaseAdmin.from("recepcao_links").update({ pin_tentativas: 0 }).eq("id", link.id);
+        return responder({ ok: true, sessao: token, expira_em: expira });
+    }
+    const sessaoTxt = String(corpo.sessao || "");
+    const { data: sessao } = /^[a-f0-9]{64}$/.test(sessaoTxt)
+        ? await supabaseAdmin.from("recepcao_sessoes").select("link_id, expira_em").eq("token_hash", await sha256(sessaoTxt)).maybeSingle()
+        : { data: null };
+    if (!sessao || new Date(sessao.expira_em) < new Date()) return responder({ ok: false, erro: "Digite o PIN da equipe.", precisa_pin: true }, 401);
+    const { data: link } = await supabaseAdmin.from("recepcao_links").select("*").eq("id", sessao.link_id).maybeSingle();
+    if (!link || link.revogado_em) return responder({ ok: false, erro: "Evento encerrado.", precisa_pin: true }, 401);
+
+    if (acao === "validador_buscar") {
+        const termos = normalizarNome(String(corpo.q || "")).split(" ").filter((t) => t.length >= 2);
+        if (!termos.length || termos.join("").length < 3) return responder({ ok: true, achados: [] });
+        const [{ data: lista, error }, { data: reservas }] = await Promise.all([
+            supabaseAdmin.rpc("recepcao_lista", { p_evento_id_ulisses: link.evento_id_ulisses }),
+            supabaseAdmin.from("recepcao_registros").select("nome").eq("evento_id_ulisses", link.evento_id_ulisses).eq("tipo", "inscricao").eq("status", "reservado"),
+        ]);
+        if (error) throw new Error(error.message);
+        const bate = (n: string) => { const nn = normalizarNome(n || ""); return termos.every((t) => nn.includes(t)); };
+        const achados = (lista || []).filter((p: any) => bate(p.nome)).slice(0, 10)
+            .map((p: any) => ({ email_evento_id: p.email_evento_id, nome: p.nome, final_tel: p.final_tel, presente: p.compareceu === true }));
+        for (const r of reservas || []) if (achados.length < 10 && bate(r.nome)) achados.push({ email_evento_id: null, nome: r.nome, final_tel: null, presente: true });
+        return responder({ ok: true, achados });
+    }
+    if (acao === "validador_liberar") {
+        const nome = texto(corpo.nome, 120), ee = Number(corpo.email_evento_id) || null;
+        if (!nome) return responder({ ok: false, erro: "Pedido inválido." }, 400);
+        const h = (await sha256(`nome:${link.evento_id_ulisses}:${ee || normalizarNome(nome)}`)).slice(0, 32);
+        await registrar({
+            client_id: `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`,
+            link_id: link.id, evento_id_ulisses: link.evento_id_ulisses, tipo: "validado", status: "ok", nome, email_evento_id: ee,
+            criado_no_aparelho: dataOk(corpo.lido_em), autor: "Segurança (busca por nome)",
+        });
+        return responder({ ok: true });
+    }
+    return responder({ ok: false, erro: "Pedido inválido." }, 400);
+}
+
 Deno.serve(async (req) => {
     if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
     let corpo: any = {};
@@ -415,6 +479,7 @@ Deno.serve(async (req) => {
     if (acao === "passe_qr") return await passeQr(corpo);
     if (acao === "cartao_lido") return await cartaoLido(corpo);
     if (acao === "passe_validado") return await passeValidado(corpo);
+    if (acao.startsWith("validador_")) return await validador(acao, corpo).catch((e) => responder({ ok: false, erro: (e as Error).message }, 500));
     const chave = String(corpo.chave || "");
     if (!/^[A-Za-z0-9_-]{10,}$/.test(chave)) return responder({ ok: false, erro: "Link inválido." }, 400);
 

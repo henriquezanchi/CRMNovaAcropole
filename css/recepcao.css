@@ -261,3 +261,12 @@ body.modo-totem .pp-cartao { display: none; }
 .sim-res { margin-top: 12px; }
 
 .sim-res .num-cartao strong { font-size: 22px; white-space: nowrap; }
+
+/* Validador: busca pelo nome (14/11/2026) */
+.vl-busca { margin-top: 12px; }
+.vl-busca-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #fff; border-radius: 12px; padding: 12px 14px; margin-top: 8px; }
+.vl-busca-item strong { display: block; font-size: 17px; }
+.vl-busca-item small { color: var(--suave); }
+.vl-busca-item .ok { color: #0b7a4a; font-weight: 700; }
+.vl-busca-item .nao { color: var(--alerta); font-weight: 700; }
+.vl-busca-item button { flex: 0 0 auto; }

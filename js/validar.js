@@ -191,6 +191,65 @@
     }, function () { $('vlAviso').textContent = 'Permita o uso da câmera nas configurações do navegador.'; });
   });
 
+  // ---------- Busca pelo nome (sem QR code nem cartão) ----------
+  // Pede o PIN da equipe uma vez; precisa de internet. Só libera quem já fez o check-in.
+  function buscaSessao() { try { var v = JSON.parse(localStorage.getItem('vl_sessao') || 'null'); return v && new Date(v.expira) > new Date() ? v.token : null; } catch (e) { return null; } }
+  function chamarBusca(corpo) {
+    corpo.sessao = buscaSessao();
+    return fetch(FUNCAO, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(corpo) })
+      .then(function (r) { return r.json().catch(function () { return {}; }); });
+  }
+  function pedirPinBusca() {
+    var pin = (prompt('PIN da equipe (só na primeira vez):') || '').replace(/\D/g, '');
+    if (!pin) return Promise.resolve(false);
+    return fetch(FUNCAO, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ acao: 'validador_pin', pin: pin }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.ok) { $('vlAviso').textContent = j.erro || 'PIN incorreto.'; return false; }
+        try { localStorage.setItem('vl_sessao', JSON.stringify({ token: j.sessao, expira: j.expira_em })); } catch (e) { /* ok */ }
+        return true;
+      }, function () { $('vlAviso').textContent = 'Sem internet: a busca pelo nome precisa de conexão.'; return false; });
+  }
+  var buscaTimer = null;
+  function buscarNome() {
+    var q = $('vlBuscaNome').value.trim(), res = $('vlBuscaRes');
+    if (q.length < 3) { res.textContent = ''; return; }
+    chamarBusca({ acao: 'validador_buscar', q: q }).then(function (j) {
+      if (j.precisa_pin) { pedirPinBusca().then(function (ok) { if (ok) buscarNome(); }); return; }
+      res.textContent = '';
+      if (!j.ok) { res.appendChild(el('p', 'dica', j.erro || 'Não foi possível buscar.')); return; }
+      if (!j.achados.length) { res.appendChild(el('p', 'dica', 'Ninguém com esse nome na lista. Encaminhe para a recepção.')); return; }
+      j.achados.forEach(function (p) {
+        var item = el('div', 'vl-busca-item'), info = el('div');
+        info.appendChild(el('strong', null, p.nome));
+        info.appendChild(el('small', null, p.final_tel ? 'Celular final ' + p.final_tel : 'Inscrito na porta'));
+        info.appendChild(el('div', p.presente ? 'ok' : 'nao', p.presente ? '✓ Check-in feito' : '✗ Sem check-in: encaminhe à recepção'));
+        item.appendChild(info);
+        if (p.presente) {
+          var b = el('button', 'btn principal', 'Liberar');
+          b.type = 'button';
+          b.addEventListener('click', function () {
+            mostrar('ok', '✓ ENTRADA LIBERADA', [['vl-nome', p.nome], ['vl-info', 'Encontrado pelo nome'], ['vl-dica', 'Confira um documento se tiver dúvida.']]);
+            res.textContent = ''; $('vlBuscaNome').value = ''; $('vlBusca').hidden = true; window.scrollTo(0, 0);
+            chamarBusca({ acao: 'validador_liberar', nome: p.nome, email_evento_id: p.email_evento_id, lido_em: new Date().toISOString() }).catch(function () { /* ok */ });
+          });
+          item.appendChild(b);
+        }
+        res.appendChild(item);
+      });
+    }, function () { res.textContent = ''; res.appendChild(el('p', 'dica', 'Sem internet: a busca pelo nome precisa de conexão. Encaminhe para a recepção.')); });
+  }
+  if ($('vlBuscarAbrir')) {
+    $('vlBuscarAbrir').addEventListener('click', function () {
+      var abrir = $('vlBusca').hidden;
+      $('vlBusca').hidden = !abrir;
+      if (!abrir) return;
+      var seguir = function () { $('vlBuscaNome').focus(); };
+      if (buscaSessao()) seguir(); else pedirPinBusca().then(function (ok) { if (ok) seguir(); else $('vlBusca').hidden = true; });
+    });
+    $('vlBuscaNome').addEventListener('input', function () { clearTimeout(buscaTimer); buscaTimer = setTimeout(buscarNome, 400); });
+  }
+
   if (document.body.classList.contains('modo-passe')) { iniciarPasse(); return; }
   try { localStorage.setItem('vl_modo', '1'); } catch (e) { /* ok */ }
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw-passe.js', { scope: './validar' }).catch(function () { /* ok */ });

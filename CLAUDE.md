@@ -11470,3 +11470,7 @@ só números, mesma chave de pessoa do painel; a tabela segue fechada para o nav
 - QR code no celular do participante (check-in e passe): tela fica acesa (Wake Lock) e o texto pede brilho no
   máximo. O navegador não deixa mudar o brilho da tela.
 - Presença conta no check-in (mesa, tablet ou QR), não na leitura da segurança; a leitura só mede a jornada.
+- Validador com busca pelo nome (14/11/2026): botão "Sem QR code? Buscar pelo nome" (`js/validar.js`). Pede o PIN da
+  equipe 1x (ação `validador_pin`, mesmo PIN/bloqueio do link ativo, sessão de 16 h em `recepcao_sessoes`), busca na
+  `recepcao_lista` + vagas reservadas (`validador_buscar`: nome, final do celular, check-in sim/não) e "Liberar" grava
+  `tipo='validado'` com autor "Segurança (busca por nome)" (`validador_liberar`). Sem check-in: recepção. Precisa de internet.
