@@ -11479,3 +11479,16 @@ só números, mesma chave de pessoa do painel; a tabela segue fechada para o nav
   sem internet, mostra com quem o cartão estava. Cartão sem pessoa vinculada (online) = "NÃO LIBERE AINDA"; sem
   internet e sem registro de entrega = "CONFIRME ANTES DE LIBERAR" (documento + anotar). Toda tela pede para
   perguntar o nome e conferir.
+- Simulação de 14/11 (12h, site publicado, mesa/tablet/celular/segurança, com e sem internet em cada etapa) e ajustes:
+  - A mesma PESSOA entrando por dois meios (cartão + QR code, QR reemitido em outro celular, busca pelo nome): o servidor
+    (`entradaAnterior()`) devolve `ja_entrou/primeira_em/por` e o validador mostra "⚠ ESTA PESSOA JÁ ENTROU"; a busca
+    pelo nome mostra `entrou_em`. Leitura repetida do mesmo cartão sem internet em até 90 s = mesma entrada.
+  - PIN errado no tablet (sair do autoatendimento) é conferido só no aparelho; PIN errado no validador é contado à
+    parte (linhas "pin-errado-validador" em `recepcao_sessoes`, 8 em 10 min) — nenhum dos dois bloqueia o PIN da equipe.
+  - Faixa de 3 passos no topo da recepção (`.passos`): Procure a pessoa → Toque em Chegou → Entregue um cartão.
+  - Limites conhecidos: se a MESA fica sem internet, os cartões que ela entrega aparecem como "sem pessoa vinculada" na
+    segurança até a fila da mesa subir (mesa e segurança devem usar internets independentes); leitura que chega ao
+    servidor antes do vínculo do cartão não é gravada; quem sabe celular + primeiro nome de um inscrito faz o check-in
+    por ele (a segurança pergunta o nome/pede documento); busca pelo nome e nome do cartão precisam de internet ou do
+    PIN digitado antes; a busca por nome no tablet lista nomes de outros inscritos.
+  - Dados da simulação apagados (18 registros, 2 presenças desfeitas no Ulisses, `log_atividade` 39879).
