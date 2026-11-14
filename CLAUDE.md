@@ -11459,3 +11459,14 @@ escolas diferentes e a importação do Ulisses recria a ficha. Agora, para event
 `evento_id_ulisses`, `carregarResumoParticipantes()` (`js/eventos.js`) usa
 `ulisses_contagem_inscritos(p_eventos)` (`migracao_contagem_inscritos_ulisses.sql`, JÁ RODADA):
 só números, mesma chave de pessoa do painel; a tabela segue fechada para o navegador.
+
+## Recepção: ajustes do dia do DMF (14/11/2026)
+
+- Registros de teste apagados (`recepcao_registros` do evento 24664) e as 2 presenças de teste desmarcadas no
+  Ulisses (pela ação `presenca` com `compareceu:false`, usando um acesso temporário criado e apagado na hora).
+- Autoatendimento: o botão de saída virou "Sair do autoatendimento (equipe)", visível; pede o PIN (confere o hash
+  guardado no aparelho e, se não bater, confere no servidor).
+- "Fechar sem cartão" na mesa pede confirmação (sem cartão a pessoa não passa pela segurança).
+- QR code no celular do participante (check-in e passe): tela fica acesa (Wake Lock) e o texto pede brilho no
+  máximo. O navegador não deixa mudar o brilho da tela.
+- Presença conta no check-in (mesa, tablet ou QR), não na leitura da segurança; a leitura só mede a jornada.

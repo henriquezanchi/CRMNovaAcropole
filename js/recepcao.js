@@ -536,7 +536,11 @@
     if (passeAtual && vincularCartao(passeAtual.nome, passeAtual.eeId, $('ppCartaoNum').value)) $('ppFechar').click();
   });
   $('ppCartaoNum').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('ppCartaoOk').click(); } });
-  $('ppFechar').addEventListener('click', function () { $('painelPasse').hidden = true; espelhar({ tipo: 'espera' }); if (!$('abaBuscar').hidden) $('busca').focus(); });
+  $('ppFechar').addEventListener('click', function () {
+    // Sem cartão a pessoa não passa pela segurança: só para exceções (cartões acabaram, presença marcada por engano).
+    if (passeAtual && !cartoesVinculados[passeAtual.nome] &&
+      !confirm('Fechar sem entregar cartão? Sem cartão, ' + String(passeAtual.nome).split(' ')[0] + ' não passa pela segurança. A presença continua marcada.')) return;
+    $('painelPasse').hidden = true; espelhar({ tipo: 'espera' }); if (!$('abaBuscar').hidden) $('busca').focus(); });
 
   function tirar(item) { var i = fila.indexOf(item); if (i >= 0) fila.splice(i, 1); }
   function nomeDe(id) { var p = ((lista && lista.inscritos) || []).filter(function (x) { return x.email_evento_id === id; })[0]; return p ? p.nome : ''; }
@@ -799,10 +803,16 @@
     ], 6000);
   }
   $('totemSair').addEventListener('click', function () {
-    var pin = prompt('PIN da equipe para sair do autoatendimento:');
+    var pin = (prompt('PIN da equipe para sair do autoatendimento:') || '').replace(/\D/g, '');
     if (!pin) return;
-    sha256(chave + ':' + pin.replace(/\D/g, '')).then(function (h) {
-      if (h === ler('pinHash', '')) sairTotem(); else aviso('PIN incorreto.');
+    sha256(chave + ':' + pin).then(function (h) {
+      if (h === ler('pinHash', '')) { sairTotem(); return; }
+      // PIN não guardado neste aparelho (ou trocado): confere no servidor, se houver internet.
+      chamar({ acao: 'pin', pin: pin, apelido: atendente }).then(function (j) {
+        if (!j.ok) { aviso(j.erro || 'PIN incorreto.'); return; }
+        gravar('pinHash', h); sessao = { token: j.sessao, expira: j.expira_em }; gravar('sessao', sessao);
+        sairTotem();
+      }, function () { aviso('PIN incorreto (sem internet para conferir de outro jeito).'); });
     });
   });
   $('btnTotem').addEventListener('click', function () {

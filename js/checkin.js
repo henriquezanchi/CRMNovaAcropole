@@ -35,7 +35,15 @@
   }
   document.querySelectorAll('[data-modo]').forEach(function (b) { b.addEventListener('click', function () { modo(b.getAttribute('data-modo')); }); });
 
+  // Tela acesa enquanto o QR code está aberto (o navegador não deixa mudar o brilho; só impedir que a tela apague).
+  var travaTela = null;
+  function manterTelaAcesa() {
+    if (!('wakeLock' in navigator) || travaTela) return;
+    navigator.wakeLock.request('screen').then(function (t) { travaTela = t; t.addEventListener('release', function () { travaTela = null; }); }, function () { /* ok */ });
+  }
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible' && window.__qrAberto) manterTelaAcesa(); });
   function mostrarPasse(p, texto) {
+    window.__qrAberto = true; manterTelaAcesa();
     $('passoForm').hidden = true; $('passoPasse').hidden = false;
     $('psBoasVindas').textContent = 'Boas-vindas, ' + String(p.nome || '').split(' ')[0] + '!';
     $('psTexto').textContent = texto || 'Check-in feito. Bom evento!';
@@ -55,6 +63,7 @@
   }
   $('psOutro').addEventListener('click', function () {
     $('passoPasse').hidden = true; $('passoForm').hidden = false;
+    window.__qrAberto = false; if (travaTela) travaTela.release();
     ['ckCelular', 'ckNome', 'inNome', 'inCelular', 'inEmail'].forEach(function (id) { $(id).value = ''; });
     modo('checkin');
   });

@@ -116,6 +116,14 @@
       });
   }
 
+  // Tela acesa enquanto o QR code está aberto (o navegador não deixa mudar o brilho; só impedir que a tela apague).
+  var travaTela = null;
+  function manterTelaAcesa() {
+    if (!('wakeLock' in navigator) || travaTela) return;
+    navigator.wakeLock.request('screen').then(function (t) { travaTela = t; t.addEventListener('release', function () { travaTela = null; }); }, function () { /* ok */ });
+  }
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible' && window.__qrAberto) manterTelaAcesa(); });
+
   // ---------- Página do passe (passe.html / /passe#<token>) ----------
   // O participante abre o próprio passe (lendo o QR na tela da recepção, ou vindo do check-in pelo celular).
   // Mostra nome, telefone, horário, o selo de válido (assinatura conferida aqui mesmo) e o QR para a segurança.
@@ -153,6 +161,7 @@
           .then(function (j) { if (j.ok && j.svg) { guardar('meu_passe_svg_' + partes[1].slice(0, 16), j.svg); desenhar(j.svg); } else semQr(); }, semQr);
       }, function () { status('vl-erro', 'Não foi possível conferir'); });
     function desenhar(svgTexto) {
+      window.__qrAberto = true; manterTelaAcesa();
       var svg = new DOMParser().parseFromString(svgTexto, 'image/svg+xml').documentElement;
       if (svg && svg.nodeName.toLowerCase() === 'svg') { $('psQr').textContent = ''; $('psQr').appendChild(document.importNode(svg, true)); }
     }

@@ -154,7 +154,7 @@ body.modo-espelho #acoesTopo, body.modo-espelho #conexao, body.modo-totem #acoes
 .totem .escolha-nome button { text-align: left; border: 2px solid var(--linha); background: #fff; border-radius: 14px; padding: 16px 18px; font-size: clamp(18px, 2.8vw, 24px); font-weight: 700; cursor: pointer; }
 .totem .escolha-nome button:hover { border-color: var(--verde); }
 .totem .grande { font-size: clamp(36px, 7vw, 72px); font-weight: 900; color: var(--verde); text-align: center; margin: 6vh 0 0; }
-.totem-sair { position: fixed; right: 12px; bottom: 12px; border: 0; background: transparent; color: #b8c4c0; font-size: 12px; cursor: pointer; padding: 8px; }
+.totem-sair { position: fixed; right: 12px; bottom: 12px; border: 1.5px solid #9fb3ae; background: #fff; color: #4a5f5a; font-size: 14px; font-weight: 600; border-radius: 999px; cursor: pointer; padding: 10px 16px; }
 
 /* Quem está atendendo */
 .btn-topo.atendente { max-width: 42vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-color: var(--amarelo); color: var(--amarelo); }
