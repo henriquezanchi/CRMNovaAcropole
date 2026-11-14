@@ -277,6 +277,40 @@
       });
     }, function () { res.textContent = ''; res.appendChild(el('p', 'dica', 'Sem internet: a busca pelo nome precisa de conexão. Encaminhe para a recepção.')); });
   }
+  // ---------- Lista completa: fez check-in e ainda não passou pela segurança ----------
+  function carregarPendentes() {
+    var area = $('vlPendentes');
+    area.textContent = ''; area.appendChild(el('p', 'dica', 'Carregando…'));
+    chamarBusca({ acao: 'validador_pendentes' }).then(function (j) {
+      if (j.precisa_pin) { pedirPinBusca().then(function (ok) { atualizarBotaoPin(); if (ok) carregarPendentes(); else area.hidden = true; }); return; }
+      area.textContent = '';
+      if (!j.ok) { area.appendChild(el('p', 'dica', j.erro || 'Não foi possível carregar a lista.')); return; }
+      area.appendChild(el('p', 'dica', j.pendentes.length + ' de ' + j.presentes + ' pessoas com check-in ainda não passaram pela segurança. Atualizado às ' + hora(j.agora) + '.'));
+      var at = el('button', 'btn secundario', 'Atualizar lista'); at.type = 'button'; at.addEventListener('click', carregarPendentes); area.appendChild(at);
+      j.pendentes.forEach(function (p) {
+        var item = el('div', 'vl-busca-item'), info = el('div');
+        info.appendChild(el('strong', null, p.nome));
+        info.appendChild(el('small', null, (p.final_tel ? 'Celular final ' + p.final_tel : 'Inscrito na porta') + (p.cartao ? ' · cartão nº ' + p.cartao : '')));
+        item.appendChild(info);
+        var b = el('button', 'btn principal', 'Liberar'); b.type = 'button';
+        b.addEventListener('click', function () {
+          mostrar('ok', '✓ ENTRADA LIBERADA', [['vl-nome', p.nome], ['vl-info', 'Liberado pela lista de check-in'], ['vl-dica', 'Confira um documento se tiver dúvida.']]);
+          item.remove(); window.scrollTo(0, 0);
+          chamarBusca({ acao: 'validador_liberar', nome: p.nome, email_evento_id: p.email_evento_id, lido_em: new Date().toISOString() }).catch(function () { /* ok */ });
+        });
+        item.appendChild(b);
+        area.appendChild(item);
+      });
+    }, function () { area.textContent = ''; area.appendChild(el('p', 'dica', 'Sem internet: esta lista precisa de conexão.')); });
+  }
+  if ($('vlPendentesAbrir')) {
+    $('vlPendentesAbrir').addEventListener('click', function () {
+      var abrir = $('vlPendentes').hidden;
+      $('vlPendentes').hidden = !abrir;
+      if (abrir) carregarPendentes();
+    });
+  }
+
   function atualizarBotaoPin() { if ($('vlPinEquipe')) $('vlPinEquipe').hidden = !!buscaSessao(); }
   if ($('vlPinEquipe')) {
     $('vlPinEquipe').addEventListener('click', function () { pedirPinBusca().then(function (ok) { atualizarBotaoPin(); if (ok) sincronizarCartoes(); }); });

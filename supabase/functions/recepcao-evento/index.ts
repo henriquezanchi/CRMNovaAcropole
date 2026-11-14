@@ -475,6 +475,40 @@ async function validador(acao: string, corpo: any) {
         }
         return responder({ ok: true, achados });
     }
+    // Quem fez check-in e ainda não passou pela segurança (lista completa, 14/11/2026).
+    if (acao === "validador_pendentes") {
+        const [{ data: lista, error }, { data: reservas }, { data: regs }] = await Promise.all([
+            supabaseAdmin.rpc("recepcao_lista", { p_evento_id_ulisses: link.evento_id_ulisses }),
+            supabaseAdmin.from("recepcao_registros").select("nome").eq("evento_id_ulisses", link.evento_id_ulisses).eq("tipo", "inscricao").eq("status", "reservado"),
+            supabaseAdmin.from("recepcao_registros").select("tipo, email_evento_id, nome, cartao_numero")
+                .eq("evento_id_ulisses", link.evento_id_ulisses).in("tipo", ["validado", "cartao_lido", "cartao"]).order("criado_em", { ascending: true }).limit(5000),
+        ]);
+        if (error) throw new Error(error.message);
+        const entrouEe = new Set<number>(), entrouNome = new Set<string>(), cartaoEe: Record<string, string> = {}, cartaoNome: Record<string, string> = {};
+        for (const r of regs || []) {
+            const n = normalizarNome(r.nome || "");
+            if (r.tipo === "cartao") { if (r.email_evento_id) cartaoEe[r.email_evento_id] = r.cartao_numero; if (n) cartaoNome[n] = r.cartao_numero; continue; }
+            if (r.email_evento_id) entrouEe.add(r.email_evento_id);
+            if (n) entrouNome.add(n);
+        }
+        const pendentes: any[] = [];
+        let presentes = 0;
+        for (const p of lista || []) {
+            if (p.compareceu !== true) continue;
+            presentes++;
+            const n = normalizarNome(p.nome || "");
+            if (entrouEe.has(p.email_evento_id) || entrouNome.has(n)) continue;
+            pendentes.push({ email_evento_id: p.email_evento_id, nome: p.nome, final_tel: p.final_tel, cartao: cartaoEe[p.email_evento_id] || cartaoNome[n] || null });
+        }
+        for (const r of reservas || []) {
+            presentes++;
+            const n = normalizarNome(r.nome || "");
+            if (entrouNome.has(n)) continue;
+            pendentes.push({ email_evento_id: null, nome: r.nome, final_tel: null, cartao: cartaoNome[n] || null });
+        }
+        pendentes.sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || ""), "pt-BR"));
+        return responder({ ok: true, presentes, pendentes, agora: new Date().toISOString() });
+    }
     // Situação de cada cartão (última entrega/leitura), para o validador guardar e consultar sem internet.
     if (acao === "validador_cartoes") {
         const { data, error } = await supabaseAdmin.from("recepcao_registros").select("cartao_numero, tipo, nome, criado_em")
