@@ -428,20 +428,21 @@ async function validador(acao: string, corpo: any) {
     if (acao === "validador_pin") {
         const link = await linkAtivo();
         if (!link) return responder({ ok: false, erro: "Nenhum evento aberto." }, 404);
-        if (link.pin_bloqueado_ate && new Date(link.pin_bloqueado_ate) > new Date()) return responder({ ok: false, erro: "PIN bloqueado por alguns minutos." }, 429);
+        // O validador é uma página aberta (o QR code do participante leva a ela). As tentativas erradas daqui são
+        // contadas à parte (linhas já vencidas em recepcao_sessoes): um curioso não bloqueia o PIN da recepção.
+        const APELIDO_ERRO = "pin-errado-validador", desde = new Date(Date.now() - MINUTOS_BLOQUEIO_PIN * 60000).toISOString();
+        const { count: erros } = await supabaseAdmin.from("recepcao_sessoes").select("token_hash", { count: "exact", head: true })
+            .eq("link_id", link.id).eq("apelido", APELIDO_ERRO).gte("expira_em", desde);
+        if ((erros || 0) >= 8) return responder({ ok: false, erro: "Muitas tentativas erradas neste validador. Aguarde alguns minutos." }, 429);
         const pin = digitos(corpo.pin);
         if (pin.length !== 6 || (await sha256(`${link.id}:${pin}`)) !== link.pin_hash) {
-            const t = (link.pin_tentativas || 0) + 1, bloquear = t >= MAX_TENTATIVAS_PIN;
-            await supabaseAdmin.from("recepcao_links").update({
-                pin_tentativas: bloquear ? 0 : t,
-                pin_bloqueado_ate: bloquear ? new Date(Date.now() + MINUTOS_BLOQUEIO_PIN * 60000).toISOString() : null,
-            }).eq("id", link.id);
-            return responder({ ok: false, erro: bloquear ? `PIN bloqueado por ${MINUTOS_BLOQUEIO_PIN} min.` : "PIN incorreto." }, 401);
+            const lixo = [...crypto.getRandomValues(new Uint8Array(32))].map((x) => x.toString(16).padStart(2, "0")).join("");
+            await supabaseAdmin.from("recepcao_sessoes").insert({ token_hash: await sha256(lixo), link_id: link.id, apelido: APELIDO_ERRO, expira_em: new Date().toISOString() });
+            return responder({ ok: false, erro: "PIN incorreto." }, 401);
         }
         const token = [...crypto.getRandomValues(new Uint8Array(32))].map((x) => x.toString(16).padStart(2, "0")).join("");
         const expira = new Date(Date.now() + HORAS_SESSAO * 3600000).toISOString();
         await supabaseAdmin.from("recepcao_sessoes").insert({ token_hash: await sha256(token), link_id: link.id, apelido: "Segurança", expira_em: expira });
-        await supabaseAdmin.from("recepcao_links").update({ pin_tentativas: 0 }).eq("id", link.id);
         return responder({ ok: true, sessao: token, expira_em: expira });
     }
     const sessaoTxt = String(corpo.sessao || "");

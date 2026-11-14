@@ -807,7 +807,10 @@
     if (!pin) return;
     sha256(chave + ':' + pin).then(function (h) {
       if (h === ler('pinHash', '')) { sairTotem(); return; }
-      // PIN não guardado neste aparelho (ou trocado): confere no servidor, se houver internet.
+      // Com o PIN guardado no aparelho, o erro fica só aqui: tentativas erradas de um curioso no tablet
+      // não podem bloquear o PIN da equipe no servidor.
+      if (ler('pinHash', '')) { aviso('PIN incorreto.'); return; }
+      // PIN não guardado neste aparelho: confere no servidor, se houver internet.
       chamar({ acao: 'pin', pin: pin, apelido: atendente }).then(function (j) {
         if (!j.ok) { aviso(j.erro || 'PIN incorreto.'); return; }
         gravar('pinHash', h); sessao = { token: j.sessao, expira: j.expira_em }; gravar('sessao', sessao);
