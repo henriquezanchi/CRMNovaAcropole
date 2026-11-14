@@ -50,6 +50,7 @@
     <button type="button" role="tab" data-aba="buscar" aria-selected="true">Chegada</button>
     <button type="button" role="tab" data-aba="cadastrar" aria-selected="false">Cadastrar</button>
     <button type="button" role="tab" data-aba="presentes" aria-selected="false">Presentes</button>
+    <button type="button" role="tab" data-aba="inscritos" aria-selected="false">Inscritos</button>
     <button type="button" role="tab" data-aba="numeros" aria-selected="false">Números</button>
   </nav>
 
@@ -101,6 +102,17 @@
   <!-- Números do evento (painel) -->
   <div id="abaNumeros" class="aba" hidden>
     <div id="painelNumeros" class="painel-numeros"><p class="vazio">Carregando…</p></div>
+  </div>
+
+  <!-- Lista completa de inscritos: quem fez e quem não fez check-in -->
+  <div id="abaInscritos" class="aba" hidden>
+    <p class="instrucao" id="resumoInscritos"></p>
+    <div class="filtros-inscritos">
+      <button type="button" class="chip" data-filtro="todos">Todos</button>
+      <button type="button" class="chip" data-filtro="sem">Sem check-in</button>
+      <button type="button" class="chip" data-filtro="com">Com check-in</button>
+    </div>
+    <div id="listaInscritos" class="resultados"></div>
   </div>
 
   <!-- Presentes e registros -->

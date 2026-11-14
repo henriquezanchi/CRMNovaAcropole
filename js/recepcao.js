@@ -440,6 +440,34 @@
     });
   }
 
+  // ---------- Inscritos (lista completa, com e sem check-in) ----------
+  var filtroInscritos = 'todos';
+  function desenharInscritos() {
+    var ins = inscritos().map(function (x) { return { nome: x.nome || '', presente: x.presente, aluno: x.aluno, final_tel: x.final_tel, porta: x.na_porta }; })
+      .concat(reservas().map(function (r) { return { nome: r.nome || '', presente: true, porta: true }; }))
+      .sort(function (a, b) { return a.nome.localeCompare(b.nome); });
+    var com = ins.filter(function (x) { return x.presente; }).length;
+    $('resumoInscritos').textContent = ins.length + ' inscritos: ' + com + ' com check-in, ' + (ins.length - com) + ' sem check-in.';
+    document.querySelectorAll('.filtros-inscritos button').forEach(function (b) { b.classList.toggle('ativo', b.getAttribute('data-filtro') === filtroInscritos); });
+    var area = $('listaInscritos'); area.textContent = '';
+    var ver = ins.filter(function (x) { return filtroInscritos === 'todos' || (filtroInscritos === 'com') === x.presente; });
+    if (!ver.length) { area.appendChild(el('p', { classe: 'vazio', texto: 'Ninguém nesta lista.' })); return; }
+    ver.forEach(function (p) {
+      area.appendChild(el('div', { classe: 'pessoa' + (p.presente ? ' presente' : '') }, [
+        el('div', { classe: 'nome', texto: p.nome }),
+        el('div', { classe: 'acao' }, [el('span', { classe: 'selo' + (p.presente ? '' : ' fora'), texto: p.presente ? '✓ Check-in feito' : 'Sem check-in' })]),
+        el('div', { classe: 'info' }, [
+          p.aluno ? el('span', { classe: 'selo', texto: 'Aluno' }) : null,
+          p.porta ? el('span', { classe: 'selo fora', texto: 'inscrito na porta' }) : null,
+          p.final_tel ? el('span', { texto: 'cel. final ' + p.final_tel }) : null
+        ])
+      ]));
+    });
+  }
+  document.querySelectorAll('.filtros-inscritos button').forEach(function (b) {
+    b.addEventListener('click', function () { filtroInscritos = b.getAttribute('data-filtro'); desenharInscritos(); });
+  });
+
   // ---------- fila de envio ----------
   function enfileirar(acao, dados) {
     dados.client_id = uuid(); dados.criado_no_aparelho = new Date().toISOString();
@@ -1058,7 +1086,8 @@
   function abrirAba(nome) {
     document.querySelectorAll('.abas button').forEach(function (b) { b.setAttribute('aria-selected', String(b.getAttribute('data-aba') === nome)); });
     $('abaBuscar').hidden = nome !== 'buscar'; $('abaCadastrar').hidden = nome !== 'cadastrar'; $('abaPresentes').hidden = nome !== 'presentes';
-    $('abaNumeros').hidden = nome !== 'numeros';
+    $('abaNumeros').hidden = nome !== 'numeros'; $('abaInscritos').hidden = nome !== 'inscritos';
+    if (nome === 'inscritos') desenharInscritos();
     if (nome === 'presentes') desenharPresentes();
     if (nome === 'numeros') carregarNumeros();
     if (nome === 'buscar') setTimeout(function () { $('busca').focus(); }, 30);

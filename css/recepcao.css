@@ -283,3 +283,9 @@ body.modo-totem .pp-cartao { display: none; }
   .passos li { padding: 8px 10px; }
   .passos li:not(:last-child)::after { right: auto; left: 22px; top: auto; bottom: -8px; transform: rotate(135deg); }
 }
+
+/* Aba Inscritos (lista completa) */
+.abas { grid-template-columns: repeat(5, 1fr); }
+.abas button { padding-left: 2px; padding-right: 2px; }
+.filtros-inscritos { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.filtros-inscritos .chip.ativo { background: var(--verde); color: #fff; }
