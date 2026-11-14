@@ -11474,3 +11474,8 @@ só números, mesma chave de pessoa do painel; a tabela segue fechada para o nav
   equipe 1x (ação `validador_pin`, mesmo PIN/bloqueio do link ativo, sessão de 16 h em `recepcao_sessoes`), busca na
   `recepcao_lista` + vagas reservadas (`validador_buscar`: nome, final do celular, check-in sim/não) e "Liberar" grava
   `tipo='validado'` com autor "Segurança (busca por nome)" (`validador_liberar`). Sem check-in: recepção. Precisa de internet.
+- Validador mais rígido (14/11/2026, prioridade do usuário: saber quem entra no auditório, não só controlar ingresso):
+  com o PIN da equipe, o celular da segurança baixa a cada minuto a situação de cada cartão (`validador_cartoes`) e,
+  sem internet, mostra com quem o cartão estava. Cartão sem pessoa vinculada (online) = "NÃO LIBERE AINDA"; sem
+  internet e sem registro de entrega = "CONFIRME ANTES DE LIBERAR" (documento + anotar). Toda tela pede para
+  perguntar o nome e conferir.

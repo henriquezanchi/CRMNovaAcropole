@@ -42,7 +42,7 @@
     var r = $('vlResultado'); r.className = 'vl-resultado vl-' + tipo; r.textContent = '';
     r.appendChild(el('p', 'vl-status', titulo));
     (linhas || []).forEach(function (l) { if (l) r.appendChild(el('p', l[0], l[1])); });
-    if (navigator.vibrate) navigator.vibrate(tipo === 'ok' ? 80 : [200, 80, 200]);
+    if (navigator.vibrate && tipo !== 'espera') navigator.vibrate(tipo === 'ok' ? 80 : [200, 80, 200]);
   }
 
   function validar(texto) {
@@ -60,7 +60,7 @@
         // recolhe e devolve à recepção. A leitura libera o cartão. Com internet, mostra com quem ele está.
         if (dados.c) { lerCartao(dados, token); contar(); return; }
         var vistos = lerVistos(), id = partes[1].slice(0, 24), antes = vistos[id];
-        var linhas = [['vl-info', dados.en || ''], ['vl-nome', dados.n || ''], ['vl-info', dados.t || ''], ['vl-info', 'Check-in: ' + hora(dados.d)]];
+        var linhas = [['vl-info', dados.en || ''], ['vl-nome', dados.n || ''], ['vl-info', dados.t || ''], ['vl-info', 'Check-in: ' + hora(dados.d)], ['vl-dica', 'Pergunte o nome e confira com a tela. Na dúvida, peça documento.']];
         // Lido de novo em menos de 1 minuto: é a mesma pessoa na frente da segurança (leitura repetida sem querer).
         if (antes && Date.now() - new Date(antes).getTime() < 60000) { mostrar('ok', '✓ QR CODE VÁLIDO', linhas); contar(); return; }
         if (antes) {
@@ -88,41 +88,67 @@
       }, function () { mostrar('erro', '✗ Não foi possível conferir', [['vl-dica', 'Atualize o navegador ou use outro celular.']]); });
   }
 
+  // Situação dos cartões baixada do servidor a cada minuto (com o PIN da equipe). Sem internet, o validador ainda sabe
+  // com quem estava cada cartão até a última atualização.
+  function lerCacheCartoes() { try { return JSON.parse(localStorage.getItem('vl_cartoes') || 'null'); } catch (e) { return null; } }
+  function marcarCartaoLidoNoCache(num) {
+    var c = lerCacheCartoes(); if (!c || !c.cartoes) return;
+    var a = c.cartoes[num]; c.cartoes[num] = { tipo: 'cartao_lido', nome: a ? a.nome : null, em: new Date().toISOString() };
+    try { localStorage.setItem('vl_cartoes', JSON.stringify(c)); } catch (e) { /* ok */ }
+  }
+  function sincronizarCartoes() {
+    if (!buscaSessao() || navigator.onLine === false) return;
+    chamarBusca({ acao: 'validador_cartoes' }).then(function (j) {
+      if (j.ok) { try { localStorage.setItem('vl_cartoes', JSON.stringify({ cartoes: j.cartoes || {}, em: j.agora })); } catch (e) { /* ok */ } }
+      if (j.precisa_pin) { try { localStorage.removeItem('vl_sessao'); } catch (e) { /* ok */ } atualizarBotaoPin(); }
+    }, function () { /* sem internet: fica com a última lista */ });
+  }
+
   function lerCartao(dados, token) {
-    var base = [['vl-info', dados.en || ''], ['vl-nome', 'Cartão de entrada nº ' + dados.c]];
+    var num = String(dados.c);
+    var base = [['vl-info', dados.en || ''], ['vl-nome', 'Cartão de entrada nº ' + num]];
     var fim = ['vl-dica', 'Recolha o cartão e devolva à recepção.'];
-    mostrar('ok', '✓ CARTÃO VÁLIDO', base.concat([['vl-info', 'Conferindo com quem está…'], fim]));
+    var pergunte = function (nome) { return ['vl-info', 'Pergunte o nome: deve ser ' + nome + '. Se não bater, não libere e chame a recepção.']; };
+    mostrar('espera', 'Conferindo o cartão…', base);
     var ctl = window.AbortController ? new AbortController() : null;
     var tempo = setTimeout(function () { if (ctl) ctl.abort(); }, 6000);
-    fetch('https://eovgljcowblwoxmobeno.supabase.co/functions/v1/recepcao-evento', { method: 'POST', headers: { 'content-type': 'application/json' },
+    fetch(FUNCAO, { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ acao: 'cartao_lido', token: token, lido_em: new Date().toISOString() }), signal: ctl ? ctl.signal : undefined })
       .then(function (r) { return r.json(); })
       .then(function (j) {
         clearTimeout(tempo);
-        if (j.ok && j.vinculado) mostrar('ok', '✓ CARTÃO VÁLIDO', base.concat([['vl-nome', j.nome], ['vl-info', 'Entregue pela recepção às ' + hora(j.vinculado_em)], fim]));
-        else if (j.ok && j.ja_lido_em && Date.now() - new Date(j.ja_lido_em).getTime() < 90000) {
+        if (j.ok && j.vinculado) {
+          marcarCartaoLidoNoCache(num);
+          mostrar('ok', '✓ CARTÃO VÁLIDO', base.concat([['vl-nome', j.nome], pergunte(j.nome), ['vl-dica', 'Entregue pela recepção às ' + hora(j.vinculado_em)], fim]));
+        } else if (j.ok && j.ja_lido_em && Date.now() - new Date(j.ja_lido_em).getTime() < 90000) {
           // Lido duas vezes seguidas sem querer: é a mesma entrada.
-          mostrar('ok', '✓ CARTÃO VÁLIDO', base.concat([j.nome_anterior ? ['vl-nome', j.nome_anterior] : null, fim]));
-        }
-        else if (j.ok) mostrar('repetido', '✓ Cartão válido · sem nome', base.concat([
-          ['vl-info', 'Pode liberar a entrada.'],
-          ['vl-dica', j.ja_lido_em ? 'A recepção entregou este cartão de novo sem digitar o número (última entrada às ' + hora(j.ja_lido_em) + ').' : 'A recepção ainda não digitou o número deste cartão.'],
-          fim]));
-        else throw new Error();
+          mostrar('ok', '✓ CARTÃO VÁLIDO', base.concat([j.nome_anterior ? ['vl-nome', j.nome_anterior] : null, j.nome_anterior ? pergunte(j.nome_anterior) : null, fim]));
+        } else if (j.ok) {
+          // Cartão sem pessoa vinculada (não foi entregue pela mesa, ou já entrou e voltou sem nova entrega): não libera.
+          mostrar('erro', '✗ NÃO LIBERE AINDA', base.concat([
+            ['vl-info', 'Este cartão não está vinculado a ninguém' + (j.ja_lido_em ? ' (já foi usado às ' + hora(j.ja_lido_em) + (j.nome_anterior ? ' por ' + j.nome_anterior : '') + ')' : '') + '.'],
+            ['vl-dica', 'Chame a recepção para registrar a pessoa e digitar o número do cartão.']]));
+        } else throw new Error();
       })
       .catch(function () {
-        clearTimeout(tempo); mostrar('ok', '✓ CARTÃO VÁLIDO', base.concat([['vl-info', 'Sem internet: não foi possível ver o nome.'], fim]));
-        registrarLeitura('cartao_lido', token); // libera o cartão quando a internet voltar
+        clearTimeout(tempo);
+        registrarLeitura('cartao_lido', token); // registra quando a internet voltar
+        var cache = lerCacheCartoes(), info = cache && cache.cartoes ? cache.cartoes[num] : null, ate = cache ? hora(cache.em) : '';
+        if (info && info.tipo === 'cartao') {
+          marcarCartaoLidoNoCache(num);
+          mostrar('repetido', '✓ Cartão válido · sem internet', base.concat([['vl-nome', info.nome], pergunte(info.nome),
+            ['vl-dica', 'Entregue às ' + hora(info.em) + ' (lista atualizada às ' + ate + ').'], fim]));
+        } else if (info && info.tipo === 'cartao_lido') {
+          mostrar('erro', '✗ CONFIRME ANTES DE LIBERAR', base.concat([
+            ['vl-info', 'Este cartão já entrou às ' + hora(info.em) + (info.nome ? ' (' + info.nome + ')' : '') + ' e não tinha nova entrega até ' + ate + '.'],
+            ['vl-dica', 'Sem internet. Pode ter sido entregue depois disso: confirme com a recepção, ou peça documento e anote nome e nº do cartão.']]));
+        } else {
+          mostrar('erro', '✗ CONFIRME ANTES DE LIBERAR', base.concat([
+            ['vl-info', cache ? 'Este cartão não tinha sido entregue até ' + ate + '.' : 'Sem internet e sem a lista de cartões neste celular.'],
+            ['vl-dica', 'Pergunte o nome, peça documento e anote nome e nº do cartão, ou confirme com a recepção.']]));
+        }
       });
   }
-
-  // Tela acesa enquanto o QR code está aberto (o navegador não deixa mudar o brilho; só impedir que a tela apague).
-  var travaTela = null;
-  function manterTelaAcesa() {
-    if (!('wakeLock' in navigator) || travaTela) return;
-    navigator.wakeLock.request('screen').then(function (t) { travaTela = t; t.addEventListener('release', function () { travaTela = null; }); }, function () { /* ok */ });
-  }
-  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible' && window.__qrAberto) manterTelaAcesa(); });
 
   // ---------- Página do passe (passe.html / /passe#<token>) ----------
   // O participante abre o próprio passe (lendo o QR na tela da recepção, ou vindo do check-in pelo celular).
@@ -239,13 +265,17 @@
       });
     }, function () { res.textContent = ''; res.appendChild(el('p', 'dica', 'Sem internet: a busca pelo nome precisa de conexão. Encaminhe para a recepção.')); });
   }
+  function atualizarBotaoPin() { if ($('vlPinEquipe')) $('vlPinEquipe').hidden = !!buscaSessao(); }
+  if ($('vlPinEquipe')) {
+    $('vlPinEquipe').addEventListener('click', function () { pedirPinBusca().then(function (ok) { atualizarBotaoPin(); if (ok) sincronizarCartoes(); }); });
+  }
   if ($('vlBuscarAbrir')) {
     $('vlBuscarAbrir').addEventListener('click', function () {
       var abrir = $('vlBusca').hidden;
       $('vlBusca').hidden = !abrir;
       if (!abrir) return;
       var seguir = function () { $('vlBuscaNome').focus(); };
-      if (buscaSessao()) seguir(); else pedirPinBusca().then(function (ok) { if (ok) seguir(); else $('vlBusca').hidden = true; });
+      if (buscaSessao()) seguir(); else pedirPinBusca().then(function (ok) { atualizarBotaoPin(); if (ok) { sincronizarCartoes(); seguir(); } else $('vlBusca').hidden = true; });
     });
     $('vlBuscaNome').addEventListener('input', function () { clearTimeout(buscaTimer); buscaTimer = setTimeout(buscarNome, 400); });
   }
@@ -254,6 +284,7 @@
   try { localStorage.setItem('vl_modo', '1'); } catch (e) { /* ok */ }
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw-passe.js', { scope: './validar' }).catch(function () { /* ok */ });
   contar();
+  atualizarBotaoPin(); sincronizarCartoes(); setInterval(sincronizarCartoes, 60000); window.addEventListener('online', sincronizarCartoes);
   if (location.hash.length > 10) validar(location.hash);
   window.addEventListener('hashchange', function () { validar(location.hash); });
 })();

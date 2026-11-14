@@ -452,6 +452,16 @@ async function validador(acao: string, corpo: any) {
         for (const r of reservas || []) if (achados.length < 10 && bate(r.nome)) achados.push({ email_evento_id: null, nome: r.nome, final_tel: null, presente: true });
         return responder({ ok: true, achados });
     }
+    // Situação de cada cartão (última entrega/leitura), para o validador guardar e consultar sem internet.
+    if (acao === "validador_cartoes") {
+        const { data, error } = await supabaseAdmin.from("recepcao_registros").select("cartao_numero, tipo, nome, criado_em")
+            .eq("evento_id_ulisses", link.evento_id_ulisses).not("cartao_numero", "is", null).in("tipo", ["cartao", "cartao_lido"])
+            .order("criado_em", { ascending: true }).limit(5000);
+        if (error) throw new Error(error.message);
+        const ult: Record<string, any> = {};
+        for (const r of data || []) ult[r.cartao_numero] = { tipo: r.tipo, nome: r.nome, em: r.criado_em };
+        return responder({ ok: true, cartoes: ult, agora: new Date().toISOString() });
+    }
     if (acao === "validador_liberar") {
         const nome = texto(corpo.nome, 120), ee = Number(corpo.email_evento_id) || null;
         if (!nome) return responder({ ok: false, erro: "Pedido inválido." }, 400);
