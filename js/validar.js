@@ -105,7 +105,7 @@
   }
 
   function lerCartao(dados, token) {
-    var num = String(dados.c);
+    var num = String(parseInt(dados.c, 10) || dados.c); // o cartão traz "005"; a lista do servidor usa 5
     var base = [['vl-info', dados.en || ''], ['vl-nome', 'Cartão de entrada nº ' + num]];
     var fim = ['vl-dica', 'Recolha o cartão e devolva à recepção.'];
     var pergunte = function (nome) { return ['vl-info', 'Pergunte o nome: deve ser ' + nome + '. Se não bater, não libere e chame a recepção.']; };
@@ -127,7 +127,7 @@
           // Cartão sem pessoa vinculada (não foi entregue pela mesa, ou já entrou e voltou sem nova entrega): não libera.
           mostrar('erro', '✗ NÃO LIBERE AINDA', base.concat([
             ['vl-info', 'Este cartão não está vinculado a ninguém' + (j.ja_lido_em ? ' (já foi usado às ' + hora(j.ja_lido_em) + (j.nome_anterior ? ' por ' + j.nome_anterior : '') + ')' : '') + '.'],
-            ['vl-dica', 'Chame a recepção para registrar a pessoa e digitar o número do cartão.']]));
+            ['vl-dica', 'Pergunte o nome e confirme com a recepção (ela pode estar sem internet e ainda não ter enviado a entrega). Sem confirmação: peça documento e anote nome e nº do cartão.']]));
         } else throw new Error();
       })
       .catch(function () {
