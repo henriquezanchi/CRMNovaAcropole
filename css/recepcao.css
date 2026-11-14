@@ -289,3 +289,4 @@ body.modo-totem .pp-cartao { display: none; }
 .abas button { padding-left: 2px; padding-right: 2px; }
 .filtros-inscritos { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .filtros-inscritos .chip.ativo { background: var(--verde); color: #fff; }
+.filtros-inscritos select { flex: 1 1 200px; min-width: 0; padding: 8px 10px; border: 1.5px solid var(--verde); border-radius: 999px; background: #fff; color: var(--verde); font-weight: 700; font-size: 14px; }

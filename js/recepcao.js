@@ -441,11 +441,25 @@
   }
 
   // ---------- Inscritos (lista completa, com e sem check-in) ----------
-  var filtroInscritos = 'todos';
+  var filtroInscritos = 'todos', filtroEscola = '';
+  var SEM_ESCOLA = '__sem__';
   function desenharInscritos() {
-    var ins = inscritos().map(function (x) { return { nome: x.nome || '', presente: x.presente, aluno: x.aluno, final_tel: x.final_tel, porta: x.na_porta }; })
-      .concat(reservas().map(function (r) { return { nome: r.nome || '', presente: true, porta: true }; }))
+    var ins = inscritos().map(function (x) { return { nome: x.nome || '', presente: x.presente, aluno: x.aluno, final_tel: x.final_tel, porta: x.na_porta, escola: x.escola || '' }; })
+      .concat(reservas().map(function (r) { return { nome: r.nome || '', presente: true, porta: true, escola: '' }; }))
       .sort(function (a, b) { return a.nome.localeCompare(b.nome); });
+    // Escola: só existe para quem é aluno/ex-aluno no Mercúrio; os demais ficam em "De fora / sem escola".
+    var contagem = {};
+    ins.forEach(function (x) { var k = x.escola || SEM_ESCOLA; contagem[k] = (contagem[k] || 0) + 1; });
+    var sel = $('filtroEscolaInscritos');
+    if (filtroEscola && !contagem[filtroEscola]) filtroEscola = '';
+    sel.textContent = '';
+    sel.appendChild(el('option', { value: '', texto: 'Todas as escolas (' + ins.length + ')' }));
+    Object.keys(contagem).filter(function (k) { return k !== SEM_ESCOLA; }).sort(function (a, b) { return a.localeCompare(b); }).forEach(function (k) {
+      sel.appendChild(el('option', { value: k, texto: k.replace(/^Goiânia - /, '') + ' (' + contagem[k] + ')' }));
+    });
+    if (contagem[SEM_ESCOLA]) sel.appendChild(el('option', { value: SEM_ESCOLA, texto: 'De fora / sem escola (' + contagem[SEM_ESCOLA] + ')' }));
+    sel.value = filtroEscola;
+    if (filtroEscola) ins = ins.filter(function (x) { return (x.escola || SEM_ESCOLA) === filtroEscola; });
     var com = ins.filter(function (x) { return x.presente; }).length;
     $('resumoInscritos').textContent = ins.length + ' inscritos: ' + com + ' com check-in, ' + (ins.length - com) + ' sem check-in.';
     document.querySelectorAll('.filtros-inscritos button').forEach(function (b) { b.classList.toggle('ativo', b.getAttribute('data-filtro') === filtroInscritos); });
@@ -458,6 +472,7 @@
         el('div', { classe: 'acao' }, [el('span', { classe: 'selo' + (p.presente ? '' : ' fora'), texto: p.presente ? '✓ Check-in feito' : 'Sem check-in' })]),
         el('div', { classe: 'info' }, [
           p.aluno ? el('span', { classe: 'selo', texto: 'Aluno' }) : null,
+          p.escola ? el('span', { texto: p.escola.replace(/^Goiânia - /, '') }) : null,
           p.porta ? el('span', { classe: 'selo fora', texto: 'inscrito na porta' }) : null,
           p.final_tel ? el('span', { texto: 'cel. final ' + p.final_tel }) : null
         ])
@@ -467,6 +482,7 @@
   document.querySelectorAll('.filtros-inscritos button').forEach(function (b) {
     b.addEventListener('click', function () { filtroInscritos = b.getAttribute('data-filtro'); desenharInscritos(); });
   });
+  $('filtroEscolaInscritos').addEventListener('change', function () { filtroEscola = this.value; desenharInscritos(); });
 
   // ---------- fila de envio ----------
   function enfileirar(acao, dados) {
