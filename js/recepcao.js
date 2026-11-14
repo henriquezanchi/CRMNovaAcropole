@@ -441,12 +441,13 @@
   }
 
   // ---------- Inscritos (lista completa, com e sem check-in) ----------
-  var filtroInscritos = 'todos', filtroEscola = '';
+  var filtroInscritos = 'todos', filtroEscola = '', filtroAluno = '';
   var SEM_ESCOLA = '__sem__';
   function desenharInscritos() {
     var ins = inscritos().map(function (x) { return { id: x.id, nome: x.nome || '', presente: x.presente, aluno: x.aluno, final_tel: x.final_tel, porta: x.na_porta, escola: x.escola || '' }; })
       .concat(reservas().map(function (r) { return { nome: r.nome || '', presente: true, porta: true, escola: '' }; }))
       .sort(function (a, b) { return a.nome.localeCompare(b.nome); });
+    if (filtroAluno) ins = ins.filter(function (x) { return (filtroAluno === 'aluno') === !!x.aluno; });
     // Escola: só existe para quem é aluno/ex-aluno no Mercúrio; os demais ficam em "De fora / sem escola".
     var contagem = {};
     ins.forEach(function (x) { var k = x.escola || SEM_ESCOLA; contagem[k] = (contagem[k] || 0) + 1; });
@@ -493,6 +494,7 @@
     b.addEventListener('click', function () { filtroInscritos = b.getAttribute('data-filtro'); desenharInscritos(); });
   });
   $('filtroEscolaInscritos').addEventListener('change', function () { filtroEscola = this.value; desenharInscritos(); });
+  $('filtroAlunoInscritos').addEventListener('change', function () { filtroAluno = this.value; desenharInscritos(); });
 
   // ---------- fila de envio ----------
   function enfileirar(acao, dados) {
