@@ -83,7 +83,7 @@
     ev.preventDefault();
     var cel = $('ckCelular').value.replace(/\D/g, ''), nome = $('ckNome').value.trim();
     if (cel.length < 10) { $('ckMsg').textContent = 'Informe o celular com DDD.'; return; }
-    if (!nome) { $('ckMsg').textContent = 'Informe seu primeiro nome.'; return; }
+    if (!nome) { $('ckMsg').textContent = 'Informe seu nome.'; return; }
     ocupado($('ckBotao'), true); $('ckMsg').textContent = '';
     chamar({ acao: 'auto_checkin', celular: cel, nome: nome }).then(function (j) {
       ocupado($('ckBotao'), false, 'Fazer check-in');
