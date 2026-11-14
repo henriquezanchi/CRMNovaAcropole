@@ -444,7 +444,7 @@
   var filtroInscritos = 'todos', filtroEscola = '';
   var SEM_ESCOLA = '__sem__';
   function desenharInscritos() {
-    var ins = inscritos().map(function (x) { return { nome: x.nome || '', presente: x.presente, aluno: x.aluno, final_tel: x.final_tel, porta: x.na_porta, escola: x.escola || '' }; })
+    var ins = inscritos().map(function (x) { return { id: x.id, nome: x.nome || '', presente: x.presente, aluno: x.aluno, final_tel: x.final_tel, porta: x.na_porta, escola: x.escola || '' }; })
       .concat(reservas().map(function (r) { return { nome: r.nome || '', presente: true, porta: true, escola: '' }; }))
       .sort(function (a, b) { return a.nome.localeCompare(b.nome); });
     // Escola: só existe para quem é aluno/ex-aluno no Mercúrio; os demais ficam em "De fora / sem escola".
@@ -469,7 +469,17 @@
     ver.forEach(function (p) {
       area.appendChild(el('div', { classe: 'pessoa' + (p.presente ? ' presente' : '') }, [
         el('div', { classe: 'nome', texto: p.nome }),
-        el('div', { classe: 'acao' }, [el('span', { classe: 'selo' + (p.presente ? '' : ' fora'), texto: p.presente ? '✓ Check-in feito' : 'Sem check-in' })]),
+        el('div', { classe: 'acao' }, p.presente || !p.id
+          ? [el('span', { classe: 'selo', texto: '✓ Check-in feito' })]
+          : [el('span', { classe: 'selo fora', texto: 'Sem check-in' }),
+            el('button', { type: 'button', classe: 'btn-chegou', texto: 'Chegou', onclick: function () {
+              // Mesmo registro da aba Chegada: marca a presença e abre a tela do cartão de entrada.
+              enfileirar('presenca', { email_evento_id: p.id, compareceu: true });
+              aviso('✓ ' + p.nome.split(' ')[0] + ' marcado(a) como presente');
+              espelhar({ tipo: 'boasvindas', nome: p.nome });
+              mostrarPasse(p.nome, null, p.id);
+              desenharInscritos();
+            } })]),
         el('div', { classe: 'info' }, [
           p.aluno ? el('span', { classe: 'selo', texto: 'Aluno' }) : null,
           p.escola ? el('span', { texto: p.escola.replace(/^Goiânia - /, '') }) : null,
