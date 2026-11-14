@@ -202,6 +202,17 @@ async function lerTokenAssinado(tokenBruto: unknown): Promise<any | null> {
 }
 
 // Segurança leu um cartão de entrada: devolve quem está com ele e libera o cartão para a recepção usar de novo.
+// A mesma PESSOA já entrou antes (por cartão, por outro QR code ou pela busca do nome)? Um QR novo gerado em outro
+// celular, ou cartão + QR da mesma inscrição, não podem dar duas entradas sem aviso (14/11/2026).
+async function entradaAnterior(ev: number, ee: number | null, excetoClientId?: string) {
+    if (!ee) return null;
+    const { data } = await supabaseAdmin.from("recepcao_registros").select("tipo, criado_no_aparelho, criado_em, client_id, cartao_numero, autor")
+        .eq("evento_id_ulisses", ev).eq("email_evento_id", ee).in("tipo", ["validado", "cartao_lido"]).order("criado_em", { ascending: true }).limit(6);
+    const r = (data || []).find((x: any) => x.client_id !== excetoClientId);
+    if (!r) return null;
+    return { em: r.criado_no_aparelho || r.criado_em, por: r.tipo === "cartao_lido" ? `cartão nº ${r.cartao_numero}` : /busca por nome/.test(r.autor || "") ? "busca pelo nome" : "outro QR code" };
+}
+
 async function cartaoLido(corpo: any) {
     const dados = await lerTokenAssinado(corpo.token);
     const num = dados ? Number(dados.c) : 0;
@@ -210,12 +221,13 @@ async function cartaoLido(corpo: any) {
         .eq("evento_id_ulisses", dados.ev).eq("cartao_numero", num).order("criado_em", { ascending: false }).limit(1).maybeSingle();
     if (!ult) return responder({ ok: true, numero: num, vinculado: false });
     if (ult.tipo === "cartao_lido") return responder({ ok: true, numero: num, vinculado: false, ja_lido_em: ult.criado_em, nome_anterior: ult.nome });
+    const antC = await entradaAnterior(dados.ev, ult.email_evento_id);
     await supabaseAdmin.from("recepcao_registros").insert({
         client_id: crypto.randomUUID(), link_id: ult.link_id, evento_id_ulisses: dados.ev, tipo: "cartao_lido", status: "ok",
         cartao_numero: num, nome: ult.nome, email_evento_id: ult.email_evento_id, autor: "Segurança (validador)",
         inicio_em: ult.criado_no_aparelho || ult.criado_em, criado_no_aparelho: dataOk(corpo.lido_em),
     });
-    return responder({ ok: true, numero: num, vinculado: true, nome: ult.nome, vinculado_em: ult.criado_em });
+    return responder({ ok: true, numero: num, vinculado: true, nome: ult.nome, vinculado_em: ult.criado_em, ...(antC ? { ja_entrou: true, primeira_em: antC.em, por: antC.por } : {}) });
 }
 
 // Data enviada pelo aparelho (horário da leitura); só aceita se for plausível (até 1 dia antes e 5 min no futuro).
@@ -235,12 +247,14 @@ async function passeValidado(corpo: any) {
     const h = (await sha256(token.split(".")[1] || token)).slice(0, 32);
     const clientId = `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
     const ref = String(dados.r || "");
+    const eeRef = ref.startsWith("i") ? Number(ref.slice(1)) || null : null;
+    const antQ = await entradaAnterior(dados.ev, eeRef, clientId);
     const novo = await registrar({
         client_id: clientId, link_id: link.id, evento_id_ulisses: dados.ev, tipo: "validado", status: "ok",
-        nome: dados.n || null, email_evento_id: ref.startsWith("i") ? Number(ref.slice(1)) || null : null,
+        nome: dados.n || null, email_evento_id: eeRef,
         inicio_em: dataOk(dados.d) || null, criado_no_aparelho: dataOk(corpo.lido_em), autor: "Segurança (validador)",
     });
-    if (novo !== null) return responder({ ok: true });
+    if (novo !== null) return responder({ ok: true, ...(antQ ? { ja_entrou: true, primeira_em: antQ.em, por: antQ.por } : {}) });
     // Já existia: devolve quando foi a primeira leitura (o validador avisa se foi em outro aparelho).
     const { data: antes } = await supabaseAdmin.from("recepcao_registros").select("criado_no_aparelho, criado_em").eq("client_id", clientId).maybeSingle();
     return responder({ ok: true, repetido: true, primeira_em: antes?.criado_no_aparelho || antes?.criado_em || null });
@@ -447,9 +461,16 @@ async function validador(acao: string, corpo: any) {
         ]);
         if (error) throw new Error(error.message);
         const bate = (n: string) => { const nn = normalizarNome(n || ""); return termos.every((t) => nn.includes(t)); };
-        const achados = (lista || []).filter((p: any) => bate(p.nome)).slice(0, 10)
+        const achados: any[] = (lista || []).filter((p: any) => bate(p.nome)).slice(0, 10)
             .map((p: any) => ({ email_evento_id: p.email_evento_id, nome: p.nome, final_tel: p.final_tel, presente: p.compareceu === true }));
         for (const r of reservas || []) if (achados.length < 10 && bate(r.nome)) achados.push({ email_evento_id: null, nome: r.nome, final_tel: null, presente: true });
+        // Quem já passou pela segurança (qualquer meio): o validador avisa antes de liberar de novo.
+        const { data: entradas } = await supabaseAdmin.from("recepcao_registros").select("email_evento_id, nome, criado_no_aparelho, criado_em")
+            .eq("evento_id_ulisses", link.evento_id_ulisses).in("tipo", ["validado", "cartao_lido"]).order("criado_em", { ascending: true }).limit(3000);
+        for (const a of achados) {
+            const e = (entradas || []).find((x: any) => (a.email_evento_id && x.email_evento_id === a.email_evento_id) || (!a.email_evento_id && normalizarNome(x.nome || "") === normalizarNome(a.nome || "")));
+            if (e) a.entrou_em = e.criado_no_aparelho || e.criado_em;
+        }
         return responder({ ok: true, achados });
     }
     // Situação de cada cartão (última entrega/leitura), para o validador guardar e consultar sem internet.

@@ -270,3 +270,16 @@ body.modo-totem .pp-cartao { display: none; }
 .vl-busca-item .ok { color: #0b7a4a; font-weight: 700; }
 .vl-busca-item .nao { color: var(--alerta); font-weight: 700; }
 .vl-busca-item button { flex: 0 0 auto; }
+
+/* Passo a passo da chegada (14/11/2026) */
+.passos { list-style: none; margin: 0 0 14px; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.passos li { position: relative; display: flex; align-items: center; gap: 10px; background: #fff; border: 1.5px solid var(--linha); border-radius: var(--raio); padding: 10px 12px; }
+.passos li:not(:last-child)::after { content: ""; position: absolute; right: -9px; top: 50%; width: 8px; height: 8px; border-top: 2px solid var(--verde); border-right: 2px solid var(--verde); transform: translateY(-50%) rotate(45deg); background: transparent; z-index: 1; }
+.passo-num { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; background: var(--verde); color: #fff; font-weight: 800; font-size: 16px; display: flex; align-items: center; justify-content: center; }
+.passo-txt { font-size: 13px; line-height: 1.25; color: var(--suave); }
+.passo-txt strong { display: block; font-size: 15px; color: var(--texto); }
+@media (max-width: 640px) {
+  .passos { grid-template-columns: 1fr; gap: 6px; }
+  .passos li { padding: 8px 10px; }
+  .passos li:not(:last-child)::after { right: auto; left: 22px; top: auto; bottom: -8px; transform: rotate(135deg); }
+}

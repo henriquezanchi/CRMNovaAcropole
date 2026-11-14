@@ -80,6 +80,10 @@
           .then(function (r) { if (r.status >= 500) throw new Error(); return r.json(); })
           .then(function (j) {
             clearTimeout(tempo);
+            if (j && j.ja_entrou && vistos[id] === agoraLido) {
+              mostrar('repetido', '⚠ ESTA PESSOA JÁ ENTROU', linhas.concat([['vl-info', 'Entrada registrada às ' + hora(j.primeira_em) + ' (' + (j.por || 'outro meio') + ').'], ['vl-dica', 'Confira se é a mesma pessoa voltando. Se for outra pessoa, não libere: peça documento e chame a recepção.']]));
+              return;
+            }
             var primeira = j && j.repetido && j.primeira_em ? new Date(j.primeira_em).getTime() : 0;
             if (primeira && Math.abs(primeira - new Date(agoraLido).getTime()) > 60000 && vistos[id] === agoraLido && $('vlResultado').textContent.indexOf(dados.n || '\u0000') >= 0) {
               mostrar('repetido', '✓ Válido · já conferido', linhas.concat([['vl-dica', 'Este QR code já entrou às ' + hora(j.primeira_em) + ' por outro celular da segurança. Confira se é a mesma pessoa voltando.']]));
@@ -117,7 +121,11 @@
       .then(function (r) { return r.json(); })
       .then(function (j) {
         clearTimeout(tempo);
-        if (j.ok && j.vinculado) {
+        if (j.ok && j.vinculado && j.ja_entrou) {
+          marcarCartaoLidoNoCache(num);
+          mostrar('repetido', '⚠ ESTA PESSOA JÁ ENTROU', base.concat([['vl-nome', j.nome], ['vl-info', 'Entrada registrada às ' + hora(j.primeira_em) + ' (' + (j.por || 'outro meio') + ').'],
+            ['vl-dica', 'Confira se é a mesma pessoa voltando. Se for outra pessoa, não libere: peça documento e chame a recepção.'], fim]));
+        } else if (j.ok && j.vinculado) {
           marcarCartaoLidoNoCache(num);
           mostrar('ok', '✓ CARTÃO VÁLIDO', base.concat([['vl-nome', j.nome], pergunte(j.nome), ['vl-dica', 'Entregue pela recepção às ' + hora(j.vinculado_em)], fim]));
         } else if (j.ok && j.ja_lido_em && Date.now() - new Date(j.ja_lido_em).getTime() < 90000) {
@@ -138,6 +146,9 @@
           marcarCartaoLidoNoCache(num);
           mostrar('repetido', '✓ Cartão válido · sem internet', base.concat([['vl-nome', info.nome], pergunte(info.nome),
             ['vl-dica', 'Entregue às ' + hora(info.em) + ' (lista atualizada às ' + ate + ').'], fim]));
+        } else if (info && info.tipo === 'cartao_lido' && Date.now() - new Date(info.em).getTime() < 90000) {
+          // Lido duas vezes seguidas sem querer: é a mesma entrada.
+          mostrar('repetido', '✓ Cartão válido · sem internet', base.concat([info.nome ? ['vl-nome', info.nome] : null, info.nome ? pergunte(info.nome) : null, fim]));
         } else if (info && info.tipo === 'cartao_lido') {
           mostrar('erro', '✗ CONFIRME ANTES DE LIBERAR', base.concat([
             ['vl-info', 'Este cartão já entrou às ' + hora(info.em) + (info.nome ? ' (' + info.nome + ')' : '') + ' e não tinha nova entrega até ' + ate + '.'],
@@ -250,6 +261,7 @@
         info.appendChild(el('strong', null, p.nome));
         info.appendChild(el('small', null, p.final_tel ? 'Celular final ' + p.final_tel : 'Inscrito na porta'));
         info.appendChild(el('div', p.presente ? 'ok' : 'nao', p.presente ? '✓ Check-in feito' : '✗ Sem check-in: encaminhe à recepção'));
+        if (p.entrou_em) info.appendChild(el('div', 'nao', '⚠ Já entrou às ' + hora(p.entrou_em) + ': confira se é a mesma pessoa'));
         item.appendChild(info);
         if (p.presente) {
           var b = el('button', 'btn principal', 'Liberar');
