@@ -780,9 +780,13 @@ async function popularFilialImportacao() {
         lista = [{ nome: (typeof filialAtual !== 'undefined' && filialAtual) ? filialAtual : 'Goiânia - Jardim América' }];
     }
 
+    // Mantém a escola já escolhida. Bug real (15/11/2026): com o banco lento, esta função (async) terminava
+    // DEPOIS que o robô já tinha escolhido a escola e voltava a seleção para a filial do topo — a planilha
+    // de Rio Verde/Alto da Glória foi importada em Jardim América.
+    const escolhida = select.value;
     select.innerHTML = lista.map(f => `<option value="${escapeHTML(f.nome)}">${escapeHTML(f.nome)}</option>`).join('');
     const valorPadrao = (typeof filialAtual !== 'undefined' && filialAtual) ? filialAtual : lista[0].nome;
-    select.value = valorPadrao;
+    select.value = escolhida && lista.some(f => f.nome === escolhida) ? escolhida : valorPadrao;
 
     if (typeof atualizarContagemExclusao === 'function') atualizarContagemExclusao();
 }

@@ -105,6 +105,14 @@ export async function importarNoCrm(page, filial, { caminhoAtivos, caminhoInativ
         if (tentativa === 5) throw new Error(`Não consegui manter a filial "${filial}" selecionada no importador (ficou "${valorAtual}") — provável corrida na população do <select>.`);
     }
 
+    // Espera a lista de escolas parar de ser recarregada (a aba recarrega ao abrir) e confere de novo.
+    await page.waitForTimeout(1500);
+    if ((await seletorFilial.inputValue()) !== filial) {
+        await seletorFilial.selectOption({ label: filial });
+        await page.waitForTimeout(400);
+        if ((await seletorFilial.inputValue()) !== filial) throw new Error(`A escola selecionada no importador mudou sozinha (esperado "${filial}") — importação cancelada.`);
+    }
+
     if (caminhoAtivos) await page.locator('#fileAtivos').setInputFiles(caminhoAtivos);
     if (caminhoInativos) await page.locator('#fileInativos').setInputFiles(caminhoInativos);
     if (caminhoInscricoes) await page.locator('#fileInscricoes').setInputFiles(caminhoInscricoes);
@@ -128,6 +136,12 @@ export async function importarNoCrm(page, filial, { caminhoAtivos, caminhoInativ
     // temas de evento por IA).
     const btnConfirmar = page.locator('button[onclick="confirmarEnviarImportacao()"]');
     await btnConfirmar.waitFor({ timeout: 120000 });
+    // Trava final (15/11/2026): a escola usada no processamento tem que ser a esperada, senão NÃO envia.
+    // Antes, uma troca silenciosa da seleção gravou a planilha de uma escola em outra.
+    const filialProcessada = await page.evaluate(() => (typeof resultadoImportacao !== 'undefined' && resultadoImportacao) ? resultadoImportacao.filial : null);
+    if (filialProcessada !== filial) {
+        throw new Error(`Importação cancelada antes de enviar: a planilha de "${filial}" foi processada como "${filialProcessada}".`);
+    }
     await btnConfirmar.click();
 
     // Timeout alargado (2026-09-21, era 180000): "Concluído!" agora só
