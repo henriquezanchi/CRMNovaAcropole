@@ -61,6 +61,7 @@ async function renderizarCobrancasCora() {
             <label style="font-size:12px;">Resumo de contatos de<br><input type="date" id="coraDe" value="${p.de}"></label>
             <label style="font-size:12px;">até<br><input type="date" id="coraAte" value="${p.ate}"></label>
             <label style="font-size:12px;">Vencimento<br><input type="date" id="coraVencimento" value="${p.vencimento}"></label>
+            <label style="font-size:12px;"><input type="checkbox" id="coraSomentePix" checked> Só Pix (sem boleto)</label>
             <label style="font-size:12px;">Ambiente<br><select id="coraAmbiente"><option value="producao">Produção (boleto de verdade)</option><option value="stage">Teste (Cora Stage)</option></select></label>
             <button type="button" class="btn-secondary" onclick="carregarPreviaCora()">Ver prévia do fixo</button>
             <button type="button" class="btn-secondary" onclick="atualizarStatusCora()" title="Consulta a Cora agora">Atualizar pagamentos</button>
@@ -115,7 +116,7 @@ async function gerarCobrancasCora() {
     const amb = document.getElementById('coraAmbiente').value;
     const total = itens.reduce((s, it) => s + it.valor_centavos, 0);
     if (!confirm(`Gerar ${itens.length} cobrança(s) na Cora ${amb === 'stage' ? '(TESTE)' : '(PRODUÇÃO, boleto de verdade)'}, total ${reaisCora(total)}?`)) return;
-    const r = await chamarCobrancaCora({ acao: 'gerar', itens, ambiente: amb, competencia: document.getElementById('coraCompetencia').value,
+    const r = await chamarCobrancaCora({ acao: 'gerar', itens, ambiente: amb, somente_pix: document.getElementById('coraSomentePix').checked, competencia: document.getElementById('coraCompetencia').value,
         de: document.getElementById('coraDe').value, ate: document.getElementById('coraAte').value, vencimento: document.getElementById('coraVencimento').value }, true);
     if (!r) return;
     const erros = (r.resultados || []).filter((x) => x.erro);

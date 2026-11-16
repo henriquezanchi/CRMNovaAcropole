@@ -71,9 +71,9 @@ function mensagemCobranca(f: any, valor: number, rel: any, de: string, ate: stri
     }
     linhas.push("", "A cobrança das matrículas novas será enviada separadamente.");
     if (pag) {
-        linhas.push("", `*Pagamento* (vencimento ${dataBR(pag.vencimento)})`);
+        linhas.push("", `*Pagamento por Pix* (vencimento ${dataBR(pag.vencimento)})`);
         if (pag.pix_emv) linhas.push("Pix copia e cola:", pag.pix_emv);
-        if (pag.boleto_url) linhas.push("", `Boleto: ${pag.boleto_url}`);
+        if (pag.boleto_url) linhas.push("", `${pag.somente_pix ? "QR Code do Pix" : "Boleto"}: ${pag.boleto_url}`);
     }
     linhas.push("", "Qualquer dúvida, estou à disposição.");
     return linhas.join("\n");
@@ -86,7 +86,7 @@ function mensagemLembrete(c: any): string {
         `Passando para lembrar do pagamento do trabalho de contatos de ${MESES[Number(mes) - 1]}/${ano} (${reais(c.valor_centavos)}), com vencimento em ${dataBR(c.vencimento)}.`,
         "Se já foi pago, por favor desconsidere.", "",
         ...(c.pix_emv ? ["Pix copia e cola:", c.pix_emv, ""] : []),
-        ...(c.boleto_url ? [`Boleto: ${c.boleto_url}`, ""] : []),
+        ...(c.boleto_url ? [`${c.pix_emv ? "QR Code do Pix" : "Boleto"}: ${c.boleto_url}`, ""] : []),
         "Obrigado!",
     ].join("\n");
 }
@@ -129,6 +129,12 @@ async function gerar(corpo: any, autor: string) {
         let { data: linha } = await supabaseAdmin.from("cobrancas_cora").select("*")
             .eq("filial", f.nome).eq("competencia", corpo.competencia).eq("tipo", "fixo").eq("ambiente", amb).maybeSingle();
         if (linha?.cora_invoice_id && linha.status !== "CANCELLED") { resultados.push({ filial: f.nome, ja_existia: true, id: linha.id }); continue; }
+        if (linha && linha.status === "erro" && !linha.cora_invoice_id) {
+            // Tentativa anterior recusada pela Cora: nova chave, senão a Cora devolve o mesmo erro.
+            const nova = crypto.randomUUID();
+            await supabaseAdmin.from("cobrancas_cora").update({ idempotency_key: nova, valor_centavos: valor, vencimento: corpo.vencimento }).eq("id", linha.id);
+            linha = { ...linha, idempotency_key: nova, valor_centavos: valor, vencimento: corpo.vencimento };
+        }
         if (!linha || linha.status === "CANCELLED") {
             if (linha) await supabaseAdmin.from("cobrancas_cora").delete().eq("id", linha.id);
             const [ano, mes] = String(corpo.competencia).split("-");
@@ -150,7 +156,8 @@ async function gerar(corpo: any, autor: string) {
                 },
                 services: [{ name: "Trabalho de contatos", description: linha.descricao.slice(0, 100), amount: valor }],
                 payment_terms: { due_date: corpo.vencimento },
-                payment_forms: ["BANK_SLIP", "PIX"],
+                // Stage da Cora não registra boleto na CIP (REC-0030); lá o teste é só com Pix.
+                payment_forms: amb === "stage" || corpo.somente_pix ? ["PIX"] : ["BANK_SLIP", "PIX"],
             },
         });
         if (!r.ok) {
@@ -160,7 +167,7 @@ async function gerar(corpo: any, autor: string) {
             continue;
         }
         const d = r.dados || {};
-        const pag = { vencimento: corpo.vencimento, pix_emv: d.pix?.emv || null, boleto_url: d.payment_options?.bank_slip?.url || null };
+        const pag = { vencimento: corpo.vencimento, pix_emv: d.pix?.emv || null, boleto_url: d.payment_options?.bank_slip?.url || null, somente_pix: !!corpo.somente_pix || amb === "stage" };
         const rel = await relatorio(f, corpo.de, corpo.ate);
         const atual = {
             cora_invoice_id: d.id, status: traduzStatus(d.status) || "OPEN", erro: null,
