@@ -11520,6 +11520,7 @@ partir do dia seguinte. O teto sobe sozinho 25/dia após 3 dias seguidos de cont
   que pesa na qualidade é bloqueio/denúncia, não volume dentro do limite autorizado. `teto_diario` = 230
   (`MARGEM_LIMITE` = 20 de folga para modelos fora das campanhas); continuam valendo o freio pela
   qualidade (amarelo → 30% e teto volta a 100; vermelho/5+ retenções → para). Campanhas com
-  `config.cota_por_proximidade` (as 6 de turma) dividem o teto todo dia por peso 1/d², d = dias até
-  `fim_convites` inclusive (`aplicarCotasPorProximidade()`, `campanha-whatsapp`), gravando a cota do dia
+  `config.cota_por_proximidade` (as 6 de turma) recebem cada uma a MESMA fatia do total que cabe até a
+  última abertura (desde `config.proximidade_desde`); cota do dia = (fatia − já agendado) ÷ dias até o próprio
+  `fim_convites`, e as de abertura mais distante ficam com o resto do dia (17/11: 49/43/23; depois 72 e 115) (`aplicarCotasPorProximidade()`, `campanha-whatsapp`), gravando a cota do dia
   em `cota_diaria` (`migracao_campanha_cota_proximidade.sql`).

@@ -265,10 +265,14 @@ function dividirPorEscola(lista: any[], total: number, minimo: number): any[] {
     return escolhidos.sort((a, b) => Number(b.prioridade || 0) - Number(a.prioridade || 0));
 }
 
-// Cotas por proximidade (16/11/2026, pedido do usuário): campanhas com config.cota_por_proximidade
-// dividem o que sobra do teto do dia (depois das campanhas de cota fixa) pelo peso 1/d², em que d
-// é o número de dias até o último dia de convite (inclusive). Quem tem a aula mais perto recebe mais;
-// campanha que já passou do fim_convites sai da divisão e as outras herdam as vagas.
+// Cotas por proximidade (16/11/2026, pedido do usuário). Cada abertura de turma recebe a MESMA
+// fatia do total de convites que cabe até a última abertura (teto do dia × dias que faltam, mais o
+// que já foi agendado desde config.proximidade_desde). Quem tem a abertura mais cedo precisa
+// mandar sua fatia em menos dias, então manda mais por dia: cota = (fatia − já agendado) ÷ dias que
+// faltam até o próprio fim_convites. As escolas com a abertura mais distante ficam com o que sobra
+// do dia e herdam as vagas de quem já abriu. Recalculado todo dia no planejamento das 08:25.
+// Ex. (teto 230; fim 23, 24 e 25/11; hoje 17/11): 49 por dia para as de 24/11, 43 para as de 25/11,
+// 23 para as de 26/11; depois 72 e 115 por dia para as últimas. Cada uma fecha com ~345 convites.
 async function aplicarCotasPorProximidade(campanhas: any[], tetoEfetivo: number) {
     const hoje = hojeBrasilia();
     const dinamicas = campanhas.filter((c) => c.config?.cota_por_proximidade);
@@ -277,20 +281,35 @@ async function aplicarCotasPorProximidade(campanhas: any[], tetoEfetivo: number)
     const disponivel = Math.max(0, tetoEfetivo - fixas);
     const dias = (fim: string) => Math.round((Date.parse(fim + "T12:00:00Z") - Date.parse(hoje + "T12:00:00Z")) / 86400000) + 1;
     const ativas = dinamicas.filter((c) => hoje >= c.inicio && hoje <= c.fim_convites);
-    const peso = new Map(ativas.map((c) => [c.id, 1 / Math.max(1, dias(c.fim_convites)) ** 2]));
-    const soma = [...peso.values()].reduce((t, v) => t + v, 0);
-    const partes = ativas.map((c) => ({ c, ideal: soma ? disponivel * peso.get(c.id)! / soma : 0 }));
-    for (const p of partes) p.c.__cota = Math.floor(p.ideal);
-    let sobra = disponivel - partes.reduce((t, p) => t + p.c.__cota, 0);
-    for (const p of [...partes].sort((x, y) => (y.ideal % 1) - (x.ideal % 1))) { if (sobra <= 0) break; p.c.__cota++; sobra--; }
     const resumo: Record<string, number> = {};
+    const cota = new Map<number, number>();
+    if (ativas.length) {
+        // Já agendado por cada uma desde o início da divisão (sem contar hoje).
+        const feito = new Map<number, number>();
+        for (const c of ativas) {
+            const desde = String(c.config?.proximidade_desde || hoje);
+            const { count } = await supabaseAdmin.from("campanha_fila").select("id", { count: "exact", head: true })
+                .eq("campanha_id", c.id).eq("tipo", "convite").neq("status", "cancelado")
+                .gte("agendado_para", instanteBrasilia(desde, "00:00").toISOString())
+                .lt("agendado_para", instanteBrasilia(hoje, "00:00").toISOString());
+            feito.set(c.id, count || 0);
+        }
+        const fimMax = Math.max(...ativas.map((c) => dias(c.fim_convites)));
+        const fatia = (disponivel * fimMax + [...feito.values()].reduce((t, v) => t + v, 0)) / ativas.length;
+        let livre = disponivel;
+        const ultimas = ativas.filter((c) => dias(c.fim_convites) === fimMax);
+        for (const c of ativas.filter((c) => dias(c.fim_convites) < fimMax).sort((a, b) => dias(a.fim_convites) - dias(b.fim_convites))) {
+            const v = Math.min(livre, Math.max(0, Math.round((fatia - feito.get(c.id)!) / dias(c.fim_convites))));
+            cota.set(c.id, v); livre -= v;
+        }
+        ultimas.forEach((c, i) => cota.set(c.id, Math.floor(livre / ultimas.length) + (i < livre % ultimas.length ? 1 : 0)));
+    }
     for (const c of dinamicas) {
-        const cota = ativas.includes(c) ? c.__cota : 0;
-        delete c.__cota;
-        resumo[c.slug] = cota;
-        if (Number(c.cota_diaria) !== cota) {
-            await supabaseAdmin.from("campanhas_whatsapp").update({ cota_diaria: cota }).eq("id", c.id);
-            c.cota_diaria = cota;
+        const v = cota.get(c.id) ?? 0;
+        resumo[c.slug] = v;
+        if (Number(c.cota_diaria) !== v) {
+            await supabaseAdmin.from("campanhas_whatsapp").update({ cota_diaria: v }).eq("id", c.id);
+            c.cota_diaria = v;
         }
     }
     return { disponivel, cotas: resumo };
