@@ -132,8 +132,10 @@ async function listarCobrancasCora() {
     if (error) { alvo.textContent = 'Erro: ' + error.message; return; }
     if (!data.length) { alvo.innerHTML = '<p class="report-sub">Nenhuma cobrança gerada ainda.</p>'; return; }
     // Telefones lidos a cada abertura: o que for preenchido em Gerenciar Filiais vale na hora.
-    const { data: fs } = await window.supabaseClient.from('filiais').select('nome, whatsapp_chefe_numero');
-    const chefe = new Map((fs || []).map((f) => [f.nome, f.whatsapp_chefe_numero]));
+    const { data: fs } = await window.supabaseClient.from('filiais').select('nome, whatsapp_chefe_numero, whatsapp_economia');
+    // Cobrança vai para o secretário de economia; sem ele, para o chefe da filial.
+    const chefe = new Map((fs || []).map((f) => [f.nome, f.whatsapp_economia || f.whatsapp_chefe_numero]));
+    const ehEconomia = new Map((fs || []).map((f) => [f.nome, !!f.whatsapp_economia]));
     window.__cobrancasCora = new Map(data.map((c) => [c.id, c]));
     const ativas = data.filter((c) => c.status !== 'CANCELLED');
     const soma = (lista) => lista.reduce((s, c) => s + (c.valor_centavos || 0), 0);
@@ -159,7 +161,7 @@ async function listarCobrancasCora() {
             <div class="cora-info">${mesCurto(c.competencia)} · vence ${brCora(c.vencimento)} · ${situacao}</div>
             ${c.erro ? `<div class="cora-erro">${escapeHTML(c.erro.slice(0, 140))}</div>` : ''}
             ${lembrete ? '<div class="cora-aviso">Sem pagamento há 3 dias: envie o lembrete.</div>' : ''}
-            ${!tel && !pago && !cancelada ? '<div class="cora-dica">Sem WhatsApp do diretor (Gerenciar Filiais)</div>' : ''}
+            ${!pago && !cancelada ? `<div class="cora-dica">${!tel ? 'Sem WhatsApp de economia nem do chefe (Gerenciar Filiais)' : (ehEconomia.get(c.filial) ? 'Vai para o secretário de economia' : 'Vai para o chefe da filial (sem secretário de economia)')}</div>` : ''}
             ${!cancelada && !pago && c.mensagem ? `<div class="cora-acoes">
                 ${lembrete && c.mensagem_lembrete
                     ? `<a class="btn-primary" target="_blank" rel="noopener" href="${wa(c.mensagem_lembrete)}"><i class="fa-brands fa-whatsapp"></i> Enviar lembrete</a>`

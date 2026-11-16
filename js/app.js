@@ -2559,6 +2559,8 @@ async function renderizarListaFiliaisModal() {
                     ${campo('Nome na frase', 'Usado nas mensagens: "da Nova Acrópole do Jardim América".', `<input type="text" value="${escapeHTML(f.nome_com_preposicao || '')}" placeholder="do Jardim América" onchange="atualizarPreposicaoFilial(${f.id}, this.value)">`)}
                     ${campo('Endereço', 'Aparece na ficha de todo lead desta filial.', `<input type="text" value="${escapeHTML(f.endereco || '')}" onchange="atualizarEnderecoFilial(${f.id}, this.value)">`, true)}
                     ${campo('WhatsApp do chefe da filial', 'Só números, com 55 e DDD. Recebe aviso de aniversário e resumo de lead.', `<input type="text" inputmode="numeric" value="${escapeHTML(f.whatsapp_chefe_numero || '')}" placeholder="5562991234567" onchange="atualizarWhatsappChefeFilial(${f.id}, this.value)">`, true)}
+                    ${campo('WhatsApp do secretário de economia', 'Recebe a cobrança mensal e os lembretes de pagamento. Em branco, vai para o chefe da filial.', `<input type="text" inputmode="numeric" value="${escapeHTML(f.whatsapp_economia || '')}" placeholder="5562991234567" onchange="atualizarWhatsappFuncaoFilial(${f.id}, 'whatsapp_economia', this.value)">`, true)}
+                    ${campo('WhatsApp do secretário de abertura de turma', 'Contato da escola para inscrições e assuntos da abertura de turma.', `<input type="text" inputmode="numeric" value="${escapeHTML(f.whatsapp_abertura_turma || '')}" placeholder="5562991234567" onchange="atualizarWhatsappFuncaoFilial(${f.id}, 'whatsapp_abertura_turma', this.value)">`, true)}
                     ${campo('PIN do painel do diretor', 'Com o PIN, o diretor vê nomes e telefones completos no painel da escola e pode agir (não contatar, observação, vagas da turma).', `<button type="button" class="btn-secondary" onclick="definirPinPainelFilial(${JSON.stringify(f.nome).replace(/"/g, '&quot;')})">Definir / redefinir PIN</button> <span class="pin-status" data-filial="${escapeHTML(f.nome)}" style="font-size:12px;color:var(--text-muted);"></span>`, true)}
                 </div>
                 <h4 class="filial-grupo">Mercúrio e cobrança</h4>
@@ -2685,6 +2687,15 @@ async function carregarStatusPinPaineis() {
         sp.textContent = !r ? 'Esta escola ainda não tem painel.' : r.pin_definido_em ? 'PIN definido em ' + new Date(r.pin_definido_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) + (r.bloqueado_ate && new Date(r.bloqueado_ate) > new Date() ? ' · bloqueado por tentativas erradas' : '') : 'Sem PIN: o painel mostra nomes e telefones resumidos.';
     });
 }
+// WhatsApp por função na escola (16/11/2026): secretário de economia (cobrança) e de abertura de turma.
+async function atualizarWhatsappFuncaoFilial(id, coluna, novoValor) {
+    if (!['whatsapp_economia', 'whatsapp_abertura_turma'].includes(coluna)) return;
+    const numero = String(novoValor || '').replace(/\D/g, '');
+    if (numero && !/^55\d{10,11}$/.test(numero)) { avisar('Use só números, com 55 e DDD (ex.: 5562991234567).'); return; }
+    const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ [coluna]: numero || null }).eq('id', id);
+    if (error) avisar('Erro ao salvar: ' + error.message);
+}
+
 async function atualizarWhatsappChefeFilial(id, novoValor) {
     novoValor = novoValor.replace(/\D/g, '');
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ whatsapp_chefe_numero: novoValor || null }).eq('id', id);
