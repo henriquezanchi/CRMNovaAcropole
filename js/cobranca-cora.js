@@ -62,7 +62,7 @@ async function renderizarCobrancasCora() {
             <label>até<br><input type="date" id="coraAte" value="${p.ate}"></label>
             <label>Vencimento<br><input type="date" id="coraVencimento" value="${p.vencimento}"></label>
             <label class="cora-check"><input type="checkbox" id="coraSomentePix" checked> Só Pix (sem boleto)</label>
-            <label>Ambiente<br><select id="coraAmbiente"><option value="producao">Produção (cobrança de verdade)</option><option value="stage">Teste (sem cobrar)</option></select></label>
+            <label>Ambiente<br><select id="coraAmbiente" onchange="listarCobrancasCora()"><option value="producao">Produção (cobrança de verdade)</option><option value="stage">Teste (sem cobrar)</option></select></label>
             <button type="button" class="btn-secondary" onclick="carregarPreviaCora()">Ver prévia do fixo</button>
             <button type="button" class="btn-secondary" onclick="atualizarStatusCora()" title="Consulta a Cora agora">Atualizar pagamentos</button>
         </div>
@@ -128,7 +128,9 @@ async function gerarCobrancasCora() {
 async function listarCobrancasCora() {
     const alvo = document.getElementById('coraLista');
     if (!alvo) return;
-    const { data, error } = await window.supabaseClient.from('cobrancas_cora').select('*').order('valor_centavos', { ascending: false }).limit(100);
+    // Só o ambiente escolhido no filtro (Produção por padrão): cobrança de teste não se mistura com a real.
+    const ambiente = (document.getElementById('coraAmbiente') || {}).value || 'producao';
+    const { data, error } = await window.supabaseClient.from('cobrancas_cora').select('*').eq('ambiente', ambiente).order('valor_centavos', { ascending: false }).limit(100);
     if (error) { alvo.textContent = 'Erro: ' + error.message; return; }
     if (!data.length) { alvo.innerHTML = '<p class="report-sub">Nenhuma cobrança gerada ainda.</p>'; return; }
     // Telefones lidos a cada abertura: o que for preenchido em Gerenciar Filiais vale na hora.
