@@ -11525,3 +11525,9 @@ partir do dia seguinte. O teto sobe sozinho 25/dia após 3 dias seguidos de cont
   `fim_convites` com peso 1/k (reforço na reta final: o último dia pesa mais), e o dia é dividido em proporção
   (Universitário/Goiânia II 45→56, Eldorado/Catalão 38→76, Jardim América/Setor Oeste 32→115 no último dia) (`aplicarCotasPorProximidade()`, `campanha-whatsapp`), gravando a cota do dia
   em `cota_diaria` (`migracao_campanha_cota_proximidade.sql`).
+- **Foco na aula experimental (16/11/2026, mesmo dia, `migracao_campanhas_foco_aula_experimental.sql`):** as 5
+  campanhas de turma de Goiânia convidam para a AULA EXPERIMENTAL da própria escola (`evento_id` = aula,
+  `evento_com_artigo`/`evento_data_curta`/`fim_convites` = dia da aula; turma guardada em `config.turma_evento_id`,
+  `config.foco='aula_experimental'`, linha de foco no início de `config.instrucoes`). Universitário/Goiânia II 17/11,
+  Eldorado 18/11, Jardim América/Setor Oeste 19/11. Catalão (sem aula experimental) saiu da divisão por proximidade:
+  15/dia fixo até 24/11. Alto da Glória segue pausada.
