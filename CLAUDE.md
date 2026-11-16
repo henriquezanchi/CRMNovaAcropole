@@ -11507,3 +11507,12 @@ só números, mesma chave de pessoa do painel; a tabela segue fechada para o nav
   + `evento_leads`; falha avisa o admin). Modelo `como_foi_evento` não existe na Meta.
 - Nas mensagens de cobrança de 16/11, "inscrições depois do contato" contou qualquer evento do Ulisses de qualquer
   escola (inclui o DMF, cadastrado no Setor Universitário).
+
+## Foco total na abertura de turma (16/11/2026)
+
+Pedido do usuário. As 100 mensagens/dia do teto de campanhas vão só para as aberturas de turma
+(`migracao_foco_abertura_turma_20261116.sql`): Universitário 24, Jardim América 24, Goiânia II 14,
+Setor Oeste 14, Eldorado 12, Catalão 12. Relacionamento do Garavelo, eventos de Cidade Jardim,
+DMF de Barra e Rio Verde ficaram com cota 0 (continuam ativas para o robô responder quem já foi
+convidado). Alto da Glória segue pausada (escola não aderiu). O planejamento roda 08:25; vale a
+partir do dia seguinte. O teto sobe sozinho 25/dia após 3 dias seguidos de conta verde.
