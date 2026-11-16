@@ -21,6 +21,7 @@ import { chamarClaude } from "../_shared/anthropic.ts";
 import { montarHistoricoWpp } from "../_shared/historico-wpp.ts";
 import { linkMapsDaFilial } from "../_shared/filiaisInfo.ts";
 import { ehRespostaAutomatica } from "../_shared/resposta-automatica.ts";
+import { chamarUlisses } from "../_shared/ulisses.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const MODELO = Deno.env.get("CAMPANHA_MODELO_IA") ?? "claude-sonnet-4-5";
@@ -158,7 +159,16 @@ ${escolas}
 # Instruções específicas desta campanha (valem mais que as regras gerais abaixo)
 ${c.config?.instrucoes || "(nenhuma)"}
 
-# Como conduzir
+${c.config?.pos_evento ? `# ATENÇÃO: o evento já aconteceu (vale mais que tudo abaixo)
+O evento acima JÁ ACONTECEU. Esta conversa é um contato depois do evento, com quem se inscreveu e não foi marcado como presente na recepção. A nossa mensagem perguntou o que a pessoa achou do evento.
+- Nunca convide para este evento, nunca mande o link de inscrição dele e nunca marque "enviar_arte".
+- Se a pessoa disser que foi (ou contar o que achou, falar da palestra, do lugar, de quem viu lá): agradeça com calor humano e, se ela comentou algo, acolha em uma frase. Marque "foi_ao_evento": true.
+- Se ela disser que não conseguiu ir: acolha sem cobrança ("Que pena, fica para a próxima"). Marque "foi_ao_evento": false.
+- Se não der para saber se foi: "foi_ao_evento": null. Se ela só cumprimentar, pergunte com leveza se ela conseguiu ir.
+- Depois disso, se a conversa abrir espaço, conte de forma natural sobre a aula experimental gratuita do Curso de Filosofia para Viver na escola de origem dela (data, hora e link copiados da lista de escolas), uma vez só, sem insistir.
+- Use "situacao": "outro", exceto "nao_vai" se ela recusar contato futuro.
+
+` : ""}# Como conduzir
 - O objetivo é a pessoa ir ao evento. Quando ela demonstrar interesse ou disser que pode receber detalhes, mande o essencial em poucas linhas: o que é, data e hora, local, se é gratuito e o link de inscrição, pedindo que ela se inscreva pelo link para garantir a vaga. Nesse caso marque "enviar_arte": true (a arte do evento vai junto, uma única vez).
 - Quando a pessoa disser que vai ("sim, irei", "vou sim", "pode contar comigo", "estarei lá"): comemore com alegria e calor humano (ex.: "Que alegria, Valdete! 😊"), explique que as vagas são limitadas e por isso é importante garantir a dela pelo link de inscrição, e mande na mesma mensagem o link, a data, o horário e o local. Dizer que vai NÃO é estar inscrita: o lugar só fica garantido com a inscrição no link. Marque "enviar_arte": true (se a arte ainda não foi enviada) e "situacao": "vai".
 - Gratuidade: quando o evento é gratuito (veja a descrição e as instruções da campanha), diga isso com clareza sempre que falar dele. Se a pessoa hesitar ou perguntar sobre valor, reforce.
@@ -205,7 +215,7 @@ ${c.config?.instrucoes || "(nenhuma)"}
 - Datas: use a tabela de calendário acima; nunca calcule dia da semana de cabeça.
 
 Responda SOMENTE com JSON válido, sem texto antes ou depois:
-{"resposta": "texto" ou null, "enviar_arte": true|false, "situacao": "vai"|"talvez"|"nao_vai"|"quer_info"|"outro", "nao_contatar": true|false, "numero_errado": true|false, "nome_informado": "nome que a própria pessoa disse ser o dela" ou null, "mudou_cidade": true|false, "escola_preferida": "nome exato entre colchetes" ou null, "precisa_humano": true|false, "motivo_humano": "texto curto" ou null}`;
+{"resposta": "texto" ou null, "enviar_arte": true|false, "situacao": "vai"|"talvez"|"nao_vai"|"quer_info"|"outro", "nao_contatar": true|false, "numero_errado": true|false, "nome_informado": "nome que a própria pessoa disse ser o dela" ou null, "mudou_cidade": true|false, "escola_preferida": "nome exato entre colchetes" ou null, "precisa_humano": true|false, "motivo_humano": "texto curto" ou null${c.config?.pos_evento ? ', "foi_ao_evento": true|false|null' : ""}}`;
 }
 
 function promptDinamico(ctx: any, conversa: string, retomada: string | null = null): string {
@@ -485,10 +495,54 @@ async function arteJaEnviada(pessoa: string, url: string): Promise<boolean> {
     return (data || []).some((m: any) => m.payload_bruto?.imagem_url === url);
 }
 
+// Pós-evento (16/11/2026): a pessoa disse que foi. Marca a presença no Ulisses
+// (POST /facade/compareceu) e na cópia local, que alimenta o painel de resultados.
+async function marcarPresencaPosEvento(pessoa: string, c: any, ev: any, filialLead: string) {
+    const { data: evento } = await supabaseAdmin.from("eventos").select("evento_id_ulisses").eq("id", ev.id).maybeSingle();
+    if (!evento?.evento_id_ulisses) return;
+    let { data: insc } = await supabaseAdmin.from("ulisses_inscricoes_evento").select("email_evento_id, compareceu, nome")
+        .eq("evento_id_ulisses", evento.evento_id_ulisses).eq("pessoaIdentificador", pessoa).is("removido_em", null).limit(1).maybeSingle();
+    if (!insc) {
+        const { data: lead } = await supabaseAdmin.from("leads_inscricoes").select('"pessoaTelefoneNumero"').eq("pessoaIdentificador", pessoa).maybeSingle();
+        const fim = String(lead?.pessoaTelefoneNumero || "").replace(/\D/g, "").slice(-8);
+        if (fim.length === 8) {
+            const { data: porTel } = await supabaseAdmin.from("ulisses_inscricoes_evento").select("email_evento_id, compareceu, nome")
+                .eq("evento_id_ulisses", evento.evento_id_ulisses).is("removido_em", null).like("telefone", `%${fim}`);
+            if (porTel?.length === 1) insc = porTel[0];
+        }
+    }
+    let resultado = "sem inscrição encontrada";
+    if (insc?.email_evento_id) {
+        if (insc.compareceu === true) resultado = "já estava marcada";
+        else {
+            try {
+                await chamarUlisses(supabaseAdmin, `/facade/compareceu/${insc.email_evento_id}/true`, { method: "POST" });
+                await supabaseAdmin.from("ulisses_inscricoes_evento").update({ compareceu: true, visto_em: new Date().toISOString() }).eq("email_evento_id", insc.email_evento_id);
+                resultado = "marcada no Ulisses";
+            } catch (e) {
+                resultado = "falha no Ulisses: " + String((e as Error).message).slice(0, 150);
+                await avisarAtendimentoPendente(`🔔 CRM: presença no evento não foi marcada no Ulisses\n${filialLead || ""}: ${insc.nome || pessoa}. Marcar à mão.`);
+            }
+        }
+    }
+    await supabaseAdmin.from("evento_leads").update({ compareceu: true }).eq("evento_id", ev.id).eq("pessoaIdentificador", pessoa);
+    await supabaseAdmin.from("log_atividade").insert({
+        filial: filialLead, acao: "presenca_pos_evento", autor: NOME_ATENDENTE, pessoa_ids: [pessoa],
+        detalhes: { campanha: c.slug, evento_id_ulisses: evento.evento_id_ulisses, email_evento_id: insc?.email_evento_id ?? null, resultado },
+    });
+}
+
 async function aplicarDecisao(pessoa: string, c: any, ev: any, d: any, filialLead: string) {
-    const etiqueta: Record<string, string> = { vai: "Campanha: Vai ao evento", talvez: "Campanha: Interessado", quer_info: "Campanha: Interessado", nao_vai: "Campanha: Não vai" };
-    if (etiqueta[d.situacao]) await alterarTags(pessoa, { removerPrefixos: ["Campanha: "], adicionar: [etiqueta[d.situacao]] });
-    if (c.evento_id && (d.situacao === "vai" || d.situacao === "nao_vai")) {
+    if (c.config?.pos_evento) {
+        if (d.foi_ao_evento === true || d.foi_ao_evento === false) {
+            await alterarTags(pessoa, { removerPrefixos: ["Pós-evento: "], adicionar: [d.foi_ao_evento ? "Pós-evento: Foi" : "Pós-evento: Não foi"] });
+        }
+        if (d.foi_ao_evento === true && ev) await marcarPresencaPosEvento(pessoa, c, ev, filialLead);
+    } else {
+        const etiqueta: Record<string, string> = { vai: "Campanha: Vai ao evento", talvez: "Campanha: Interessado", quer_info: "Campanha: Interessado", nao_vai: "Campanha: Não vai" };
+        if (etiqueta[d.situacao]) await alterarTags(pessoa, { removerPrefixos: ["Campanha: "], adicionar: [etiqueta[d.situacao]] });
+    }
+    if (c.evento_id && !c.config?.pos_evento && (d.situacao === "vai" || d.situacao === "nao_vai")) {
         await supabaseAdmin.from("evento_leads").update({ resposta_convite: d.situacao === "vai" ? "confirmado" : "recusado" })
             .eq("evento_id", c.evento_id).eq("pessoaIdentificador", pessoa).eq("origem", "crm");
     }
@@ -626,7 +680,7 @@ async function responder(pessoa: string, mensagemId: number | null, esperaSegund
             // o essencial já saiu (caso real 04/11: só a arte chegou e o texto não).
             const envio = await enviar({ pessoaIdentificador: pessoa, tipo: "texto", texto: d.resposta });
             status = envio.ok ? "respondida" : "falha_envio: " + String(envio.erro || "").slice(0, 200);
-            if (envio.ok && d.enviar_arte && ev?.imagem_url && !(await arteJaEnviada(pessoa, ev.imagem_url))) {
+            if (envio.ok && d.enviar_arte && !c.config?.pos_evento && ev?.imagem_url && !(await arteJaEnviada(pessoa, ev.imagem_url))) {
                 await enviar({ pessoaIdentificador: pessoa, tipo: "imagem", imagemUrl: ev.imagem_url, caption: "" });
             }
         }

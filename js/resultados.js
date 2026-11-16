@@ -601,11 +601,22 @@
       s.appendChild(tabela(['Escola', 'Convidados', 'Responderam', 'Taxa', 'Inscritos após convite'], linhas, [1, 2, 3, 4]));
     }
 
+    // Presença (16/11/2026): depois do evento, quem não foi marcado como presente aparece como
+    // "Não marcado" (a recepção pode ter deixado passar alguém) e as listas filtram por presença.
+    var eventoPassou = !!(ev.data && String(ev.data).slice(0, 10) < new Date().toISOString().slice(0, 10));
+    var presenteDe = function (x) { return x.compareceu === true; };
+    var seloPresenca = function (x) { return presenteDe(x) ? selo('Presente') : (eventoPassou || x.compareceu === false ? selo('Não marcado', 'am') : ''); };
+    var iconePresenca = function (x) { return presenteDe(x) ? icone('✅', 'Presente') : (eventoPassou || x.compareceu === false ? icone('⭕', 'Não marcado como presente') : null); };
+    var filtroPresenca = function (presente) {
+      return { rotulo: 'Presença', opcoes: [
+        { rotulo: 'Presentes', teste: function (x) { return presente(x); } },
+        { rotulo: 'Não marcados como presentes', teste: function (x) { return !presente(x); } }] };
+    };
     var colunasInsc = ['Nome', 'Telefone', 'Escola', 'Perfil', 'Veio do convite', 'Inscrição', 'Presença'];
     if (dados.diretor) colunasInsc = colunasInsc.concat(['Aluno?']);
     var linhaInsc = function (x) {
       var cel = [nomeProprio(x.nome), linkWhats(x.telefone), x.escola ? nomeEscola(x.escola) : 'Sem cadastro no CRM', perfilInscrito(x),
-        x.via_convite ? selo('Sim') : '', dataCurta(x.em), x.compareceu === true ? selo('Presente') : (x.compareceu === false ? selo('Faltou', 'vm') : '')];
+        x.via_convite ? selo('Sim') : '', dataCurta(x.em), seloPresenca(x)];
       if (dados.diretor) cel.push(controleAluno(x, true) || '');
       return cel;
     };
@@ -614,7 +625,7 @@
         x.aluno ? icone('🎓', 'Aluno') : (x.sugestao ? icone('❓', 'Possível aluno: ' + textoSugestao(x.sugestao)) : icone('🙋', 'De fora (não é aluno)')),
         x.via_convite ? icone('📩', 'Inscreveu-se depois do nosso convite') : null,
         x.em ? el('span', { classe: 'ic-data', title: 'Data da inscrição', texto: dataCurta(x.em) }) : null,
-        x.compareceu === true ? icone('✅', 'Presente') : (x.compareceu === false ? icone('❌', 'Faltou') : null)
+        iconePresenca(x)
       ]);
       if (x.sugestao && !x.aluno) p.appendChild(el('div', { classe: 'muted sugestao-aluno', texto: textoSugestao(x.sugestao) }));
       var ctl = controleAluno(x, true); if (ctl) p.appendChild(ctl);
@@ -663,12 +674,18 @@
     escolasListaInsc.sort(function (a, b) { return !a ? 1 : !b ? -1 : nomeEscola(a).localeCompare(nomeEscola(b)); });
     var filtrosInsc = escolasListaInsc.length > 1 ? [{ rotulo: 'Escola', opcoes: escolasListaInsc.map(function (e) {
       return { rotulo: e ? nomeEscola(e) : 'Sem cadastro no CRM', teste: function (x) { return (x.escola || '') === e; } };
-    }) }] : null;
+    }) }] : [];
+    if (eventoPassou && !turma) filtrosInsc.unshift(filtroPresenca(presenteDe));
+    if (!filtrosInsc.length) filtrosInsc = null;
     s.appendChild(listaComBusca(turma ? 'Inscritos na turma' : 'Inscritos no Ulisses', c.inscritos || [], colunasInsc, linhaInsc, 'Nenhum inscrito ainda.', pessoaInsc,
-      '🎓 aluno · 🙋 de fora · ❓ possível aluno · 📩 veio do convite · ✅ presente · ❌ faltou · 📞 toque para ver o telefone', filtrosInsc));
+      '🎓 aluno · 🙋 de fora · ❓ possível aluno · 📩 veio do convite · ✅ presente · ⭕ não marcado como presente · 📞 toque para ver o telefone', filtrosInsc));
 
     var ENTREGA = { lido: ['Lido', ''], entregue: ['Entregue', 'cz'], enviado: ['Enviado', 'cz'], falhou: ['Não entregue', 'vm'] };
     var contatados = c.contatados || [];
+    var digitosP = function (t) { return String(t || '').replace(/\D/g, '').slice(-8); };
+    var presPid = {}, presTel = {};
+    (c.inscritos || []).forEach(function (x) { if (x.compareceu === true) { if (x.pid) presPid[x.pid] = 1; var d = digitosP(x.telefone); if (d.length === 8) presTel[d] = 1; } });
+    var contatadoPresente = function (x) { return !!((x.pid && presPid[x.pid]) || presTel[digitosP(x.telefone)]); };
     var escolasContat = []; contatados.forEach(function (x) { if (x.escola && escolasContat.indexOf(x.escola) < 0) escolasContat.push(x.escola); });
     escolasContat.sort(function (a, b) { return nomeEscola(a).localeCompare(nomeEscola(b)); });
     var stC = function (x) { return String(x.situacao || ''); };
@@ -692,13 +709,18 @@
         { rotulo: 'Enviado', teste: function (x) { return x.entrega === 'enviado'; } },
         { rotulo: 'Não entregue', teste: function (x) { return x.entrega === 'falhou'; } }] }
     ];
+    if (eventoPassou && !turma) filtrosContat.unshift(filtroPresenca(contatadoPresente));
     if (escolasContat.length > 1) filtrosContat.push({ rotulo: 'Escola', opcoes: escolasContat.map(function (e) {
       return { rotulo: nomeEscola(e), teste: function (x) { return x.escola === e; } };
     }) });
-    s.appendChild(listaComBusca('Pessoas contatadas', contatados, ['Nome', 'Telefone', 'Escola', 'Convite', 'Entrega', 'Respondeu', 'Situação', 'Inscrito'], function (x) {
+    var colunasContat = ['Nome', 'Telefone', 'Escola', 'Convite', 'Entrega', 'Respondeu', 'Situação', 'Inscrito'];
+    if (eventoPassou && !turma) colunasContat.push('Presença');
+    s.appendChild(listaComBusca('Pessoas contatadas', contatados, colunasContat, function (x) {
       var e = ENTREGA[x.entrega] || [x.entrega || '', 'cz'];
       var sit = x.parar ? selo('Pediu para não receber', 'vm') : x.situacao ? selo(String(x.situacao).replace('Campanha: ', ''), /Não vai/.test(x.situacao) ? 'cz' : (/Vai/.test(x.situacao) ? '' : 'am')) : '';
-      return [nomeProprio(x.nome), linkWhats(x.telefone), nomeEscola(x.escola), dataHora(x.enviado_em), selo(e[0], e[1]), x.respondeu ? 'Sim' : '', sit, x.inscrito ? selo('Inscrito') : ''];
+      var linha = [nomeProprio(x.nome), linkWhats(x.telefone), nomeEscola(x.escola), dataHora(x.enviado_em), selo(e[0], e[1]), x.respondeu ? 'Sim' : '', sit, x.inscrito ? selo('Inscrito') : ''];
+      if (eventoPassou && !turma) linha.push(contatadoPresente(x) ? selo('Presente') : (x.inscrito ? selo('Não marcado', 'am') : ''));
+      return linha;
     }, 'Nenhum convite enviado ainda.', function (x) {
       var ENT = { enviado: ['✓', 'Enviado', 'ic-cinza'], entregue: ['✓✓', 'Entregue', 'ic-cinza'], lido: ['✓✓', 'Lido', 'ic-azul'], falhou: ['⚠', 'Não entregue', 'ic-verm'] };
       var en = ENT[x.entrega];
@@ -712,9 +734,10 @@
         en ? icone(en[0], en[1], en[2]) : null,
         x.respondeu ? icone('💬', 'Respondeu') : null,
         sitIc,
-        x.inscrito ? icone('📝', 'Já inscrito no Ulisses') : null
+        x.inscrito ? icone('📝', 'Já inscrito no Ulisses') : null,
+        eventoPassou && !turma && contatadoPresente(x) ? icone('✅', 'Presente') : null
       ]);
-    }, '✓ enviado · ✓✓ entregue · ✓✓ azul lido · ⚠ não entregue · 💬 respondeu · ⭐ interessado · 🎉 vai · 🙅 não vai · 🚫 pediu para parar · 📝 já inscrito · 📞 toque para ver o telefone', filtrosContat));
+    }, '✓ enviado · ✓✓ entregue · ✓✓ azul lido · ⚠ não entregue · 💬 respondeu · ⭐ interessado · 🎉 vai · 🙅 não vai · 🚫 pediu para parar · 📝 já inscrito' + (eventoPassou && !turma ? ' · ✅ presente' : '') + ' · 📞 toque para ver o telefone', filtrosContat));
 
     var banco = c.campanha && c.campanha.banco;
     if (banco) {

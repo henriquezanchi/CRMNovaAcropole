@@ -419,7 +419,11 @@ function paramsDoModelo(nome: string, c: any, lead: any, filialPrep: string): st
     if (nome === "convite_palestra") return [nomeLead, c.atendente, filialPrep, c.evento_com_artigo, c.evento_data_curta];
     if (nome === "contato_inicial") return [nomeLead, c.atendente, filialPrep];
     if (nome === "resgate_lead_evento") return [nomeLead];
-    if (nome === "contato_ulisses") {
+    if (/^contato_ulisses/.test(nome) && c.config?.evento_de && c.config?.evento_nome) {
+        // Pós-evento (16/11/2026): o evento é o da campanha, não o último do histórico.
+        return [nomeLead, c.atendente, filialPrep, c.config.evento_de, c.config.evento_nome];
+    }
+    if (/^contato_ulisses/.test(nome)) {
         // Campanha de relacionamento (11/11/2026): "Vi que você participou {{4}} {{5}} recentemente."
         const ult = ultimoEventoDoLead(lead);
         if (!ult) return [];
@@ -533,13 +537,13 @@ async function enviar() {
         // Conferência na hora: respondeu, conversou ou se inscreveu desde que entrou na fila.
         const desde = it.tipo === "followup"
             ? (await supabaseAdmin.from("campanha_fila").select("enviado_em").eq("campanha_id", c.id).eq("pessoaIdentificador", it.pessoaIdentificador).eq("tipo", "convite").maybeSingle()).data?.enviado_em
-            : new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+            : (c.config?.conversa_desde || new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString());
         const { count: conversa } = await supabaseAdmin.from("mensagens_whatsapp").select("id", { count: "exact", head: true })
             .eq("pessoaIdentificador", it.pessoaIdentificador).gte("criado_em", it.tipo === "followup" && desde ? antes10min(desde) : (desde || new Date().toISOString()))
             .in("direcao", it.tipo === "followup" ? ["entrada"] : ["entrada", "saida"])
             .or("wa_status.is.null,wa_status.neq.falhou"); // envio que falhou não é conversa (reenvio de 12/11)
         if (conversa && conversa > 0) { await finalizar("pulado", { motivo: it.tipo === "followup" ? "respondeu ao convite" : "conversa nos últimos 7 dias" }); continue; }
-        if (c.evento_id) {
+        if (c.evento_id && !c.config?.pos_evento) {
             const { count: inscrito } = await supabaseAdmin.from("evento_leads").select("id", { count: "exact", head: true })
                 .eq("evento_id", c.evento_id).eq("pessoaIdentificador", it.pessoaIdentificador).eq("origem", "ulisses");
             if (inscrito && inscrito > 0) { await finalizar("pulado", { motivo: "já inscrito no evento" }); continue; }
@@ -564,7 +568,7 @@ async function enviar() {
             usados++;
             enviadosHoje++;
             await finalizar("enviado", { enviado_em: momentoEnvio, wa_message_id: envio.dados?.wa_message_id ?? null });
-            if (c.evento_id && it.tipo === "convite") {
+            if (c.evento_id && it.tipo === "convite" && !c.config?.pos_evento) {
                 await supabaseAdmin.from("evento_leads").upsert(
                     { evento_id: c.evento_id, pessoaIdentificador: it.pessoaIdentificador, resposta_convite: "pendente", origem: "crm" },
                     { onConflict: "evento_id,pessoaIdentificador", ignoreDuplicates: true });
