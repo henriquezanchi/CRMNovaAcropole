@@ -85,11 +85,28 @@
     return box;
   }
   // Telefone vira link do WhatsApp (13/11/2026, pedido do usuário). Telefone borrado (sem PIN) fica só texto.
-  function linkWhats(tel) {
+  // modelo (opcional): mensagem pronta para o diretor abrir a conversa pelo próprio WhatsApp.
+  // "{remetente}" é trocado na hora do clique pelo nome informado no painel (16/11/2026).
+  function linkWhats(tel, modelo) {
     var d = String(tel || '').replace(/\D/g, '');
     if (d.length < 10 || d.length > 11) return tel || '';
-    return el('a', { href: 'https://wa.me/55' + d, target: '_blank', rel: 'noopener', classe: 'link-whats', title: 'Abrir no WhatsApp', texto: tel });
+    var a = el('a', { href: 'https://wa.me/55' + d, target: '_blank', rel: 'noopener', classe: 'link-whats', title: modelo ? 'Abrir no WhatsApp com a mensagem pronta' : 'Abrir no WhatsApp', texto: tel });
+    if (modelo) a.setAttribute('data-msg', modelo);
+    return a;
   }
+  var CHAVE_REMETENTE = 'painel_nome_remetente';
+  function nomeRemetente() { try { return (localStorage.getItem(CHAVE_REMETENTE) || '').trim(); } catch (e) { return ''; } }
+  function textoComRemetente(modelo) {
+    var r = nomeRemetente();
+    return modelo.replace('{remetente}', r ? r : 'a equipe').replace(/Aqui é a equipe, da /, 'Aqui é da equipe da ');
+  }
+  // Delegado: vale também para os cartões do celular (cópias do link, sem os eventos originais).
+  document.addEventListener('click', function (e) {
+    var a = e.target && e.target.closest ? e.target.closest('a.link-whats[data-msg]') : null;
+    if (!a) return;
+    var d = (a.getAttribute('href') || '').match(/wa\.me\/(\d+)/);
+    if (d) a.setAttribute('href', 'https://wa.me/' + d[1] + '?text=' + encodeURIComponent(textoComRemetente(a.getAttribute('data-msg'))));
+  }, true);
   function cartao(n, r, d) {
     return el('div', { classe: 'cartao' }, [el('div', { classe: 'n', texto: n }), el('div', { classe: 'r', texto: r }), d ? el('div', { classe: 'd', texto: d }) : null]);
   }
@@ -315,7 +332,7 @@
     else if (x.telefone) {
       var bt = el('button', { type: 'button', classe: 'ic ic-tel', title: 'Mostrar telefone', 'aria-label': 'Mostrar telefone', texto: '📞' });
       bt.addEventListener('click', function () {
-        var a = linkWhats(x.telefone);
+        var a = linkWhats(x.telefone, x._msg);
         bt.replaceWith(a instanceof Node ? a : el('span', { classe: 'pessoa-tel', texto: x.telefone }));
       });
       ics.appendChild(bt);
@@ -513,6 +530,56 @@
     return box;
   }
 
+  // Mensagem para o diretor abrir a conversa pelo próprio WhatsApp (16/11/2026): conforme a
+  // pessoa ser aluna ou de fora, ter sido marcada como presente ou não, e o evento já ter passado.
+  var DIAS_SEMANA = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+  function nomeCurtoEvento(ev) {
+    var n = String(ev.nome || '');
+    if (/mundial da filosofia/i.test(n)) return 'no Dia Mundial da Filosofia';
+    n = n.split(/\s[-–]\s/)[0].trim();
+    if (n === n.toUpperCase()) n = nomeProprio(n);
+    return (/^(aula|palestra|oficina|abertura|turma|leitura|mostra|noite|tarde|manhã|semana|jornada)/i.test(n) ? 'na ' : 'no ') + n;
+  }
+  function quandoEvento(ev, passou) {
+    if (!ev.data) return '';
+    var iso = String(ev.data).slice(0, 10), p = iso.split('-');
+    var d = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2], 12));
+    var dias = Math.round((Date.now() - d.getTime()) / 864e5);
+    var dm = p[2] + '/' + p[1];
+    if (passou && dias <= 6) return (d.getUTCDay() === 0 || d.getUTCDay() === 6 ? ', no ' : ', na ') + DIAS_SEMANA[d.getUTCDay()] + ' (' + dm + ')';
+    var hora = ev.hora ? ' às ' + String(ev.hora).slice(0, 5).replace(':00', 'h').replace(':', 'h') : '';
+    return ', no dia ' + dm + hora;
+  }
+  function aberturaConversa(x, ev, passou, turma) {
+    var nome = nomeProprio(String(x.nome || '').trim().split(/\s+/)[0] || '');
+    var oi = 'Oi' + (nome ? ', ' + nome : '') + '! ';
+    var prep = (dados.preposicoes || {})[x.escola] || '';
+    var apresentacao = 'Aqui é {remetente}, da Nova Acrópole' + (prep ? ' ' + prep : '') + '. ';
+    var evento = nomeCurtoEvento(ev), quando = quandoEvento(ev, passou);
+    if (!passou) {
+      return x.aluno
+        ? oi + 'Vi que você se inscreveu ' + evento + quando + '. Que bom! Vai levar alguém com você?'
+        : oi + apresentacao + 'Vi que você se inscreveu ' + evento + quando + '. Estamos te esperando! Ficou com alguma dúvida?';
+    }
+    if (x.compareceu === true) {
+      return x.aluno
+        ? oi + 'Que bom ter você com a gente ' + evento + quando + '! O que você achou?'
+        : oi + apresentacao + 'Vi que você esteve com a gente ' + evento + quando + '. Que alegria! O que você achou? Ficou alguma reflexão com você?';
+    }
+    return x.aluno
+      ? oi + 'Você conseguiu ir ' + evento.replace(/^no /, 'ao ').replace(/^na /, 'à ') + quando + '? Se foi, me conta o que achou!'
+      : oi + apresentacao + 'Vi que você se inscreveu ' + evento + quando + '. Conseguiu ir? Se foi, quero muito saber o que achou!';
+  }
+  function campoRemetente() {
+    var box = el('div', { classe: 'campo-remetente' });
+    var inp = el('input', { type: 'text', placeholder: 'Seu nome (ex.: Ana)', value: nomeRemetente(), maxlength: '40' });
+    inp.addEventListener('input', function () { try { localStorage.setItem(CHAVE_REMETENTE, inp.value.trim()); } catch (e) { /* sem armazenamento */ } });
+    box.appendChild(el('label', { texto: 'Seu nome nas mensagens do WhatsApp: ' }));
+    box.appendChild(inp);
+    box.appendChild(el('p', { classe: 'muted', texto: 'Toque no telefone de um inscrito: o WhatsApp abre no seu celular com uma mensagem pronta para começar a conversa, conforme a situação da pessoa (presente ou não, aluno ou de fora). Revise antes de enviar.' }));
+    return box;
+  }
+
   function secaoCampanha(c, turma) {
     var s = el('section');
     var ev = c.evento || {}, n = c.numeros || {}, meta = Number(c.campanha && c.campanha.meta_presentes_fora) || 50;
@@ -615,7 +682,7 @@
     var colunasInsc = ['Nome', 'Telefone', 'Escola', 'Perfil', 'Veio do convite', 'Inscrição', 'Presença'];
     if (dados.diretor) colunasInsc = colunasInsc.concat(['Aluno?']);
     var linhaInsc = function (x) {
-      var cel = [nomeProprio(x.nome), linkWhats(x.telefone), x.escola ? nomeEscola(x.escola) : 'Sem cadastro no CRM', perfilInscrito(x),
+      var cel = [nomeProprio(x.nome), linkWhats(x.telefone, x._msg), x.escola ? nomeEscola(x.escola) : 'Sem cadastro no CRM', perfilInscrito(x),
         x.via_convite ? selo('Sim') : '', dataCurta(x.em), seloPresenca(x)];
       if (dados.diretor) cel.push(controleAluno(x, true) || '');
       return cel;
@@ -677,6 +744,8 @@
     }) }] : [];
     if (eventoPassou && !turma) filtrosInsc.unshift(filtroPresenca(presenteDe));
     if (!filtrosInsc.length) filtrosInsc = null;
+    (c.inscritos || []).forEach(function (x) { x._msg = aberturaConversa(x, ev, eventoPassou, turma); });
+    if ((c.inscritos || []).some(function (x) { return !x.borrado && x.telefone; })) s.appendChild(campoRemetente());
     s.appendChild(listaComBusca(turma ? 'Inscritos na turma' : 'Inscritos no Ulisses', c.inscritos || [], colunasInsc, linhaInsc, 'Nenhum inscrito ainda.', pessoaInsc,
       '🎓 aluno · 🙋 de fora · ❓ possível aluno · 📩 veio do convite · ✅ presente · ⭕ não marcado como presente · 📞 toque para ver o telefone', filtrosInsc));
 

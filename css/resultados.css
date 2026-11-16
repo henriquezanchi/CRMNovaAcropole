@@ -169,3 +169,6 @@ summary { padding: 10px 0; cursor: pointer; }
 .link-whats { color: var(--verde, #086357); font-weight: 600; text-decoration: none; white-space: nowrap; }
 .link-whats::before { content: "💬 "; font-size: 0.85em; }
 .link-whats:hover { text-decoration: underline; }
+.campo-remetente { margin: 16px 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.campo-remetente input { padding: 8px 10px; border: 1px solid var(--linha); border-radius: 8px; font: inherit; min-width: 200px; }
+.campo-remetente p { flex-basis: 100%; margin: 0; font-size: 13px; }

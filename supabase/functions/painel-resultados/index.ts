@@ -320,7 +320,7 @@ Deno.serve(async (req) => {
             return { ...d, contatados, inscritos, por_escola: (d.por_escola || []).filter((x: any) => permitida(x.escola)) };
         });
         // Sigla de 3 letras de cada escola (código da unidade no Mercúrio), para as listas.
-        const { data: fs } = await supabaseAdmin.from("filiais").select("nome, mercurio_unidade, ativo");
+        const { data: fs } = await supabaseAdmin.from("filiais").select("nome, mercurio_unidade, ativo, nome_com_preposicao");
         const siglas = Object.fromEntries((fs || []).map((f: any) => [f.nome, f.mercurio_unidade || String(f.nome).replace(/^Goiânia - /, "").normalize("NFD").replace(/[^A-Za-z]/g, "").slice(0, 3).toUpperCase()]));
         // Aberturas de turma da escola com a configuração do diretor (vagas, turmas, prazo).
         let turmasConfig: any[] = [];
@@ -336,6 +336,8 @@ Deno.serve(async (req) => {
         return responder({
             rotulo: link.rotulo, dias, gerado_em: geradoEm, ulisses_em: ulissesEm, turmas_config: turmasConfig, escolas: somenteCampanhas ? null : escolasLinha.dados, campanhas: campanhasDados.filter(Boolean), siglas,
             escola_unica: escolaUnica, diretor, pin_disponivel: !!link.pin_hash,
+            // "do Jardim América": abertura das mensagens que o diretor manda pelo próprio WhatsApp.
+            preposicoes: Object.fromEntries((fs || []).filter((f: any) => f.nome_com_preposicao).map((f: any) => [f.nome, f.nome_com_preposicao])),
             escolas_ativas: diretor ? (fs || []).filter((f: any) => f.ativo && f.mercurio_unidade).map((f: any) => f.nome).sort() : [],
         });
     } catch (e) {
