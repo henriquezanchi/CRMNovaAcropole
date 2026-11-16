@@ -56,18 +56,18 @@ async function renderizarCobrancasCora() {
     if (!box) return;
     const p = padroesCora();
     box.innerHTML = `
-        <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px;">
-            <label style="font-size:12px;">Mês da cobrança<br><input type="month" id="coraCompetencia" value="${p.competencia}"></label>
-            <label style="font-size:12px;">Resumo de contatos de<br><input type="date" id="coraDe" value="${p.de}"></label>
-            <label style="font-size:12px;">até<br><input type="date" id="coraAte" value="${p.ate}"></label>
-            <label style="font-size:12px;">Vencimento<br><input type="date" id="coraVencimento" value="${p.vencimento}"></label>
-            <label style="font-size:12px;"><input type="checkbox" id="coraSomentePix" checked> Só Pix (sem boleto)</label>
-            <label style="font-size:12px;">Ambiente<br><select id="coraAmbiente"><option value="producao">Produção (boleto de verdade)</option><option value="stage">Teste (Cora Stage)</option></select></label>
+        <div class="cora-filtros">
+            <label>Mês da cobrança<br><input type="month" id="coraCompetencia" value="${p.competencia}"></label>
+            <label>Resumo de contatos de<br><input type="date" id="coraDe" value="${p.de}"></label>
+            <label>até<br><input type="date" id="coraAte" value="${p.ate}"></label>
+            <label>Vencimento<br><input type="date" id="coraVencimento" value="${p.vencimento}"></label>
+            <label class="cora-check"><input type="checkbox" id="coraSomentePix" checked> Só Pix (sem boleto)</label>
+            <label>Ambiente<br><select id="coraAmbiente"><option value="producao">Produção (cobrança de verdade)</option><option value="stage">Teste (sem cobrar)</option></select></label>
             <button type="button" class="btn-secondary" onclick="carregarPreviaCora()">Ver prévia do fixo</button>
             <button type="button" class="btn-secondary" onclick="atualizarStatusCora()" title="Consulta a Cora agora">Atualizar pagamentos</button>
         </div>
         <div id="coraPrevia"></div>
-        <h4 style="margin:18px 0 8px;">Cobranças geradas</h4>
+        <h4 style="margin:22px 0 10px;">Cobranças geradas</h4>
         <div id="coraLista">Carregando…</div>`;
     await listarCobrancasCora();
 }
@@ -128,34 +128,57 @@ async function gerarCobrancasCora() {
 async function listarCobrancasCora() {
     const alvo = document.getElementById('coraLista');
     if (!alvo) return;
-    const { data, error } = await window.supabaseClient.from('cobrancas_cora').select('*').order('criado_em', { ascending: false }).limit(100);
+    const { data, error } = await window.supabaseClient.from('cobrancas_cora').select('*').order('valor_centavos', { ascending: false }).limit(100);
     if (error) { alvo.textContent = 'Erro: ' + error.message; return; }
     if (!data.length) { alvo.innerHTML = '<p class="report-sub">Nenhuma cobrança gerada ainda.</p>'; return; }
+    // Telefones lidos a cada abertura: o que for preenchido em Gerenciar Filiais vale na hora.
     const { data: fs } = await window.supabaseClient.from('filiais').select('nome, whatsapp_chefe_numero');
     const chefe = new Map((fs || []).map((f) => [f.nome, f.whatsapp_chefe_numero]));
     window.__cobrancasCora = new Map(data.map((c) => [c.id, c]));
-    alvo.innerHTML = `<div style="overflow-x:auto;"><table class="tabela-relatorio" style="width:100%;font-size:13px;">
-        <thead><tr><th>Escola</th><th>Mês</th><th style="text-align:right;">Valor</th><th>Vencimento</th><th>Situação</th><th>Enviada</th><th>Ações</th></tr></thead>
-        <tbody>${data.map((c) => {
-            const tel = String(chefe.get(c.filial) || '').replace(/\D/g, '');
-            const pago = c.status === 'PAID';
-            const lembrete = !pago && c.status !== 'CANCELLED' && c.lembrete_em;
-            return `<tr>
-                <td>${escapeHTML(String(c.filial).replace(/^Goiânia - /, ''))}${c.ambiente === 'stage' ? ' <small style="color:#92400e;">(teste)</small>' : ''}</td>
-                <td>${escapeHTML(c.competencia)}</td>
-                <td style="text-align:right;">${reaisCora(c.valor_centavos)}</td>
-                <td>${brCora(c.vencimento)}</td>
-                <td>${seloCora(c.status)}${pago && c.pago_em ? `<br><small>${brCora(c.pago_em)}</small>` : ''}${c.erro ? `<br><small style="color:#b91c1c;">${escapeHTML(c.erro.slice(0, 120))}</small>` : ''}${lembrete ? '<br><small style="color:#92400e;">Lembrete pendente</small>' : ''}</td>
-                <td>${c.enviada_em ? brCora(c.enviada_em) : '—'}</td>
-                <td style="white-space:nowrap;">
-                    ${c.mensagem ? `<button type="button" class="btn-secondary" onclick="copiarMensagemCora(${c.id}, 'mensagem')">Copiar mensagem</button>
-                    <a class="btn-secondary" target="_blank" rel="noopener" href="https://wa.me/${tel}?text=${encodeURIComponent(c.mensagem)}">WhatsApp${tel ? '' : ' (escolher contato)'}</a>` : ''}
-                    ${c.mensagem && !c.enviada_em && !pago ? `<button type="button" class="btn-secondary" onclick="marcarEnviadaCora(${c.id})">Marcar enviada</button>` : ''}
-                    ${lembrete && c.mensagem_lembrete ? `<a class="btn-secondary" target="_blank" rel="noopener" href="https://wa.me/${tel}?text=${encodeURIComponent(c.mensagem_lembrete)}">Lembrete</a>` : ''}
-                    ${c.boleto_url ? `<a class="btn-secondary" target="_blank" rel="noopener" href="${escapeHTML(c.boleto_url)}">Boleto</a>` : ''}
-                    ${!pago && c.cora_invoice_id && c.status !== 'CANCELLED' ? `<button type="button" class="btn-secondary" onclick="cancelarCobrancaCora(${c.id})">Cancelar</button>` : ''}
-                </td></tr>`;
-        }).join('')}</tbody></table></div>`;
+    const ativas = data.filter((c) => c.status !== 'CANCELLED');
+    const soma = (lista) => lista.reduce((s, c) => s + (c.valor_centavos || 0), 0);
+    const pagas = ativas.filter((c) => c.status === 'PAID');
+    const resumo = `<div class="cora-resumo">
+        <div><span>Total cobrado</span><strong>${reaisCora(soma(ativas))}</strong></div>
+        <div><span>Recebido</span><strong class="ok">${reaisCora(soma(pagas))}</strong><small>${pagas.length} de ${ativas.length} escolas</small></div>
+        <div><span>Em aberto</span><strong class="pend">${reaisCora(soma(ativas) - soma(pagas))}</strong><small>${ativas.filter((c) => !c.enviada_em && c.status !== 'PAID').length} ainda não enviadas</small></div>
+    </div>`;
+    const mesCurto = (comp) => { const [a, m] = String(comp).split('-'); return ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][Number(m) - 1] + '/' + String(a).slice(2); };
+    const cartoes = data.map((c) => {
+        const tel = String(chefe.get(c.filial) || '').replace(/\D/g, '');
+        const pago = c.status === 'PAID', cancelada = c.status === 'CANCELLED';
+        const lembrete = !pago && !cancelada && c.lembrete_em;
+        const wa = (texto) => `https://wa.me/${tel}?text=${encodeURIComponent(texto)}`;
+        const situacao = pago ? `Paga em ${brCora(c.pago_em)}` : (c.enviada_em ? `Enviada em ${brCora(c.enviada_em)}` : 'Ainda não enviada');
+        return `<div class="cora-cartao ${pago ? 'paga' : ''} ${cancelada ? 'cancelada' : ''}">
+            <div class="cora-topo">
+                <div class="cora-escola">${escapeHTML(String(c.filial).replace(/^Goiânia - /, '').replace(/\/MT$/, ''))}${c.ambiente === 'stage' ? ' <small>(teste)</small>' : ''}</div>
+                ${seloCora(c.status)}
+            </div>
+            <div class="cora-valor">${reaisCora(c.valor_centavos)}</div>
+            <div class="cora-info">${mesCurto(c.competencia)} · vence ${brCora(c.vencimento)} · ${situacao}</div>
+            ${c.erro ? `<div class="cora-erro">${escapeHTML(c.erro.slice(0, 140))}</div>` : ''}
+            ${lembrete ? '<div class="cora-aviso">Sem pagamento há 3 dias: envie o lembrete.</div>' : ''}
+            ${!tel && !pago && !cancelada ? '<div class="cora-dica">Sem WhatsApp do diretor (Gerenciar Filiais)</div>' : ''}
+            ${!cancelada && !pago && c.mensagem ? `<div class="cora-acoes">
+                ${lembrete && c.mensagem_lembrete
+                    ? `<a class="btn-primary" target="_blank" rel="noopener" href="${wa(c.mensagem_lembrete)}"><i class="fa-brands fa-whatsapp"></i> Enviar lembrete</a>`
+                    : `<a class="btn-primary" target="_blank" rel="noopener" href="${wa(c.mensagem)}" onclick="aoAbrirWhatsAppCora(${c.id})"><i class="fa-brands fa-whatsapp"></i> ${c.enviada_em ? 'Reenviar' : 'Enviar'}</a>`}
+                <button type="button" class="cora-icone" title="Copiar mensagem" onclick="copiarMensagemCora(${c.id}, '${lembrete ? 'mensagem_lembrete' : 'mensagem'}')"><i class="fa-regular fa-copy"></i></button>
+                ${c.boleto_url ? `<a class="cora-icone" title="${c.pix_emv ? 'QR Code do Pix' : 'Boleto'}" target="_blank" rel="noopener" href="${escapeHTML(c.boleto_url)}"><i class="fa-solid ${c.pix_emv ? 'fa-qrcode' : 'fa-barcode'}"></i></a>` : ''}
+                ${!c.enviada_em ? `<button type="button" class="cora-icone" title="Marcar como enviada" onclick="marcarEnviadaCora(${c.id})"><i class="fa-solid fa-check"></i></button>` : ''}
+                ${c.cora_invoice_id ? `<button type="button" class="cora-icone perigo" title="Cancelar cobrança" onclick="cancelarCobrancaCora(${c.id})"><i class="fa-solid fa-ban"></i></button>` : ''}
+            </div>` : ''}
+        </div>`;
+    }).join('');
+    alvo.innerHTML = resumo + `<div class="cora-grade">${cartoes}</div>`;
+}
+
+// Abriu o WhatsApp com a mensagem: pergunta (sem bloquear) se pode marcar como enviada.
+function aoAbrirWhatsAppCora(id) {
+    const c = window.__cobrancasCora && window.__cobrancasCora.get(id);
+    if (!c || c.enviada_em) return;
+    setTimeout(() => { if (confirm('Mensagem enviada para o diretor? Marcar como enviada (conta os 3 dias do lembrete).')) marcarEnviadaCora(id); }, 1500);
 }
 
 function copiarMensagemCora(id, campo) {

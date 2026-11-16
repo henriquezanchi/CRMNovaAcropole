@@ -1620,3 +1620,34 @@ select:hover { border-color: #b9c7c2; }
 .filiais-inativas-seta { font-size: 11px; transition: transform .15s; }
 .filiais-inativas[open] .filiais-inativas-seta { transform: rotate(90deg); }
 .filiais-inativas-lista { margin-top: 8px; }
+
+/* Cobranças (Cora) — cartões por escola (16/11/2026) */
+.cora-resumo { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.cora-resumo > div { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: var(--raio); padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
+.cora-resumo span { font-size: 12px; color: var(--text-muted); }
+.cora-resumo strong { font-size: 20px; color: var(--text-dark); font-variant-numeric: tabular-nums; }
+.cora-resumo strong.ok { color: var(--cor-sucesso); }
+.cora-resumo strong.pend { color: var(--cor-alerta); }
+.cora-resumo small { font-size: 11.5px; color: var(--text-muted); }
+.cora-grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+.cora-cartao { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: var(--raio); padding: 14px; display: flex; flex-direction: column; gap: 6px; }
+.cora-cartao.paga { border-color: #abefc6; background: var(--cor-sucesso-fundo); }
+.cora-cartao.cancelada { opacity: .55; }
+.cora-topo { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.cora-topo > span { white-space: nowrap; }
+.cora-escola { font-weight: 600; font-size: 14px; color: var(--text-dark); }
+.cora-escola small { color: var(--cor-alerta); font-weight: 500; }
+.cora-valor { font-size: 22px; font-weight: 700; color: var(--na-green-dark); font-variant-numeric: tabular-nums; }
+.cora-info { font-size: 12px; color: var(--text-muted); }
+.cora-erro { font-size: 12px; color: var(--cor-erro); }
+.cora-aviso { font-size: 12px; color: var(--cor-alerta); background: var(--cor-alerta-fundo); border-radius: var(--raio-p); padding: 4px 8px; }
+.cora-dica { font-size: 11.5px; color: var(--text-muted); font-style: italic; }
+.cora-acoes { display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.cora-acoes .btn-primary { text-decoration: none; padding: 7px 14px; font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px; }
+.cora-icone { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border-color); background: var(--card-bg); border-radius: var(--raio-p); color: var(--text-muted); cursor: pointer; text-decoration: none; font-size: 13px; }
+.cora-icone:hover { background: var(--verde-suave); color: var(--na-green-dark); }
+.cora-icone.perigo:hover { background: var(--cor-erro-fundo); color: var(--cor-erro); }
+.cora-filtros { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 14px; padding: 14px; background: var(--superficie-suave); border: 1px solid var(--border-color); border-radius: var(--raio); }
+.cora-filtros label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-muted); }
+.cora-filtros input[type=date], .cora-filtros input[type=month], .cora-filtros select { padding: 7px 9px; border: 1px solid var(--border-color); border-radius: var(--raio-p); font: inherit; font-size: 13px; color: var(--text-dark); background: var(--card-bg); }
+.cora-filtros .cora-check { flex-direction: row; align-items: center; gap: 6px; padding-bottom: 8px; color: var(--text-dark); }
