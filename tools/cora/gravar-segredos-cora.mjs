@@ -5,7 +5,7 @@
 import fs from "fs"; import os from "os"; import path from "path"; import { execSync } from "child_process"; import crypto from "crypto";
 const base = process.argv[2];
 if (!base) { console.error("Informe a pasta das credenciais."); process.exit(1); }
-const achar = (prefixo) => { const d = fs.readdirSync(base).filter((n) => n.startsWith(prefixo)).sort().pop(); if (!d) throw new Error("Pasta não encontrada: " + prefixo); return path.join(base, d); };
+const achar = (prefixo) => { const d = fs.readdirSync(base, { withFileTypes: true }).filter((n) => n.isDirectory() && n.name.startsWith(prefixo)).map((n) => n.name).sort().pop(); if (!d) throw new Error("Pasta não encontrada: " + prefixo); return path.join(base, d); };
 const st = achar("cert_key_cora_stage_"), pr = achar("cert_key_cora_production_");
 const ler = (d, f) => fs.readFileSync(path.join(d, f), "utf8");
 const cn = new crypto.X509Certificate(ler(pr, "certificate.pem")).subject.match(/CN=(\S+)/)[1];
