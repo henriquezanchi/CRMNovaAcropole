@@ -11492,3 +11492,18 @@ só números, mesma chave de pessoa do painel; a tabela segue fechada para o nav
     por ele (a segurança pergunta o nome/pede documento); busca pelo nome e nome do cartão precisam de internet ou do
     PIN digitado antes; a busca por nome no tablet lista nomes de outros inscritos.
   - Dados da simulação apagados (18 registros, 2 presenças desfeitas no Ulisses, `log_atividade` 39879).
+
+## Pós-evento do DMF Goiânia: presença no painel e mensagem a quem não foi marcado (16/11/2026)
+
+- Painel de resultados (`js/resultados.js`): depois da data do evento, inscritos e contatados ganham filtro "Presença"
+  (Presentes / Não marcados como presentes); quem não foi marcado aparece "Não marcado" (antes "Faltou"). A presença
+  dos contatados é calculada em `painel-resultados` antes de mascarar telefone (`presente`).
+- Campanha `dmf-2026-pos` (`migracao_campanha_dmf_pos_evento*.sql`): modelo aprovado `contato_ulisses_saida`
+  ("Vi que você participou do Dia Mundial da Filosofia recentemente. E aí, o que achou?"), fila montada à mão (56
+  inscritos sem presença, não alunos, sem conversa desde o evento), `cota_diaria=0`. `config.pos_evento` muda o
+  `campanha-whatsapp` (não pula inscrito; conversa contada desde `config.conversa_desde`; parâmetros 4/5 de
+  `config.evento_de`/`evento_nome`) e o `campanha-responder` (prompt de pós-evento, campo `foi_ao_evento`, etiquetas
+  "Pós-evento: Foi/Não foi", e `marcarPresencaPosEvento()` marca `compareceu` no Ulisses + `ulisses_inscricoes_evento`
+  + `evento_leads`; falha avisa o admin). Modelo `como_foi_evento` não existe na Meta.
+- Nas mensagens de cobrança de 16/11, "inscrições depois do contato" contou qualquer evento do Ulisses de qualquer
+  escola (inclui o DMF, cadastrado no Setor Universitário).
