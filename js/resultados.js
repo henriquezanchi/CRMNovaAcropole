@@ -685,7 +685,7 @@
     var digitosP = function (t) { return String(t || '').replace(/\D/g, '').slice(-8); };
     var presPid = {}, presTel = {};
     (c.inscritos || []).forEach(function (x) { if (x.compareceu === true) { if (x.pid) presPid[x.pid] = 1; var d = digitosP(x.telefone); if (d.length === 8) presTel[d] = 1; } });
-    var contatadoPresente = function (x) { return !!((x.pid && presPid[x.pid]) || presTel[digitosP(x.telefone)]); };
+    var contatadoPresente = function (x) { return x.presente != null ? !!x.presente : !!((x.pid && presPid[x.pid]) || presTel[digitosP(x.telefone)]); };
     var escolasContat = []; contatados.forEach(function (x) { if (x.escola && escolasContat.indexOf(x.escola) < 0) escolasContat.push(x.escola); });
     escolasContat.sort(function (a, b) { return nomeEscola(a).localeCompare(nomeEscola(b)); });
     var stC = function (x) { return String(x.situacao || ''); };

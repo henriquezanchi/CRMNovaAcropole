@@ -301,8 +301,13 @@ Deno.serve(async (req) => {
             const chaveTel = (t: unknown) => { const g = String(t || "").replace(/\D/g, ""); return g.length >= 10 ? g.slice(0, 2) + g.slice(-8) : ""; };
             const inscPid = new Set((d.inscritos || []).map((x: any) => x.pid).filter(Boolean).map(String));
             const inscTel = new Set((d.inscritos || []).map((x: any) => chaveTel(x.telefone)).filter(Boolean));
+            // Presença (16/11/2026): inscrito marcado como presente, pelo cadastro ou pelo telefone.
+            const presentes = (d.inscritos || []).filter((x: any) => x.compareceu === true);
+            const presPid = new Set(presentes.map((x: any) => x.pid).filter(Boolean).map(String));
+            const presTel = new Set(presentes.map((x: any) => chaveTel(x.telefone)).filter(Boolean));
             let contatados = (d.contatados || []).filter((x: any) => permitida(x.escola)).map((x: any) => ({
                 ...x, inscrito: (x.pid != null && inscPid.has(String(x.pid))) || (!!chaveTel(x.telefone) && inscTel.has(chaveTel(x.telefone))),
+                presente: (x.pid != null && presPid.has(String(x.pid))) || (!!chaveTel(x.telefone) && presTel.has(chaveTel(x.telefone))),
             }));
             // Inscrito sem cadastro no CRM e que não é aluno: a função do banco o coloca na escola do
             // evento; aqui ele vai para "Sem cadastro no CRM", para não inflar a escola do evento.
