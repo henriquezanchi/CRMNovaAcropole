@@ -487,6 +487,12 @@
                 </div>
 
                 <div style="margin-top:30px;">
+                    <h3 style="font-size:16px; color:var(--na-green-dark);">Cobranças (Cora)</h3>
+                    <p class="report-sub">Gera boleto + Pix na Cora para cada escola, com a mensagem pronta para o diretor. O pagamento é marcado sozinho e, sem pagamento 3 dias depois do envio, o lembrete fica pronto aqui.</p>
+                    <div id="relatorioCobrancasCora"></div>
+                </div>
+
+                <div style="margin-top:30px;">
                     <h3 style="font-size:16px; color:var(--na-green-dark);">Comissão do SDR — Todas as Filiais (prévia ao vivo)</h3>
                     <p class="report-sub">Acompanhamento por mês de matrícula, com os membros de hoje. O valor oficial a cobrar é o da Cobrança Mensal, acima.</p>
                     <div id="relatorioComissaoSdrTodasFiliais"></div>
@@ -1809,6 +1815,7 @@
     <!-- 3f3. Contas de usuário (login nominal + permissão por módulo) -->
     <script src="js/usuarios.js"></script>
     <script src="js/tarefas.js"></script>
+    <script src="js/cobranca-cora.js"></script>
     <!-- 3f4. Indicador de progresso do scraper do Mercúrio (topbar) -->
     <script src="js/scraper-progresso.js"></script>
     <!-- 3g. Portão de acesso (senha única do time) — carregado por último só

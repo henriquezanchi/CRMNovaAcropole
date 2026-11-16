@@ -86,6 +86,33 @@ async function registrarPedidoNaoContatar(pessoa: string, texto: string, confirm
     } catch (e) { console.warn("Falha ao registrar pedido de não contato:", (e as Error).message); }
 }
 
+// Engano no "Parar mensagens" (16/11/2026, caso real: "cliquei errado, desculpe"). Se a pessoa
+// escreve que tocou sem querer até 24 h depois de a etiqueta ter sido posta AUTOMATICAMENTE por
+// um pedido dela, a etiqueta sai. Etiqueta posta à mão pela equipe ou há mais tempo nunca sai sozinha.
+const ENGANO_NAO_CONTATAR = [
+    /(cliquei|apertei|toquei|marquei|clickei|selecionei)\s+(errado|sem\s+querer|por\s+engano|no\s+bot[aã]o\s+errado)/i,
+    /(foi|era)\s+(sem\s+querer|engano|por\s+engano)/i,
+    /^\s*(desculp[ae]s?,?\s*)?(foi\s+)?sem\s+querer/i,
+    /n[ãa]o\s+(era|quis|queria)\s+(pra\s+|para\s+)?(parar|sair|clicar|apertar)/i,
+    /pode\s+(continuar|mandar|me\s+mandar)\b.{0,25}mensage/i,
+];
+async function desfazerNaoContatarPorEngano(pessoa: string, texto: string) {
+    if (!texto || !ENGANO_NAO_CONTATAR.some((re) => re.test(texto))) return;
+    try {
+        const { data: lead } = await supabaseAdmin.from(NOME_TABELA_LEADS).select("tags, filial").eq("pessoaIdentificador", pessoa).maybeSingle();
+        if (!lead || !String(JSON.stringify(lead.tags || "")).includes("Não Contatar")) return;
+        const { data: pedido } = await supabaseAdmin.from("log_atividade").select("id")
+            .eq("acao", "pedido_nao_contatar_detectado").contains("pessoa_ids", [pessoa])
+            .gte("criado_em", new Date(Date.now() - 24 * 3600_000).toISOString()).limit(1).maybeSingle();
+        if (!pedido) return;
+        await alterarTags(pessoa, { remover: ["Não Contatar"] });
+        await supabaseAdmin.from("log_atividade").insert({
+            filial: lead.filial || "GLOBAL", acao: "pedido_nao_contatar_desfeito", autor: "Recebimento do WhatsApp",
+            pessoa_ids: [pessoa], detalhes: { trecho: texto.slice(0, 200), motivo: "a pessoa disse que tocou por engano" },
+        });
+    } catch (e) { console.warn("Falha ao desfazer Não Contatar:", (e as Error).message); }
+}
+
 function extrairTexto(msg: any): string {
     if (msg.type === "text") return msg.text?.body ?? "";
     if (msg.type === "button") return msg.button?.text ?? "[Botão]";
@@ -451,6 +478,7 @@ Deno.serve(async (req) => {
                 // Texto digitado ou toque em botão ("Parar mensagens", 13/11/2026).
                 if (!error && match?.pessoaIdentificador && ["text", "button", "interactive"].includes(msg.type)) {
                     await registrarPedidoNaoContatar(match.pessoaIdentificador, extrairTexto(msg), true);
+                    await desfazerNaoContatarPorEngano(match.pessoaIdentificador, extrairTexto(msg));
                 }
                 // Campanha com resposta automática (04/11/2026): quem foi convidado e
                 // respondeu recebe resposta do robô em até 1 minuto no horário

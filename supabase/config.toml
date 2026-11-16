@@ -51,3 +51,9 @@ verify_jwt = false
 
 [functions.painel-resultados]
 verify_jwt = false
+
+[functions.cora-webhook]
+verify_jwt = false
+
+[functions.cora-cobranca]
+verify_jwt = false

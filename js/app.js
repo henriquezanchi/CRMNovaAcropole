@@ -2567,6 +2567,7 @@ async function renderizarListaFiliaisModal() {
                     ${campo('Mensalidade do aluno (R$)', 'Base da comissão de 30%.', `<input type="number" step="0.01" min="0" value="${f.valor_mensalidade != null ? f.valor_mensalidade : ''}" onchange="atualizarValorMensalidadeFilial(${f.id}, this.value)">`)}
                     ${campo('Membros', `${membrosMercurio} Fixo: R$ 4,96 por membro/mês.`, `<input type="number" step="1" min="0" data-campo="membros" data-membros-mercurio="${f.membros_mercurio ?? ''}" value="${f.membros != null ? f.membros : ''}" onchange="atualizarMembrosFilial(${f.id}, this.value); atualizarResumoFilialModal(this)">`)}
                     ${campo('Valor fixo manual (R$)', 'Se preenchido, substitui membros × R$ 4,96.', `<input type="number" step="0.01" min="0" value="${f.valor_fixo_mensal_agencia != null ? f.valor_fixo_mensal_agencia : ''}" onchange="atualizarValorFixoFilial(${f.id}, this.value)">`)}
+                    ${campo('CNPJ para cobrança', 'De quem paga o boleto da Cora (só números).', `<input type="text" inputmode="numeric" maxlength="18" value="${escapeHTML(f.cnpj_cobranca || '')}" placeholder="00.000.000/0001-00" onchange="atualizarCnpjCobrancaFilial(${f.id}, this.value)">`)}
                 </div>
             </div>
         </details>`;
@@ -2696,6 +2697,14 @@ async function atualizarWhatsappChefeFilial(id, novoValor) {
 async function atualizarValorMensalidadeFilial(id, novoValor) {
     const numero = novoValor.trim() === '' ? null : parseFloat(novoValor.replace(',', '.'));
     const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ valor_mensalidade: (numero === null || isNaN(numero)) ? null : numero }).eq('id', id);
+    if (error) avisar('Erro ao salvar: ' + error.message);
+}
+
+// CNPJ de quem paga o boleto da Cora (cobranca-cora.js), 16/11/2026.
+async function atualizarCnpjCobrancaFilial(id, valor) {
+    const dig = String(valor || '').replace(/\D/g, '');
+    if (dig && dig.length !== 14 && dig.length !== 11) { avisar('CNPJ precisa ter 14 números (ou CPF, 11).'); return; }
+    const { error } = await window.supabaseClient.from(NOME_TABELA_FILIAIS).update({ cnpj_cobranca: dig || null }).eq('id', id);
     if (error) avisar('Erro ao salvar: ' + error.message);
 }
 
@@ -3400,6 +3409,7 @@ const CARREGADORES_RELATORIOS_BANCO = [
     ['relatorioCobrancaMensal', () => typeof renderizarCobrancaMensal === 'function' && renderizarCobrancaMensal()],
     ['relatorioCiclosTurma', () => typeof renderizarCiclosTurma === 'function' && renderizarCiclosTurma()],
     ['relatorioConciliacaoMercurio', () => typeof renderizarConciliacaoMercurio === 'function' && renderizarConciliacaoMercurio()],
+    ['relatorioCobrancasCora', () => typeof renderizarCobrancasCora === 'function' && renderizarCobrancasCora()],
     ['relatorioComissaoSdrTodasFiliais', () => renderizarComissaoSdrTodasFiliais()],
     ['relatorioAcertosComissao', () => typeof renderizarAcertosComissao === 'function' && renderizarAcertosComissao()],
     ['relatorioAnualMatriculas', () => typeof carregarRelatorioAnualMatriculas === 'function' && carregarRelatorioAnualMatriculas()],

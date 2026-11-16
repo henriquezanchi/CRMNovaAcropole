@@ -5592,7 +5592,7 @@ async function carregarSugestaoIaWpp(leadId) {
     if (!container) return;
     if (!leadId) { container.innerHTML = ''; return; }
 
-    const { data } = await window.supabaseClient
+    const { data: pendente } = await window.supabaseClient
         .from('sugestoes_resposta_wpp')
         .select('*')
         .eq('pessoaIdentificador', leadId)
@@ -5600,10 +5600,23 @@ async function carregarSugestaoIaWpp(leadId) {
         .order('criado_em', { ascending: false })
         .limit(1)
         .maybeSingle();
+    // Lembrete sugerido é independente da resposta (16/11/2026): enviar ou descartar a resposta
+    // não pode sumir com ele. Vale a sugestão de lembrete mais recente (até 14 dias), qualquer status.
+    const { data: comLembrete } = await window.supabaseClient
+        .from('sugestoes_resposta_wpp')
+        .select('id, lembrete_sugerido_data, lembrete_sugerido_motivo')
+        .eq('pessoaIdentificador', leadId)
+        .not('lembrete_sugerido_data', 'is', null)
+        .gte('criado_em', new Date(Date.now() - 14 * 864e5).toISOString())
+        .order('criado_em', { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-    if (!data) { container.innerHTML = ''; return; }
+    if (!pendente && !comLembrete) { container.innerHTML = ''; return; }
+    const data = pendente || { id: null };
+    const lembrete = comLembrete || null;
 
-    container.innerHTML = `
+    container.innerHTML = `${pendente ? `
         <div style="margin:0 12px 8px; padding:8px 10px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px;">
             <div style="font-size:11px; font-weight:600; color:#1d4ed8; margin-bottom:4px;"><i class="fa-solid fa-wand-magic-sparkles"></i> Sugestão de resposta (IA) — revise antes de enviar</div>
             ${renderizarAgenteIaCRM(data.agente_ia)}
@@ -5615,14 +5628,14 @@ async function carregarSugestaoIaWpp(leadId) {
                 ${data.sugestao_resposta ? `<button class="btn-primary" style="font-size:11px; padding:4px 10px;" onclick="enviarSugestaoIaWpp(${data.id}, '${leadId}')"><i class="fa-solid fa-paper-plane"></i> Enviar</button>` : ''}
                 <button class="btn-secondary" style="font-size:11px; padding:4px 10px;" onclick="descartarSugestaoIaWpp(${data.id}, '${leadId}')">Descartar</button>
             </div>
-        </div>
-        ${data.lembrete_sugerido_data ? `
+        </div>` : ''}
+        ${lembrete ? `
         <div style="margin:0 12px 8px; padding:8px 10px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px;">
             <div style="font-size:11px; font-weight:600; color:#92400e; margin-bottom:4px;"><i class="fa-solid fa-clock"></i> A IA detectou uma data de retorno — criar lembrete?</div>
-            <div style="font-size:12px; margin-bottom:6px;"><strong>${formatarDataBRWpp(data.lembrete_sugerido_data)}</strong> — ${escapeHTML(data.lembrete_sugerido_motivo || '')}</div>
+            <div style="font-size:12px; margin-bottom:6px;"><strong>${formatarDataBRWpp(lembrete.lembrete_sugerido_data)}</strong> — ${escapeHTML(lembrete.lembrete_sugerido_motivo || '')}</div>
             <div style="display:flex; gap:6px;">
-                <button class="btn-primary" style="font-size:11px; padding:4px 10px;" onclick="aplicarLembreteSugeridoWpp(${data.id}, '${leadId}', ${argJs(data.lembrete_sugerido_data)}, ${argJs(data.lembrete_sugerido_motivo || '')})"><i class="fa-solid fa-check"></i> Criar Lembrete</button>
-                <button class="btn-secondary" style="font-size:11px; padding:4px 10px;" onclick="ignorarLembreteSugeridoWpp(${data.id}, '${leadId}')">Ignorar</button>
+                <button class="btn-primary" style="font-size:11px; padding:4px 10px;" onclick="aplicarLembreteSugeridoWpp(${lembrete.id}, '${leadId}', ${argJs(lembrete.lembrete_sugerido_data)}, ${argJs(lembrete.lembrete_sugerido_motivo || '')})"><i class="fa-solid fa-check"></i> Criar Lembrete</button>
+                <button class="btn-secondary" style="font-size:11px; padding:4px 10px;" onclick="ignorarLembreteSugeridoWpp(${lembrete.id}, '${leadId}')">Ignorar</button>
             </div>
         </div>` : ''}
     `;
