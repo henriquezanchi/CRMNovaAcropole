@@ -268,11 +268,10 @@ function dividirPorEscola(lista: any[], total: number, minimo: number): any[] {
 // Cotas por proximidade (16/11/2026, pedido do usuário). Cada abertura de turma recebe a MESMA
 // fatia do total de convites que cabe até a última abertura (teto do dia × dias que faltam, mais o
 // que já foi agendado desde config.proximidade_desde). Quem tem a abertura mais cedo precisa
-// mandar sua fatia em menos dias, então manda mais por dia: cota = (fatia − já agendado) ÷ dias que
-// faltam até o próprio fim_convites. As escolas com a abertura mais distante ficam com o que sobra
-// do dia e herdam as vagas de quem já abriu. Recalculado todo dia no planejamento das 08:25.
-// Ex. (teto 230; fim 23, 24 e 25/11; hoje 17/11): 49 por dia para as de 24/11, 43 para as de 25/11,
-// 23 para as de 26/11; depois 72 e 115 por dia para as últimas. Cada uma fecha com ~345 convites.
+// mandar sua fatia em menos dias, então manda mais por dia; e cada uma reforça a própria reta final.
+// Quando uma abertura passa, as vagas dela vão para as que ainda vão abrir. Recalculado todo dia às 08:25.
+// Ex. (teto 230; fim 23, 24 e 25/11; hoje 17/11): Universitário/Goiânia II 45→56, Eldorado/Catalão
+// 38→76 no último dia, Jardim América/Setor Oeste 32→115 no último dia; ~335-365 convites cada.
 async function aplicarCotasPorProximidade(campanhas: any[], tetoEfetivo: number) {
     const hoje = hojeBrasilia();
     const dinamicas = campanhas.filter((c) => c.config?.cota_por_proximidade);
@@ -296,13 +295,16 @@ async function aplicarCotasPorProximidade(campanhas: any[], tetoEfetivo: number)
         }
         const fimMax = Math.max(...ativas.map((c) => dias(c.fim_convites)));
         const fatia = (disponivel * fimMax + [...feito.values()].reduce((t, v) => t + v, 0)) / ativas.length;
-        let livre = disponivel;
-        const ultimas = ativas.filter((c) => dias(c.fim_convites) === fimMax);
-        for (const c of ativas.filter((c) => dias(c.fim_convites) < fimMax).sort((a, b) => dias(a.fim_convites) - dias(b.fim_convites))) {
-            const v = Math.min(livre, Math.max(0, Math.round((fatia - feito.get(c.id)!) / dias(c.fim_convites))));
-            cota.set(c.id, v); livre -= v;
-        }
-        ultimas.forEach((c, i) => cota.set(c.id, Math.floor(livre / ultimas.length) + (i < livre % ultimas.length ? 1 : 0)));
+        // Reforço na reta final (16/11/2026): o saldo de cada escola é espalhado pelos dias que faltam
+        // com peso 1/k (k = dias até o fim_convites; o último dia pesa mais), porque convite perto da
+        // data rende mais (a pessoa decide e não esquece). Hoje fica a parte do dia de hoje.
+        const parteHoje = (D: number) => { let soma = 0; for (let k = 1; k <= D; k++) soma += 1 / k; return (1 / D) / soma; };
+        const necessidade = ativas.map((c) => ({ c, v: Math.max(0, fatia - feito.get(c.id)!) * parteHoje(dias(c.fim_convites)) }));
+        const somaNec = necessidade.reduce((t, x) => t + x.v, 0);
+        const partes = necessidade.map((x) => ({ c: x.c, ideal: somaNec ? disponivel * x.v / somaNec : 0 }));
+        for (const p of partes) cota.set(p.c.id, Math.floor(p.ideal));
+        let sobra = disponivel - partes.reduce((t, p) => t + cota.get(p.c.id)!, 0);
+        for (const p of [...partes].sort((x, y) => (y.ideal % 1) - (x.ideal % 1))) { if (sobra <= 0) break; cota.set(p.c.id, cota.get(p.c.id)! + 1); sobra--; }
     }
     for (const c of dinamicas) {
         const v = cota.get(c.id) ?? 0;

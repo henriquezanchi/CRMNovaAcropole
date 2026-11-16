@@ -11521,6 +11521,7 @@ partir do dia seguinte. O teto sobe sozinho 25/dia após 3 dias seguidos de cont
   (`MARGEM_LIMITE` = 20 de folga para modelos fora das campanhas); continuam valendo o freio pela
   qualidade (amarelo → 30% e teto volta a 100; vermelho/5+ retenções → para). Campanhas com
   `config.cota_por_proximidade` (as 6 de turma) recebem cada uma a MESMA fatia do total que cabe até a
-  última abertura (desde `config.proximidade_desde`); cota do dia = (fatia − já agendado) ÷ dias até o próprio
-  `fim_convites`, e as de abertura mais distante ficam com o resto do dia (17/11: 49/43/23; depois 72 e 115) (`aplicarCotasPorProximidade()`, `campanha-whatsapp`), gravando a cota do dia
+  última abertura (desde `config.proximidade_desde`); o saldo de cada uma é espalhado pelos dias até o próprio
+  `fim_convites` com peso 1/k (reforço na reta final: o último dia pesa mais), e o dia é dividido em proporção
+  (Universitário/Goiânia II 45→56, Eldorado/Catalão 38→76, Jardim América/Setor Oeste 32→115 no último dia) (`aplicarCotasPorProximidade()`, `campanha-whatsapp`), gravando a cota do dia
   em `cota_diaria` (`migracao_campanha_cota_proximidade.sql`).
