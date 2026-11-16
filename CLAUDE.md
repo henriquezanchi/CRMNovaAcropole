@@ -11516,3 +11516,10 @@ Setor Oeste 14, Eldorado 12, Catalão 12. Relacionamento do Garavelo, eventos de
 DMF de Barra e Rio Verde ficaram com cota 0 (continuam ativas para o robô responder quem já foi
 convidado). Alto da Glória segue pausada (escola não aderiu). O planejamento roda 08:25; vale a
 partir do dia seguinte. O teto sobe sozinho 25/dia após 3 dias seguidos de conta verde.
+- **Teto no limite da Meta + cotas por proximidade (16/11/2026, mesmo dia):** o usuário apontou que o
+  que pesa na qualidade é bloqueio/denúncia, não volume dentro do limite autorizado. `teto_diario` = 230
+  (`MARGEM_LIMITE` = 20 de folga para modelos fora das campanhas); continuam valendo o freio pela
+  qualidade (amarelo → 30% e teto volta a 100; vermelho/5+ retenções → para). Campanhas com
+  `config.cota_por_proximidade` (as 6 de turma) dividem o teto todo dia por peso 1/d², d = dias até
+  `fim_convites` inclusive (`aplicarCotasPorProximidade()`, `campanha-whatsapp`), gravando a cota do dia
+  em `cota_diaria` (`migracao_campanha_cota_proximidade.sql`).

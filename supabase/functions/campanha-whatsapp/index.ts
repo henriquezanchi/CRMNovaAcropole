@@ -18,7 +18,8 @@ import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
 
 const GRAPH_VERSION = Deno.env.get("WHATSAPP_GRAPH_API_VERSION") ?? "v21.0";
 const FUSO = "America/Sao_Paulo";
-const MARGEM_LIMITE = 5;
+// Folga para modelos fora das campanhas (aniversário, convites manuais, lembretes) no mesmo limite da Meta.
+const MARGEM_LIMITE = 20;
 
 function json(body: unknown, status = 200) {
     return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -262,6 +263,37 @@ function dividirPorEscola(lista: any[], total: number, minimo: number): any[] {
     const escolhidos: any[] = [];
     for (const e of escolas) escolhidos.push(...grupos.get(e)!.slice(0, cota.get(e)!));
     return escolhidos.sort((a, b) => Number(b.prioridade || 0) - Number(a.prioridade || 0));
+}
+
+// Cotas por proximidade (16/11/2026, pedido do usuário): campanhas com config.cota_por_proximidade
+// dividem o que sobra do teto do dia (depois das campanhas de cota fixa) pelo peso 1/d², em que d
+// é o número de dias até o último dia de convite (inclusive). Quem tem a aula mais perto recebe mais;
+// campanha que já passou do fim_convites sai da divisão e as outras herdam as vagas.
+async function aplicarCotasPorProximidade(campanhas: any[], tetoEfetivo: number) {
+    const hoje = hojeBrasilia();
+    const dinamicas = campanhas.filter((c) => c.config?.cota_por_proximidade);
+    if (!dinamicas.length) return null;
+    const fixas = campanhas.filter((c) => !c.config?.cota_por_proximidade).reduce((t, c) => t + Number(c.cota_diaria || 0), 0);
+    const disponivel = Math.max(0, tetoEfetivo - fixas);
+    const dias = (fim: string) => Math.round((Date.parse(fim + "T12:00:00Z") - Date.parse(hoje + "T12:00:00Z")) / 86400000) + 1;
+    const ativas = dinamicas.filter((c) => hoje >= c.inicio && hoje <= c.fim_convites);
+    const peso = new Map(ativas.map((c) => [c.id, 1 / Math.max(1, dias(c.fim_convites)) ** 2]));
+    const soma = [...peso.values()].reduce((t, v) => t + v, 0);
+    const partes = ativas.map((c) => ({ c, ideal: soma ? disponivel * peso.get(c.id)! / soma : 0 }));
+    for (const p of partes) p.c.__cota = Math.floor(p.ideal);
+    let sobra = disponivel - partes.reduce((t, p) => t + p.c.__cota, 0);
+    for (const p of [...partes].sort((x, y) => (y.ideal % 1) - (x.ideal % 1))) { if (sobra <= 0) break; p.c.__cota++; sobra--; }
+    const resumo: Record<string, number> = {};
+    for (const c of dinamicas) {
+        const cota = ativas.includes(c) ? c.__cota : 0;
+        delete c.__cota;
+        resumo[c.slug] = cota;
+        if (Number(c.cota_diaria) !== cota) {
+            await supabaseAdmin.from("campanhas_whatsapp").update({ cota_diaria: cota }).eq("id", c.id);
+            c.cota_diaria = cota;
+        }
+    }
+    return { disponivel, cotas: resumo };
 }
 
 async function planejar(c: any, forcar: boolean, qualidade: Qualidade, teto: { teto: number; efetivo: number }) {
@@ -663,8 +695,11 @@ Deno.serve(async (req) => {
             const saida = [];
             const qualidade = await estadoQualidade();
             const teto = await tetoDoDia(await limiteDiarioMeta(), qualidade, true);
-            for (const c of await campanhasAtivas()) saida.push(await planejar(c, Boolean(corpo.forcar), qualidade, teto));
-            return json({ ok: true, qualidade, teto, planejado: saida });
+            const campanhas = await campanhasAtivas();
+            const cotasProximidade = await aplicarCotasPorProximidade(campanhas, teto.efetivo);
+            campanhas.sort((x: any, y: any) => Number(y.cota_diaria) - Number(x.cota_diaria) || Number(x.id) - Number(y.id));
+            for (const c of campanhas) saida.push(await planejar(c, Boolean(corpo.forcar), qualidade, teto));
+            return json({ ok: true, qualidade, teto, cotasProximidade, planejado: saida });
         }
         if (corpo.acao === "enviar") return json({ ok: true, enviados: await enviar() });
         if (corpo.acao === "modelos") return json({ ok: true, modelos: await listarModelos() });
