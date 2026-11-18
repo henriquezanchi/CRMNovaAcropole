@@ -2000,7 +2000,7 @@ async function abrirRemoverLeadLgpd() {
     const lead = leadsAtuais.find(l => String(l.pessoaIdentificador) === String(currentLeadId));
     if (!lead) return;
 
-    if (!confirm(`Remover "${lead.pessoaNome}" do cadastro A PEDIDO DELA?\n\nIsso vai:\n- apagar o cadastro DEFINITIVAMENTE do CRM (diferente da Lixeira, não tem como restaurar);\n- impedir que ela volte numa reimportação futura do Ulisses/Mercúrio;\n- agendar a desativação do contato no Ulisses (feita sozinha na próxima importação semanal).`)) return;
+    if (!confirm(`Remover "${lead.pessoaNome}" do cadastro A PEDIDO DELA?\n\nIsso vai:\n- apagar o cadastro DEFINITIVAMENTE do CRM (diferente da Lixeira, não tem como restaurar);\n- impedir que ela volte numa reimportação futura do Ulisses/Mercúrio;\n- desativar o contato no Ulisses (Não Perturbe), em até 10 minutos.`)) return;
 
     const telefoneBusca = [lead.pessoaTelefoneDDD, lead.pessoaTelefoneNumero].filter(Boolean).join('') || null;
     const nomeNormalizado = typeof normalizarNomeImport === 'function'
@@ -2026,11 +2026,16 @@ async function abrirRemoverLeadLgpd() {
         return;
     }
 
+    // Código do contato no Ulisses = pessoaIdentificador real (abaixo de 900000000; acima são ids criados pelo CRM).
+    // Com ele, a Edge Function ulisses-nao-perturbe desativa o contato pela API em até 10 minutos (cron).
+    const codigoUlisses = /^\d+$/.test(String(currentLeadId)) && Number(currentLeadId) < 900000000 ? Number(currentLeadId) : null;
     const { error: erroFila } = await window.supabaseClient.from('fila_desativacao_ulisses').insert({
         filial: filialAtual,
         nome: lead.pessoaNome,
         telefone_busca: telefoneBusca,
-        status: 'pendente',
+        ulisses_email_id: codigoUlisses,
+        status: codigoUlisses ? 'pendente' : 'nao_encontrado',
+        observacao: codigoUlisses ? null : 'Cadastro sem código do Ulisses (veio só do Mercúrio ou foi criado no CRM): desativar à mão no Ulisses, se existir lá.',
     });
     if (erroFila) console.warn('Não foi possível enfileirar a desativação no Ulisses (a remoção no CRM já foi salva):', erroFila.message);
 
@@ -2052,7 +2057,7 @@ async function abrirRemoverLeadLgpd() {
 
     leadsAtuais = leadsAtuais.filter(l => String(l.pessoaIdentificador) !== String(idParaApagar));
     renderizarCards();
-    avisar(`"${nomeParaApagar}" removido(a) do CRM. A desativação no Ulisses acontece sozinha na próxima importação semanal (ou rode "npm run ulisses-local" antes, se for urgente).`);
+    avisar(`"${nomeParaApagar}" removido(a) do CRM.${codigoUlisses ? ' No Ulisses, o contato é desativado (Não Perturbe) em até 10 minutos.' : ' Este cadastro não tem código do Ulisses: se a pessoa existir lá, desative à mão.'}`);
 }
 
 // ==========================================

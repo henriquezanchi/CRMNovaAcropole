@@ -11557,8 +11557,10 @@ as turmas de Goiânia de 20 a 23/11. A soma das cotas fixas agora só conta camp
 Edge `ulisses-nao-perturbe` (`--no-verify-jwt`, só `x-funil-token`): processa `fila_desativacao_ulisses` pendente com
 `ulisses_email_id` (coluna nova = código do contato no Ulisses = `pessoaIdentificador` real) chamando
 `POST /facade/naoPertube/{emailId}` pela ponte (mesma ação do link "Desativar contato" do telemarketing:
-`desativado=true`, motivo "Não Pertube"). Sem cron: acionar à mão. Primeiro uso
+`desativado=true`, motivo "Não Pertube"). Cron `ulisses-nao-perturbe` a cada 10 min, só chama a função se houver
+pendente (`migracao_agendamento_ulisses_nao_perturbe.sql`). Primeiro uso
 (`migracao_remocao_parar_mensagens_20261118.sql`): as 7 pessoas que tocaram "Parar mensagens"/"Sair" em 16/11 foram
 removidas do CRM (bloqueio de reimportação em `contatos_removidos_lgpd` + exclusão) e desativadas no Ulisses
-(fila 8-14 concluída). Lucas Oliveira (559879) ficou: tocou por engano. O botão LGPD da gaveta ainda enfileira sem
-`ulisses_email_id` (fila 1-7 antigas continuam pendentes, sem código).
+(fila 8-14 concluída). Lucas Oliveira (559879) ficou: tocou por engano. O botão LGPD da gaveta
+(`abrirRemoverLeadLgpd()`) grava `ulisses_email_id` quando o cadastro tem código real do Ulisses (< 900000000); sem
+código, a fila fica `nao_encontrado` com aviso para desativar à mão.
