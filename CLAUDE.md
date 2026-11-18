@@ -11542,3 +11542,12 @@ Prioridade (`prioridadeCampanha()`, igual no JS e em `campanha-whatsapp`, que ag
 1 aula experimental/aula inaugural, 2 abertura de turma, 3 curso pago/workshop/oficina, 4 outro evento,
 5 relacionamento (sem evento), 6 pós-evento. `config.fase_seguinte` (`migracao_campanha_fase_seguinte.sql`) guarda a
 volta para a turma em 20/11 só para a projeção; quem muda de fato é o cron `campanhas-voltar-turma-20261120`.
+
+## Todas as escolas abertas com convites (18/11/2026, `migracao_campanhas_todas_escolas_20261119.sql`, JÁ RODADA)
+
+Pedido do usuário: toda escola aberta recebe convites, exceto Alto da Glória (fechada). Teto continua 230/dia.
+Cotas fixas: Catalão 15, Cidade Jardim 15 (palestra 21/11, depois Café 28/11), Garavelo 15 (relacionamento),
+Barra 10 e Jataí 10 (relacionamento novo, mesmo modelo do Garavelo, até 30/11). Rio Verde: `turma-rio-verde-2026`
+(abertura 24/11, evento 848, sem aula experimental, endereço não cadastrado) entra na divisão por proximidade com
+as turmas de Goiânia de 20 a 23/11. A soma das cotas fixas agora só conta campanha dentro de `inicio..fim_convites`
+(antes uma campanha encerrada com cota > 0 continuava tirando vaga das outras).

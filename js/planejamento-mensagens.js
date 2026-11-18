@@ -140,7 +140,7 @@ async function renderizarPlanejamentoMensagens() {
                 continue;
             }
             const doDia = campanhas.map((c) => campanhaNoDia(c, dia));
-            const fixas = doDia.filter((c) => !c.config?.cota_por_proximidade).reduce((t, c) => t + Number(c.cota_diaria || 0), 0);
+            const fixas = doDia.filter((c) => !c.config?.cota_por_proximidade && dia >= c.inicio && dia <= c.fim_convites).reduce((t, c) => t + Number(c.cota_diaria || 0), 0);
             const disponivel = Math.max(0, tetoEfetivo - fixas);
             const feitoDe = (c) => {
                 const desde = c.proximidadeDesde || dia; let soma = 0;

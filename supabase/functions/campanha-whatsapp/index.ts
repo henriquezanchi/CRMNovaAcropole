@@ -286,7 +286,8 @@ async function aplicarCotasPorProximidade(campanhas: any[], tetoEfetivo: number)
     const hoje = hojeBrasilia();
     const dinamicas = campanhas.filter((c) => c.config?.cota_por_proximidade);
     if (!dinamicas.length) return null;
-    const fixas = campanhas.filter((c) => !c.config?.cota_por_proximidade).reduce((t, c) => t + Number(c.cota_diaria || 0), 0);
+    const fixas = campanhas.filter((c) => !c.config?.cota_por_proximidade && hojeBrasilia() >= c.inicio && hojeBrasilia() <= c.fim_convites)
+        .reduce((t, c) => t + Number(c.cota_diaria || 0), 0);
     const disponivel = Math.max(0, tetoEfetivo - fixas);
     const dias = (fim: string) => Math.round((Date.parse(fim + "T12:00:00Z") - Date.parse(hoje + "T12:00:00Z")) / 86400000) + 1;
     const ativas = dinamicas.filter((c) => hoje >= c.inicio && hoje <= c.fim_convites);
