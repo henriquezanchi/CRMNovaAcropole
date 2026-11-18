@@ -3428,6 +3428,7 @@ const CARREGADORES_RELATORIOS_BANCO = [
     ['relatorioComparacaoFiliais', () => renderizarRelatorioComparacaoFiliais()],
     ['relatorioSlaWhatsApp', () => typeof carregarRelatoriosWhatsApp === 'function' && carregarRelatoriosWhatsApp()],
     ['resumoTrabalhoContainer', () => typeof carregarResumoTrabalho === 'function' && carregarResumoTrabalho()],
+    ['relatorioPlanejamentoMensagens', () => typeof renderizarPlanejamentoMensagens === 'function' && renderizarPlanejamentoMensagens()],
 ];
 const relatoriosBancoCarregados = new Set();
 

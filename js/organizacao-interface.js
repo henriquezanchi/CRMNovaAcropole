@@ -33,6 +33,7 @@ function organizarInterfaceCrm() {
             ['Comissões e cobrança', ['relatorioComissaoSdrTodasFiliais','relatorioCobrancaMensal','relatorioCiclosTurma']],
             ['Funil e relacionamento', ['funilInteracoes','relatorioKanbanCabecalho','funnelChart','relatorioJornadaBase','relatorioTemasEvento','relatorioCanalOrigemMercurio','relatorioMotivosPerda','relatorioComparacaoFiliais']],
             ['Atendimento e equipe', ['relatorioSlaWhatsApp','resumoTrabalhoContainer']],
+            ['Planejamento de mensagens', ['relatorioPlanejamentoMensagens']],
         ];
         const navegacao = document.createElement('nav'); navegacao.className = 'atalhos-relatorios'; navegacao.setAttribute('aria-label','Assuntos dos relatórios');
         const cabecalho = document.createElement('header'); cabecalho.className = 'relatorios-intro';

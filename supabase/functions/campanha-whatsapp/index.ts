@@ -272,6 +272,16 @@ function dividirPorEscola(lista: any[], total: number, minimo: number): any[] {
 // Quando uma abertura passa, as vagas dela vão para as que ainda vão abrir. Recalculado todo dia às 08:25.
 // Ex. (teto 230; fim 23, 24 e 25/11; hoje 17/11): Universitário/Goiânia II 45→56, Eldorado/Catalão
 // 38→76 no último dia, Jardim América/Setor Oeste 32→115 no último dia; ~335-365 convites cada.
+function prioridadeCampanha(c: any, ev: any): number {
+    if (c.config?.pos_evento) return 6;
+    if (!c.evento_id || !ev) return 5;
+    const nome = String(ev.nome || ""), tipo = String(ev.tipo || "");
+    if (/experimental/i.test(nome) || /aula inaugural/i.test(tipo)) return 1;
+    if (/abertura de turma/i.test(tipo) || /turma/i.test(nome)) return 2;
+    if (/curso|workshop|oficina/i.test(tipo + " " + nome)) return 3;
+    return 4;
+}
+
 async function aplicarCotasPorProximidade(campanhas: any[], tetoEfetivo: number) {
     const hoje = hojeBrasilia();
     const dinamicas = campanhas.filter((c) => c.config?.cota_por_proximidade);
@@ -718,7 +728,14 @@ Deno.serve(async (req) => {
             const teto = await tetoDoDia(await limiteDiarioMeta(), qualidade, true);
             const campanhas = await campanhasAtivas();
             const cotasProximidade = await aplicarCotasPorProximidade(campanhas, teto.efetivo);
-            campanhas.sort((x: any, y: any) => Number(y.cota_diaria) - Number(x.cota_diaria) || Number(x.id) - Number(y.id));
+            // Prioridade (18/11/2026, pedido do usuário): aula experimental > abertura de turma > curso pago >
+            // outro evento > relacionamento > pós-evento. Quem vem antes planeja antes e não perde vaga do teto do dia.
+            // Mesma regra de prioridadeCampanha() em js/planejamento-mensagens.js.
+            const idsEv = [...new Set(campanhas.map((c: any) => c.evento_id).filter(Boolean))];
+            const { data: evs } = idsEv.length ? await supabaseAdmin.from("eventos").select("id, nome, tipo").in("id", idsEv) : { data: [] };
+            const evPorId = new Map((evs || []).map((e: any) => [e.id, e]));
+            campanhas.sort((x: any, y: any) => prioridadeCampanha(x, evPorId.get(x.evento_id)) - prioridadeCampanha(y, evPorId.get(y.evento_id))
+                || Number(y.cota_diaria) - Number(x.cota_diaria) || Number(x.id) - Number(y.id));
             for (const c of campanhas) saida.push(await planejar(c, Boolean(corpo.forcar), qualidade, teto));
             return json({ ok: true, qualidade, teto, cotasProximidade, planejado: saida });
         }

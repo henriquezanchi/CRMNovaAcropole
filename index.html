@@ -551,6 +551,19 @@
                     </div>
                     <div id="resumoTrabalhoContainer"></div>
                 </div>
+
+                <!-- Planejamento de mensagens (18/11/2026): convites de campanha dos próximos 7 dias,
+                     dia a dia, por tipo de campanha e escola (js/planejamento-mensagens.js) -->
+                <div style="margin-top:30px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                        <div>
+                            <h3 style="font-size:16px; color:var(--na-green-dark);">Planejamento de mensagens da semana</h3>
+                            <p class="report-sub">Convites de campanha previstos, todas as escolas, na ordem de prioridade: aula experimental, abertura de turma, curso pago, outro evento, relacionamento.</p>
+                        </div>
+                        <button class="btn-secondary" onclick="renderizarPlanejamentoMensagens()"><i class="fa-solid fa-rotate"></i> Atualizar</button>
+                    </div>
+                    <div id="relatorioPlanejamentoMensagens"></div>
+                </div>
             </div>
         </div>
 
@@ -1811,6 +1824,7 @@
     <script src="js/relatorio-anual-matriculas.js"></script>
     <!-- 3f2b. Relatórios de WhatsApp (SLA, desempenho por atendente, volume) + Resumo do Trabalho na tela -->
     <script src="js/relatorios-whatsapp.js"></script>
+    <script src="js/planejamento-mensagens.js"></script>
     <script src="js/funil-interacoes.js"></script>
     <!-- 3f3. Contas de usuário (login nominal + permissão por módulo) -->
     <script src="js/usuarios.js"></script>
