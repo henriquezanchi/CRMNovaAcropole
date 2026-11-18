@@ -11531,3 +11531,14 @@ partir do dia seguinte. O teto sobe sozinho 25/dia após 3 dias seguidos de cont
   `config.foco='aula_experimental'`, linha de foco no início de `config.instrucoes`). Universitário/Goiânia II 17/11,
   Eldorado 18/11, Jardim América/Setor Oeste 19/11. Catalão (sem aula experimental) saiu da divisão por proximidade:
   15/dia fixo até 24/11. Alto da Glória segue pausada.
+
+## Planejamento de mensagens da semana (18/11/2026)
+
+Aba Relatórios → assunto "Planejamento de mensagens" (`js/planejamento-mensagens.js`, `#relatorioPlanejamentoMensagens`).
+Convites de campanha dos próximos 7 dias, por tipo e por escola. Hoje = `campanha_fila` real; dias seguintes = estimativa
+com a mesma conta do agendador (teto, cota fixa, `aplicarCotasPorProximidade` com reforço 1/k, `config.fase_seguinte`
+aplicada a partir de `desde`). Não considera lista de candidatos esgotada nem evento lotado; 2ª tentativa fora.
+Prioridade (`prioridadeCampanha()`, igual no JS e em `campanha-whatsapp`, que agora ordena o planejamento por ela):
+1 aula experimental/aula inaugural, 2 abertura de turma, 3 curso pago/workshop/oficina, 4 outro evento,
+5 relacionamento (sem evento), 6 pós-evento. `config.fase_seguinte` (`migracao_campanha_fase_seguinte.sql`) guarda a
+volta para a turma em 20/11 só para a projeção; quem muda de fato é o cron `campanhas-voltar-turma-20261120`.
