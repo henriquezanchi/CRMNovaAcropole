@@ -11551,3 +11551,14 @@ Barra 10 e Jataí 10 (relacionamento novo, mesmo modelo do Garavelo, até 30/11)
 (abertura 24/11, evento 848, sem aula experimental, endereço não cadastrado) entra na divisão por proximidade com
 as turmas de Goiânia de 20 a 23/11. A soma das cotas fixas agora só conta campanha dentro de `inicio..fim_convites`
 (antes uma campanha encerrada com cota > 0 continuava tirando vaga das outras).
+
+## Desativação no Ulisses pela API (18/11/2026)
+
+Edge `ulisses-nao-perturbe` (`--no-verify-jwt`, só `x-funil-token`): processa `fila_desativacao_ulisses` pendente com
+`ulisses_email_id` (coluna nova = código do contato no Ulisses = `pessoaIdentificador` real) chamando
+`POST /facade/naoPertube/{emailId}` pela ponte (mesma ação do link "Desativar contato" do telemarketing:
+`desativado=true`, motivo "Não Pertube"). Sem cron: acionar à mão. Primeiro uso
+(`migracao_remocao_parar_mensagens_20261118.sql`): as 7 pessoas que tocaram "Parar mensagens"/"Sair" em 16/11 foram
+removidas do CRM (bloqueio de reimportação em `contatos_removidos_lgpd` + exclusão) e desativadas no Ulisses
+(fila 8-14 concluída). Lucas Oliveira (559879) ficou: tocou por engano. O botão LGPD da gaveta ainda enfileira sem
+`ulisses_email_id` (fila 1-7 antigas continuam pendentes, sem código).
