@@ -20,7 +20,7 @@
 // `scraper/sincronizar-ulisses-api-local.mjs`; ver
 // `scraper/importar-ulisses-api.js` pra importação de
 // Inscrições/Eventos/Comparecimento e CLAUDE.md pro histórico.
-import { lerCredencial } from './lib/supabaseAdmin.js';
+import { lerCredencial, supabaseAdmin } from './lib/supabaseAdmin.js';
 
 const AUTH0_TOKEN_URL = 'https://acropolebrasil.us.auth0.com/oauth/token';
 const API_AUDIENCE = 'https://api.acropolebrasil.com.br/';
@@ -31,8 +31,31 @@ const API_BASE_URL = 'https://api.acropolebrasil.com.br';
 // chamada. Renova sozinho quando faltar menos de 1 minuto pra expirar.
 let tokenCache = null; // { accessToken, expiraEm }
 
+// Cache no banco (19/11/2026, aviso do Auth0 de 80% da cota de tokens M2M): cada rodada do GitHub Actions começa
+// sem memória e pedia um token novo a cada 10 min. Agora todas as rodadas (e as Edge Functions, ver
+// supabase/functions/_shared/ulisses.ts) usam o mesmo token por 24 h. Sem a tabela (migracao_cache_token_ulisses.sql),
+// segue como antes.
+async function tokenDoBanco() {
+    try {
+        const { data } = await supabaseAdmin.from('ulisses_token_cache').select('token, expira_em').eq('id', 1).maybeSingle();
+        if (data && new Date(data.expira_em).getTime() - Date.now() > 10 * 60_000) return { accessToken: data.token, expiraEm: new Date(data.expira_em).getTime() };
+    } catch { /* sem tabela: segue */ }
+    return null;
+}
+
+async function guardarTokenNoBanco(accessToken, expiraEm) {
+    try {
+        await supabaseAdmin.from('ulisses_token_cache').upsert({ id: 1, token: accessToken, expira_em: new Date(expiraEm).toISOString(), atualizado_em: new Date().toISOString() });
+    } catch { /* sem tabela: segue */ }
+}
+
 async function obterTokenUlissesApi() {
     if (tokenCache && tokenCache.expiraEm - Date.now() > 60_000) {
+        return tokenCache.accessToken;
+    }
+    const doBanco = await tokenDoBanco();
+    if (doBanco) {
+        tokenCache = doBanco;
         return tokenCache.accessToken;
     }
     const { usuario: clientId, senha: clientSecret } = await lerCredencial('ulisses_api', null);
@@ -51,6 +74,7 @@ async function obterTokenUlissesApi() {
         throw new Error(`Falha ao obter token OAuth2 do Ulisses: ${dados.error || resp.status} — ${dados.error_description || 'sem detalhe'}`);
     }
     tokenCache = { accessToken: dados.access_token, expiraEm: Date.now() + dados.expires_in * 1000 };
+    await guardarTokenNoBanco(tokenCache.accessToken, tokenCache.expiraEm);
     return tokenCache.accessToken;
 }
 

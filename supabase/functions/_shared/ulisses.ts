@@ -11,6 +11,14 @@ let tokenCache: { token: string; expira: number } | null = null;
 
 async function token(admin: SupabaseClient): Promise<string> {
     if (tokenCache && tokenCache.expira - Date.now() > 60_000) return tokenCache.token;
+    // Mesmo cache do robô (19/11/2026, cota de tokens M2M do Auth0): token de 24 h guardado no banco.
+    try {
+        const { data: salvo } = await admin.from("ulisses_token_cache").select("token, expira_em").eq("id", 1).maybeSingle();
+        if (salvo && new Date(salvo.expira_em).getTime() - Date.now() > 10 * 60_000) {
+            tokenCache = { token: salvo.token, expira: new Date(salvo.expira_em).getTime() };
+            return tokenCache.token;
+        }
+    } catch { /* sem tabela: segue */ }
     const { data, error } = await admin.rpc("ler_credencial_scraper", {
         p_sistema: "ulisses_api", p_filial: "GLOBAL", p_chave: Deno.env.get("CREDENCIAIS_SCRAPER_CHAVE"),
     });
@@ -22,6 +30,9 @@ async function token(admin: SupabaseClient): Promise<string> {
     const j = await resp.json().catch(() => ({}));
     if (!resp.ok || !j.access_token) throw new Error("Falha ao obter acesso à API do Ulisses.");
     tokenCache = { token: j.access_token, expira: Date.now() + (j.expires_in || 3600) * 1000 };
+    try {
+        await admin.from("ulisses_token_cache").upsert({ id: 1, token: tokenCache.token, expira_em: new Date(tokenCache.expira).toISOString(), atualizado_em: new Date().toISOString() });
+    } catch { /* sem tabela: segue */ }
     return tokenCache.token;
 }
 
