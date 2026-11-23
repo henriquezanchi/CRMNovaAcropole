@@ -11564,3 +11564,13 @@ removidas do CRM (bloqueio de reimportação em `contatos_removidos_lgpd` + excl
 (fila 8-14 concluída). Lucas Oliveira (559879) ficou: tocou por engano. O botão LGPD da gaveta
 (`abrirRemoverLeadLgpd()`) grava `ulisses_email_id` quando o cadastro tem código real do Ulisses (< 900000000); sem
 código, a fila fica `nao_encontrado` com aviso para desativar à mão.
+
+## Convite com falha temporária volta para a fila (23/11/2026)
+
+Bug: a Meta aceita o modelo na hora e só depois avisa a falha (webhook). A fila já marcava "enviado" e a pessoa
+nunca mais era convidada; com o pagamento pendente (131042) de 21-23/11, a trava de pagamento deixava sair 1 teste a
+cada 10 min e cada teste "gastava" um lead (~297 perdidos). `campanha_reverter_falhas_temporarias()`
+(`migracao_campanha_reverter_falhas_temporarias.sql`, JÁ RODADA, devolveu 297) roda no início de cada `enviar()`:
+convite `enviado` cuja mensagem falhou com 131042/130429/131056 volta a `pendente` (+30 min), apaga o vínculo
+`evento_leads` 'crm' pendente criado no envio; se a campanha já passou de `fim_convites`, vira `cancelado`. Falha
+temporária síncrona (`whatsapp-send` não ok) também volta a `pendente`. 131026/131049 continuam como enviados.

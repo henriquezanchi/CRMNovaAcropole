@@ -533,7 +533,14 @@ async function avisarPagamento(bloqueado: boolean) {
     } catch (e) { console.warn("aviso de pagamento não enviado:", e); }
 }
 
+// Falha temporária na Meta (pagamento 131042, limite 130429/131056) não pode tirar a pessoa da campanha (23/11/2026):
+// a Meta aceita o envio e só avisa a falha depois, pelo webhook. Convite nessa situação volta para a fila.
+const RE_FALHA_TEMPORARIA = /131042|130429|131056|payment|eligibility|rate limit/i;
+
 async function enviar() {
+    const { data: revertidos, error: erroRev } = await supabaseAdmin.rpc("campanha_reverter_falhas_temporarias");
+    if (erroRev) console.warn("reverter falhas temporárias:", erroRev.message);
+    else if (revertidos) console.log(`${revertidos} convite(s) com falha temporária voltaram para a fila`);
     const { data: itens, error } = await supabaseAdmin.rpc("campanha_assumir_envios", { p_limite: 3 });
     if (error) throw new Error("falha_assumir: " + error.message);
     const resultados: any[] = [];
@@ -640,6 +647,11 @@ async function enviar() {
         } else {
             const erro = envio.dados?.erro;
             const motivo = String(envio.dados?.detalhe?.message || erro || `status ${envio.status}`).slice(0, 300);
+            if (RE_FALHA_TEMPORARIA.test(JSON.stringify(envio.dados?.detalhe || "") + " " + motivo)) {
+                await supabaseAdmin.from("campanha_fila").update({ status: "pendente", motivo: "reenvio: " + motivo, agendado_para: new Date(Date.now() + 30 * 60_000).toISOString() }).eq("id", it.id);
+                resultados.push({ id: it.id, status: "adiado_falha_temporaria", motivo });
+                continue;
+            }
             await finalizar(erro === "preferencia_contato" || erro === "cadastro_em_conferencia" || erro === "lead_sem_telefone" ? "pulado" : "falhou", { motivo });
         }
     }
