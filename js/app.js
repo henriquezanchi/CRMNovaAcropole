@@ -2508,6 +2508,7 @@ async function abrirGerenciarFiliais() {
     filiaisAbertasModal = new Set();
     await renderizarListaFiliaisModal();
     carregarStatusPinPaineis();
+    if (typeof carregarStatusWhatsappOficial === 'function') carregarStatusWhatsappOficial();
     document.getElementById('modalFiliais').classList.add('open');
     document.getElementById('overlayModalFiliais').classList.add('active');
 }
@@ -2568,6 +2569,9 @@ async function renderizarListaFiliaisModal() {
                     ${campo('WhatsApp do secretário de abertura de turma', 'Contato da escola para inscrições e assuntos da abertura de turma.', `<input type="text" inputmode="numeric" value="${escapeHTML(f.whatsapp_abertura_turma || '')}" placeholder="5562991234567" onchange="atualizarWhatsappFuncaoFilial(${f.id}, 'whatsapp_abertura_turma', this.value)">`, true)}
                     ${campo('PIN do painel do diretor', 'Com o PIN, o diretor vê nomes e telefones completos no painel da escola e pode agir (não contatar, observação, vagas da turma).', `<button type="button" class="btn-secondary" onclick="definirPinPainelFilial(${JSON.stringify(f.nome).replace(/"/g, '&quot;')})">Definir / redefinir PIN</button> <span class="pin-status" data-filial="${escapeHTML(f.nome)}" style="font-size:12px;color:var(--text-muted);"></span>`, true)}
                 </div>
+                <h4 class="filial-grupo">WhatsApp oficial da escola</h4>
+                <p class="filial-campo-ajuda">Conecta o número da própria escola ao CRM sem tirá-lo do app WhatsApp Business do celular.</p>
+                <div class="wpp-oficial" data-filial="${escapeHTML(f.nome)}"><span class="filial-campo-ajuda">Carregando...</span></div>
                 <h4 class="filial-grupo">Mercúrio e cobrança</h4>
                 <div class="filial-grade">
                     ${campo('Código no Mercúrio', 'Liga a sincronização diária com o banco do Mercúrio.', `<input type="text" data-campo="unidade" maxlength="3" value="${escapeHTML(f.mercurio_unidade || '')}" placeholder="JAM" onchange="atualizarMercurioUnidadeFilial(${f.id}, this.value); atualizarResumoFilialModal(this)">`)}

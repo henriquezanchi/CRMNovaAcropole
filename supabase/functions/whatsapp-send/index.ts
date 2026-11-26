@@ -11,10 +11,7 @@ import { montarNumeroE164 } from "../_shared/telefone.ts";
 import { motivoBloqueioContato, motivoIntegridadeContato, temTagNaoContatar, TEXTO_CONFIRMACAO_NAO_CONTATAR } from "../_shared/preferencia-contato.ts";
 import { motivoRascunhoAgente } from "../_shared/rascunho-agente.mjs";
 import { aplicarReacao } from "../_shared/reacoes.ts";
-
-const GRAPH_VERSION = Deno.env.get("WHATSAPP_GRAPH_API_VERSION") ?? "v21.0";
-const TOKEN = Deno.env.get("WHATSAPP_TOKEN")!;
-const PHONE_ID_DEFAULT = Deno.env.get("WHATSAPP_PHONE_NUMBER_ID_DEFAULT")!;
+import { bloqueioDoNumero, GRAPH_VERSION, numeroParaNovaMensagem, tokenDoNumero } from "../_shared/whatsapp-numeros.ts";
 
 function json(body: unknown, status = 200) {
     return new Response(JSON.stringify(body), {
@@ -157,16 +154,27 @@ Deno.serve(async (req) => {
         if (!recebidas) return json({ ok: false, erro: "janela_fechada", detalhe: { message: "Só é possível responder números que escreveram nas últimas 24h." } }, 403);
     }
 
-    // Resolve o número da Meta que envia: da filial do lead, com fallback pro padrão.
-    let phoneNumberId = PHONE_ID_DEFAULT;
-    if (filial) {
-        const { data: filialRow } = await supabaseAdmin
-            .from("filiais")
-            .select("whatsapp_phone_number_id")
-            .eq("nome", filial)
-            .maybeSingle();
-        if (filialRow?.whatsapp_phone_number_id) phoneNumberId = filialRow.whatsapp_phone_number_id;
+    // Número que envia (26/11/2026, WhatsApp oficial das escolas): a conversa é respondida pelo número em que a
+    // pessoa escreveu; reação sai pelo número da mensagem reagida; modelo (mensagem nova) sai pelo número da escola
+    // quando ela liberou o uso no CRM, senão pelo da filial/agência como antes. Número de escola sem "usar no CRM"
+    // não envia nada, nem dos robôs.
+    let phoneNumberId: string | null = null;
+    if (tipo === "reacao") {
+        const { data: alvo } = await supabaseAdmin.from(NOME_TABELA_MENSAGENS).select("phone_number_id_meta")
+            .eq("wa_message_id", mensagemAlvoId).maybeSingle();
+        phoneNumberId = alvo?.phone_number_id_meta || null;
+    } else if (tipo !== "template") {
+        let consulta = supabaseAdmin.from(NOME_TABELA_MENSAGENS).select("phone_number_id_meta")
+            .eq("direcao", "entrada").not("phone_number_id_meta", "is", null)
+            .order("criado_em", { ascending: false }).limit(1);
+        consulta = pessoaIdentificador ? consulta.eq("pessoaIdentificador", pessoaIdentificador) : consulta.eq("telefone_whatsapp", numeroE164);
+        const { data: ultima } = await consulta;
+        phoneNumberId = ultima?.[0]?.phone_number_id_meta || null;
     }
+    if (!phoneNumberId) phoneNumberId = await numeroParaNovaMensagem(filial);
+    const bloqueioNumero = await bloqueioDoNumero(phoneNumberId);
+    if (bloqueioNumero) return json({ ok: false, erro: "numero_escola_bloqueado", detalhe: { message: bloqueioNumero } }, 409);
+    const tokenEnvio = await tokenDoNumero(phoneNumberId);
 
     const bodyGraph = tipo === "template"
         ? {
@@ -282,7 +290,7 @@ Deno.serve(async (req) => {
     try {
         respGraph = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`, {
             method: "POST",
-            headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
+            headers: { Authorization: `Bearer ${tokenEnvio}`, "Content-Type": "application/json" },
             body: JSON.stringify(bodyGraph),
         });
         respJson = await respGraph.json();

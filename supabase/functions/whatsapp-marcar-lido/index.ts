@@ -9,11 +9,8 @@
 // ao abrir uma conversa — best-effort, fire-and-forget, nunca bloqueia a
 // UI nem quebra nada se falhar.
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
-import { supabaseAdmin, NOME_TABELA_LEADS } from "../_shared/supabaseAdmin.ts";
-
-const GRAPH_VERSION = Deno.env.get("WHATSAPP_GRAPH_API_VERSION") ?? "v21.0";
-const TOKEN = Deno.env.get("WHATSAPP_TOKEN")!;
-const PHONE_ID_DEFAULT = Deno.env.get("WHATSAPP_PHONE_NUMBER_ID_DEFAULT")!;
+import { supabaseAdmin, NOME_TABELA_LEADS, NOME_TABELA_MENSAGENS } from "../_shared/supabaseAdmin.ts";
+import { GRAPH_VERSION, PHONE_ID_PADRAO as PHONE_ID_DEFAULT, tokenDoNumero } from "../_shared/whatsapp-numeros.ts";
 
 function json(body: unknown, status = 200) {
     return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -33,19 +30,25 @@ Deno.serve(async (req) => {
     const { pessoaIdentificador, waMessageId } = corpoReq;
     if (!pessoaIdentificador || !waMessageId) return json({ ok: false, erro: "parametros_faltando" }, 400);
 
-    // Resolve o número da Meta que "recebeu" — precisa ser o mesmo número
-    // que está marcando como lido (a filial do lead, com fallback pro padrão).
+    // Resolve o número da Meta que "recebeu" — precisa ser o mesmo número que está marcando como lido: o da própria
+    // mensagem (número da escola, quando veio por ele); sem isso, a filial do lead, com fallback pro padrão.
     let phoneNumberId = PHONE_ID_DEFAULT;
-    const { data: lead } = await supabaseAdmin.from(NOME_TABELA_LEADS).select("filial").eq("pessoaIdentificador", pessoaIdentificador).maybeSingle();
-    if (lead?.filial) {
-        const { data: filialRow } = await supabaseAdmin.from("filiais").select("whatsapp_phone_number_id").eq("nome", lead.filial).maybeSingle();
-        if (filialRow?.whatsapp_phone_number_id) phoneNumberId = filialRow.whatsapp_phone_number_id;
+    const { data: recebida } = await supabaseAdmin.from(NOME_TABELA_MENSAGENS).select("phone_number_id_meta").eq("wa_message_id", waMessageId).maybeSingle();
+    if (recebida?.phone_number_id_meta) {
+        phoneNumberId = recebida.phone_number_id_meta;
+    } else {
+        const { data: lead } = await supabaseAdmin.from(NOME_TABELA_LEADS).select("filial").eq("pessoaIdentificador", pessoaIdentificador).maybeSingle();
+        if (lead?.filial) {
+            const { data: filialRow } = await supabaseAdmin.from("filiais").select("whatsapp_phone_number_id").eq("nome", lead.filial).maybeSingle();
+            if (filialRow?.whatsapp_phone_number_id) phoneNumberId = filialRow.whatsapp_phone_number_id;
+        }
     }
+    const token = await tokenDoNumero(phoneNumberId);
 
     try {
         const resp = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`, {
             method: "POST",
-            headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
             body: JSON.stringify({ messaging_product: "whatsapp", status: "read", message_id: waMessageId }),
         });
         const data = await resp.json();

@@ -12,6 +12,7 @@ import { aplicarReacao } from "../_shared/reacoes.ts";
 import { baixarEArmazenarMidiaRecebida } from "../_shared/midia.ts";
 import { tratarComandoAdmin } from "../_shared/comandoAdmin.ts";
 import { TEXTO_CONFIRMACAO_NAO_CONTATAR } from "../_shared/preferencia-contato.ts";
+import { esquecerCacheNumeros, numeroEscolaPorId, type NumeroEscola } from "../_shared/whatsapp-numeros.ts";
 
 const APP_SECRET = Deno.env.get("WHATSAPP_APP_SECRET")!;
 const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN")!;
@@ -341,6 +342,116 @@ async function acionarRespostaCampanha(pessoa: string, waMessageId: string) {
     await supabaseAdmin.rpc("executar_campanha_responder", { p_corpo: { pessoa, mensagem_id: m.id } });
 }
 
+/* WHATSAPP OFICIAL DAS ESCOLAS (coexistência com o app WhatsApp Business, 26/11/2026) */
+
+/** Lead de um número, dando preferência a quem é da escola dona do número. Mesmos passos do recebimento normal. */
+async function casarLeadDoNumero(numeroCliente: string, escola: NumeroEscola | null) {
+    const { ddd, numero } = separarFromMeta(numeroCliente);
+    const candidatos = candidatosNumeroBR(numero);
+    const matches = await buscarLeadsPorTelefone(ddd, candidatos);
+    let match = matches.length === 1 ? matches[0] : null;
+    if (!match && escola) {
+        const daEscola = matches.filter((m: any) => m.filial === escola.filial);
+        if (daEscola.length === 1) match = daEscola[0];
+    }
+    if (!match) match = await resolverPorUltimoEnvioNosso(ddd, candidatos);
+    if (!match && matches.length > 1) match = await resolverAmbiguidadePorHistorico(matches);
+    return { match, matches };
+}
+
+/** Mídia de uma mensagem da escola (eco), baixada com o token da escola. */
+async function midiaDaMensagem(msg: any, escola: NumeroEscola | null): Promise<Record<string, unknown>> {
+    const token = escola?.token || undefined;
+    const tipo = mapearTipoMeta(msg.type);
+    const id = msg[msg.type]?.id;
+    if (!id) return {};
+    const m = ["audio", "imagem", "documento", "video", "sticker"].includes(tipo)
+        ? await baixarEArmazenarMidiaRecebida(supabaseAdmin, id, token) : null;
+    if (!m) return {};
+    if (tipo === "audio") return { audio_url: m.url, audio_mime: m.mimeType };
+    if (tipo === "imagem") return { imagem_url: m.url };
+    if (tipo === "documento") return { documento_url: m.url, nome_arquivo: msg.document?.filename || "documento" };
+    if (tipo === "video") return { video_url: m.url, video_mime: m.mimeType };
+    return { sticker_url: m.url };
+}
+
+/**
+ * Grava uma mensagem que não passou pelo recebimento normal: enviada pela equipe no celular/WhatsApp Web da escola
+ * (eco) ou trazida do histórico do app. Não aciona robôs nem a detecção de "não contatar" (é passado ou é a própria
+ * escola falando). Duplicadas são ignoradas pelo id da Meta.
+ */
+async function gravarMensagemDaEscola(msg: any, direcao: "entrada" | "saida", numeroCliente: string, escola: NumeroEscola | null,
+    phoneNumberId: string | undefined, origem: "eco_app" | "historico_app", baixarMidia: boolean, statusHistorico?: string) {
+    if (!msg?.id || !numeroCliente) return;
+    const { match } = await casarLeadDoNumero(numeroCliente, escola);
+    const midia = baixarMidia ? await midiaDaMensagem(msg, escola) : {};
+    const statusMeta: Record<string, string> = { read: "lido", played: "lido", delivered: "entregue", sent: "enviado", error: "falhou", pending: "enviando" };
+    const { error } = await supabaseAdmin.from(NOME_TABELA_MENSAGENS).upsert({
+        pessoaIdentificador: match?.pessoaIdentificador ?? null,
+        telefone_whatsapp: numeroCliente,
+        filial: match?.filial ?? escola?.filial ?? null,
+        direcao,
+        tipo: mapearTipoMeta(msg.type),
+        corpo_texto: extrairTexto(msg),
+        wa_message_id: msg.id,
+        wa_status: direcao === "entrada" ? "entregue" : (statusMeta[statusHistorico || ""] || "enviado"),
+        phone_number_id_meta: phoneNumberId ?? escola?.phoneNumberId ?? null,
+        atendente_nome: direcao === "saida" ? `WhatsApp da escola${origem === "historico_app" ? " (histórico)" : ""}` : null,
+        payload_bruto: { ...msg, ...midia, origem },
+        criado_em: msg.timestamp ? new Date(Number(msg.timestamp) * 1000).toISOString() : new Date().toISOString(),
+    }, { onConflict: "wa_message_id", ignoreDuplicates: true });
+    if (error) console.error(`Erro ao gravar mensagem (${origem}):`, error);
+}
+
+/** Mensagens que a equipe mandou pelo app ou pelo WhatsApp Web da escola. */
+async function tratarEcos(value: any, escola: NumeroEscola | null, phoneNumberId: string | undefined) {
+    for (const eco of value.message_echoes ?? []) {
+        await gravarMensagemDaEscola(eco, "saida", String(eco.to || ""), escola, phoneNumberId, "eco_app", true);
+    }
+}
+
+/** Histórico de até 6 meses do app, pedido na conexão. Chega em partes; mídia antiga não é baixada (volume). */
+async function tratarHistorico(value: any, escola: NumeroEscola | null, phoneNumberId: string | undefined) {
+    for (const bloco of value.history ?? []) {
+        if (bloco.errors?.length) {
+            await supabaseAdmin.from("whatsapp_conexoes").update({
+                ultimo_erro: "Histórico: " + bloco.errors.map((e: any) => e.message || e.title || e.code).join(", "),
+                atualizado_em: new Date().toISOString(),
+            }).eq("phone_number_id", phoneNumberId);
+            continue;
+        }
+        for (const conversa of bloco.threads ?? []) {
+            const cliente = String(conversa.id || conversa.context?.wa_id || "");
+            for (const msg of conversa.messages ?? []) {
+                const direcao = String(msg.from || "") === cliente ? "entrada" : "saida";
+                await gravarMensagemDaEscola(msg, direcao, cliente, escola, phoneNumberId, "historico_app", false, msg.history_context?.status);
+            }
+        }
+        const progresso = Number(bloco.metadata?.progress);
+        if (Number.isFinite(progresso)) {
+            await supabaseAdmin.from("whatsapp_conexoes").update({ historico_progresso: progresso, atualizado_em: new Date().toISOString() })
+                .eq("phone_number_id", phoneNumberId);
+        }
+    }
+}
+
+/** A escola desconectou o número da plataforma (no app ou por inatividade): o CRM para de usar o número. */
+async function tratarAtualizacaoConta(entryId: string, value: any) {
+    const evento = String(value.event || "");
+    if (["PARTNER_REMOVED", "ACCOUNT_OFFBOARDED"].includes(evento)) {
+        const motivo = value.disconnection_info?.reason ? ` (${value.disconnection_info.reason})` : "";
+        await supabaseAdmin.from("whatsapp_conexoes").update({
+            estado: "desconectado", usar_no_crm: false, desconectado_em: new Date().toISOString(),
+            ultimo_erro: `A Meta avisou: ${evento}${motivo}`, atualizado_em: new Date().toISOString(),
+        }).eq("waba_id", entryId);
+        esquecerCacheNumeros();
+    } else if (evento === "ACCOUNT_RECONNECTED") {
+        await supabaseAdmin.from("whatsapp_conexoes").update({ estado: "conectado", ultimo_erro: null, atualizado_em: new Date().toISOString() })
+            .eq("waba_id", entryId).not("token_cifrado", "is", null);
+        esquecerCacheNumeros();
+    }
+}
+
 Deno.serve(async (req) => {
     const url = new URL(req.url);
 
@@ -371,6 +482,15 @@ Deno.serve(async (req) => {
         for (const change of entry.changes ?? []) {
             const value = change.value ?? {};
             const phoneNumberId: string | undefined = value.metadata?.phone_number_id;
+            // Número de uma escola conectada (null = número da agência, como sempre foi).
+            const escola = await numeroEscolaPorId(phoneNumberId);
+            // Robôs só respondem pelo número da escola depois de ela liberar o uso no CRM.
+            const robosPodem = !escola || escola.usarNoCrm;
+
+            if (change.field === "smb_message_echoes") { await tratarEcos(value, escola, phoneNumberId); continue; }
+            if (change.field === "history") { await tratarHistorico(value, escola, phoneNumberId); continue; }
+            if (change.field === "smb_app_state_sync") continue; // contatos do app: o CRM já tem os seus
+            if (change.field === "account_update") { await tratarAtualizacaoConta(String(entry.id || ""), value); continue; }
 
             for (const msg of value.messages ?? []) {
                 // Reação com emoji a uma mensagem já existente (pedido do
@@ -415,6 +535,11 @@ Deno.serve(async (req) => {
                 const matches = await buscarLeadsPorTelefone(ddd, candidatos);
                 let match = matches.length === 1 ? matches[0] : null;
                 let resolvidoPorHistorico = false;
+                // Pelo número de uma escola, entre duplicados vale o cadastro daquela escola.
+                if (!match && escola) {
+                    const daEscola = matches.filter((m: any) => m.filial === escola.filial);
+                    if (daEscola.length === 1) match = daEscola[0];
+                }
                 // Sinal mais forte primeiro (ver resolverPorUltimoEnvioNosso()):
                 // "pra quem mandamos mensagem por último neste telefone" —
                 // cobre ambiguidade (2+ leads) E o caso de 0 candidatos em
@@ -437,22 +562,22 @@ Deno.serve(async (req) => {
                 let midiaExtra: Record<string, unknown> = {};
                 const tipoMapeado = mapearTipoMeta(msg.type);
                 if (tipoMapeado === "audio" && msg.audio?.id) {
-                    const midia = await baixarEArmazenarMidiaRecebida(supabaseAdmin, msg.audio.id);
+                    const midia = await baixarEArmazenarMidiaRecebida(supabaseAdmin, msg.audio.id, escola?.token || undefined);
                     if (midia) midiaExtra = { audio_url: midia.url, audio_mime: midia.mimeType };
                 } else if (tipoMapeado === "imagem" && msg.image?.id) {
-                    const midia = await baixarEArmazenarMidiaRecebida(supabaseAdmin, msg.image.id);
+                    const midia = await baixarEArmazenarMidiaRecebida(supabaseAdmin, msg.image.id, escola?.token || undefined);
                     if (midia) midiaExtra = { imagem_url: midia.url };
                 } else if (tipoMapeado === "documento" && msg.document?.id) {
-                    const midia = await baixarEArmazenarMidiaRecebida(supabaseAdmin, msg.document.id);
+                    const midia = await baixarEArmazenarMidiaRecebida(supabaseAdmin, msg.document.id, escola?.token || undefined);
                     if (midia) midiaExtra = { documento_url: midia.url, nome_arquivo: msg.document.filename || "documento" };
                 } else if (tipoMapeado === "video" && msg.video?.id) {
                     // Pedido do usuário (2026-09-29, "implemente tudo que for
                     // possível"): vídeo recebido tocando de verdade — mesmo
                     // mecanismo de áudio/imagem, só o `id` muda de campo.
-                    const midia = await baixarEArmazenarMidiaRecebida(supabaseAdmin, msg.video.id);
+                    const midia = await baixarEArmazenarMidiaRecebida(supabaseAdmin, msg.video.id, escola?.token || undefined);
                     if (midia) midiaExtra = { video_url: midia.url, video_mime: midia.mimeType };
                 } else if (tipoMapeado === "sticker" && msg.sticker?.id) {
-                    const midia = await baixarEArmazenarMidiaRecebida(supabaseAdmin, msg.sticker.id);
+                    const midia = await baixarEArmazenarMidiaRecebida(supabaseAdmin, msg.sticker.id, escola?.token || undefined);
                     if (midia) midiaExtra = { sticker_url: midia.url };
                 }
 
@@ -463,7 +588,7 @@ Deno.serve(async (req) => {
                 const { error } = await supabaseAdmin.from(NOME_TABELA_MENSAGENS).upsert({
                     pessoaIdentificador: match?.pessoaIdentificador ?? null,
                     telefone_whatsapp: msg.from,
-                    filial: match?.filial ?? null,
+                    filial: match?.filial ?? escola?.filial ?? null,
                     direcao: "entrada",
                     tipo: tipoMapeado,
                     corpo_texto: extrairTexto(msg),
@@ -477,14 +602,14 @@ Deno.serve(async (req) => {
                 if (error) console.error("Erro ao gravar mensagem recebida:", error);
                 // Texto digitado ou toque em botão ("Parar mensagens", 13/11/2026).
                 if (!error && match?.pessoaIdentificador && ["text", "button", "interactive"].includes(msg.type)) {
-                    await registrarPedidoNaoContatar(match.pessoaIdentificador, extrairTexto(msg), true);
+                    await registrarPedidoNaoContatar(match.pessoaIdentificador, extrairTexto(msg), robosPodem);
                     await desfazerNaoContatarPorEngano(match.pessoaIdentificador, extrairTexto(msg));
                 }
                 // Campanha com resposta automática (04/11/2026): quem foi convidado e
                 // respondeu recebe resposta do robô em até 1 minuto no horário
                 // comercial. A chamada sai pelo pg_net (assíncrona), sem atrasar o 200
                 // que a Meta espera. Fora do horário, o cron a cada minuto responde.
-                if (!error && match?.pessoaIdentificador) {
+                if (!error && match?.pessoaIdentificador && robosPodem) {
                     await acionarRespostaCampanha(match.pessoaIdentificador, msg.id).catch((e) => console.warn("Resposta da campanha não acionada:", e));
                 }
             }

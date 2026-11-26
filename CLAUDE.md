@@ -11574,3 +11574,33 @@ cada 10 min e cada teste "gastava" um lead (~297 perdidos). `campanha_reverter_f
 convite `enviado` cuja mensagem falhou com 131042/130429/131056 volta a `pendente` (+30 min), apaga o vínculo
 `evento_leads` 'crm' pendente criado no envio; se a campanha já passou de `fim_convites`, vira `cancelado`. Falha
 temporária síncrona (`whatsapp-send` não ok) também volta a `pendente`. 131026/131049 continuam como enviados.
+
+## WhatsApp oficial das escolas, em coexistência (26/11/2026)
+
+Pedido do usuário: usar o número oficial de cada escola no CRM sem tirá-lo do app WhatsApp Business (agora somos
+Tech Provider). Primeira escola: Barra do Garças (número no celular do usuário).
+- **Conexão:** Gerenciar Filiais > "WhatsApp oficial da escola" (`js/whatsapp-oficial.js`). Abre o Embedded Signup v5
+  da Meta (FB JS SDK, `config_id` do secret `WHATSAPP_ES_CONFIG_ID`; app 1387056736205164, achado pelo token da
+  agência). Edge `whatsapp-conexao`: troca o código pelo token da escola, confere o número na WABA, inscreve o app
+  (`subscribed_apps`, sem `/register`, que não vale para coexistência), guarda o token cifrado (AES-GCM, chave
+  `WHATSAPP_CONEXOES_CHAVE` ou `CREDENCIAIS_SCRAPER_CHAVE`) e pede contatos + histórico de 6 meses (`smb_app_data`,
+  uma vez só, até 24 h depois). Ações exigem admin + senha do CRM (mesmo critério do PIN).
+- **Tabela** `whatsapp_conexoes` (`migracao_whatsapp_coexistencia.sql`, JÁ RODADA): sem policy; a tela lê a view
+  `whatsapp_conexoes_status` (sem token).
+- **Regra de envio** (`_shared/whatsapp-numeros.ts`, usado em `whatsapp-send`/`whatsapp-marcar-lido`/mídia): a conversa
+  é respondida pelo número em que a pessoa escreveu; reação pelo número da mensagem; modelo pelo número da escola só
+  com `usar_no_crm` ligado. Número de escola sem `usar_no_crm` recusa qualquer envio (inclusive robôs), erro
+  `numero_escola_bloqueado`. Modelos precisam existir na WABA da escola.
+- **Webhook:** mensagens pelo número da escola casam primeiro com cadastros daquela filial; robôs (resposta de campanha,
+  confirmação de saída) só agem com `usar_no_crm`. Campos novos tratados: `smb_message_echoes` (o que a equipe manda
+  pelo celular/WhatsApp Web vira saída "WhatsApp da escola"), `history` (sem baixar mídia antiga),
+  `account_update` (PARTNER_REMOVED/ACCOUNT_OFFBOARDED desligam a conexão). `smb_app_state_sync` é ignorado.
+- **Pendências do usuário no painel da Meta:** criar a configuração do Facebook Login for Business para o Embedded
+  Signup (WhatsApp) e pôr o id em `WHATSAPP_ES_CONFIG_ID`; incluir `crm-nova-acropole.vercel.app` nos domínios
+  permitidos e nas URIs de redirecionamento; assinar no webhook os campos `smb_message_echoes`, `history`,
+  `smb_app_state_sync` e `account_update`.
+- **Coexistência (docs da Meta, 11/2026):** 20 mensagens/s por número; mensagens pelo app seguem grátis e não abrem
+  janela de 24 h na API; ao conectar, todos os aparelhos vinculados são desconectados e podem ser reconectados
+  (WhatsApp Web e Mac funcionam; **WhatsApp para Windows não**: o que chega nele não é espelhado); grupos não
+  sincronizam; listas de transmissão viram só leitura; mensagens temporárias, visualização única e localização em
+  tempo real são desligadas nas conversas 1:1; abrir o app no celular a cada ~14 dias, senão a Meta desconecta.

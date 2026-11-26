@@ -10,12 +10,15 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const GRAPH_VERSION = Deno.env.get("WHATSAPP_GRAPH_API_VERSION") ?? "v21.0";
-const TOKEN = Deno.env.get("WHATSAPP_TOKEN")!;
+const TOKEN_AGENCIA = Deno.env.get("WHATSAPP_TOKEN")!;
 
 export async function baixarEArmazenarMidiaRecebida(
     supabaseAdmin: SupabaseClient,
     mediaId: string,
+    tokenDoNumero?: string,
 ): Promise<{ url: string; mimeType: string } | null> {
+    // Mídia que chegou pelo número de uma escola só é acessível com o token da escola (26/11/2026).
+    const TOKEN = tokenDoNumero || TOKEN_AGENCIA;
     try {
         const respMeta = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`, {
             headers: { Authorization: `Bearer ${TOKEN}` },
