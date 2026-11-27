@@ -9,6 +9,9 @@
 // "Usar no CRM" (inclusive os robôs). Mexer na conexão exige administrador e a senha do CRM.
 
 const SDK_FACEBOOK = 'https://connect.facebook.net/pt_BR/sdk.js';
+// Versão do diálogo de login. O cadastro v5 (coexistência ligada por padrão, out/2026) pede a versão mais recente;
+// com v21.0 a Meta abria o fluxo antigo, sem a opção de conectar o app WhatsApp Business (27/11/2026).
+const VERSAO_SDK_FACEBOOK = 'v27.0';
 let configWhatsappOficial = null;
 let sdkFacebookPronto = null;
 
@@ -120,7 +123,7 @@ async function conectarWhatsappOficial(nomeFilial) {
     const cred = await credenciaisAdminWhatsapp(`Conectar o WhatsApp de ${nomeFilial}`);
     if (!cred) return;
     try {
-        await carregarSdkFacebook(cfg.appId, cfg.graphVersion || 'v21.0');
+        await carregarSdkFacebook(cfg.appId, VERSAO_SDK_FACEBOOK);
         const { code, sessao } = await abrirCadastroMeta(cfg.configId);
         avisar('Conectando o número ao CRM...');
         const r = await chamarWhatsappConexao({
