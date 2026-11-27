@@ -120,6 +120,50 @@ Deno.serve(async (req) => {
         return json({ ok: true, origem, contas, modelos, diagnostico, me, escopos: dbg?.data?.granular_scopes, tipo: dbg?.data?.type, app: dbg?.data?.app_id });
     }
 
+    // Copia os modelos APROVADOS da conta da agência para a conta da escola (cada conta do WhatsApp tem os seus
+    // próprios modelos; sem isso, uma escola recém-conectada não consegue mandar nenhum modelo pelo CRM).
+    if (corpo.acao === "copiar") {
+        if (!filial) return json({ ok: false, erro: "Informe a filial de destino." }, 400);
+        if (origem === "WhatsApp da agência") return json({ ok: false, erro: "Esta filial não tem número próprio conectado." }, 400);
+        const contaAgencia = Deno.env.get("WHATSAPP_WABA_ID");
+        if (!contaAgencia || !TOKEN_PADRAO) return json({ ok: false, erro: "Conta da agência não configurada (WHATSAPP_WABA_ID)." }, 500);
+        const fonte = await fetch(`${GRAPH}/${contaAgencia}/message_templates?limit=100&fields=name,status,category,language,components`, {
+            headers: { Authorization: `Bearer ${TOKEN_PADRAO}` } }).then((x) => x.json()).catch(() => ({}));
+        if (fonte?.error) return json({ ok: false, erro: "Não consegui ler os modelos da agência: " + mensagemErro(fonte) }, 400);
+        const destino = contas[0];
+        const jaTem = await fetch(`${GRAPH}/${destino}/message_templates?limit=100&fields=name,language`, {
+            headers: { Authorization: `Bearer ${token}` } }).then((x) => x.json()).catch(() => ({}));
+        const existentes = new Set((jaTem?.data || []).map((t: any) => `${t.name}|${t.language}`));
+        const resultado: any[] = [];
+        for (const t of fonte?.data || []) {
+            if (t.status !== "APPROVED") { resultado.push({ nome: t.name, idioma: t.language, pulado: `status ${t.status}` }); continue; }
+            if (existentes.has(`${t.name}|${t.language}`)) { resultado.push({ nome: t.name, idioma: t.language, pulado: "já existe" }); continue; }
+            const components = (t.components || []).map((c: any) => {
+                const k: any = { type: c.type };
+                if (c.format) k.format = c.format;
+                if (c.text) k.text = c.text;
+                if (c.buttons) k.buttons = c.buttons;
+                if (c.example) k.example = c.example;
+                // Corpo com variáveis sem exemplo: a Meta exige exemplo para analisar.
+                if (c.type === "BODY" && !k.example) {
+                    const n = [...new Set(String(c.text || "").match(/\{\{\d+\}\}/g) || [])].length;
+                    if (n) k.example = { body_text: [Array.from({ length: n }, (_, i) => `exemplo ${i + 1}`)] };
+                }
+                return k;
+            });
+            const r = await fetch(`${GRAPH}/${destino}/message_templates`, {
+                method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ name: t.name, language: t.language, category: t.category, components }),
+            }).then((x) => x.json()).catch((e) => ({ error: { message: String(e) } }));
+            resultado.push(r?.error ? { nome: t.name, idioma: t.language, erro: mensagemErro(r) } : { nome: t.name, idioma: t.language, status: r.status, id: r.id });
+        }
+        await supabaseAdmin.from("log_atividade").insert({
+            filial, acao: "modelos_whatsapp_copiados", autor: String(corpo.usuario),
+            pessoa_ids: [], detalhes: { de: contaAgencia, para: destino, resultado },
+        }).then(() => {}, () => {});
+        return json({ ok: true, de: contaAgencia, para: destino, resultado });
+    }
+
     if (corpo.acao === "criar") {
         const nome = String(corpo.nome || "").trim().toLowerCase();
         const texto = String(corpo.corpo || "").trim();

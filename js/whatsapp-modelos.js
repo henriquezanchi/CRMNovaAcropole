@@ -89,3 +89,19 @@ async function criarModeloWhatsapp() {
     document.getElementById('modeloWppRodape').value = '';
     carregarModelosWhatsapp();
 }
+
+// Copia os modelos aprovados da conta da agência para a conta da escola escolhida (1 clique por escola conectada).
+async function copiarModelosDaAgencia() {
+    const filial = document.getElementById('modelosWppFilial').value;
+    if (!filial) { avisar('Escolha a escola de destino (com número próprio conectado).'); return; }
+    if (!confirm(`Copiar todos os modelos aprovados da agência para a conta do WhatsApp de ${filial}? Cada um entra em análise na Meta.`)) return;
+    const btn = document.getElementById('modelosWppCopiar');
+    btn.disabled = true; btn.textContent = 'Copiando...';
+    const r = await chamarWhatsappModelos({ acao: 'copiar', filial });
+    btn.disabled = false; btn.textContent = 'Copiar modelos da agência';
+    if (!r) return;
+    if (!r.ok) { avisar('Não deu: ' + r.erro); return; }
+    const ok = r.resultado.filter(x => x.status).length, pul = r.resultado.filter(x => x.pulado).length, err = r.resultado.filter(x => x.erro);
+    avisar(`${ok} modelo(s) enviado(s) para análise, ${pul} pulado(s)${err.length ? `, ${err.length} com erro: ${err.map(x => x.nome + ' (' + x.erro + ')').join('; ')}` : ''}.`);
+    carregarModelosWhatsapp();
+}

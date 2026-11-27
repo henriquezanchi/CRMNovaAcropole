@@ -11,6 +11,7 @@
 // filiais.whatsapp_phone_number_id preenchidos (mesma origem de whatsapp-send).
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
+import { numerosDasEscolas } from "../_shared/whatsapp-numeros.ts";
 
 const GRAPH_VERSION = Deno.env.get("WHATSAPP_GRAPH_API_VERSION") ?? "v21.0";
 const TOKEN = Deno.env.get("WHATSAPP_TOKEN")!;
@@ -22,10 +23,10 @@ const CAMPOS = "display_phone_number,verified_name,status,quality_rating,name_st
 const CAMPO_LIMITE_NOVO = "whatsapp_business_manager_messaging_limit";
 const CAMPO_LIMITE_ANTIGO = "messaging_limit_tier";
 
-async function lerCampo(phoneId: string, campo: string): Promise<string | null> {
+async function lerCampo(phoneId: string, campo: string, token = TOKEN): Promise<string | null> {
     try {
         const resp = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${phoneId}?fields=${campo}`, {
-            headers: { Authorization: `Bearer ${TOKEN}` },
+            headers: { Authorization: `Bearer ${token}` },
         });
         const data = await resp.json();
         if (!resp.ok || data?.error) return null;
@@ -63,10 +64,10 @@ function descreverProblema(status: string | null, qualidade: string | null): str
     return partes.length ? partes.join(" e ") : null;
 }
 
-async function consultarNumero(phoneId: string) {
+async function consultarNumero(phoneId: string, token = TOKEN) {
     try {
         const resp = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${phoneId}?fields=${CAMPOS}`, {
-            headers: { Authorization: `Bearer ${TOKEN}` },
+            headers: { Authorization: `Bearer ${token}` },
         });
         const data = await resp.json();
         if (!resp.ok || data?.error) {
@@ -74,8 +75,8 @@ async function consultarNumero(phoneId: string) {
             return { ok: false, problema: `a Meta recusou a consulta: ${msg}`, detalhe: data };
         }
         const problema = descreverProblema(data.status ?? null, data.quality_rating ?? null);
-        const limiteNovo = await lerCampo(phoneId, CAMPO_LIMITE_NOVO);
-        const limite = limiteNovo ?? await lerCampo(phoneId, CAMPO_LIMITE_ANTIGO);
+        const limiteNovo = await lerCampo(phoneId, CAMPO_LIMITE_NOVO, token);
+        const limite = limiteNovo ?? await lerCampo(phoneId, CAMPO_LIMITE_ANTIGO, token);
         return {
             ok: !problema,
             problema,
@@ -114,10 +115,15 @@ Deno.serve(async (req) => {
 
     const { data: filiais } = await supabaseAdmin.from("filiais").select("whatsapp_phone_number_id").not("whatsapp_phone_number_id", "is", null);
     const ids = [...new Set([PHONE_ID_DEFAULT, ...(filiais || []).map((f: any) => String(f.whatsapp_phone_number_id))].filter(Boolean))];
+    // Números das escolas conectadas (whatsapp_conexoes): consultados com o token da própria escola (27/11/2026).
+    const tokensEscola = new Map<string, string>();
+    for (const e of await numerosDasEscolas()) {
+        if (e.estado === "conectado" && e.token && !ids.includes(e.phoneNumberId)) { ids.push(e.phoneNumberId); tokensEscola.set(e.phoneNumberId, e.token); }
+    }
 
     const resultados: any[] = [];
     for (const phoneId of ids) {
-        const r: any = await consultarNumero(phoneId);
+        const r: any = await consultarNumero(phoneId, tokensEscola.get(phoneId) || TOKEN);
         if (r.erroRede) { resultados.push({ phoneId, erroRede: r.erroRede }); continue; }
 
         const { data: anterior } = await supabaseAdmin

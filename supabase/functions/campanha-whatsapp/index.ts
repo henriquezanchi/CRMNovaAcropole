@@ -52,9 +52,14 @@ function limiteDoTier(tier: string | null): number {
     return 250;
 }
 
+// O limite/qualidade usados pelo agendador são os do número da AGÊNCIA (portfólio da Aletheia). Números das
+// escolas (whatsapp_conexoes) também entram em whatsapp_saude_conta, mas têm limite próprio no portfólio delas,
+// então não podem ser confundidos com o da agência aqui (27/11/2026).
+const PHONE_ID_AGENCIA = Deno.env.get("WHATSAPP_PHONE_NUMBER_ID_DEFAULT") || "";
+
 async function limiteDiarioMeta(): Promise<number> {
     const { data } = await supabaseAdmin.from("whatsapp_saude_conta")
-        .select("messaging_limit_tier").order("verificado_em", { ascending: false }).limit(1).maybeSingle();
+        .select("messaging_limit_tier").eq("phone_number_id", PHONE_ID_AGENCIA).order("verificado_em", { ascending: false }).limit(1).maybeSingle();
     return limiteDoTier(data?.messaging_limit_tier ?? null);
 }
 
@@ -77,7 +82,7 @@ type Qualidade = { nivel: "verde" | "amarelo" | "vermelho" | "desconhecido"; fat
 
 async function estadoQualidade(): Promise<Qualidade> {
     const { data } = await supabaseAdmin.from("whatsapp_saude_conta")
-        .select("quality_rating, status").order("verificado_em", { ascending: false }).limit(1).maybeSingle();
+        .select("quality_rating, status").eq("phone_number_id", PHONE_ID_AGENCIA).order("verificado_em", { ascending: false }).limit(1).maybeSingle();
     const q = String(data?.quality_rating || "").toUpperCase();
     const desde = new Date(Date.now() - HORAS_RETENCOES * 3600 * 1000).toISOString();
     const { count: retencoes } = await supabaseAdmin.from("mensagens_whatsapp").select("id", { count: "exact", head: true })
@@ -103,7 +108,7 @@ async function tetoDoDia(limiteMeta: number, qualidade: Qualidade, ajustar: bool
             const dias = Number(p.dias_verde_para_subir || 3);
             const desde = new Date(Date.now() - dias * 24 * 3600 * 1000).toISOString();
             const { data: linhas } = await supabaseAdmin.from("whatsapp_saude_conta").select("quality_rating, verificado_em")
-                .gte("verificado_em", desde).order("verificado_em");
+                .eq("phone_number_id", PHONE_ID_AGENCIA).gte("verificado_em", desde).order("verificado_em");
             const lista = linhas || [];
             const tudoVerde = lista.length > 0 && lista.every((l: any) => ["GREEN", "HIGH"].includes(String(l.quality_rating || "").toUpperCase()));
             const cobreJanela = lista.length > 0 && new Date(lista[0].verificado_em).getTime() <= new Date(desde).getTime() + 2 * 3600 * 1000;
