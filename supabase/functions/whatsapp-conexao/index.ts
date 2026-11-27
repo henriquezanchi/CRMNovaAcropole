@@ -40,6 +40,31 @@ async function appId(): Promise<string | null> {
     return r.ok && d?.id ? (appIdCache = String(d.id)) : null;
 }
 
+// Número cadastrado SEM o app do celular (número de API) precisa do registro na Cloud API com um PIN de verificação
+// em duas etapas; sem isso fica "PENDING" e não envia (27/11/2026, caso real: +55 62 3190-2994). O PIN é derivado do
+// id do número com a chave de cifra do servidor: sempre o mesmo, sem precisar guardar.
+async function pinDoNumero(phoneNumberId: string): Promise<string> {
+    const chave = Deno.env.get("WHATSAPP_CONEXOES_CHAVE") || Deno.env.get("CREDENCIAIS_SCRAPER_CHAVE") || "crm";
+    const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(chave), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const mac = new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode("pin:" + phoneNumberId)));
+    let n = 0;
+    for (let i = 0; i < 4; i++) n = (n * 256 + mac[i]) % 1000000;
+    return String(n).padStart(6, "0");
+}
+
+/** Registra o número na Cloud API se ainda não estiver conectado. Devolve o status final ou o erro. */
+async function registrarNumero(phoneNumberId: string, token: string): Promise<{ status: string | null; erro: string | null }> {
+    const antes = await graph(`/${phoneNumberId}?fields=status,platform_type,is_on_biz_app`, token);
+    if (antes.ok && antes.dados?.status === "CONNECTED") return { status: "CONNECTED", erro: null };
+    if (antes.ok && antes.dados?.is_on_biz_app === true) return { status: antes.dados?.status || null, erro: null }; // coexistência: não registra
+    const r = await graph(`/${phoneNumberId}/register`, token, {
+        method: "POST", body: JSON.stringify({ messaging_product: "whatsapp", pin: await pinDoNumero(phoneNumberId) }),
+    });
+    if (!r.ok) return { status: antes.dados?.status || null, erro: mensagemErro(r.dados) };
+    const depois = await graph(`/${phoneNumberId}?fields=status`, token);
+    return { status: depois.dados?.status || "CONNECTED", erro: null };
+}
+
 async function graph(caminho: string, token: string, init: RequestInit = {}) {
     const r = await fetch(`${GRAPH}${caminho}`, {
         ...init,
@@ -143,8 +168,11 @@ Deno.serve(async (req) => {
         });
         if (!inscricao.ok) return json({ ok: false, erro: "Não consegui ligar o recebimento de mensagens: " + mensagemErro(inscricao.dados) }, 400);
 
-        // 4. Guarda a conexão. Uso no CRM sempre começa desligado.
+        // 3b. Número de API (sem app no celular): registra na Cloud API, senão fica "PENDING".
         const coexistencia = numero.is_on_biz_app === true || corpo.coexistencia === true;
+        const registro = coexistencia ? { status: null, erro: null } : await registrarNumero(phoneNumberId, token);
+
+        // 4. Guarda a conexão. Uso no CRM sempre começa desligado.
         const { error } = await supabaseAdmin.from("whatsapp_conexoes").upsert({
             filial, waba_id: wabaId, phone_number_id: phoneNumberId, business_id: corpo.businessId ? String(corpo.businessId) : null,
             numero_exibicao: numero.display_phone_number || null, nome_verificado: numero.verified_name || null,
@@ -157,8 +185,9 @@ Deno.serve(async (req) => {
 
         // 5. Contatos e histórico do app (prazo de 24 h; só faz sentido em coexistência).
         const erros = coexistencia ? await pedirSincronizacao(filial, phoneNumberId, token) : [];
-        await registrar(filial, "whatsapp_oficial_conectado", autor, { numero: numero.display_phone_number, waba_id: wabaId, coexistencia, erros_sincronizacao: erros });
-        return json({ ok: true, numero: numero.display_phone_number, nome: numero.verified_name, coexistencia, errosSincronizacao: erros });
+        if (registro.erro) erros.push(`Registro na API: ${registro.erro}`);
+        await registrar(filial, "whatsapp_oficial_conectado", autor, { numero: numero.display_phone_number, waba_id: wabaId, coexistencia, registro, erros_sincronizacao: erros });
+        return json({ ok: true, numero: numero.display_phone_number, nome: numero.verified_name, coexistencia, registro, errosSincronizacao: erros });
     }
 
     const { data: conexao } = await supabaseAdmin.from("whatsapp_conexoes").select("*").eq("filial", filial).maybeSingle();
@@ -170,6 +199,14 @@ Deno.serve(async (req) => {
         await supabaseAdmin.from("whatsapp_conexoes").update({ usar_no_crm: ligar, atualizado_em: new Date().toISOString() }).eq("filial", filial);
         await registrar(filial, ligar ? "whatsapp_oficial_uso_ligado" : "whatsapp_oficial_uso_desligado", autor, { numero: conexao.numero_exibicao });
         return json({ ok: true, usarNoCrm: ligar });
+    }
+
+    if (acao === "registrar") {
+        if (!conexao.token_cifrado || conexao.estado !== "conectado") return json({ ok: false, erro: "Conexão sem token ativo." }, 409);
+        const r = await registrarNumero(conexao.phone_number_id, await decifrarToken(conexao.token_cifrado));
+        await supabaseAdmin.from("whatsapp_conexoes").update({ ultimo_erro: r.erro, atualizado_em: new Date().toISOString() }).eq("filial", filial);
+        await registrar(filial, "whatsapp_oficial_registrado", autor, { numero: conexao.numero_exibicao, ...r });
+        return json({ ok: !r.erro, status: r.status, erro: r.erro });
     }
 
     if (acao === "sincronizar") {

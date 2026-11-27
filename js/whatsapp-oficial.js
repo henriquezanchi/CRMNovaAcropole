@@ -154,6 +154,14 @@ async function alternarUsoWhatsappOficial(nomeFilial, ligar) {
     carregarStatusWhatsappOficial();
 }
 
+async function registrarWhatsappOficial(nomeFilial) {
+    const cred = await credenciaisAdminWhatsapp(`Registrar na API o número de ${nomeFilial}`);
+    if (!cred) return;
+    const r = await chamarWhatsappConexao({ acao: 'registrar', filial: nomeFilial, ...cred });
+    avisar(r.ok ? `Número registrado (status ${r.status || 'CONNECTED'}).` : 'Não foi possível registrar: ' + (r.erro || '?'));
+    carregarStatusWhatsappOficial();
+}
+
 async function sincronizarWhatsappOficial(nomeFilial) {
     const cred = await credenciaisAdminWhatsapp(`Pedir de novo os contatos e o histórico de ${nomeFilial}`);
     if (!cred) return;
@@ -198,6 +206,7 @@ function htmlWhatsappOficial(nomeFilial, c) {
         </label>
         <div class="wpp-oficial-acoes">
             ${c.coexistencia ? `<button type="button" class="btn-secondary" onclick="sincronizarWhatsappOficial(${nomeJs})">Pedir histórico de novo</button>` : ''}
+            ${!c.coexistencia ? `<button type="button" class="btn-secondary" onclick="registrarWhatsappOficial(${nomeJs})" title="Número de API (sem app no celular) pendente na Meta: conclui o registro">Registrar na API</button>` : ''}
             <button type="button" class="btn-secondary" onclick="conectarWhatsappOficial(${nomeJs})">Reconectar</button>
             <button type="button" class="btn-secondary wpp-oficial-perigo" onclick="desconectarWhatsappOficial(${nomeJs})">Desconectar do CRM</button>
         </div>`;
