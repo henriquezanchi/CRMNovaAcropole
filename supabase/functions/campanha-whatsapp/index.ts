@@ -574,6 +574,9 @@ async function enviar() {
             resultados.push({ id: it.id, status, ...extra });
         };
         if (!c?.ativa) { await finalizar("cancelado", { motivo: "campanha pausada" }); continue; }
+        // Convite de campanha que já encerrou nunca sai (27/11/2026): sem isto, convites que ficaram na fila durante o
+        // bloqueio de pagamento sairiam depois da abertura da turma, convidando para uma aula que já aconteceu.
+        if (c.fim_convites && hojeBrasilia() > c.fim_convites) { await finalizar("cancelado", { motivo: "campanha já encerrou os convites" }); continue; }
         if (Array.isArray(c.config?.excluir_filiais) && c.config.excluir_filiais.includes(it.filial)) { await finalizar("cancelado", { motivo: "escola fora desta campanha" }); continue; }
         if (c.config?.parar_com_vagas_restantes) {
             if (!vagasPorCampanha.has(c.id)) vagasPorCampanha.set(c.id, await vagasRestantes(c));
