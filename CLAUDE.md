@@ -11622,3 +11622,29 @@ Tech Provider). Primeira escola: Barra do Garças (número no celular do usuári
 - Coexistência (Barra): a janela da Meta só oferece "conectar o app WhatsApp Business" depois do acesso avançado às
   permissões do WhatsApp (análise do app). O número de Barra (66 3199-3188) está livre na Plataforma comercial do app
   do celular; existe um portfólio "Nova Acrópole Barra do Garça" no Business Suite do usuário.
+
+## Número próprio de Barra pelo app da Semperia + robô respeita o humano (27/11/2026)
+
+- **Cadastro incorporado pelo app da Semperia** (1042186132200958, Provedor de Tecnologia já aprovado; o app "CRM
+  Aletheia" segue em análise e só é usado pelo número da agência). Segredos `WHATSAPP_ES_APP_ID`/`WHATSAPP_ES_APP_SECRET`/
+  `WHATSAPP_ES_CONFIG_ID` (configuração 1756499725438373 "CRM Nova Acrópole", token sem expiração) — sem eles,
+  `whatsapp-conexao` cai no app da agência. Conta da escola inscrita com `override_callback_uri` = webhook do CRM
+  (o webhook da Semperia não muda); `whatsapp-webhook` aceita a assinatura dos dois apps.
+- **Ordem real da janela (v5):** número primeiro, portfólio depois. A Meta só lista portfólio em que o login tem
+  **acesso total** (Barra: Henrique é "parcial", a Jennyfer tem total). O usuário atingiu o limite de criação de
+  portfólios. Número VoIP do BRDID no app do celular (3199-3188, fachada de Barra) é recusado na coexistência.
+- **Limite de mensagens é por PORTFÓLIO** (Meta, out/2025) e cada portfólio novo aceita 2 números: número extra
+  dentro do portfólio da Aletheia não aumenta nada. Solução: DID novo **+55 62 3190-2994** (BRDID, verificação por
+  ligação) cadastrado como número de API na conta "Nova Acrópole Goiânia" (WABA 1124636837226787, phone
+  1490112977516416) no portfólio **LUIZ HENRIQUE ZANCHI BORGES** (1141463741358906), conectado à filial Barra do
+  Garças/MT (`whatsapp_conexoes`). O portfólio "Dog Walker Pe" foi renomeado "Nova Acrópole Goiânia" mas a Meta não
+  o aceita (restrição de publicidade antiga). Pendências: forma de pagamento nessa conta; modelos (botão "Copiar
+  modelos da agência" em Modelos de mensagem (Meta), admin + senha; copia os aprovados da WABA da agência);
+  "Usar no CRM" só depois dos modelos aprovados.
+- `whatsapp-saude-conta` também vigia os números de `whatsapp_conexoes` (token da escola); `campanha-whatsapp`
+  lê limite/qualidade só do número da agência (`WHATSAPP_PHONE_NUMBER_ID_DEFAULT`). Limite por escola ainda não é
+  descontado por escola no agendador.
+- **Robô de campanha** (`migracao_campanha_robo_respeita_humano.sql`, JÁ RODADA): não responde quando
+  `leads_inscricoes.ia_sugestao_resposta = false` (seletor "IA" no cabeçalho da conversa) nem quando a última
+  mensagem nossa nas últimas 48 h foi de uma conta ativa de `usuarios_crm` (humano assumiu). Grade oficial do
+  Curso de Filosofia para Viver (acropole.org.br/lp/curso-de-filosofia) entrou no prompt.
