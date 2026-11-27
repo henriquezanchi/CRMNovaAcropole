@@ -14,8 +14,14 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
 import { cifrarToken, decifrarToken, esquecerCacheNumeros, GRAPH_VERSION, TOKEN_PADRAO } from "../_shared/whatsapp-numeros.ts";
 
-const APP_SECRET = Deno.env.get("WHATSAPP_APP_SECRET") ?? "";
+// App que faz o cadastro incorporado (Embedded Signup). Pode ser outro app do mesmo portfólio já aprovado como
+// Provedor de Tecnologia (27/11/2026: o da Semperia), diferente do app usado pelo número da agência. Sem os
+// segredos WHATSAPP_ES_*, cai no app da agência (WHATSAPP_APP_ID/WHATSAPP_APP_SECRET).
+const APP_SECRET = Deno.env.get("WHATSAPP_ES_APP_SECRET") || Deno.env.get("WHATSAPP_APP_SECRET") || "";
 const CONFIG_ID = Deno.env.get("WHATSAPP_ES_CONFIG_ID") ?? "";
+const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN") ?? "";
+// As mensagens das contas das escolas chegam no webhook do CRM mesmo quando o app de cadastro tem outro webhook.
+const WEBHOOK_CRM = Deno.env.get("WHATSAPP_WEBHOOK_URL") || `${Deno.env.get("SUPABASE_URL")}/functions/v1/whatsapp-webhook`;
 const GRAPH = `https://graph.facebook.com/${GRAPH_VERSION}`;
 
 function json(body: unknown, status = 200) {
@@ -26,7 +32,7 @@ let appIdCache: string | null = null;
 /** Id do app da Meta: segredo WHATSAPP_APP_ID ou, sem ele, o app dono do token da agência. */
 async function appId(): Promise<string | null> {
     if (appIdCache) return appIdCache;
-    const fixo = Deno.env.get("WHATSAPP_APP_ID");
+    const fixo = Deno.env.get("WHATSAPP_ES_APP_ID") || Deno.env.get("WHATSAPP_APP_ID");
     if (fixo) return (appIdCache = fixo);
     if (!TOKEN_PADRAO) return null;
     const r = await fetch(`${GRAPH}/app?fields=id,name`, { headers: { Authorization: `Bearer ${TOKEN_PADRAO}` } });
@@ -132,7 +138,9 @@ Deno.serve(async (req) => {
         if (outra) return json({ ok: false, erro: `Este número já está conectado à filial ${outra.filial}.` }, 409);
 
         // 3. App do CRM inscrito na conta da escola: as mensagens passam a chegar no whatsapp-webhook.
-        const inscricao = await graph(`/${wabaId}/subscribed_apps`, token, { method: "POST" });
+        const inscricao = await graph(`/${wabaId}/subscribed_apps`, token, {
+            method: "POST", body: JSON.stringify({ override_callback_uri: WEBHOOK_CRM, verify_token: VERIFY_TOKEN }),
+        });
         if (!inscricao.ok) return json({ ok: false, erro: "Não consegui ligar o recebimento de mensagens: " + mensagemErro(inscricao.dados) }, 400);
 
         // 4. Guarda a conexão. Uso no CRM sempre começa desligado.

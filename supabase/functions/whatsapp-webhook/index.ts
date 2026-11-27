@@ -14,15 +14,22 @@ import { tratarComandoAdmin } from "../_shared/comandoAdmin.ts";
 import { TEXTO_CONFIRMACAO_NAO_CONTATAR } from "../_shared/preferencia-contato.ts";
 import { esquecerCacheNumeros, numeroEscolaPorId, type NumeroEscola } from "../_shared/whatsapp-numeros.ts";
 
-const APP_SECRET = Deno.env.get("WHATSAPP_APP_SECRET")!;
+// Segredos dos apps que podem assinar o webhook: o da agência e, se for outro, o do cadastro incorporado
+// (contas das escolas inscritas com override_callback_uri).
+const APP_SECRETS = [...new Set([Deno.env.get("WHATSAPP_APP_SECRET"), Deno.env.get("WHATSAPP_ES_APP_SECRET")].filter(Boolean))] as string[];
 const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN")!;
 const WHATSAPP_NUMERO_ADMIN = Deno.env.get("WHATSAPP_NUMERO_ADMIN") ?? "";
 
 async function validarAssinatura(rawBody: string, header: string | null): Promise<boolean> {
+    for (const segredo of APP_SECRETS) if (await assinaturaBate(rawBody, header, segredo)) return true;
+    return false;
+}
+
+async function assinaturaBate(rawBody: string, header: string | null, segredo: string): Promise<boolean> {
     if (!header?.startsWith("sha256=")) return false;
     const key = await crypto.subtle.importKey(
         "raw",
-        new TextEncoder().encode(APP_SECRET),
+        new TextEncoder().encode(segredo),
         { name: "HMAC", hash: "SHA-256" },
         false,
         ["sign"],

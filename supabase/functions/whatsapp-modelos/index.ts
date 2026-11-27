@@ -37,6 +37,16 @@ async function contasDoToken(token: string): Promise<string[]> {
             for (const w of [...(b.owned_whatsapp_business_accounts?.data || []), ...(b.client_whatsapp_business_accounts?.data || [])]) contas.add(String(w.id));
         }
     }
+    // Token de usuário de sistema sem escopo por conta: pergunta direto ao portfólio da agência.
+    const portfolio = Deno.env.get("WHATSAPP_BUSINESS_ID") || "1510384940854530";
+    if (!contas.size) {
+        for (const campo of ["owned_whatsapp_business_accounts", "client_whatsapp_business_accounts"]) {
+            const r = await fetch(`${GRAPH}/${portfolio}/${campo}?fields=id,name`, { headers: { Authorization: `Bearer ${token}` } })
+                .then((x) => x.json()).catch(() => ({}));
+            for (const w of r?.data || []) contas.add(String(w.id));
+            if (r?.error) console.warn(campo, r.error.message);
+        }
+    }
     const fixa = Deno.env.get("WHATSAPP_WABA_ID");
     if (!contas.size && fixa) contas.add(fixa);
     return [...contas];
@@ -61,6 +71,14 @@ Deno.serve(async (req) => {
     const filial = typeof corpo.filial === "string" && corpo.filial.trim() ? corpo.filial.trim() : null;
     const { contas, token, origem } = await contaDaFilial(filial);
     if (!contas.length || !token) return json({ ok: false, erro: "Nenhuma conta do WhatsApp encontrada para este token." }, 404);
+
+    // Diagnóstico (só leitura): GET em um caminho da Graph API com o token em uso. Para achar a conta certa.
+    if (corpo.acao === "graph") {
+        const caminho = String(corpo.caminho || "");
+        if (!/^\/[A-Za-z0-9_\/.?=&%,-]+$/.test(caminho)) return json({ ok: false, erro: "Caminho inválido." }, 400);
+        const r = await fetch(`${GRAPH}${caminho}`, { headers: { Authorization: `Bearer ${token}` } }).then((x) => x.json()).catch((e) => ({ error: String(e) }));
+        return json({ ok: true, resposta: r });
+    }
 
     if (corpo.acao === "listar") {
         const modelos: any[] = [];
@@ -87,6 +105,15 @@ Deno.serve(async (req) => {
                 headers: { Authorization: `Bearer ${token}` } }).then((x) => x.json()).catch((e) => ({ error: { message: String(e) } }));
             diagnostico.push({ conta: w, info, numeros });
         }
+        const numeroAgencia = await fetch(`${GRAPH}/${Deno.env.get("WHATSAPP_PHONE_NUMBER_ID_DEFAULT")}?fields=id,display_phone_number,verified_name,account_mode,platform_type,is_on_biz_app`, {
+            headers: { Authorization: `Bearer ${token}` } }).then((x) => x.json()).catch(() => ({}));
+        const portfolio = Deno.env.get("WHATSAPP_BUSINESS_ID") || "1510384940854530";
+        const doPortfolio: any = {};
+        for (const campo of ["owned_whatsapp_business_accounts", "client_whatsapp_business_accounts"]) {
+            doPortfolio[campo] = await fetch(`${GRAPH}/${portfolio}/${campo}?fields=id,name`, { headers: { Authorization: `Bearer ${token}` } })
+                .then((x) => x.json()).catch((e) => ({ error: String(e) }));
+        }
+        (diagnostico as any).push({ numeroAgencia, portfolio, doPortfolio });
         const me = await fetch(`${GRAPH}/me?fields=id,name`, { headers: { Authorization: `Bearer ${token}` } }).then((x) => x.json()).catch(() => ({}));
         const dbg = await fetch(`${GRAPH}/debug_token?input_token=${encodeURIComponent(token)}`, { headers: { Authorization: `Bearer ${token}` } })
             .then((x) => x.json()).catch(() => ({}));
