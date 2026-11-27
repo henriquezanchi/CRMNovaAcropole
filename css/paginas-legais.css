@@ -1,0 +1,13 @@
+/* Páginas públicas de privacidade e exclusão de dados (exigidas pela Meta para publicar o app). */
+:root { --verde: #086357; --texto: #1f2937; --suave: #6b7280; --fundo: #f8fafc; }
+@media (prefers-color-scheme: dark) { :root { --verde: #5fc4b3; --texto: #e5e7eb; --suave: #9ca3af; --fundo: #111827; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--fundo); color: var(--texto); font: 16px/1.6 "Noto Sans", system-ui, sans-serif; }
+.legal { max-width: 720px; margin: 0 auto; padding: 40px 16px 64px; }
+h1 { color: var(--verde); font-size: 28px; line-height: 1.25; margin: 0 0 4px; }
+h2 { font-size: 19px; margin: 32px 0 8px; }
+.legal-data, .legal-rodape { color: var(--suave); font-size: 14px; }
+.legal-rodape { margin-top: 40px; }
+a { color: var(--verde); }
+ul, ol { padding-left: 22px; }
+li { margin-bottom: 6px; }
