@@ -11,9 +11,11 @@ async function chamarWhatsappModelos(corpo) {
     const usuario = typeof usuarioLogado === 'function' ? usuarioLogado() : null;
     if (!usuario || !usuario.ehAdmin) { avisar('Só um administrador mexe nos modelos de mensagem.'); return null; }
     if (!modelosWppSenhaHash) {
-        const senha = prompt('Confirme com a sua senha do CRM para acessar os modelos na Meta:');
-        if (!senha) return null;
+        // Campo na própria tela (não prompt): navegadores automatizados e alguns bloqueadores engolem o prompt().
+        const senha = (document.getElementById('modelosWppSenha')?.value || '').trim();
+        if (!senha) { avisar('Digite a sua senha do CRM no campo "Senha" para consultar a Meta.'); return null; }
         modelosWppSenhaHash = await calcularHashSenha(senha);
+        document.getElementById('modelosWppSenha').value = '';
     }
     const { data, error } = await window.supabaseClient.functions.invoke('whatsapp-modelos', {
         body: { ...corpo, usuario: usuario.nome, senhaHash: modelosWppSenhaHash },
@@ -35,7 +37,8 @@ function abrirModelosWhatsapp() {
     sel.innerHTML = '<option value="">Conta da agência (número compartilhado)</option>' +
         filiais.map(f => `<option value="${escapeHTML(f.nome)}">${escapeHTML(f.nome)}</option>`).join('');
     sel.value = modelosWppFilial;
-    carregarModelosWhatsapp();
+    if (modelosWppSenhaHash) carregarModelosWhatsapp();
+    else document.getElementById('modelosWppLista').innerHTML = '<p class="filial-campo-ajuda">Digite a senha e clique em "Consultar a Meta".</p>';
 }
 function fecharModelosWhatsapp() {
     document.getElementById('modalModelosWpp').classList.remove('open');

@@ -981,11 +981,18 @@
         </div>
         <div class="modal-body">
             <p style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">Modelos aprovados pela Meta são o único jeito de iniciar uma conversa (fora da janela de 24 h). Um modelo novo entra em análise e só pode ser usado depois de aprovado.</p>
-            <label class="filial-campo" style="margin-bottom:10px;">
-                <span class="filial-campo-rotulo">Conta do WhatsApp</span>
-                <select id="modelosWppFilial" onchange="carregarModelosWhatsapp()"></select>
-                <span class="filial-campo-ajuda" id="modelosWppOrigem"></span>
-            </label>
+            <div class="filial-grade" style="margin-bottom:10px;">
+                <label class="filial-campo">
+                    <span class="filial-campo-rotulo">Conta do WhatsApp</span>
+                    <select id="modelosWppFilial" onchange="carregarModelosWhatsapp()"></select>
+                    <span class="filial-campo-ajuda" id="modelosWppOrigem"></span>
+                </label>
+                <label class="filial-campo">
+                    <span class="filial-campo-rotulo">Senha do CRM (administrador)</span>
+                    <input type="password" id="modelosWppSenha" autocomplete="current-password" onkeydown="if (event.key === 'Enter') carregarModelosWhatsapp()">
+                    <span class="filial-campo-ajuda"><button type="button" class="btn-secondary-mini" onclick="carregarModelosWhatsapp()">Consultar a Meta</button></span>
+                </label>
+            </div>
             <h4 class="filial-grupo">Novo modelo</h4>
             <div class="filial-grade">
                 <label class="filial-campo"><span class="filial-campo-rotulo">Nome</span><input type="text" id="modeloWppNome" placeholder="lembrete_evento"><span class="filial-campo-ajuda">Letras minúsculas, números e _.</span></label>
