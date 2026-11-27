@@ -78,7 +78,19 @@ Deno.serve(async (req) => {
                 });
             }
         }
-        return json({ ok: true, origem, contas, modelos });
+        // Diagnóstico: o que a Meta diz de cada conta (ajuda quando a API de modelos é recusada).
+        const diagnostico: any[] = [];
+        for (const w of contas) {
+            const info = await fetch(`${GRAPH}/${w}?fields=id,name,account_review_status,business_verification_status,ownership_type,on_behalf_of_business_info,message_template_namespace,timezone_id,is_enabled_for_insights`, {
+                headers: { Authorization: `Bearer ${token}` } }).then((x) => x.json()).catch((e) => ({ error: { message: String(e) } }));
+            const numeros = await fetch(`${GRAPH}/${w}/phone_numbers?fields=id,display_phone_number,platform_type,is_on_biz_app,status`, {
+                headers: { Authorization: `Bearer ${token}` } }).then((x) => x.json()).catch((e) => ({ error: { message: String(e) } }));
+            diagnostico.push({ conta: w, info, numeros });
+        }
+        const me = await fetch(`${GRAPH}/me?fields=id,name`, { headers: { Authorization: `Bearer ${token}` } }).then((x) => x.json()).catch(() => ({}));
+        const dbg = await fetch(`${GRAPH}/debug_token?input_token=${encodeURIComponent(token)}`, { headers: { Authorization: `Bearer ${token}` } })
+            .then((x) => x.json()).catch(() => ({}));
+        return json({ ok: true, origem, contas, modelos, diagnostico, me, escopos: dbg?.data?.granular_scopes, tipo: dbg?.data?.type, app: dbg?.data?.app_id });
     }
 
     if (corpo.acao === "criar") {

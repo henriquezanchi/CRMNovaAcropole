@@ -54,6 +54,7 @@ async function carregarModelosWhatsapp() {
     const r = await chamarWhatsappModelos({ acao: 'listar', filial: modelosWppFilial || null });
     if (!r) { lista.innerHTML = ''; return; }
     if (!r.ok) { lista.innerHTML = `<p class="wpp-oficial-aviso">${escapeHTML(r.erro)}</p>`; return; }
+    window.__modelosWppUltimo = r;
     document.getElementById('modelosWppOrigem').textContent = `${r.origem} · conta ${r.contas.join(', ')}`;
     if (!r.modelos.length) { lista.innerHTML = '<p class="filial-campo-ajuda">Nenhum modelo nesta conta ainda.</p>'; return; }
     lista.innerHTML = r.modelos.map(m => {
