@@ -972,6 +972,34 @@
         </div>
     </div>
 
+    <!-- Modal: Modelos de mensagem do WhatsApp (Meta) -->
+    <div class="overlay" id="overlayModalModelosWpp" onclick="fecharModelosWhatsapp()"></div>
+    <div class="modal" id="modalModelosWpp">
+        <div class="modal-header">
+            <h3><i class="fa-brands fa-whatsapp"></i> Modelos de mensagem</h3>
+            <button style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);" onclick="fecharModelosWhatsapp()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">Modelos aprovados pela Meta são o único jeito de iniciar uma conversa (fora da janela de 24 h). Um modelo novo entra em análise e só pode ser usado depois de aprovado.</p>
+            <label class="filial-campo" style="margin-bottom:10px;">
+                <span class="filial-campo-rotulo">Conta do WhatsApp</span>
+                <select id="modelosWppFilial" onchange="carregarModelosWhatsapp()"></select>
+                <span class="filial-campo-ajuda" id="modelosWppOrigem"></span>
+            </label>
+            <h4 class="filial-grupo">Novo modelo</h4>
+            <div class="filial-grade">
+                <label class="filial-campo"><span class="filial-campo-rotulo">Nome</span><input type="text" id="modeloWppNome" placeholder="lembrete_evento"><span class="filial-campo-ajuda">Letras minúsculas, números e _.</span></label>
+                <label class="filial-campo"><span class="filial-campo-rotulo">Categoria</span>
+                    <select id="modeloWppCategoria"><option value="UTILITY">Utilidade (lembrete, confirmação)</option><option value="MARKETING">Marketing (convite, divulgação)</option></select></label>
+                <label class="filial-campo largo"><span class="filial-campo-rotulo">Texto</span><textarea id="modeloWppCorpo" rows="4" placeholder="Olá, {{1}}! Passando para lembrar da {{2}}, amanhã às {{3}}. Podemos contar com você?"></textarea><span class="filial-campo-ajuda">Use {{1}}, {{2}}... para o que muda a cada envio (nome, evento, data).</span></label>
+                <label class="filial-campo largo"><span class="filial-campo-rotulo">Rodapé (opcional)</span><input type="text" id="modeloWppRodape" maxlength="60" placeholder="Para não receber mais, responda SAIR"></label>
+            </div>
+            <button class="btn-primary" id="modeloWppCriar" style="margin-top:10px;" onclick="criarModeloWhatsapp()">Criar modelo na Meta</button>
+            <h4 class="filial-grupo">Modelos nesta conta</h4>
+            <div id="modelosWppLista"></div>
+        </div>
+    </div>
+
     <!-- Modal: Gerenciar Filiais -->
     <div class="overlay" id="overlayModalFiliais" onclick="fecharGerenciarFiliais()"></div>
     <div class="modal" id="modalFiliais">
@@ -981,6 +1009,7 @@
         </div>
         <div class="modal-body">
             <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">Renomeie, reordene, desative ou crie filiais. Desativar uma filial só a tira do seletor principal — os leads dela continuam intactos e podem ser reativados a qualquer momento.</p>
+            <button class="btn-secondary" style="margin-bottom: 14px;" onclick="abrirModelosWhatsapp()"><i class="fa-brands fa-whatsapp"></i> Modelos de mensagem (Meta)</button>
             <div id="filiaisList"></div>
             <button class="btn-secondary" style="margin-top: 12px; width:100%;" onclick="adicionarFilial()"><i class="fa-solid fa-plus"></i> Adicionar Filial</button>
         </div>
@@ -1805,6 +1834,7 @@
     <!-- 3c. Módulo de integração real com WhatsApp (Meta Cloud API) -->
     <script src="js/whatsapp.js"></script>
     <script src="js/whatsapp-oficial.js"></script>
+    <script src="js/whatsapp-modelos.js"></script>
     <!-- 3c2. Importar Conversa de WhatsApp (feita fora do CRM, enquanto a API
          está bloqueada) — depende de normalizarNomeImport() (js/importador.js,
          já carregado acima) e de chatDrawer (js/whatsapp.js, idem) -->
