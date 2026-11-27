@@ -11604,3 +11604,21 @@ Tech Provider). Primeira escola: Barra do Garças (número no celular do usuári
   (WhatsApp Web e Mac funcionam; **WhatsApp para Windows não**: o que chega nele não é espelhado); grupos não
   sincronizam; listas de transmissão viram só leitura; mensagens temporárias, visualização única e localização em
   tempo real são desligadas nas conversas 1:1; abrir o app no celular a cada ~14 dias, senão a Meta desconecta.
+
+## Modelos de mensagem pelo CRM + conta certa da Meta (27/11/2026)
+
+- Edge `whatsapp-modelos` (admin + senha, como `whatsapp-conexao`): `listar`, `criar` (BODY com exemplos para {{n}},
+  FOOTER "responda SAIR" em marketing) e `graph` (GET de diagnóstico). Tela: Gerenciar Filiais > "Modelos de mensagem
+  (Meta)" (`js/whatsapp-modelos.js`); a senha é um campo da tela (prompt() não funciona em navegador automatizado).
+  Usa a conta da escola conectada ou a da agência.
+- **A conta (WABA) do número da agência é `2208270893051018` ("CRM Nova Acrópole")**, no portfólio da Aletheia
+  (1510384940854530). O segredo `WHATSAPP_WABA_ID` tinha `4141029446188721` (id errado, responde "Invalid WhatsApp
+  account usage") — era isso que recusava a API de modelos desde 10/11; corrigido. O usuário de sistema do token não
+  lista contas (`assigned_whatsapp_business_accounts` vazio), então o id precisa ficar no segredo.
+- Análise do app na Meta (Tech Provider) estava "Não enviado"; vídeos gravados com chrome-devtools (CRM enviando
+  modelo `contato_inicial` ao lead 904000019 e WhatsApp Web recebendo; criação do modelo `lembrete_evento`, UTILITY,
+  em análise) em `C:\Users\Henrique Zanchi\Downloads\meta-analise-app\`. Páginas públicas `privacidade.html` e
+  `exclusao-de-dados.html` (Aletheia Arquitetura de Sistemas Ltda). App renomeado "CRM Aletheia" e publicado.
+- Coexistência (Barra): a janela da Meta só oferece "conectar o app WhatsApp Business" depois do acesso avançado às
+  permissões do WhatsApp (análise do app). O número de Barra (66 3199-3188) está livre na Plataforma comercial do app
+  do celular; existe um portfólio "Nova Acrópole Barra do Garça" no Business Suite do usuário.
