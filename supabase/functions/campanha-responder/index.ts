@@ -604,7 +604,7 @@ async function eventoDaPerguntaDePresenca(pessoa: string, c: any) {
         .eq("pessoaIdentificador", pessoa).eq("direcao", "saida").eq("tipo", "template").neq("wa_status", "falhou")
         .order("criado_em", { ascending: false }).limit(1).maybeSingle();
     const nomeModelo = (ult as any)?.payload_bruto?.template_nome;
-    if (nomeModelo !== c.config.template_sem_presenca && !/conseguiu ir?/i.test(String(ult?.corpo_texto || ""))) return null;
+    if (nomeModelo !== c.config.template_sem_presenca && !/conseguiu ir\?/i.test(String(ult?.corpo_texto || ""))) return null;
     const hoje = hojeBrasilia();
     let q = supabaseAdmin.from("evento_leads").select("eventos!inner(id)").eq("pessoaIdentificador", pessoa)
         .eq("origem", "ulisses").lt("eventos.data", hoje);
