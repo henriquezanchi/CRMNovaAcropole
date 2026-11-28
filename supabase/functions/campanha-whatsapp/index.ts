@@ -464,16 +464,18 @@ async function chamarEnvio(corpo: Record<string, unknown>) {
     return { ok: resp.ok && dados?.ok !== false, dados, status: resp.status };
 }
 
-// Último evento do histórico do Ulisses, para o modelo contato_ulisses: {de: "da palestra", nome: "Bushido"}.
-function ultimoEventoDoLead(lead: any): { de: string; nome: string } | null {
-    let h: any = lead?.historico_eventos;
-    if (typeof h === "string") { try { h = JSON.parse(h); } catch { h = []; } }
-    if (!Array.isArray(h)) return null;
-    const comData = h.filter((e: any) => /^\d{2}\/\d{2}\/\d{4}/.test(String(e?.data || "")) && e?.evento)
-        .map((e: any) => { const [d, m, a] = String(e.data).slice(0, 10).split("/"); return { e, iso: `${a}-${m}-${d}` }; })
-        .sort((x: any, y: any) => y.iso.localeCompare(x.iso));
-    if (!comData.length) return null;
-    const ev = comData[0].e;
+// Último evento em que a pessoa ESTEVE (evento_leads.compareceu = true), para o modelo
+// contato_ulisses ("Vi que você participou {{4}} {{5}}"). Até 28/11/2026 usava o último
+// evento do histórico (inscrição), e a mensagem dizia "participou" a quem só se inscreveu.
+async function eventoPresenteDoLead(pid: string): Promise<{ evento: string; tipo: string | null } | null> {
+    const { data } = await supabaseAdmin.from("evento_leads").select("eventos!inner(nome, tipo, data)")
+        .eq("pessoaIdentificador", pid).eq("compareceu", true)
+        .order("data", { foreignTable: "eventos", ascending: false }).limit(1).maybeSingle();
+    const e: any = (data as any)?.eventos;
+    return e?.nome ? { evento: e.nome, tipo: e.tipo ?? null } : null;
+}
+function descreverEvento(ev: { evento: string; tipo: string | null } | null): { de: string; nome: string } | null {
+    if (!ev?.evento) return null;
     let nomeEv = String(ev.evento).trim();
     if (nomeEv === nomeEv.toUpperCase()) nomeEv = nomeEv.toLowerCase().replace(/(^|[\s(":])(\p{L})/gu, (_: string, a: string, b: string) => a + b.toUpperCase())
         .replace(/ (De|Da|Do|Das|Dos|E|O|A|Os|As|Em|No|Na|Nos|Nas|Para|Com)(?= )/g, (x: string) => x.toLowerCase());
@@ -483,7 +485,7 @@ function ultimoEventoDoLead(lead: any): { de: string; nome: string } | null {
     return { de, nome: `"${nomeEv}"` };
 }
 
-function paramsDoModelo(nome: string, c: any, lead: any, filialPrep: string): string[] {
+function paramsDoModelo(nome: string, c: any, lead: any, filialPrep: string, eventoPresente: { evento: string; tipo: string | null } | null = null): string[] {
     const nomeLead = primeiroNome(lead);
     if (nome === "convite_palestra") return [nomeLead, c.atendente, filialPrep, c.evento_com_artigo, c.evento_data_curta];
     if (nome === "contato_inicial") return [nomeLead, c.atendente, filialPrep];
@@ -494,7 +496,8 @@ function paramsDoModelo(nome: string, c: any, lead: any, filialPrep: string): st
     }
     if (/^contato_ulisses/.test(nome)) {
         // Campanha de relacionamento (11/11/2026): "Vi que você participou {{4}} {{5}} recentemente."
-        const ult = ultimoEventoDoLead(lead);
+        // Só com presença confirmada (28/11/2026).
+        const ult = descreverEvento(eventoPresente);
         if (!ult) return [];
         return [nomeLead, c.atendente, filialPrep, ult.de, ult.nome];
     }
@@ -631,8 +634,10 @@ async function enviar() {
         const filialPrep = filial?.nome_com_preposicao || `de ${lead.filial}`;
         const modelo = it.tipo === "followup" ? c.template_followup : c.template_convite;
         if (!modelo) { await finalizar("pulado", { motivo: "sem modelo aprovado para esta etapa" }); continue; }
-        const params = paramsDoModelo(modelo, c, lead, filialPrep);
-        if (!params.length) { await finalizar("pulado", { motivo: "sem evento no histórico para o modelo" }); continue; }
+        const precisaPresenca = /^contato_ulisses/.test(modelo) && !(c.config?.evento_de && c.config?.evento_nome);
+        const eventoPresente = precisaPresenca ? await eventoPresenteDoLead(it.pessoaIdentificador) : null;
+        const params = paramsDoModelo(modelo, c, lead, filialPrep, eventoPresente);
+        if (!params.length) { await finalizar("pulado", { motivo: "sem presença confirmada em evento para o modelo" }); continue; }
         const corpo = (c.config?.corpos || {})[modelo] as string | undefined;
         const preview = corpo ? corpo.replace(/\{\{(\d+)\}\}/g, (_: string, n: string) => params[Number(n) - 1] ?? "") : `[Modelo ${modelo}] ${params.join(" | ")}`;
         // Horário de ANTES da chamada: com o servidor lento a chamada pode levar

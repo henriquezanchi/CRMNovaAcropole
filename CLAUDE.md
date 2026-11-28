@@ -11648,3 +11648,18 @@ Tech Provider). Primeira escola: Barra do Garças (número no celular do usuári
   `leads_inscricoes.ia_sugestao_resposta = false` (seletor "IA" no cabeçalho da conversa) nem quando a última
   mensagem nossa nas últimas 48 h foi de uma conta ativa de `usuarios_crm` (humano assumiu). Grade oficial do
   Curso de Filosofia para Viver (acropole.org.br/lp/curso-de-filosofia) entrou no prompt.
+
+## Campanha de relacionamento só para quem COMPARECEU (28/11/2026)
+
+Casos reais Flavia (Garavelo), Jessika e Amanda (Barra): o modelo `contato_ulisses` ("Vi que você participou {{4}}
+{{5}} recentemente. E aí, o que achou?") saiu para quem só tinha se INSCRITO no Ulisses e não foi. Era erro do código
+do CRM, não do modelo: `campanha_candidatos()` (filtro `config.ultimo_evento_desde`) e `ultimoEventoDoLead()`
+(`campanha-whatsapp`) olhavam só `historico_eventos` (inscrição), nunca a presença.
+- `migracao_campanha_relacionamento_presenca.sql` (JÁ RODADA): o filtro exige `evento_leads.compareceu = true` num
+  evento com data >= `ultimo_evento_desde`. Jataí ficou com 0 candidatos (ninguém com presença registrada lá).
+- `campanha-whatsapp`: `eventoPresenteDoLead(pid)` (último evento com `compareceu = true`) alimenta `{{4}}/{{5}}`;
+  sem presença, o item é pulado ("sem presença confirmada em evento para o modelo"). 18 convites pendentes escolhidos
+  pela regra antiga foram cancelados.
+- `campanha-responder`: "estou fora de Goiânia / viajando / estou em Brasília" não é mudança de cidade (só "me mudei",
+  "moro em X"); quem diz que não foi ao evento recebe acolhimento, nunca "que bom que gostou". Etiqueta "Conversa:
+  Mudou de Cidade" tirada de Flavia (537744) e Amanda (548287); Rosemar (Palmeirópolis/TO) e Kleyton (Brasília) ficaram.
