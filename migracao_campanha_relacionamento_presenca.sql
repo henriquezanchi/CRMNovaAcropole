@@ -92,7 +92,14 @@ aptos as (
       and ((select config->>'ultimo_evento_desde' from c) is null
            or exists (select 1 from evento_leads el join eventos e on e.id = el.evento_id
                        where el."pessoaIdentificador" = ce.pid and el.compareceu = true
-                         and e.data >= ((select config->>'ultimo_evento_desde' from c))::date))
+                         and e.data >= ((select config->>'ultimo_evento_desde' from c))::date)
+           -- Com config.template_sem_presenca (modelo "Você conseguiu ir?"), entra também quem se
+           -- inscreveu no Ulisses num evento já passado e não tem presença registrada.
+           or ((select config->>'template_sem_presenca' from c) is not null
+               and exists (select 1 from evento_leads el join eventos e on e.id = el.evento_id
+                            where el."pessoaIdentificador" = ce.pid and el.origem = 'ulisses' and el.compareceu is null
+                              and e.data < current_date
+                              and e.data >= ((select config->>'ultimo_evento_desde' from c))::date)))
 ),
 um_por_telefone as (
     select distinct on (tel) *

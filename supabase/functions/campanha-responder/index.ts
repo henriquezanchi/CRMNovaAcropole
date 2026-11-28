@@ -595,8 +595,27 @@ async function aplicarDecisao(pessoa: string, c: any, ev: any, d: any, filialLea
 }
 
 // Responde a conversa de UMA pessoa, se a última mensagem ainda for dela.
+// Campanha de relacionamento com config.template_sem_presenca (28/11/2026): se o nosso
+// último modelo para a pessoa perguntou "Você conseguiu ir?", a conversa é tratada como
+// pós-evento daquele evento (mesmo prompt, etiquetas e marcação de presença no Ulisses).
+async function eventoDaPerguntaDePresenca(pessoa: string, c: any) {
+    if (c.evento_id || !c.config?.template_sem_presenca) return null;
+    const { data: ult } = await supabaseAdmin.from("mensagens_whatsapp").select("corpo_texto, payload_bruto")
+        .eq("pessoaIdentificador", pessoa).eq("direcao", "saida").eq("tipo", "template").neq("wa_status", "falhou")
+        .order("criado_em", { ascending: false }).limit(1).maybeSingle();
+    const nomeModelo = (ult as any)?.payload_bruto?.template_nome;
+    if (nomeModelo !== c.config.template_sem_presenca && !/conseguiu ir?/i.test(String(ult?.corpo_texto || ""))) return null;
+    const hoje = hojeBrasilia();
+    let q = supabaseAdmin.from("evento_leads").select("eventos!inner(id)").eq("pessoaIdentificador", pessoa)
+        .eq("origem", "ulisses").lt("eventos.data", hoje);
+    if (c.config?.ultimo_evento_desde) q = q.gte("eventos.data", c.config.ultimo_evento_desde);
+    const { data } = await q.order("data", { foreignTable: "eventos", ascending: false }).limit(1).maybeSingle();
+    const id = (data as any)?.eventos?.id;
+    return id ? await descreverEvento(id) : null;
+}
+
 async function responder(pessoa: string, mensagemId: number | null, esperaSegundos: number) {
-    const c = await campanhaDoLead(pessoa);
+    let c = await campanhaDoLead(pessoa);
     if (!c) return { pessoa, pulado: "fora de campanha ativa" };
     const { data: ultima } = await supabaseAdmin.from("mensagens_whatsapp")
         .select("id, direcao, tipo, criado_em").eq("pessoaIdentificador", pessoa).neq("wa_status", "falhou")
@@ -637,7 +656,9 @@ async function responder(pessoa: string, mensagemId: number | null, esperaSegund
     if (erroReserva) return { pessoa, pulado: "já assumida" };
 
     const hojeISO = hojeBrasilia();
-    const ev = c.evento_id ? await descreverEvento(c.evento_id) : null;
+    let ev = c.evento_id ? await descreverEvento(c.evento_id) : null;
+    const evPergunta = await eventoDaPerguntaDePresenca(pessoa, c);
+    if (evPergunta) { ev = evPergunta; c = { ...c, config: { ...c.config, pos_evento: true } }; }
     const ctx = await contextoDoLead(pessoa);
     const h = await historico(pessoa);
     // Resposta automática do WhatsApp dela (ausência, "retornarei"...): não se

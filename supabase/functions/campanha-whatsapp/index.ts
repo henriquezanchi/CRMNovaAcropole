@@ -474,6 +474,18 @@ async function eventoPresenteDoLead(pid: string): Promise<{ evento: string; tipo
     const e: any = (data as any)?.eventos;
     return e?.nome ? { evento: e.nome, tipo: e.tipo ?? null } : null;
 }
+// Último evento já passado em que a pessoa se INSCREVEU no Ulisses e ainda não tem
+// presença registrada (28/11/2026): usado pelo modelo de config.template_sem_presenca,
+// que pergunta "Você conseguiu ir?" em vez de afirmar que ela participou.
+async function eventoInscritoSemPresenca(pid: string, desde: string | null): Promise<{ id: number; evento: string; tipo: string | null } | null> {
+    const hoje = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
+    let q = supabaseAdmin.from("evento_leads").select("eventos!inner(id, nome, tipo, data)")
+        .eq("pessoaIdentificador", pid).eq("origem", "ulisses").is("compareceu", null).lt("eventos.data", hoje);
+    if (desde) q = q.gte("eventos.data", desde);
+    const { data } = await q.order("data", { foreignTable: "eventos", ascending: false }).limit(1).maybeSingle();
+    const e: any = (data as any)?.eventos;
+    return e?.nome ? { id: e.id, evento: e.nome, tipo: e.tipo ?? null } : null;
+}
 function descreverEvento(ev: { evento: string; tipo: string | null } | null): { de: string; nome: string } | null {
     if (!ev?.evento) return null;
     let nomeEv = String(ev.evento).trim();
@@ -632,12 +644,21 @@ async function enviar() {
         }
         const { data: filial } = await supabaseAdmin.from("filiais").select("nome_com_preposicao").eq("nome", lead.filial).maybeSingle();
         const filialPrep = filial?.nome_com_preposicao || `de ${lead.filial}`;
-        const modelo = it.tipo === "followup" ? c.template_followup : c.template_convite;
+        let modelo = it.tipo === "followup" ? c.template_followup : c.template_convite;
         if (!modelo) { await finalizar("pulado", { motivo: "sem modelo aprovado para esta etapa" }); continue; }
         const precisaPresenca = /^contato_ulisses/.test(modelo) && !(c.config?.evento_de && c.config?.evento_nome);
-        const eventoPresente = precisaPresenca ? await eventoPresenteDoLead(it.pessoaIdentificador) : null;
-        const params = paramsDoModelo(modelo, c, lead, filialPrep, eventoPresente);
-        if (!params.length) { await finalizar("pulado", { motivo: "sem presença confirmada em evento para o modelo" }); continue; }
+        let eventoPresente = precisaPresenca ? await eventoPresenteDoLead(it.pessoaIdentificador) : null;
+        let params: string[];
+        if (precisaPresenca && !eventoPresente && c.config?.template_sem_presenca && it.tipo === "convite") {
+            // Inscrita sem presença registrada: modelo que pergunta "Você conseguiu ir?".
+            const insc = await eventoInscritoSemPresenca(it.pessoaIdentificador, c.config?.ultimo_evento_desde || null);
+            const desc = descreverEvento(insc);
+            modelo = c.config.template_sem_presenca;
+            params = desc ? [primeiroNome(lead), c.atendente, filialPrep, desc.de, desc.nome] : [];
+        } else {
+            params = paramsDoModelo(modelo, c, lead, filialPrep, eventoPresente);
+        }
+        if (!params.length) { await finalizar("pulado", { motivo: "sem presença confirmada nem inscrição recente para o modelo" }); continue; }
         const corpo = (c.config?.corpos || {})[modelo] as string | undefined;
         const preview = corpo ? corpo.replace(/\{\{(\d+)\}\}/g, (_: string, n: string) => params[Number(n) - 1] ?? "") : `[Modelo ${modelo}] ${params.join(" | ")}`;
         // Horário de ANTES da chamada: com o servidor lento a chamada pode levar

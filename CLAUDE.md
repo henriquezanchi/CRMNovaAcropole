@@ -11663,3 +11663,9 @@ do CRM, não do modelo: `campanha_candidatos()` (filtro `config.ultimo_evento_de
 - `campanha-responder`: "estou fora de Goiânia / viajando / estou em Brasília" não é mudança de cidade (só "me mudei",
   "moro em X"); quem diz que não foi ao evento recebe acolhimento, nunca "que bom que gostou". Etiqueta "Conversa:
   Mudou de Cidade" tirada de Flavia (537744) e Amanda (548287); Rosemar (Palmeirópolis/TO) e Kleyton (Brasília) ficaram.
+- Modelo "Você conseguiu ir?" (28/11/2026, enviado à Meta, aguardando aprovação; botões de resposta rápida "Sim,
+  consegui ir!", "Não consegui ir…", "Não quero receber mensagens"). Código pronto, desligado até a campanha ter
+  `config.template_sem_presenca` = nome do modelo: aí a seleção inclui inscritos sem presença num evento já passado
+  (`evento_leads` origem ulisses, `compareceu is null`), o envio usa esse modelo para eles (`eventoInscritoSemPresenca()`)
+  e o robô trata a resposta como pós-evento daquele evento (`eventoDaPerguntaDePresenca()`): etiqueta "Pós-evento:
+  Foi/Não foi" e presença marcada no Ulisses quando ela diz que foi.
