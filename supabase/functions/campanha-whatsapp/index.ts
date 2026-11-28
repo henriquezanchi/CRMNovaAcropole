@@ -15,6 +15,7 @@
 // diferentes em 24h corridas (TIER_250 hoje). O planejamento e cada envio
 // conferem a contagem real das últimas 24h antes de mandar.
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
+import { decifrarToken } from "../_shared/whatsapp-numeros.ts";
 
 const GRAPH_VERSION = Deno.env.get("WHATSAPP_GRAPH_API_VERSION") ?? "v21.0";
 const FUSO = "America/Sao_Paulo";
@@ -57,9 +58,15 @@ function limiteDoTier(tier: string | null): number {
 // então não podem ser confundidos com o da agência aqui (27/11/2026).
 const PHONE_ID_AGENCIA = Deno.env.get("WHATSAPP_PHONE_NUMBER_ID_DEFAULT") || "";
 
-async function limiteDiarioMeta(): Promise<number> {
+// Número extra das campanhas (28/11/2026): cada número tem limite, qualidade, teto e contagens próprios.
+// Linhas antigas sem phone_number_id_meta / phone_number_id são do número da agência.
+function doNumero(q: any, phoneId: string, coluna = "phone_number_id_meta") {
+    return phoneId === PHONE_ID_AGENCIA ? q.or(`${coluna}.is.null,${coluna}.eq.${phoneId}`) : q.eq(coluna, phoneId);
+}
+
+async function limiteDiarioMeta(phoneId = PHONE_ID_AGENCIA): Promise<number> {
     const { data } = await supabaseAdmin.from("whatsapp_saude_conta")
-        .select("messaging_limit_tier").eq("phone_number_id", PHONE_ID_AGENCIA).order("verificado_em", { ascending: false }).limit(1).maybeSingle();
+        .select("messaging_limit_tier").eq("phone_number_id", phoneId).order("verificado_em", { ascending: false }).limit(1).maybeSingle();
     return limiteDoTier(data?.messaging_limit_tier ?? null);
 }
 
@@ -80,14 +87,14 @@ const MODELOS_PROIBIDOS_FOLLOWUP = new Set(["contato_inicial"]);
 
 type Qualidade = { nivel: "verde" | "amarelo" | "vermelho" | "desconhecido"; fator: number; semFollowup: boolean; pausar: boolean; motivo: string; retencoes: number };
 
-async function estadoQualidade(): Promise<Qualidade> {
+async function estadoQualidade(phoneId = PHONE_ID_AGENCIA): Promise<Qualidade> {
     const { data } = await supabaseAdmin.from("whatsapp_saude_conta")
-        .select("quality_rating, status").eq("phone_number_id", PHONE_ID_AGENCIA).order("verificado_em", { ascending: false }).limit(1).maybeSingle();
+        .select("quality_rating, status").eq("phone_number_id", phoneId).order("verificado_em", { ascending: false }).limit(1).maybeSingle();
     const q = String(data?.quality_rating || "").toUpperCase();
     const desde = new Date(Date.now() - HORAS_RETENCOES * 3600 * 1000).toISOString();
-    const { count: retencoes } = await supabaseAdmin.from("mensagens_whatsapp").select("id", { count: "exact", head: true })
+    const { count: retencoes } = await doNumero(supabaseAdmin.from("mensagens_whatsapp").select("id", { count: "exact", head: true })
         .eq("direcao", "saida").eq("wa_status", "falhou").gte("criado_em", desde)
-        .filter("wa_status_erro", "cs", JSON.stringify([{ code: 131049 }]));
+        .filter("wa_status_erro", "cs", JSON.stringify([{ code: 131049 }])), phoneId);
     const r = retencoes || 0;
     const amarelo = q === "YELLOW" || q === "MEDIUM";
     if (data?.status && data.status !== "CONNECTED") return { nivel: "vermelho", fator: 0, semFollowup: true, pausar: true, motivo: `número ${data.status}`, retencoes: r };
@@ -99,16 +106,22 @@ async function estadoQualidade(): Promise<Qualidade> {
 
 // Teto diário somando todas as campanhas (campanha_parametros). Rampa: começa em 100; com 3 dias
 // seguidos de qualidade verde sobe 25 por dia até o limite da Meta; fora do verde volta a no máximo 100.
-async function tetoDoDia(limiteMeta: number, qualidade: Qualidade, ajustar: boolean): Promise<{ teto: number; efetivo: number }> {
+// Número extra: mesma rampa, teto guardado em whatsapp_conexoes (teto_campanha/teto_ajustado_em), começando em teto_inicial.
+async function tetoDoDia(limiteMeta: number, qualidade: Qualidade, ajustar: boolean, phoneId = PHONE_ID_AGENCIA): Promise<{ teto: number; efetivo: number }> {
     const { data: p } = await supabaseAdmin.from("campanha_parametros").select("*").eq("id", 1).maybeSingle();
-    let teto = Number(p?.teto_diario ?? 100);
+    const extra = phoneId !== PHONE_ID_AGENCIA;
+    const { data: cx } = extra
+        ? await supabaseAdmin.from("whatsapp_conexoes").select("teto_campanha, teto_ajustado_em").eq("phone_number_id", phoneId).maybeSingle()
+        : { data: null as any };
+    let teto = extra ? Number(cx?.teto_campanha ?? p?.teto_inicial ?? 100) : Number(p?.teto_diario ?? 100);
+    const ajustadoEm = extra ? cx?.teto_ajustado_em : p?.teto_ajustado_em;
     const hoje = hojeBrasilia();
-    if (ajustar && p && p.teto_ajustado_em !== hoje) {
+    if (ajustar && p && ajustadoEm !== hoje) {
         if (qualidade.nivel === "verde") {
             const dias = Number(p.dias_verde_para_subir || 3);
             const desde = new Date(Date.now() - dias * 24 * 3600 * 1000).toISOString();
             const { data: linhas } = await supabaseAdmin.from("whatsapp_saude_conta").select("quality_rating, verificado_em")
-                .eq("phone_number_id", PHONE_ID_AGENCIA).gte("verificado_em", desde).order("verificado_em");
+                .eq("phone_number_id", phoneId).gte("verificado_em", desde).order("verificado_em");
             const lista = linhas || [];
             const tudoVerde = lista.length > 0 && lista.every((l: any) => ["GREEN", "HIGH"].includes(String(l.quality_rating || "").toUpperCase()));
             const cobreJanela = lista.length > 0 && new Date(lista[0].verificado_em).getTime() <= new Date(desde).getTime() + 2 * 3600 * 1000;
@@ -116,7 +129,8 @@ async function tetoDoDia(limiteMeta: number, qualidade: Qualidade, ajustar: bool
         } else {
             teto = Math.min(teto, Number(p.teto_inicial || 100));
         }
-        await supabaseAdmin.from("campanha_parametros").update({ teto_diario: teto, teto_ajustado_em: hoje, atualizado_em: new Date().toISOString() }).eq("id", 1);
+        if (extra) await supabaseAdmin.from("whatsapp_conexoes").update({ teto_campanha: teto, teto_ajustado_em: hoje }).eq("phone_number_id", phoneId);
+        else await supabaseAdmin.from("campanha_parametros").update({ teto_diario: teto, teto_ajustado_em: hoje, atualizado_em: new Date().toISOString() }).eq("id", 1);
     }
     const efetivo = qualidade.pausar ? 0 : Math.floor(Math.min(teto, limiteMeta - MARGEM_LIMITE) * qualidade.fator);
     return { teto, efetivo };
@@ -126,24 +140,96 @@ function followupPermitido(c: any, qualidade: Qualidade): boolean {
     return !!c.template_followup && !MODELOS_PROIBIDOS_FOLLOWUP.has(c.template_followup) && !qualidade.semFollowup;
 }
 
-async function enviadosHojeCampanhas(): Promise<number> {
+// ---------------------------------------------------------------------------
+// Números que enviam convites (28/11/2026, pedido do usuário: "esse número, para ficar como extra, e termos
+// mais 250 mensagens por dia"). Sempre o número da agência; mais cada número extra (whatsapp_conexoes com
+// extra_campanhas, conectado e com "usar no CRM" ligado). O limite da Meta é por portfólio, e o extra está em
+// outro portfólio, então cada um tem limite, qualidade (freios), teto com rampa e contagens próprios. Um convite
+// só sai pelo extra se o modelo estiver APROVADO na conta (WABA) dele; a 2ª tentativa sai pelo mesmo número do
+// convite. As respostas seguem a regra de sempre (número em que a pessoa escreveu).
+// ---------------------------------------------------------------------------
+const MARGEM_EXTRA = 5; // o extra não recebe modelos manuais; só uma folguinha
+
+type NumeroPool = {
+    id: string; extra: boolean; nome: string; waba: string | null; token: string | null;
+    limite: number; margem: number; qualidade: Qualidade; teto: { teto: number; efetivo: number };
+    usados24h: number; enviadosHoje: number; pagamento: { bloqueado: boolean; podeTestar: boolean };
+    modelos: Set<string> | null; // nome|idioma aprovados (só extras)
+};
+
+const chaveModelo = (nome: string, idioma: string | null | undefined) => `${nome}|${idioma || "pt_BR"}`;
+
+async function modelosAprovados(waba: string, token: string): Promise<Set<string>> {
+    const aprovados = new Set<string>();
+    let url = `https://graph.facebook.com/${GRAPH_VERSION}/${waba}/message_templates?fields=name,language,status&limit=200`;
+    for (let i = 0; url && i < 10; i++) {
+        const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        const j = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(j?.error?.message || `status ${resp.status}`);
+        for (const t of j.data || []) if (t.status === "APPROVED") aprovados.add(chaveModelo(t.name, t.language));
+        url = j.paging?.next || "";
+    }
+    return aprovados;
+}
+
+async function numerosDoPool(opts: { ajustar?: boolean; contagens?: boolean } = {}): Promise<NumeroPool[]> {
+    const base: { id: string; extra: boolean; nome: string; waba: string | null; token: string | null }[] =
+        [{ id: PHONE_ID_AGENCIA, extra: false, nome: "agência", waba: null, token: null }];
+    const { data, error } = await supabaseAdmin.from("whatsapp_conexoes")
+        .select("filial, phone_number_id, waba_id, numero_exibicao, token_cifrado, estado, usar_no_crm").eq("extra_campanhas", true);
+    if (error) console.warn("números extras indisponíveis:", error.message);
+    for (const c of data || []) {
+        if (c.estado !== "conectado" || !c.usar_no_crm || !c.token_cifrado) continue;
+        try {
+            base.push({ id: String(c.phone_number_id), extra: true, nome: c.numero_exibicao || String(c.phone_number_id), waba: String(c.waba_id), token: await decifrarToken(c.token_cifrado) });
+        } catch (e) { console.error("token do número extra não decifrou:", c.phone_number_id, e); }
+    }
+    const lista: NumeroPool[] = [];
+    for (const b of base) {
+        const limite = await limiteDiarioMeta(b.id);
+        const qualidade = await estadoQualidade(b.id);
+        const teto = await tetoDoDia(limite, qualidade, !!opts.ajustar, b.id);
+        let modelos: Set<string> | null = null;
+        if (b.extra) {
+            try { modelos = await modelosAprovados(b.waba!, b.token!); }
+            catch (e) { console.warn("modelos do número extra:", b.nome, e); modelos = new Set(); }
+        }
+        lista.push({
+            ...b, limite, margem: b.extra ? MARGEM_EXTRA : MARGEM_LIMITE, qualidade, teto, modelos,
+            usados24h: opts.contagens ? await iniciadasUltimas24h(b.id) : 0,
+            enviadosHoje: opts.contagens ? await enviadosHojeCampanhas(b.id) : 0,
+            pagamento: opts.contagens ? await estadoPagamento(b.id) : { bloqueado: false, podeTestar: true },
+        });
+    }
+    return lista;
+}
+
+function resumoPool(pool: NumeroPool[]) {
+    return pool.map((n) => ({ numero: n.nome, extra: n.extra, limite: n.limite, qualidade: n.qualidade.nivel, freio: n.qualidade.motivo || null,
+        teto: n.teto.teto, efetivo: n.teto.efetivo, usados24h: n.usados24h, enviadosHoje: n.enviadosHoje,
+        pagamentoBloqueado: n.pagamento.bloqueado, modelosAprovados: n.modelos ? n.modelos.size : null }));
+}
+
+async function enviadosHojeCampanhas(phoneId: string | null = null): Promise<number> {
     const inicio = instanteBrasilia(hojeBrasilia(), "00:00").toISOString();
-    const { count } = await supabaseAdmin.from("campanha_fila").select("id", { count: "exact", head: true })
+    let q = supabaseAdmin.from("campanha_fila").select("id", { count: "exact", head: true })
         .eq("status", "enviado").gte("enviado_em", inicio);
+    if (phoneId) q = doNumero(q, phoneId, "phone_number_id");
+    const { count } = await q;
     return count || 0;
 }
 
 // Pessoas diferentes que receberam modelo nosso nas últimas 24h (falha da
 // Meta não abre conversa, então não conta).
-async function iniciadasUltimas24h(): Promise<number> {
+async function iniciadasUltimas24h(phoneId = PHONE_ID_AGENCIA): Promise<number> {
     const desde = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
     const pessoas = new Set<string>();
     let de = 0;
     for (;;) {
-        const { data, error } = await supabaseAdmin.from("mensagens_whatsapp")
+        const { data, error } = await doNumero(supabaseAdmin.from("mensagens_whatsapp")
             .select('"pessoaIdentificador", telefone_whatsapp, wa_status')
-            .eq("direcao", "saida").eq("tipo", "template").gte("criado_em", desde)
-            .range(de, de + 999);
+            .eq("direcao", "saida").eq("tipo", "template").gte("criado_em", desde), phoneId)
+            .order("id").range(de, de + 999);
         if (error) throw new Error("falha_contar_envios: " + error.message);
         for (const m of data || []) if (m.wa_status !== "falhou") pessoas.add(String(m.pessoaIdentificador || m.telefone_whatsapp));
         if (!data || data.length < 1000) break;
@@ -352,7 +438,7 @@ async function planejar(c: any, forcar: boolean, qualidade: Qualidade, teto: { t
         .neq("campanha_id", c.id).gte("agendado_para", inicioDia.toISOString()).lte("agendado_para", fimDia.toISOString())
         .neq("status", "cancelado");
     // Teto do dia (somando todas as campanhas) já reduzido pela qualidade da conta.
-    const total = Math.max(0, Math.min(c.cota_diaria, Math.min(limiteMeta - MARGEM_LIMITE, teto.efetivo) - (outrasHoje || 0)) - (jaPlanejados || 0));
+    const total = Math.max(0, Math.min(c.cota_diaria, teto.efetivo - (outrasHoje || 0)) - (jaPlanejados || 0));
 
     const podeConvidar = hoje >= c.inicio && hoje <= c.fim_convites;
     const podeFollowup = hoje > c.inicio && hoje <= c.fim_followup && followupPermitido(c, qualidade);
@@ -428,7 +514,7 @@ async function planejar(c: any, forcar: boolean, qualidade: Qualidade, teto: { t
         if (!id) continue;
         const { data: up, error: e3 } = await supabaseAdmin.from("campanha_fila")
             .update({ status: "pendente", agendado_para: l.agendado_para, filial: l.filial, telefone_chave: l.telefone_chave,
-                grupo: l.grupo, prioridade: l.prioridade, motivo: null, enviado_em: null, wa_message_id: null })
+                grupo: l.grupo, prioridade: l.prioridade, motivo: null, enviado_em: null, wa_message_id: null, phone_number_id: null })
             .eq("id", id).eq("status", "cancelado").select("id");
         if (e3) throw new Error("falha_reaproveitar_fila: " + e3.message);
         if (up && up.length) gravados[l.tipo]++;
@@ -522,18 +608,18 @@ function paramsDoModelo(nome: string, c: any, lead: any, filialPrep: string, eve
 // 30 min; o resto volta para a fila. Quando um passar, os envios voltam sozinhos.
 const ERRO_PAGAMENTO = "131042";
 const MINUTOS_TESTE_PAGAMENTO = 10;
-async function estadoPagamento(): Promise<{ bloqueado: boolean; podeTestar: boolean }> {
+async function estadoPagamento(phoneId = PHONE_ID_AGENCIA): Promise<{ bloqueado: boolean; podeTestar: boolean }> {
     // Último resultado que diz algo sobre a CONTA: entrega, ou falha por pagamento. Falhas de um
     // número só (sem WhatsApp, 131026; ecossistema, 131049) não contam — em 11/11 a última falha foi
     // 131026 e escondeu o 131042 logo antes.
-    const { data: recentes } = await supabaseAdmin.from("mensagens_whatsapp").select("wa_status, wa_status_erro")
-        .eq("direcao", "saida").eq("tipo", "template").in("wa_status", ["entregue", "lido", "falhou"])
+    const { data: recentes } = await doNumero(supabaseAdmin.from("mensagens_whatsapp").select("wa_status, wa_status_erro")
+        .eq("direcao", "saida").eq("tipo", "template").in("wa_status", ["entregue", "lido", "falhou"]), phoneId)
         .order("criado_em", { ascending: false }).limit(30);
     const ultimo = (recentes || []).find((m: any) => m.wa_status !== "falhou" || JSON.stringify(m.wa_status_erro || "").includes(ERRO_PAGAMENTO));
     const bloqueado = !!ultimo && ultimo.wa_status === "falhou";
     if (!bloqueado) return { bloqueado: false, podeTestar: true };
-    const { count: testesRecentes } = await supabaseAdmin.from("mensagens_whatsapp").select("id", { count: "exact", head: true })
-        .eq("direcao", "saida").eq("tipo", "template").gte("criado_em", new Date(Date.now() - MINUTOS_TESTE_PAGAMENTO * 60_000).toISOString());
+    const { count: testesRecentes } = await doNumero(supabaseAdmin.from("mensagens_whatsapp").select("id", { count: "exact", head: true })
+        .eq("direcao", "saida").eq("tipo", "template").gte("criado_em", new Date(Date.now() - MINUTOS_TESTE_PAGAMENTO * 60_000).toISOString()), phoneId);
     return { bloqueado: true, podeTestar: !testesRecentes };
 }
 async function avisarPagamento(bloqueado: boolean) {
@@ -565,24 +651,22 @@ async function enviar() {
     if (error) throw new Error("falha_assumir: " + error.message);
     const resultados: any[] = [];
     if (!itens?.length) return resultados;
-    const limiteMeta = await limiteDiarioMeta();
-    let usados = await iniciadasUltimas24h();
-    const qualidade = await estadoQualidade();
-    const teto = await tetoDoDia(limiteMeta, qualidade, false);
-    let enviadosHoje = await enviadosHojeCampanhas();
+    const pool = await numerosDoPool({ contagens: true });
+    const agencia = pool[0];
+    const qualidade = agencia.qualidade; // 2ª tentativa segue a qualidade do número da agência
     const campanhas = new Map<number, any>();
     const vagasPorCampanha = new Map<number, any>();
-    const pagamento = await estadoPagamento();
-    await avisarPagamento(pagamento.bloqueado);
-    let testeLiberado = pagamento.podeTestar;
+    await avisarPagamento(agencia.pagamento.bloqueado);
+    // Com pagamento bloqueado num número, só 1 envio de teste por vez sai por ele.
+    const testeLiberado = new Map(pool.map((n) => [n.id, n.pagamento.podeTestar]));
+    const semVagaTeto = (n: NumeroPool) => n.qualidade.pausar || n.enviadosHoje >= n.teto.efetivo;
+    const semVagaLimite = (n: NumeroPool) => semVagaTeto(n) || n.usados24h >= n.limite - n.margem;
+    const podeEnviarPor = (n: NumeroPool) => !semVagaLimite(n) && (!n.pagamento.bloqueado || testeLiberado.get(n.id));
     for (const it of itens) {
-        if (pagamento.bloqueado) {
-            if (!testeLiberado) {
-                await supabaseAdmin.from("campanha_fila").update({ status: "pendente", agendado_para: new Date(Date.now() + MINUTOS_TESTE_PAGAMENTO * 60_000).toISOString() }).eq("id", it.id);
-                resultados.push({ id: it.id, status: "adiado_pagamento" });
-                continue;
-            }
-            testeLiberado = false; // este é o envio de teste
+        if (pool.every((n) => n.pagamento.bloqueado && !testeLiberado.get(n.id))) {
+            await supabaseAdmin.from("campanha_fila").update({ status: "pendente", agendado_para: new Date(Date.now() + MINUTOS_TESTE_PAGAMENTO * 60_000).toISOString() }).eq("id", it.id);
+            resultados.push({ id: it.id, status: "adiado_pagamento" });
+            continue;
         }
         let c = campanhas.get(it.campanha_id);
         if (!c) {
@@ -603,22 +687,23 @@ async function enviar() {
             const v = vagasPorCampanha.get(c.id);
             if (pararPorVagas(c, v)) { await finalizar("cancelado", { motivo: `restam ${v!.restantes} vagas no evento` }); continue; }
         }
-        if (qualidade.pausar) {
-            // Freio da qualidade: volta para a fila e confere de novo em 1 hora.
+        if (pool.every((n) => n.qualidade.pausar)) {
+            // Freio da qualidade (em todos os números): volta para a fila e confere de novo em 1 hora.
             await supabaseAdmin.from("campanha_fila").update({ status: "pendente", agendado_para: new Date(Date.now() + 60 * 60_000).toISOString() }).eq("id", it.id);
-            resultados.push({ id: it.id, status: "adiado_qualidade", motivo: qualidade.motivo });
+            resultados.push({ id: it.id, status: "adiado_qualidade", motivo: pool.map((n) => n.qualidade.motivo).filter(Boolean).join("; ") });
             continue;
         }
         if (it.tipo === "followup" && !followupPermitido(c, qualidade)) {
             await finalizar("cancelado", { motivo: qualidade.semFollowup ? `sem 2ª tentativa: ${qualidade.motivo}` : "modelo de 2ª tentativa não permitido" });
             continue;
         }
-        if (enviadosHoje >= teto.efetivo) {
-            // Teto do dia atingido (ou reduzido pela qualidade). Cancelado volta a ser candidato amanhã.
-            await finalizar("cancelado", { motivo: `teto do dia atingido (${teto.efetivo}${qualidade.motivo ? ", " + qualidade.motivo : ""})` });
+        const motivoTeto = () => `teto do dia atingido (${pool.map((n) => `${n.nome}: ${n.teto.efetivo}${n.qualidade.motivo ? ", " + n.qualidade.motivo : ""}`).join("; ")})`;
+        if (pool.every(semVagaTeto)) {
+            // Teto do dia atingido em todos os números (ou reduzido pela qualidade). Cancelado volta a ser candidato amanhã.
+            await finalizar("cancelado", { motivo: motivoTeto() });
             continue;
         }
-        if (usados >= limiteMeta - MARGEM_LIMITE) {
+        if (pool.every(semVagaLimite)) {
             // Sem cota agora: volta para a fila e tenta daqui a 15 min.
             await supabaseAdmin.from("campanha_fila").update({ status: "pendente", agendado_para: new Date(Date.now() + 15 * 60_000).toISOString() }).eq("id", it.id);
             resultados.push({ id: it.id, status: "adiado_limite_meta" });
@@ -659,6 +744,24 @@ async function enviar() {
             params = paramsDoModelo(modelo, c, lead, filialPrep, eventoPresente);
         }
         if (!params.length) { await finalizar("pulado", { motivo: "sem presença confirmada nem inscrição recente para o modelo" }); continue; }
+        // Número que envia: o de menor ocupação do teto entre os que têm vaga e o modelo aprovado.
+        // 2ª tentativa sai pelo mesmo número do convite (convites antigos, sem número gravado, são da agência).
+        const numeroDoConvite = it.tipo === "followup"
+            ? ((await supabaseAdmin.from("campanha_fila").select("phone_number_id").eq("campanha_id", c.id).eq("pessoaIdentificador", it.pessoaIdentificador).eq("tipo", "convite").maybeSingle()).data?.phone_number_id || PHONE_ID_AGENCIA)
+            : null;
+        const comModelo = pool.filter((n) => (!n.extra || n.modelos?.has(chaveModelo(modelo, c.template_idioma))) && (!numeroDoConvite || n.id === numeroDoConvite));
+        const opcoes = comModelo.filter(podeEnviarPor)
+            .sort((a, b) => a.enviadosHoje / Math.max(1, a.teto.efetivo) - b.enviadosHoje / Math.max(1, b.teto.efetivo));
+        const numero = opcoes[0];
+        if (!numero) {
+            if (comModelo.every(semVagaTeto)) await finalizar("cancelado", { motivo: motivoTeto() });
+            else {
+                await supabaseAdmin.from("campanha_fila").update({ status: "pendente", agendado_para: new Date(Date.now() + 15 * 60_000).toISOString() }).eq("id", it.id);
+                resultados.push({ id: it.id, status: "adiado_sem_numero", motivo: `nenhum número com vaga e o modelo ${modelo} aprovado` });
+            }
+            continue;
+        }
+        if (numero.pagamento.bloqueado) testeLiberado.set(numero.id, false); // este é o envio de teste por esse número
         const corpo = (c.config?.corpos || {})[modelo] as string | undefined;
         const preview = corpo ? corpo.replace(/\{\{(\d+)\}\}/g, (_: string, n: string) => params[Number(n) - 1] ?? "") : `[Modelo ${modelo}] ${params.join(" | ")}`;
         // Horário de ANTES da chamada: com o servidor lento a chamada pode levar
@@ -667,12 +770,12 @@ async function enviar() {
         const envio = await chamarEnvio({
             pessoaIdentificador: it.pessoaIdentificador, tipo: "template", templateNome: modelo,
             templateIdioma: c.template_idioma, templateParams: params, templatePreview: preview,
-            atendenteNome: `Campanha ${c.nome}`, origemEnvio: "campanha",
+            atendenteNome: `Campanha ${c.nome}`, origemEnvio: "campanha", phoneNumberIdEnvio: numero.id,
         });
         if (envio.ok) {
-            usados++;
-            enviadosHoje++;
-            await finalizar("enviado", { enviado_em: momentoEnvio, wa_message_id: envio.dados?.wa_message_id ?? null });
+            numero.usados24h++;
+            numero.enviadosHoje++;
+            await finalizar("enviado", { enviado_em: momentoEnvio, wa_message_id: envio.dados?.wa_message_id ?? null, phone_number_id: numero.id });
             if (c.evento_id && it.tipo === "convite" && !c.config?.pos_evento) {
                 await supabaseAdmin.from("evento_leads").upsert(
                     { evento_id: c.evento_id, pessoaIdentificador: it.pessoaIdentificador, resposta_convite: "pendente", origem: "crm" },
@@ -752,10 +855,10 @@ async function status() {
         for (const r of data) resumo[`${r.tipo}:${r.status}`] = (resumo[`${r.tipo}:${r.status}`] || 0) + 1;
         saida.push({ campanha: c.slug, resumo, inscritosEvento: c.evento_id ? await inscritosNoEvento(c.evento_id) : null });
     }
-    const limiteMeta = await limiteDiarioMeta();
-    const qualidade = await estadoQualidade();
-    return { campanhas: saida, limiteMeta, iniciadas24h: await iniciadasUltimas24h(), qualidade,
-        teto: await tetoDoDia(limiteMeta, qualidade, false), enviadosHoje: await enviadosHojeCampanhas() };
+    const pool = await numerosDoPool({ contagens: true });
+    const agencia = pool[0];
+    return { campanhas: saida, limiteMeta: agencia.limite, iniciadas24h: agencia.usados24h, qualidade: agencia.qualidade,
+        teto: agencia.teto, enviadosHoje: await enviadosHojeCampanhas(), numeros: resumoPool(pool) };
 }
 
 // Margem de segurança ao procurar resposta a um envio: o horário gravado pode
@@ -771,9 +874,17 @@ Deno.serve(async (req) => {
     try {
         if (corpo.acao === "planejar") {
             const saida = [];
-            const qualidade = await estadoQualidade();
-            const teto = await tetoDoDia(await limiteDiarioMeta(), qualidade, true);
+            const pool = await numerosDoPool({ ajustar: true });
+            const qualidade = pool[0].qualidade;
             const campanhas = await campanhasAtivas();
+            // O extra só soma capacidade quando tem aprovados TODOS os modelos de convite das campanhas ativas
+            // (senão o planejamento contaria vagas que não podem ser usadas).
+            const modelosConvite = [...new Set(campanhas.flatMap((c: any) => [c.template_convite, c.config?.template_sem_presenca]
+                .filter(Boolean).map((m: string) => chaveModelo(m, c.template_idioma))))];
+            const capacidade = (n: NumeroPool) => (n.extra && !modelosConvite.every((m) => n.modelos?.has(m)) ? 0 : n.teto.efetivo);
+            const teto = { teto: pool.reduce((t, n) => t + n.teto.teto, 0), efetivo: pool.reduce((t, n) => t + capacidade(n), 0) };
+            const numeros = resumoPool(pool).map((r, k) => ({ ...r, capacidadePlanejada: capacidade(pool[k]),
+                modelosFaltando: pool[k].extra ? modelosConvite.filter((m) => !pool[k].modelos?.has(m)) : [] }));
             const cotasProximidade = await aplicarCotasPorProximidade(campanhas, teto.efetivo);
             // Prioridade (18/11/2026, pedido do usuário): aula experimental > abertura de turma > curso pago >
             // outro evento > relacionamento > pós-evento. Quem vem antes planeja antes e não perde vaga do teto do dia.
@@ -784,7 +895,7 @@ Deno.serve(async (req) => {
             campanhas.sort((x: any, y: any) => prioridadeCampanha(x, evPorId.get(x.evento_id)) - prioridadeCampanha(y, evPorId.get(y.evento_id))
                 || Number(y.cota_diaria) - Number(x.cota_diaria) || Number(x.id) - Number(y.id));
             for (const c of campanhas) saida.push(await planejar(c, Boolean(corpo.forcar), qualidade, teto));
-            return json({ ok: true, qualidade, teto, cotasProximidade, planejado: saida });
+            return json({ ok: true, qualidade, teto, numeros, cotasProximidade, planejado: saida });
         }
         if (corpo.acao === "enviar") return json({ ok: true, enviados: await enviar() });
         if (corpo.acao === "modelos") return json({ ok: true, modelos: await listarModelos() });

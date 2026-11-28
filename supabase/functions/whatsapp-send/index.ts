@@ -11,7 +11,7 @@ import { montarNumeroE164 } from "../_shared/telefone.ts";
 import { motivoBloqueioContato, motivoIntegridadeContato, temTagNaoContatar, TEXTO_CONFIRMACAO_NAO_CONTATAR } from "../_shared/preferencia-contato.ts";
 import { motivoRascunhoAgente } from "../_shared/rascunho-agente.mjs";
 import { aplicarReacao } from "../_shared/reacoes.ts";
-import { bloqueioDoNumero, GRAPH_VERSION, numeroParaNovaMensagem, tokenDoNumero } from "../_shared/whatsapp-numeros.ts";
+import { bloqueioDoNumero, GRAPH_VERSION, numeroParaNovaMensagem, numeroValidoParaCampanha, tokenDoNumero } from "../_shared/whatsapp-numeros.ts";
 
 function json(body: unknown, status = 200) {
     return new Response(JSON.stringify(body), {
@@ -85,6 +85,9 @@ Deno.serve(async (req) => {
         // só vale com o modelo `aniversario`, e aí não é campanha — só quem
         // pediu para não ser contatado bloqueia.
         origemEnvio?: "manual" | "campanha" | "aniversario";
+        // Número escolhido pelo agendador de campanhas (agência ou número extra, 28/11/2026). Só vale para modelo
+        // de campanha; qualquer outro envio segue a regra de sempre.
+        phoneNumberIdEnvio?: string;
         rascunhoAgente?: {tipo:"geral"|"convite";id:number};
     };
     try {
@@ -93,7 +96,7 @@ Deno.serve(async (req) => {
         return json({ ok: false, erro: "json_invalido" }, 400);
     }
 
-    const { pessoaIdentificador, telefoneWhatsapp, tipo, texto, templateNome, templateIdioma, templateParams, templatePreview, imagemUrl, documentoUrl, audioUrl, nomeArquivo, caption, atendenteNome, mensagemAlvoId, emoji, contextoMessageId, contextoPreview, contextoRemetente, origemEnvio } = corpoReq;
+    const { pessoaIdentificador, telefoneWhatsapp, tipo, texto, templateNome, templateIdioma, templateParams, templatePreview, imagemUrl, documentoUrl, audioUrl, nomeArquivo, caption, atendenteNome, mensagemAlvoId, emoji, contextoMessageId, contextoPreview, contextoRemetente, origemEnvio, phoneNumberIdEnvio } = corpoReq;
     if ((!pessoaIdentificador && !telefoneWhatsapp) || !tipo) return json({ ok: false, erro: "parametros_faltando" }, 400);
     if (!pessoaIdentificador && tipo !== "texto") return json({ ok: false, erro: "tipo_exige_lead" }, 400);
     if (tipo === "texto" && !texto?.trim()) return json({ ok: false, erro: "texto_vazio" }, 400);
@@ -170,6 +173,12 @@ Deno.serve(async (req) => {
         consulta = pessoaIdentificador ? consulta.eq("pessoaIdentificador", pessoaIdentificador) : consulta.eq("telefone_whatsapp", numeroE164);
         const { data: ultima } = await consulta;
         phoneNumberId = ultima?.[0]?.phone_number_id_meta || null;
+    }
+    if (!phoneNumberId && tipo === "template" && origemEnvio === "campanha" && phoneNumberIdEnvio) {
+        if (!(await numeroValidoParaCampanha(String(phoneNumberIdEnvio)))) {
+            return json({ ok: false, erro: "numero_campanha_invalido", detalhe: { message: "Número escolhido para a campanha não está liberado." } }, 409);
+        }
+        phoneNumberId = String(phoneNumberIdEnvio);
     }
     if (!phoneNumberId) phoneNumberId = await numeroParaNovaMensagem(filial);
     const bloqueioNumero = await bloqueioDoNumero(phoneNumberId);

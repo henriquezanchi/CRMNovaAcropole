@@ -357,7 +357,7 @@ async function casarLeadDoNumero(numeroCliente: string, escola: NumeroEscola | n
     const candidatos = candidatosNumeroBR(numero);
     const matches = await buscarLeadsPorTelefone(ddd, candidatos);
     let match = matches.length === 1 ? matches[0] : null;
-    if (!match && escola) {
+    if (!match && escola && !escola.extra) {
         const daEscola = matches.filter((m: any) => m.filial === escola.filial);
         if (daEscola.length === 1) match = daEscola[0];
     }
@@ -396,7 +396,7 @@ async function gravarMensagemDaEscola(msg: any, direcao: "entrada" | "saida", nu
     const { error } = await supabaseAdmin.from(NOME_TABELA_MENSAGENS).upsert({
         pessoaIdentificador: match?.pessoaIdentificador ?? null,
         telefone_whatsapp: numeroCliente,
-        filial: match?.filial ?? escola?.filial ?? null,
+        filial: match?.filial ?? (escola?.extra ? null : escola?.filial) ?? null,
         direcao,
         tipo: mapearTipoMeta(msg.type),
         corpo_texto: extrairTexto(msg),
@@ -543,7 +543,7 @@ Deno.serve(async (req) => {
                 let match = matches.length === 1 ? matches[0] : null;
                 let resolvidoPorHistorico = false;
                 // Pelo número de uma escola, entre duplicados vale o cadastro daquela escola.
-                if (!match && escola) {
+                if (!match && escola && !escola.extra) {
                     const daEscola = matches.filter((m: any) => m.filial === escola.filial);
                     if (daEscola.length === 1) match = daEscola[0];
                 }
@@ -595,7 +595,7 @@ Deno.serve(async (req) => {
                 const { error } = await supabaseAdmin.from(NOME_TABELA_MENSAGENS).upsert({
                     pessoaIdentificador: match?.pessoaIdentificador ?? null,
                     telefone_whatsapp: msg.from,
-                    filial: match?.filial ?? escola?.filial ?? null,
+                    filial: match?.filial ?? (escola?.extra ? null : escola?.filial) ?? null,
                     direcao: "entrada",
                     tipo: tipoMapeado,
                     corpo_texto: extrairTexto(msg),

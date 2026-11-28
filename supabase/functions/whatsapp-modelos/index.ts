@@ -6,7 +6,7 @@
 // whatsapp-conexao). O modelo criado fica em análise na Meta; o CRM só o usa depois de aprovado.
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
-import { GRAPH_VERSION, numeroEscolaDaFilial, TOKEN_PADRAO } from "../_shared/whatsapp-numeros.ts";
+import { conexaoDaFilial, GRAPH_VERSION, TOKEN_PADRAO } from "../_shared/whatsapp-numeros.ts";
 
 const GRAPH = `https://graph.facebook.com/${GRAPH_VERSION}`;
 
@@ -54,7 +54,7 @@ async function contasDoToken(token: string): Promise<string[]> {
 
 /** Conta e token que valem para a filial: a da escola conectada, senão a da agência. */
 async function contaDaFilial(filial: string | null): Promise<{ contas: string[]; token: string; origem: string }> {
-    const escola = await numeroEscolaDaFilial(filial);
+    const escola = await conexaoDaFilial(filial);
     if (escola?.token && escola.estado === "conectado") return { contas: [escola.wabaId], token: escola.token, origem: `WhatsApp de ${escola.filial}` };
     return { contas: await contasDoToken(TOKEN_PADRAO), token: TOKEN_PADRAO, origem: "WhatsApp da agência" };
 }

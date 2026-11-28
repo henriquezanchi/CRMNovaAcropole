@@ -198,11 +198,12 @@ function htmlWhatsappOficial(nomeFilial, c) {
             <span class="filial-chip ${c.estado === 'conectado' ? 'filial-chip-ok' : 'filial-chip-alerta'}">${c.estado === 'conectado' ? 'Conectado' : 'Com erro'}</span>
             <strong>${escapeHTML(c.numero_exibicao || '')}</strong> ${c.nome_verificado ? '· ' + escapeHTML(c.nome_verificado) : ''}
             ${c.coexistencia ? '<span class="filial-chip">Também no app do celular</span>' : ''}
+            ${c.extra_campanhas ? '<span class="filial-chip filial-chip-ok" title="Soma capacidade às campanhas de todas as escolas, com limite próprio na Meta">Número extra das campanhas (todas as escolas)</span>' : ''}
         </div>
         <div class="wpp-oficial-detalhe">Conectado em ${dataCurtaWhatsappOficial(c.conectado_em)}${c.conectado_por ? ' por ' + escapeHTML(c.conectado_por) : ''}${historico ? ' · ' + historico : ''}</div>
         ${c.ultimo_erro ? `<div class="wpp-oficial-aviso">${escapeHTML(c.ultimo_erro)}</div>` : ''}
         <label class="filial-opcao" title="Desligado: as conversas deste número entram no CRM, mas nada sai por ele.">
-            <input type="checkbox" ${c.usar_no_crm ? 'checked' : ''} onchange="alternarUsoWhatsappOficial(${nomeJs}, this.checked)"> Usar no CRM (respostas, modelos e robôs saem por este número)
+            <input type="checkbox" ${c.usar_no_crm ? 'checked' : ''} onchange="alternarUsoWhatsappOficial(${nomeJs}, this.checked)"> ${c.extra_campanhas ? 'Usar no CRM (convites das campanhas também saem por este número; ligue depois dos modelos aprovados)' : 'Usar no CRM (respostas, modelos e robôs saem por este número)'}
         </label>
         <div class="wpp-oficial-acoes">
             ${c.coexistencia ? `<button type="button" class="btn-secondary" onclick="sincronizarWhatsappOficial(${nomeJs})">Pedir histórico de novo</button>` : ''}

@@ -49,6 +49,8 @@ export type NumeroEscola = {
     token: string | null;
     estado: string;
     usarNoCrm: boolean;
+    /** Número extra das campanhas de todas as escolas (28/11/2026): não é "o número da escola" da filial. */
+    extra: boolean;
 };
 
 let cache: { em: number; lista: NumeroEscola[] } | null = null;
@@ -57,7 +59,7 @@ let cache: { em: number; lista: NumeroEscola[] } | null = null;
 export async function numerosDasEscolas(): Promise<NumeroEscola[]> {
     if (cache && Date.now() - cache.em < 60_000) return cache.lista;
     const { data, error } = await supabaseAdmin.from("whatsapp_conexoes")
-        .select("filial, phone_number_id, waba_id, numero_exibicao, token_cifrado, estado, usar_no_crm");
+        .select("filial, phone_number_id, waba_id, numero_exibicao, token_cifrado, estado, usar_no_crm, extra_campanhas");
     if (error) {
         // Sem a tabela (migração ainda não aplicada): tudo segue pelo número da agência.
         console.warn("whatsapp_conexoes indisponível:", error.message);
@@ -71,7 +73,7 @@ export async function numerosDasEscolas(): Promise<NumeroEscola[]> {
         }
         lista.push({
             filial: c.filial, phoneNumberId: String(c.phone_number_id), wabaId: String(c.waba_id),
-            numeroExibicao: c.numero_exibicao, token, estado: c.estado, usarNoCrm: !!c.usar_no_crm,
+            numeroExibicao: c.numero_exibicao, token, estado: c.estado, usarNoCrm: !!c.usar_no_crm, extra: !!c.extra_campanhas,
         });
     }
     cache = { em: Date.now(), lista };
@@ -88,6 +90,12 @@ export async function numeroEscolaPorId(phoneNumberId: string | null | undefined
 }
 
 export async function numeroEscolaDaFilial(filial: string | null | undefined): Promise<NumeroEscola | null> {
+    if (!filial) return null;
+    return (await numerosDasEscolas()).find((n) => n.filial === filial && !n.extra) ?? null;
+}
+
+/** Qualquer número conectado nesta linha da tela (inclusive o extra das campanhas): usado só para modelos/ações da conta. */
+export async function conexaoDaFilial(filial: string | null | undefined): Promise<NumeroEscola | null> {
     if (!filial) return null;
     return (await numerosDasEscolas()).find((n) => n.filial === filial) ?? null;
 }
@@ -109,11 +117,19 @@ export async function numeroParaNovaMensagem(filial: string | null): Promise<str
     return PHONE_ID_PADRAO;
 }
 
+/** Número que o agendador de campanhas pode escolher (agência ou extra liberado no CRM). */
+export async function numeroValidoParaCampanha(phoneNumberId: string): Promise<boolean> {
+    if (phoneNumberId === PHONE_ID_PADRAO) return true;
+    const n = await numeroEscolaPorId(phoneNumberId);
+    return !!n && n.extra && n.usarNoCrm && n.estado === "conectado" && !!n.token;
+}
+
 /** Por que este número não pode enviar agora (null = pode). */
 export async function bloqueioDoNumero(phoneNumberId: string): Promise<string | null> {
     const escola = await numeroEscolaPorId(phoneNumberId);
     if (!escola) return null;
     if (escola.estado !== "conectado" || !escola.token) return `O WhatsApp de ${escola.filial} está desconectado do CRM.`;
+    if (!escola.usarNoCrm && escola.extra) return "O número extra das campanhas ainda não foi liberado no CRM (Usar no CRM).";
     if (!escola.usarNoCrm) return `Esta conversa é do WhatsApp de ${escola.filial}. Para responder pelo CRM, ligue "Usar no CRM" em Gerenciar Filiais.`;
     return null;
 }

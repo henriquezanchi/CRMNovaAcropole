@@ -11669,3 +11669,23 @@ do CRM, não do modelo: `campanha_candidatos()` (filtro `config.ultimo_evento_de
   (`evento_leads` origem ulisses, `compareceu is null`), o envio usa esse modelo para eles (`eventoInscritoSemPresenca()`)
   e o robô trata a resposta como pós-evento daquele evento (`eventoDaPerguntaDePresenca()`): etiqueta "Pós-evento:
   Foi/Não foi" e presença marcada no Ulisses quando ela diz que foi.
+
+## Número extra das campanhas (28/11/2026)
+
+Pedido do usuário: (62) 3190-2994 (phone 1490112977516416, WABA 1124636837226787, portfólio "LUIZ HENRIQUE ZANCHI
+BORGES", TIER_250 próprio) vira capacidade extra para as campanhas de TODAS as escolas, não número de Barra.
+`migracao_whatsapp_numero_extra.sql` (JÁ RODADA): `whatsapp_conexoes.extra_campanhas/teto_campanha/teto_ajustado_em`,
+`campanha_fila.phone_number_id` (null = agência). A linha continua na filial em que foi conectada (Barra), só para
+token/ações da tela.
+- `campanha-whatsapp` (`numerosDoPool()`): agência + extras com `usar_no_crm` e conectados; cada número tem limite,
+  qualidade/freios, pagamento (131042) e teto com rampa próprios (extra começa em `teto_inicial` e sobe 25/dia após 3
+  dias verdes). Convite sai pelo número de menor ocupação que tenha vaga E o modelo APROVADO na WABA dele (lido na
+  Graph API a cada rodada); 2ª tentativa sai pelo número do convite. No planejamento o extra só soma capacidade quando
+  tem todos os modelos de convite das campanhas ativas (`numeros[].modelosFaltando` no retorno de `planejar`).
+- `whatsapp-send` aceita `phoneNumberIdEnvio` só em modelo de campanha (`numeroValidoParaCampanha()`); respostas
+  continuam pelo número em que a pessoa escreveu. `numeroEscolaDaFilial()` ignora extras (modelos manuais de Barra
+  saem pela agência); `conexaoDaFilial()` (inclui extra) é usada em `whatsapp-modelos` (copiar/criar modelos).
+  Webhook: no número extra não vale a preferência "cadastro da escola do número" nem a filial do número.
+- Planejamento de mensagens soma a capacidade dos extras liberados.
+- Para entrar no rodízio: copiar modelos da agência para a conta do extra, aguardar aprovação, cadastrar forma de
+  pagamento na WABA e ligar "Usar no CRM" na linha dele (Gerenciar Filiais > Barra do Garças).

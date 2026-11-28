@@ -95,10 +95,11 @@ async function renderizarPlanejamentoMensagens() {
         const hoje = hojeBrasiliaPlanejamento();
         const diasLista = Array.from({ length: DIAS_PLANEJAMENTO }, (_, i) => somarDiasISO(hoje, i));
 
-        const [{ data: campanhas, error: e1 }, { data: param }, { data: saude }] = await Promise.all([
+        const [{ data: campanhas, error: e1 }, { data: param }, { data: saudes }, { data: conexoes }] = await Promise.all([
             sb.from('campanhas_whatsapp').select('id, slug, nome, filiais, evento_id, evento_data_curta, inicio, fim_convites, cota_diaria, config').eq('ativa', true),
-            sb.from('campanha_parametros').select('teto_diario').eq('id', 1).maybeSingle(),
-            sb.from('whatsapp_saude_conta').select('quality_rating, status, messaging_limit_tier').order('verificado_em', { ascending: false }).limit(1).maybeSingle(),
+            sb.from('campanha_parametros').select('teto_diario, teto_inicial').eq('id', 1).maybeSingle(),
+            sb.from('whatsapp_saude_conta').select('phone_number_id, quality_rating, status, messaging_limit_tier').order('verificado_em', { ascending: false }).limit(60),
+            sb.from('whatsapp_conexoes_status').select('phone_number_id, estado, usar_no_crm, extra_campanhas, teto_campanha'),
         ]);
         if (e1) throw new Error(e1.message);
 
@@ -126,11 +127,24 @@ async function renderizarPlanejamentoMensagens() {
             if (!linhas || linhas.length < 1000) break;
         }
 
-        const limiteMeta = limiteDoTierPlanejamento(saude?.messaging_limit_tier);
+        // Saúde mais recente de cada número. Número da agência = o que não é de nenhuma escola conectada.
+        // Números extras das campanhas (28/11/2026) somam a própria capacidade (teto com rampa, limite e qualidade próprios).
+        const idsConexoes = new Set((conexoes || []).map((c) => String(c.phone_number_id)));
+        const saudePorNumero = new Map();
+        for (const r of saudes || []) if (!saudePorNumero.has(String(r.phone_number_id))) saudePorNumero.set(String(r.phone_number_id), r);
+        const saude = (saudes || []).find((r) => !idsConexoes.has(String(r.phone_number_id))) || null;
+        const capacidadeNumero = (sd, tetoNumero) => {
+            const qn = String(sd?.quality_rating || '').toUpperCase();
+            const f = (sd?.status && sd.status !== 'CONNECTED') || qn === 'RED' || qn === 'LOW' ? 0 : (qn === 'YELLOW' || qn === 'MEDIUM' ? 0.3 : 1);
+            return { limite: limiteDoTierPlanejamento(sd?.messaging_limit_tier), efetivo: Math.floor(Math.min(tetoNumero, limiteDoTierPlanejamento(sd?.messaging_limit_tier) - MARGEM_LIMITE_PLANEJAMENTO) * f) };
+        };
         const q = String(saude?.quality_rating || '').toUpperCase();
         const fator = (saude?.status && saude.status !== 'CONNECTED') || q === 'RED' || q === 'LOW' ? 0 : (q === 'YELLOW' || q === 'MEDIUM' ? 0.3 : 1);
-        const teto = Number(param?.teto_diario ?? 100);
-        const tetoEfetivo = Math.floor(Math.min(teto, limiteMeta - MARGEM_LIMITE_PLANEJAMENTO) * fator);
+        const agenciaCap = capacidadeNumero(saude, Number(param?.teto_diario ?? 100));
+        const extras = (conexoes || []).filter((c) => c.extra_campanhas && c.usar_no_crm && c.estado === 'conectado');
+        const capacidadeExtras = extras.reduce((t, c) => t + capacidadeNumero(saudePorNumero.get(String(c.phone_number_id)), Number(c.teto_campanha ?? param?.teto_inicial ?? 100)).efetivo, 0);
+        const limiteMeta = agenciaCap.limite + extras.reduce((t, c) => t + capacidadeNumero(saudePorNumero.get(String(c.phone_number_id)), 0).limite, 0);
+        const tetoEfetivo = agenciaCap.efetivo + capacidadeExtras;
 
         // Projeção dia a dia.
         const previsto = new Map();   // chave "campanha|dia" -> convites
